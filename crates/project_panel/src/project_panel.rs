@@ -5370,178 +5370,236 @@ impl Render for ProjectPanel {
                 )
                 .track_focus(&self.focus_handle(cx))
                 .child(
-                    uniform_list("entries", item_count, {
-                        cx.processor(|this, range: Range<usize>, window, cx| {
-                            let mut items = Vec::with_capacity(range.end - range.start);
-                            this.for_each_visible_entry(
-                                range,
-                                window,
-                                cx,
-                                |id, details, window, cx| {
-                                    items.push(this.render_entry(id, details, window, cx));
-                                },
-                            );
-                            items
-                        })
-                    })
-                    .when(show_indent_guides, |list| {
-                        list.with_decoration(
-                            ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
-                                .with_compute_indents_fn(cx.entity(), |this, range, window, cx| {
-                                    let mut items =
-                                        SmallVec::with_capacity(range.end - range.start);
-                                    this.iter_visible_entries(
+                    v_flex()
+                        .child(
+                            uniform_list("entries", item_count, {
+                                cx.processor(|this, range: Range<usize>, window, cx| {
+                                    let mut items = Vec::with_capacity(range.end - range.start);
+                                    this.for_each_visible_entry(
                                         range,
                                         window,
                                         cx,
-                                        |entry, _, entries, _, _| {
-                                            let (depth, _) = Self::calculate_depth_and_difference(
-                                                entry, entries,
-                                            );
-                                            items.push(depth);
+                                        |id, details, window, cx| {
+                                            items.push(this.render_entry(id, details, window, cx));
                                         },
                                     );
                                     items
                                 })
-                                .on_click(cx.listener(
-                                    |this, active_indent_guide: &IndentGuideLayout, window, cx| {
-                                        if window.modifiers().secondary() {
-                                            let ix = active_indent_guide.offset.y;
-                                            let Some((target_entry, worktree)) = maybe!({
-                                                let (worktree_id, entry) =
-                                                    this.entry_at_index(ix)?;
-                                                let worktree = this
-                                                    .project
-                                                    .read(cx)
-                                                    .worktree_for_id(worktree_id, cx)?;
-                                                let target_entry = worktree
-                                                    .read(cx)
-                                                    .entry_for_path(&entry.path.parent()?)?;
-                                                Some((target_entry, worktree))
-                                            }) else {
-                                                return;
-                                            };
-
-                                            this.collapse_entry(target_entry.clone(), worktree, cx);
-                                        }
-                                    },
-                                ))
-                                .with_render_fn(cx.entity(), move |this, params, _, cx| {
-                                    const LEFT_OFFSET: Pixels = px(14.);
-                                    const PADDING_Y: Pixels = px(4.);
-                                    const HITBOX_OVERDRAW: Pixels = px(3.);
-
-                                    let active_indent_guide_index =
-                                        this.find_active_indent_guide(&params.indent_guides, cx);
-
-                                    let indent_size = params.indent_size;
-                                    let item_height = params.item_height;
-
-                                    params
-                                        .indent_guides
-                                        .into_iter()
-                                        .enumerate()
-                                        .map(|(idx, layout)| {
-                                            let offset = if layout.continues_offscreen {
-                                                px(0.)
-                                            } else {
-                                                PADDING_Y
-                                            };
-                                            let bounds = Bounds::new(
-                                                point(
-                                                    layout.offset.x * indent_size + LEFT_OFFSET,
-                                                    layout.offset.y * item_height + offset,
-                                                ),
-                                                size(
-                                                    px(1.),
-                                                    layout.length * item_height - offset * 2.,
-                                                ),
+                            })
+                            .when(show_indent_guides, |list| {
+                                list.with_decoration(
+                                    ui::indent_guides(
+                                        px(indent_size),
+                                        IndentGuideColors::panel(cx),
+                                    )
+                                    .with_compute_indents_fn(
+                                        cx.entity(),
+                                        |this, range, window, cx| {
+                                            let mut items =
+                                                SmallVec::with_capacity(range.end - range.start);
+                                            this.iter_visible_entries(
+                                                range,
+                                                window,
+                                                cx,
+                                                |entry, _, entries, _, _| {
+                                                    let (depth, _) =
+                                                        Self::calculate_depth_and_difference(
+                                                            entry, entries,
+                                                        );
+                                                    items.push(depth);
+                                                },
                                             );
-                                            ui::RenderedIndentGuide {
-                                                bounds,
-                                                layout,
-                                                is_active: Some(idx) == active_indent_guide_index,
-                                                hitbox: Some(Bounds::new(
-                                                    point(
-                                                        bounds.origin.x - HITBOX_OVERDRAW,
-                                                        bounds.origin.y,
-                                                    ),
-                                                    size(
-                                                        bounds.size.width + HITBOX_OVERDRAW * 2.,
-                                                        bounds.size.height,
-                                                    ),
-                                                )),
+                                            items
+                                        },
+                                    )
+                                    .on_click(cx.listener(
+                                        |this,
+                                         active_indent_guide: &IndentGuideLayout,
+                                         window,
+                                         cx| {
+                                            if window.modifiers().secondary() {
+                                                let ix = active_indent_guide.offset.y;
+                                                let Some((target_entry, worktree)) = maybe!({
+                                                    let (worktree_id, entry) =
+                                                        this.entry_at_index(ix)?;
+                                                    let worktree = this
+                                                        .project
+                                                        .read(cx)
+                                                        .worktree_for_id(worktree_id, cx)?;
+                                                    let target_entry = worktree
+                                                        .read(cx)
+                                                        .entry_for_path(&entry.path.parent()?)?;
+                                                    Some((target_entry, worktree))
+                                                }) else {
+                                                    return;
+                                                };
+
+                                                this.collapse_entry(
+                                                    target_entry.clone(),
+                                                    worktree,
+                                                    cx,
+                                                );
                                             }
-                                        })
-                                        .collect()
-                                }),
-                        )
-                    })
-                    .when(show_sticky_entries, |list| {
-                        let sticky_items = ui::sticky_items(
-                            cx.entity(),
-                            |this, range, window, cx| {
-                                let mut items = SmallVec::with_capacity(range.end - range.start);
-                                this.iter_visible_entries(
-                                    range,
-                                    window,
-                                    cx,
-                                    |entry, index, entries, _, _| {
-                                        let (depth, _) =
-                                            Self::calculate_depth_and_difference(entry, entries);
-                                        let candidate =
-                                            StickyProjectPanelCandidate { index, depth };
-                                        items.push(candidate);
+                                        },
+                                    ))
+                                    .with_render_fn(
+                                        cx.entity(),
+                                        move |this, params, _, cx| {
+                                            const LEFT_OFFSET: Pixels = px(14.);
+                                            const PADDING_Y: Pixels = px(4.);
+                                            const HITBOX_OVERDRAW: Pixels = px(3.);
+
+                                            let active_indent_guide_index = this
+                                                .find_active_indent_guide(
+                                                    &params.indent_guides,
+                                                    cx,
+                                                );
+
+                                            let indent_size = params.indent_size;
+                                            let item_height = params.item_height;
+
+                                            params
+                                                .indent_guides
+                                                .into_iter()
+                                                .enumerate()
+                                                .map(|(idx, layout)| {
+                                                    let offset = if layout.continues_offscreen {
+                                                        px(0.)
+                                                    } else {
+                                                        PADDING_Y
+                                                    };
+                                                    let bounds = Bounds::new(
+                                                        point(
+                                                            layout.offset.x * indent_size
+                                                                + LEFT_OFFSET,
+                                                            layout.offset.y * item_height + offset,
+                                                        ),
+                                                        size(
+                                                            px(1.),
+                                                            layout.length * item_height
+                                                                - offset * 2.,
+                                                        ),
+                                                    );
+                                                    ui::RenderedIndentGuide {
+                                                        bounds,
+                                                        layout,
+                                                        is_active: Some(idx)
+                                                            == active_indent_guide_index,
+                                                        hitbox: Some(Bounds::new(
+                                                            point(
+                                                                bounds.origin.x - HITBOX_OVERDRAW,
+                                                                bounds.origin.y,
+                                                            ),
+                                                            size(
+                                                                bounds.size.width
+                                                                    + HITBOX_OVERDRAW * 2.,
+                                                                bounds.size.height,
+                                                            ),
+                                                        )),
+                                                    }
+                                                })
+                                                .collect()
+                                        },
+                                    ),
+                                )
+                            })
+                            .when(show_sticky_entries, |list| {
+                                let sticky_items = ui::sticky_items(
+                                    cx.entity(),
+                                    |this, range, window, cx| {
+                                        let mut items =
+                                            SmallVec::with_capacity(range.end - range.start);
+                                        this.iter_visible_entries(
+                                            range,
+                                            window,
+                                            cx,
+                                            |entry, index, entries, _, _| {
+                                                let (depth, _) =
+                                                    Self::calculate_depth_and_difference(
+                                                        entry, entries,
+                                                    );
+                                                let candidate =
+                                                    StickyProjectPanelCandidate { index, depth };
+                                                items.push(candidate);
+                                            },
+                                        );
+                                        items
+                                    },
+                                    |this, marker_entry, window, cx| {
+                                        let sticky_entries =
+                                            this.render_sticky_entries(marker_entry, window, cx);
+                                        this.sticky_items_count = sticky_entries.len();
+                                        sticky_entries
                                     },
                                 );
-                                items
-                            },
-                            |this, marker_entry, window, cx| {
-                                let sticky_entries =
-                                    this.render_sticky_entries(marker_entry, window, cx);
-                                this.sticky_items_count = sticky_entries.len();
-                                sticky_entries
-                            },
-                        );
-                        list.with_decoration(if show_indent_guides {
-                            sticky_items.with_decoration(
-                                ui::indent_guides(px(indent_size), IndentGuideColors::panel(cx))
-                                    .with_render_fn(cx.entity(), move |_, params, _, _| {
-                                        const LEFT_OFFSET: Pixels = px(14.);
+                                list.with_decoration(if show_indent_guides {
+                                    sticky_items.with_decoration(
+                                        ui::indent_guides(
+                                            px(indent_size),
+                                            IndentGuideColors::panel(cx),
+                                        )
+                                        .with_render_fn(
+                                            cx.entity(),
+                                            move |_, params, _, _| {
+                                                const LEFT_OFFSET: Pixels = px(14.);
 
-                                        let indent_size = params.indent_size;
-                                        let item_height = params.item_height;
+                                                let indent_size = params.indent_size;
+                                                let item_height = params.item_height;
 
-                                        params
-                                            .indent_guides
-                                            .into_iter()
-                                            .map(|layout| {
-                                                let bounds = Bounds::new(
-                                                    point(
-                                                        layout.offset.x * indent_size + LEFT_OFFSET,
-                                                        layout.offset.y * item_height,
-                                                    ),
-                                                    size(px(1.), layout.length * item_height),
-                                                );
-                                                ui::RenderedIndentGuide {
-                                                    bounds,
-                                                    layout,
-                                                    is_active: false,
-                                                    hitbox: None,
-                                                }
-                                            })
-                                            .collect()
-                                    }),
+                                                params
+                                                    .indent_guides
+                                                    .into_iter()
+                                                    .map(|layout| {
+                                                        let bounds = Bounds::new(
+                                                            point(
+                                                                layout.offset.x * indent_size
+                                                                    + LEFT_OFFSET,
+                                                                layout.offset.y * item_height,
+                                                            ),
+                                                            size(
+                                                                px(1.),
+                                                                layout.length * item_height,
+                                                            ),
+                                                        );
+                                                        ui::RenderedIndentGuide {
+                                                            bounds,
+                                                            layout,
+                                                            is_active: false,
+                                                            hitbox: None,
+                                                        }
+                                                    })
+                                                    .collect()
+                                            },
+                                        ),
+                                    )
+                                } else {
+                                    sticky_items
+                                })
+                            })
+                            .with_sizing_behavior(ListSizingBehavior::Infer)
+                            .with_horizontal_sizing_behavior(
+                                ListHorizontalSizingBehavior::Unconstrained,
                             )
-                        } else {
-                            sticky_items
-                        })
-                    })
-                    .size_full()
-                    .with_sizing_behavior(ListSizingBehavior::Infer)
-                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-                    .with_width_from_item(self.max_width_item_index)
-                    .track_scroll(self.scroll_handle.clone()),
+                            .with_width_from_item(self.max_width_item_index)
+                            .track_scroll(self.scroll_handle.clone()),
+                        )
+                        .child(
+                            div()
+                                .block_mouse_except_scroll()
+                                .flex_grow()
+                                .drag_over::<DraggedSelection>(|style, _, _, cx| {
+                                    style.bg(cx.theme().colors().drop_target_background)
+                                })
+                                .drag_over::<ExternalPaths>(|style, _, _, cx| {
+                                    style.bg(cx.theme().colors().drop_target_background)
+                                }),
+                            // .on_drag_move::<DraggedSelection>(cx.listener(
+                            //     move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
+                            //         //
+                            //     },
+                            // ))
+                        )
+                        .size_full(),
                 )
                 .children(self.render_vertical_scrollbar(cx))
                 .when_some(self.render_horizontal_scrollbar(cx), |this, scrollbar| {
