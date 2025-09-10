@@ -18,7 +18,11 @@ schemars = ["dep:schemars"]
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
+futures-util.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
 http_client.workspace = true
+http_client_tls.workspace = true
 schemars = { workspace = true, optional = true }
 log.workspace = true
 serde.workspace = true

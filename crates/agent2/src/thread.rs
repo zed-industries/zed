@@ -14,16 +14,22 @@ use agent_settings::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use assistant_tool::adapt_schema_to_format;
+use audio::{
+    AudioContext, AudioSink, AudioSource, CHANNEL_COUNT, ENGINE_FORMAT, SAMPLE_RATE, ringbuf_pipe,
+};
 use chrono::{DateTime, Utc};
 use client::{ModelRequestUsage, RequestUsage};
 use cloud_llm_client::{CompletionIntent, CompletionRequestStatus, UsageLimit};
 use collections::{HashMap, HashSet, IndexMap};
 use fs::Fs;
 use futures::{
-    FutureExt,
-    channel::{mpsc, oneshot},
-    future::Shared,
-    stream::FuturesUnordered,
+    FutureExt, SinkExt,
+    channel::{
+        mpsc::{self, UnboundedReceiver, UnboundedSender, unbounded},
+        oneshot,
+    },
+    future::{Shared, try_join3},
+    stream::{BoxStream, FuturesUnordered},
 };
 use git::repository::DiffType;
 use gpui::{
@@ -34,17 +40,21 @@ use language_model::{
     LanguageModelImage, LanguageModelProviderId, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, LanguageModelRequestTool, LanguageModelToolResult,
     LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, Role, SelectedModel, StopReason, TokenUsage,
+    LanguageModelToolUseId, RealtimeRequest, RealtimeResponse, Role, SelectedModel, StopReason,
+    TokenUsage,
 };
+
 use project::{
     Project,
     git_store::{GitStore, RepositoryState},
 };
 use prompt_store::ProjectContext;
+use rodio::buffer::SamplesBuffer;
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
-use smol::stream::StreamExt;
+use smol::{future::yield_now, stream::StreamExt};
+
 use std::{
     collections::BTreeMap,
     ops::RangeInclusive,
@@ -53,7 +63,8 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use std::{fmt::Write, path::PathBuf};
+use std::{fmt::Write, ops::ControlFlow, path::PathBuf};
+
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
 
@@ -583,6 +594,7 @@ pub struct Thread {
     updated_at: DateTime<Utc>,
     title: Option<SharedString>,
     pending_title_generation: Option<Task<()>>,
+    realtime_client: Option<Task<Result<()>>>,
     summary: Option<SharedString>,
     messages: Vec<Message>,
     completion_mode: CompletionMode,
@@ -590,6 +602,10 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
+    realtime_rx: Option<
+        UnboundedReceiver<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+    >,
+    realtime_tx: Option<UnboundedSender<LanguageModelToolResult>>,
     pending_message: Option<AgentMessage>,
     tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     tool_use_limit_reached: bool,
@@ -638,11 +654,14 @@ impl Thread {
             updated_at: Utc::now(),
             title: None,
             pending_title_generation: None,
+            realtime_client: None,
             summary: None,
             messages: Vec::new(),
             completion_mode: AgentSettings::get_global(cx).preferred_completion_mode,
             running_turn: None,
             pending_message: None,
+            realtime_tx: None,
+            realtime_rx: None,
             tools: BTreeMap::default(),
             tool_use_limit_reached: false,
             request_token_usage: HashMap::default(),
@@ -816,8 +835,11 @@ impl Thread {
                 Some(db_thread.title.clone())
             },
             pending_title_generation: None,
+            realtime_client: None,
             summary: db_thread.detailed_summary,
             messages: db_thread.messages,
+            realtime_tx: None,
+            realtime_rx: None,
             completion_mode: db_thread.completion_mode.unwrap_or_default(),
             running_turn: None,
             pending_message: None,
@@ -1002,6 +1024,9 @@ impl Thread {
     }
 
     pub fn set_model(&mut self, model: Arc<dyn LanguageModel>, cx: &mut Context<Self>) {
+        // Ensure any existing realtime session is stopped when switching models.
+        self.stop_realtime();
+
         let old_usage = self.latest_token_usage();
         self.model = Some(model);
         let new_caps = Self::prompt_capabilities(self.model.as_deref());
@@ -1106,6 +1131,15 @@ impl Thread {
         self.flush_pending_message(cx);
     }
 
+    pub fn stop_realtime(&mut self) {
+        // Drop channels and task to terminate realtime gracefully.
+        if let Some(_task) = self.realtime_client.take() {
+            // Dropping cancels the task.
+        }
+        self.realtime_tx.take();
+        self.realtime_rx.take();
+    }
+
     fn update_token_usage(&mut self, update: language_model::TokenUsage, cx: &mut Context<Self>) {
         let Some(last_user_message) = self.last_user_message() else {
             return;
@@ -1172,20 +1206,170 @@ impl Thread {
     where
         T: Into<UserMessageContent>,
     {
+        self.push_messages(id, content, cx)?;
+        self.run_turn(cx)
+    }
+
+    pub fn push_messages<T>(
+        &mut self,
+        id: UserMessageId,
+        content: impl IntoIterator<Item = T>,
+        cx: &mut Context<Self>,
+    ) -> Result<()>
+    where
+        T: Into<UserMessageContent>,
+    {
         let model = self.model().context("No language model configured")?;
 
-        log::info!("Thread::send called with model: {}", model.name().0);
+        log::info!(
+            "Thread::push_messages called with model: {}",
+            model.name().0
+        );
         self.advance_prompt_id();
 
         let content = content.into_iter().map(Into::into).collect::<Vec<_>>();
-        log::debug!("Thread::send content: {:?}", content);
+        log::debug!("Thread::push_messages content: {:?}", content);
 
         self.messages
             .push(Message::User(UserMessage { id, content }));
         cx.notify();
 
         log::debug!("Total messages in thread: {}", self.messages.len());
-        self.run_turn(cx)
+        Ok(())
+    }
+
+    pub fn run_realtime(
+        &mut self,
+        cx: &mut Context<Self>,
+        audio_context: Arc<AudioContext>,
+    ) -> Result<Option<UnboundedReceiver<Result<ThreadEvent>>>> {
+        if let Some(model) = self.model() {
+            let profile = AgentSettings::get_global(cx)
+                .profiles
+                .get(&self.profile_id)
+                .context("Profile not found")?;
+
+            let tools = self
+                .enabled_tools(profile, model, cx)
+                .iter()
+                .filter_map(|(tool_name, tool)| {
+                    log::trace!("Including tool: {}", tool_name);
+
+                    Some(LanguageModelRequestTool {
+                        name: tool_name.to_string(),
+                        description: tool.description().to_string(),
+                        input_schema: tool.input_schema(model.tool_input_format()).log_err()?,
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            if let Some((task, mut rt_tx, mut rt_rx)) = model.run_realtime(cx, tools) {
+                let (mut output_tx, output_rx) = unbounded::<
+                    Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+                >();
+                let (rt_tool_result_tx, mut rt_tool_result_rx) =
+                    unbounded::<LanguageModelToolResult>();
+
+                self.realtime_tx = Some(rt_tool_result_tx);
+                self.realtime_rx = Some(output_rx);
+
+                self.realtime_client =
+                    Some(cx.spawn::<_, anyhow::Result<()>>(async move |_, cx| {
+                        // Large output buffer because OpenAI's Realtime API sends audio quickly
+                        let output_buffer_size =
+                            ENGINE_FORMAT.sample_count(Duration::from_secs(60));
+
+                        let input_buffer_size =
+                            ENGINE_FORMAT.sample_count(Duration::from_millis(200));
+
+                        let mut input_work_buf = vec![0.; input_buffer_size];
+
+                        let (mut output_sink, output_source) = ringbuf_pipe(output_buffer_size);
+                        let mut output_source_controller = output_source.controller();
+
+                        let (input_sink, mut input_source) = ringbuf_pipe(input_buffer_size);
+
+                        audio_context.capture.add_sink(input_sink).await?;
+                        audio_context.playback.add_source(output_source).await?;
+
+                        let rt_task = cx.spawn::<_, anyhow::Result<()>>(async move |_| {
+                            task.await?;
+                            Ok(())
+                        });
+
+                        let rt_sender_task = cx.spawn::<_, anyhow::Result<()>>(async move |_| {
+                            while let Some(rt_ev) = rt_rx.next().await {
+                                let rt_ev: Option<LanguageModelCompletionEvent> = match rt_ev {
+                                    RealtimeResponse::Audio(samples) => {
+                                        let _ = output_sink.tick(&samples.collect::<Vec<f32>>())?;
+                                        None
+                                    }
+                                    RealtimeResponse::AudioEnd => {
+                                        output_source_controller.clear().await?;
+                                        None
+                                    }
+                                    RealtimeResponse::StartMessage { message_id } => {
+                                        Some(LanguageModelCompletionEvent::StartMessage {
+                                            message_id,
+                                        })
+                                    }
+                                    RealtimeResponse::Text(text) => {
+                                        Some(LanguageModelCompletionEvent::Text(text))
+                                    }
+                                    RealtimeResponse::ToolUse(tool_use) => {
+                                        Some(LanguageModelCompletionEvent::ToolUse(tool_use))
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(rt_ev) = rt_ev {
+                                    output_tx.send(Ok(rt_ev)).await?;
+                                }
+                            }
+                            Ok(())
+                        });
+
+                        let rt_receiver_task = cx.spawn::<_, anyhow::Result<()>>(async move |_| {
+                            let mut out_buf = vec![];
+
+                            loop {
+                                match input_source.tick(&mut input_work_buf)? {
+                                    ControlFlow::Continue(count) => {
+                                        out_buf.extend_from_slice(&input_work_buf[..count]);
+                                    }
+                                    _ => {}
+                                }
+
+                                if ENGINE_FORMAT.duration_from_sample_count(out_buf.len())
+                                    > Duration::from_millis(40)
+                                {
+                                    rt_tx
+                                        .send(RealtimeRequest::Audio(SamplesBuffer::new(
+                                            CHANNEL_COUNT,
+                                            SAMPLE_RATE,
+                                            out_buf.clone(),
+                                        )))
+                                        .await?;
+                                    out_buf.clear();
+                                }
+
+                                if let Some(tool_result) =
+                                    rt_tool_result_rx.next().now_or_never().flatten()
+                                {
+                                    rt_tx.send(RealtimeRequest::ToolResult(tool_result)).await?;
+                                }
+                                yield_now().await;
+                            }
+                        });
+
+                        try_join3(rt_task, rt_sender_task, rt_receiver_task).await?;
+
+                        Ok(())
+                    }));
+
+                return Ok(Some(self.run_turn(cx)?));
+            }
+        }
+        Ok(None)
     }
 
     fn run_turn(
@@ -1249,95 +1433,231 @@ impl Thread {
     ) -> Result<()> {
         let mut attempt = 0;
         let mut intent = CompletionIntent::UserPrompt;
-        loop {
-            let request =
-                this.update(cx, |this, cx| this.build_completion_request(intent, cx))??;
 
-            telemetry::event!(
-                "Agent Thread Completion",
-                thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
-                prompt_id = this.read_with(cx, |this, _| this.prompt_id.to_string())?,
-                model = model.telemetry_id(),
-                model_provider = model.provider_id().to_string(),
-                attempt
-            );
-
-            log::debug!("Calling model.stream_completion, attempt {}", attempt);
-            let mut events = model
-                .stream_completion(request, cx)
-                .await
-                .map_err(|error| anyhow!(error))?;
-            let mut tool_results = FuturesUnordered::new();
-            let mut error = None;
-            while let Some(event) = events.next().await {
-                log::trace!("Received completion event: {:?}", event);
-                match event {
-                    Ok(event) => {
-                        tool_results.extend(this.update(cx, |this, cx| {
-                            this.handle_completion_event(event, event_stream, cx)
-                        })??);
-                    }
-                    Err(err) => {
-                        error = Some(err);
-                        break;
-                    }
-                }
-            }
-
-            let end_turn = tool_results.is_empty();
-            while let Some(tool_result) = tool_results.next().await {
-                log::debug!("Tool finished {:?}", tool_result);
-
-                event_stream.update_tool_call_fields(
-                    &tool_result.tool_use_id,
-                    acp::ToolCallUpdateFields {
-                        status: Some(if tool_result.is_error {
-                            acp::ToolCallStatus::Failed
-                        } else {
-                            acp::ToolCallStatus::Completed
-                        }),
-                        raw_output: tool_result.output.clone(),
-                        ..Default::default()
-                    },
-                );
-                this.update(cx, |this, _cx| {
-                    this.pending_message()
-                        .tool_results
-                        .insert(tool_result.tool_use_id.clone(), tool_result);
-                })?;
-            }
-
-            this.update(cx, |this, cx| {
-                this.flush_pending_message(cx);
-                if this.title.is_none() && this.pending_title_generation.is_none() {
-                    this.generate_title(cx);
-                }
+        if model.is_realtime() {
+            let (mut rt_tx, mut rt_rx) = this.update(cx, |this, _cx| {
+                (
+                    this.realtime_tx.take().unwrap(),
+                    this.realtime_rx.take().unwrap(),
+                )
             })?;
 
-            if let Some(error) = error {
-                attempt += 1;
-                let retry =
-                    this.update(cx, |this, _| this.handle_completion_error(error, attempt))??;
-                let timer = cx.background_executor().timer(retry.duration);
-                event_stream.send_retry(retry);
-                timer.await;
-                this.update(cx, |this, _cx| {
-                    if let Some(Message::Agent(message)) = this.messages.last() {
-                        if message.tool_results.is_empty() {
-                            intent = CompletionIntent::UserPrompt;
-                            this.messages.push(Message::Resume);
-                        }
-                    }
-                })?;
-            } else if this.read_with(cx, |this, _| this.tool_use_limit_reached)? {
-                return Err(language_model::ToolUseLimitReachedError.into());
-            } else if end_turn {
-                return Ok(());
-            } else {
-                intent = CompletionIntent::ToolResults;
-                attempt = 0;
+            loop {
+                if Self::process_event(
+                    this,
+                    event_stream,
+                    cx,
+                    &mut rt_tx,
+                    &mut rt_rx,
+                    &mut attempt,
+                    &mut intent,
+                )
+                .await?
+                .is_break()
+                {
+                    return Ok(());
+                }
+            }
+        } else {
+            loop {
+                let request =
+                    this.update(cx, |this, cx| this.build_completion_request(intent, cx))??;
+
+                telemetry::event!(
+                    "Agent Thread Completion",
+                    thread_id = this.read_with(cx, |this, _| this.id.to_string())?,
+                    prompt_id = this.read_with(cx, |this, _| this.prompt_id.to_string())?,
+                    model = model.telemetry_id(),
+                    model_provider = model.provider_id().to_string(),
+                    attempt
+                );
+
+                log::debug!("Calling model.stream_completion, attempt {}", attempt);
+                let events = model
+                    .stream_completion(request, cx)
+                    .await
+                    .map_err(|error| anyhow!(error))?;
+
+                if Self::process_events(this, event_stream, cx, events, &mut attempt, &mut intent)
+                    .await?
+                    .is_break()
+                {
+                    return Ok(());
+                }
+            }
+        };
+    }
+
+    async fn process_event(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cx: &mut AsyncApp,
+        realtime_tx: &mut UnboundedSender<LanguageModelToolResult>,
+        realtime_rx: &mut UnboundedReceiver<
+            Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+        >,
+        attempt: &mut u8,
+        intent: &mut CompletionIntent,
+    ) -> Result<ControlFlow<()>> {
+        let mut tool_results = FuturesUnordered::new();
+        let mut error = None;
+
+        let event = realtime_rx.next().await.transpose();
+
+        match event {
+            Ok(event) => {
+                if let Some(event) = event {
+                    tool_results.extend(this.update(cx, |this, cx| {
+                        this.handle_completion_event(event, event_stream, cx)
+                    })??);
+                }
+            }
+            Err(err) => {
+                error = Some(err);
             }
         }
+
+        let end_turn = tool_results.is_empty();
+
+        while let Some(tool_result) = tool_results.next().await {
+            log::debug!("Tool finished {:?}", tool_result);
+
+            event_stream.update_tool_call_fields(
+                &tool_result.tool_use_id,
+                acp::ToolCallUpdateFields {
+                    status: Some(if tool_result.is_error {
+                        acp::ToolCallStatus::Failed
+                    } else {
+                        acp::ToolCallStatus::Completed
+                    }),
+                    raw_output: tool_result.output.clone(),
+                    ..Default::default()
+                },
+            );
+            realtime_tx.send(tool_result.clone()).await?;
+
+            this.update(cx, |this, _cx| {
+                this.pending_message()
+                    .tool_results
+                    .insert(tool_result.tool_use_id.clone(), tool_result);
+            })?;
+        }
+
+        this.update(cx, |this, cx| {
+            this.flush_pending_message(cx);
+            if this.title.is_none() && this.pending_title_generation.is_none() {
+                this.generate_title(cx);
+            }
+        })?;
+
+        if let Some(error) = error {
+            *attempt += 1;
+            let retry =
+                this.update(cx, |this, _| this.handle_completion_error(error, *attempt))??;
+            let timer = cx.background_executor().timer(retry.duration);
+            event_stream.send_retry(retry);
+            timer.await;
+            this.update(cx, |this, _cx| {
+                if let Some(Message::Agent(message)) = this.messages.last() {
+                    if message.tool_results.is_empty() {
+                        *intent = CompletionIntent::UserPrompt;
+                        this.messages.push(Message::Resume);
+                    }
+                }
+            })?;
+        } else if this.read_with(cx, |this, _| this.tool_use_limit_reached)? {
+            return Err(language_model::ToolUseLimitReachedError.into());
+        } else if end_turn {
+            return Ok(ControlFlow::Break(()));
+        } else {
+            *intent = CompletionIntent::ToolResults;
+            *attempt = 0;
+        }
+        Ok(ControlFlow::Continue(()))
+    }
+
+    async fn process_events(
+        this: &WeakEntity<Self>,
+        event_stream: &ThreadEventStream,
+        cx: &mut AsyncApp,
+        mut events: BoxStream<
+            'static,
+            Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+        >,
+        attempt: &mut u8,
+        intent: &mut CompletionIntent,
+    ) -> Result<ControlFlow<()>> {
+        let mut tool_results = FuturesUnordered::new();
+        let mut error = None;
+        while let Some(event) = events.next().await {
+            log::trace!("Received completion event: {:?}", event);
+            match event {
+                Ok(event) => {
+                    tool_results.extend(this.update(cx, |this, cx| {
+                        this.handle_completion_event(event, event_stream, cx)
+                    })??);
+                }
+                Err(err) => {
+                    error = Some(err);
+                    break;
+                }
+            }
+        }
+
+        let end_turn = tool_results.is_empty();
+        while let Some(tool_result) = tool_results.next().await {
+            log::debug!("Tool finished {:?}", tool_result);
+
+            event_stream.update_tool_call_fields(
+                &tool_result.tool_use_id,
+                acp::ToolCallUpdateFields {
+                    status: Some(if tool_result.is_error {
+                        acp::ToolCallStatus::Failed
+                    } else {
+                        acp::ToolCallStatus::Completed
+                    }),
+                    raw_output: tool_result.output.clone(),
+                    ..Default::default()
+                },
+            );
+            this.update(cx, |this, _cx| {
+                this.pending_message()
+                    .tool_results
+                    .insert(tool_result.tool_use_id.clone(), tool_result);
+            })?;
+        }
+
+        this.update(cx, |this, cx| {
+            this.flush_pending_message(cx);
+            if this.title.is_none() && this.pending_title_generation.is_none() {
+                this.generate_title(cx);
+            }
+        })?;
+
+        if let Some(error) = error {
+            *attempt += 1;
+            let retry =
+                this.update(cx, |this, _| this.handle_completion_error(error, *attempt))??;
+            let timer = cx.background_executor().timer(retry.duration);
+            event_stream.send_retry(retry);
+            timer.await;
+            this.update(cx, |this, _cx| {
+                if let Some(Message::Agent(message)) = this.messages.last() {
+                    if message.tool_results.is_empty() {
+                        *intent = CompletionIntent::UserPrompt;
+                        this.messages.push(Message::Resume);
+                    }
+                }
+            })?;
+        } else if this.read_with(cx, |this, _| this.tool_use_limit_reached)? {
+            return Err(language_model::ToolUseLimitReachedError.into());
+        } else if end_turn {
+            return Ok(ControlFlow::Break(()));
+        } else {
+            *intent = CompletionIntent::ToolResults;
+            *attempt = 0;
+        }
+        Ok(ControlFlow::Continue(()))
     }
 
     fn handle_completion_error(

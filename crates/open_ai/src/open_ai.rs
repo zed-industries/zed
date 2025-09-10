@@ -1,3 +1,5 @@
+pub mod realtime;
+
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
@@ -81,6 +83,11 @@ pub enum Model {
     #[serde(rename = "gpt-5-nano")]
     FiveNano,
 
+    #[serde(rename = "gpt-realtime")]
+    Realtime,
+    #[serde(rename = "gpt-audio")]
+    Audio,
+
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -116,6 +123,8 @@ impl Model {
             "gpt-5" => Ok(Self::Five),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
+            "gpt-realtime" => Ok(Self::Realtime),
+            "gpt-audio" => Ok(Self::Audio),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
@@ -137,6 +146,8 @@ impl Model {
             Self::Five => "gpt-5",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
+            Self::Realtime => "gpt-realtime",
+            Self::Audio => "gpt-audio",
             Self::Custom { name, .. } => name,
         }
     }
@@ -158,6 +169,8 @@ impl Model {
             Self::Five => "gpt-5",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
+            Self::Realtime => "gpt-realtime",
+            Self::Audio => "gpt-audio",
             Self::Custom {
                 name, display_name, ..
             } => display_name.as_ref().unwrap_or(name),
@@ -181,6 +194,8 @@ impl Model {
             Self::Five => 272_000,
             Self::FiveMini => 272_000,
             Self::FiveNano => 272_000,
+            Self::Realtime => 32_000,
+            Self::Audio => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -205,6 +220,8 @@ impl Model {
             Self::Five => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
+            Self::Realtime => Some(32_768),
+            Self::Audio => Some(16_384),
         }
     }
 
@@ -232,7 +249,9 @@ impl Model {
             | Self::FourPointOneNano
             | Self::Five
             | Self::FiveMini
-            | Self::FiveNano => true,
+            | Self::FiveNano
+            | Self::Realtime
+            | Self::Audio => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,
         }
     }
@@ -242,6 +261,13 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
+    }
+
+    pub fn is_realtime(&self) -> bool {
+        match self {
+            Model::Realtime | Model::Audio => true,
+            _ => false,
+        }
     }
 }
 

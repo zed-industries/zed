@@ -1,5 +1,6 @@
 mod model;
 mod rate_limiter;
+mod realtime;
 mod registry;
 mod request;
 mod role;
@@ -13,6 +14,7 @@ use anyhow::{Result, anyhow};
 use client::Client;
 use cloud_llm_client::{CompletionMode, CompletionRequestStatus};
 use futures::FutureExt;
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::{StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, SharedString, Task, Window};
 use http_client::{StatusCode, http};
@@ -31,6 +33,7 @@ use util::serde::is_default;
 
 pub use crate::model::*;
 pub use crate::rate_limiter::*;
+pub use crate::realtime::*;
 pub use crate::registry::*;
 pub use crate::request::*;
 pub use crate::role::*;
@@ -543,6 +546,11 @@ pub trait LanguageModel: Send + Sync {
         None
     }
 
+    /// Whether this model supports voice
+    fn is_realtime(&self) -> bool {
+        false
+    }
+
     /// Whether this model supports images
     fn supports_images(&self) -> bool;
 
@@ -567,6 +575,10 @@ pub trait LanguageModel: Send + Sync {
         None
     }
     fn max_output_tokens(&self) -> Option<u64> {
+        None
+    }
+
+    fn get_completion_model(&self) -> Option<Arc<dyn LanguageModel>> {
         None
     }
 
@@ -649,6 +661,18 @@ pub trait LanguageModel: Send + Sync {
             })
         }
         .boxed()
+    }
+
+    fn run_realtime(
+        &self,
+        _cx: &App,
+        _tools: Vec<LanguageModelRequestTool>,
+    ) -> Option<(
+        Task<Result<()>>,
+        UnboundedSender<RealtimeRequest>,
+        UnboundedReceiver<RealtimeResponse>,
+    )> {
+        None
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {

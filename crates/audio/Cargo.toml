@@ -8,17 +8,33 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+default = ["webrtc-processing"]
+webrtc-processing = ["dep:webrtc-audio-processing"]
+aec-processing = ["dep:aec-rs"]
+
 [lib]
 path = "src/audio.rs"
 doctest = false
 
 [dependencies]
 anyhow.workspace = true
+aec-rs = { workspace = true, optional = true }
+audio_thread_priority.workspace = true
+dasp_sample.workspace = true
+fixed-resample.workspace = true
+futures.workspace = true
+log.workspace = true
+itertools.workspace = true
 collections.workspace = true
 gpui.workspace = true
+ringbuf.workspace = true
 settings.workspace = true
 schemars.workspace = true
+spin_sleep.workspace = true
 serde.workspace = true
+tokio.workspace = true
 rodio = { workspace = true, features = [ "wav", "playback", "tracing" ] }
 util.workspace = true
+webrtc-audio-processing = { workspace = true, optional = true }
 workspace-hack.workspace = true

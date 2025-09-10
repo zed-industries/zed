@@ -10,8 +10,10 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
-use futures::channel::{mpsc, oneshot};
+use futures::channel::mpsc::{self, UnboundedReceiver};
+use futures::channel::oneshot;
 use futures::future::Shared;
+
 use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
@@ -329,7 +331,101 @@ impl NativeAgent {
                 pending_save: Task::ready(()),
             },
         );
+        // Ensure realtime processes start immediately if model already supports it
+        self.start_realtime_if_applicable(acp_thread.downgrade(), cx);
         acp_thread
+    }
+
+    fn start_realtime_if_applicable(
+        &mut self,
+        acp_thread: WeakEntity<AcpThread>,
+        cx: &mut Context<Self>,
+    ) {
+        let weak_acp_thread = acp_thread.clone();
+        let session_id = match acp_thread.read_with(cx, |t, _cx| t.session_id().clone()) {
+            Ok(id) => id,
+            Err(_) => {
+                log::warn!("AcpThread no longer exists when starting realtime");
+                return;
+            }
+        };
+
+        let Some(session) = self.sessions.get(&session_id) else {
+            log::warn!(
+                "No session found for realtime event; session_id={}",
+                session_id
+            );
+            return;
+        };
+        let thread = session.thread.clone();
+
+        // Stop any previously running realtime session before starting a new one.
+        thread.update(cx, |thread, _cx| {
+            thread.stop_realtime();
+        });
+
+        let is_realtime = thread
+            .read(cx)
+            .model()
+            .is_some_and(|model| model.is_realtime());
+
+        acp_thread
+            .update(cx, |this, _| this.set_realtime_state(is_realtime))
+            .ok();
+
+        if !is_realtime {
+            return;
+        }
+
+        let events_task = thread.update(cx, |_thread, cx| {
+            cx.spawn(async move |thread, cx| {
+                let audio_context = gpui_tokio::Tokio::spawn(cx, audio::async_init())?.await??;
+
+                thread.update(cx, |thread, cx| {
+                    if thread.model().is_some_and(|model| model.is_realtime()) {
+                        let events = thread.run_realtime(cx, audio_context)?;
+                        Ok::<_, anyhow::Error>(events)
+                    } else {
+                        Ok(None)
+                    }
+                })?
+            })
+        });
+
+        log::debug!("Initializing realtime audio context");
+        gpui_tokio::Tokio::spawn(cx, audio::async_init()).detach_and_log_err(cx);
+
+        let task = acp_thread.update(cx, |_acp_thread, cx| {
+            cx.spawn(async |acp_thread, cx| {
+                if let Some(events) = events_task.await? {
+                    let x = acp_thread.update(cx, |acp_thread, cx| {
+                        let native_connection = match acp_thread
+                            .connection()
+                            .clone()
+                            .downcast::<NativeAgentConnection>()
+                        {
+                            Some(conn) => conn,
+                            None => {
+                                log::error!("Failed to downcast AgentConnection to NativeAgentConnection for realtime run");
+                                return Task::ready(Ok(()));
+                            }
+                        };
+
+                        let task =
+                            native_connection.run_realtime(weak_acp_thread, cx, events);
+
+                        let rt_task = acp_thread.run_turn(cx, async |_, _|task.await);
+                        cx.spawn(async move |_, _| rt_task.await)
+                    })?;
+                    x.await?;
+                }
+                Ok::<(), anyhow::Error>(())
+            })
+        }).log_err();
+
+        if let Some(task) = task {
+            task.detach_and_log_err(cx);
+        }
     }
 
     pub fn models(&self) -> &LanguageModels {
@@ -693,6 +789,12 @@ impl NativeAgentConnection {
             .map(|session| session.thread.clone())
     }
 
+    async fn send_input_realtime() -> Result<acp::PromptResponse> {
+        Ok(acp::PromptResponse {
+            stop_reason: acp::StopReason::EndTurn,
+        })
+    }
+
     fn run_turn(
         &self,
         session_id: acp::SessionId,
@@ -819,6 +921,15 @@ impl NativeAgentConnection {
             })
         })
     }
+
+    pub fn run_realtime(
+        &self,
+        acp_thread: WeakEntity<AcpThread>,
+        cx: &mut App,
+        events: UnboundedReceiver<Result<ThreadEvent>>,
+    ) -> Task<Result<acp::PromptResponse>> {
+        Self::handle_thread_events(events, acp_thread, cx)
+    }
 }
 
 impl AgentModelSelector for NativeAgentConnection {
@@ -839,33 +950,32 @@ impl AgentModelSelector for NativeAgentConnection {
         cx: &mut App,
     ) -> Task<Result<()>> {
         log::debug!("Setting model for session {}: {}", session_id, model_id);
-        let Some(thread) = self
-            .0
-            .read(cx)
-            .sessions
-            .get(&session_id)
-            .map(|session| session.thread.clone())
-        else {
-            return Task::ready(Err(anyhow!("Session not found")));
-        };
 
-        let Some(model) = self.0.read(cx).models.model_from_id(&model_id) else {
-            return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
-        };
+        // Perform selection and realtime lifecycle management within a single agent update.
+        self.0.update(cx, |agent, cx| {
+            let Some(session) = agent.sessions.get(&session_id) else {
+                return Task::ready(Err(anyhow!("Session not found")));
+            };
+            let thread = session.thread.clone();
+            let acp_thread = session.acp_thread.clone();
 
-        thread.update(cx, |thread, cx| {
-            thread.set_model(model.clone(), cx);
-        });
+            let Some(model) = agent.models.model_from_id(&model_id) else {
+                return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
+            };
 
-        update_settings_file::<AgentSettings>(
-            self.0.read(cx).fs.clone(),
-            cx,
-            move |settings, _cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+            });
+
+            update_settings_file::<AgentSettings>(agent.fs.clone(), cx, move |settings, _cx| {
                 settings.set_model(model);
-            },
-        );
+            });
 
-        Task::ready(Ok(()))
+            agent.start_realtime_if_applicable(acp_thread, cx);
+
+            // Start or stop realtime depending on the selected model.
+            Task::ready(Ok(()))
+        })
     }
 
     fn selected_model(
@@ -963,12 +1073,26 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
+        log::debug!("Prompting agent (NativeAgentConnection)");
+
         let id = id.expect("UserMessageId is required");
         let session_id = params.session_id.clone();
         log::info!("Received prompt request for session: {}", session_id);
         log::debug!("Prompt blocks count: {}", params.prompt.len());
 
-        self.run_turn(session_id, cx, |thread, cx| {
+        let is_realtime = self.is_realtime(&session_id, cx);
+
+        if is_realtime {
+            let Some((thread, _acp_thread)) = self.0.update(cx, |agent, _cx| {
+                agent
+                    .sessions
+                    .get_mut(&session_id)
+                    .map(|s| (s.thread.clone(), s.acp_thread.clone()))
+            }) else {
+                return Task::ready(Err(anyhow!("Session not found")));
+            };
+            log::debug!("Found session for: {}", session_id);
+
             let content: Vec<UserMessageContent> = params
                 .prompt
                 .into_iter()
@@ -978,8 +1102,24 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
             log::debug!("Message id: {:?}", id);
             log::debug!("Message content: {:?}", content);
 
-            thread.update(cx, |thread, cx| thread.send(id, content, cx))
-        })
+            match thread.update(cx, |thread, cx| thread.push_messages(id, content, cx)) {
+                Ok(_) => cx.spawn(async move |_| Self::send_input_realtime().await),
+                Err(err) => Task::ready(Err(err)),
+            }
+        } else {
+            self.run_turn(session_id, cx, |thread, cx| {
+                let content: Vec<UserMessageContent> = params
+                    .prompt
+                    .into_iter()
+                    .map(Into::into)
+                    .collect::<Vec<_>>();
+                log::debug!("Converted prompt to message: {} chars", content.len());
+                log::debug!("Message id: {:?}", id);
+                log::debug!("Message content: {:?}", content);
+
+                thread.update(cx, |thread, cx| thread.send(id, content, cx))
+            })
+        }
     }
 
     fn resume(
@@ -1034,6 +1174,16 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
+    }
+
+    fn is_realtime(&self, session_id: &acp::SessionId, cx: &mut App) -> bool {
+        if let Some(thread) = self.thread(session_id, cx) {
+            let thread = thread.read(cx);
+            if thread.model().is_some_and(|model| model.is_realtime()) {
+                return true;
+            }
+        }
+        false
     }
 }
 

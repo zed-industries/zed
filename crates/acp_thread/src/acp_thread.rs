@@ -783,6 +783,7 @@ pub struct AcpThread {
     send_task: Option<Task<()>>,
     connection: Rc<dyn AgentConnection>,
     session_id: acp::SessionId,
+    is_realtime_running: bool,
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
@@ -898,11 +899,16 @@ impl AcpThread {
             connection,
             session_id,
             token_usage: None,
+            is_realtime_running: false,
             prompt_capabilities,
             _observe_prompt_capabilities: task,
             terminals: HashMap::default(),
             determine_shell,
         }
+    }
+
+    pub fn set_realtime_state(&mut self, running: bool) {
+        self.is_realtime_running = running;
     }
 
     pub fn prompt_capabilities(&self) -> acp::PromptCapabilities {
@@ -1455,6 +1461,10 @@ impl AcpThread {
         message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<()>> {
+        if self.is_realtime_running {
+            return Task::ready(Ok(())).boxed();
+        }
+
         let block = ContentBlock::new_combined(
             message.clone(),
             self.project.read(cx).languages().clone(),
@@ -1520,7 +1530,7 @@ impl AcpThread {
         })
     }
 
-    fn run_turn(
+    pub fn run_turn(
         &mut self,
         cx: &mut Context<Self>,
         f: impl 'static + AsyncFnOnce(WeakEntity<Self>, &mut AsyncApp) -> Result<acp::PromptResponse>,

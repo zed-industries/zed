@@ -16,6 +16,9 @@ doctest = false
 test-support = ["gpui/test-support", "project/test-support", "dep:parking_lot"]
 
 [dependencies]
+log.workspace = true
+audio.workspace = true
+rodio.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
 anyhow.workspace = true
@@ -34,6 +37,7 @@ parking_lot = { workspace = true, optional = true }
 portable-pty.workspace = true
 project.workspace = true
 prompt_store.workspace = true
+rtrb.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

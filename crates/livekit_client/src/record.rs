@@ -83,7 +83,11 @@ fn write_out(
             .expect("Stream has ended, callback cant hold the lock"),
     );
     let samples: Vec<f32> = SampleTypeConverter::<_, f32>::new(samples.into_iter()).collect();
-    let mut samples = SamplesBuffer::new(config.channels(), config.sample_rate().0, samples);
+    let mut samples = SamplesBuffer::new(
+        rodio::ChannelCount::new(config.channels()).expect("value must be nonzero"),
+        rodio::SampleRate::new(config.sample_rate().0).expect("value must be nonzero"),
+        samples,
+    );
     match rodio::output_to_wav(&mut samples, path) {
         Ok(_) => Ok(()),
         Err(e) => Err(anyhow::anyhow!("Failed to write wav file: {}", e)),

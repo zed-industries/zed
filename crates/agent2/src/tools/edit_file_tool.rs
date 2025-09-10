@@ -290,6 +290,7 @@ impl AgentTool for EditFileTool {
             let request = request?;
             let model = model.context("No language model configured")?;
 
+            let model = model.get_completion_model().unwrap_or(model);
             let edit_format = EditFormat::from_model(model.clone())?;
             let edit_agent = EditAgent::new(
                 model,

@@ -1,8 +1,13 @@
+mod realtime;
+
 use anyhow::{Context as _, Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
+use gpui_tokio::Tokio;
+use realtime::*;
 
 use futures::Stream;
+use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window};
 use http_client::HttpClient;
@@ -10,8 +15,9 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolResultContent,
+    LanguageModelToolUse, MessageContent, RateLimiter, RealtimeRequest, RealtimeResponse, Role,
+    StopReason, TokenUsage,
 };
 use menu;
 use open_ai::{ImageUrl, Model, ReasoningEffort, ResponseStreamEvent, stream_completion};
@@ -186,10 +192,17 @@ impl OpenAiLanguageModelProvider {
     }
 
     fn create_language_model(&self, model: open_ai::Model) -> Arc<dyn LanguageModel> {
+        let completion_model = if model.is_realtime() {
+            Some(self.create_language_model(Model::FourPointOne))
+        } else {
+            None
+        };
+
         Arc::new(OpenAiLanguageModel {
             id: LanguageModelId::from(model.id().to_string()),
             model,
             state: self.state.clone(),
+            completion_model: completion_model,
             http_client: self.http_client.clone(),
             request_limiter: RateLimiter::new(4),
         })
@@ -286,6 +299,7 @@ pub struct OpenAiLanguageModel {
     id: LanguageModelId,
     model: open_ai::Model,
     state: gpui::Entity<State>,
+    completion_model: Option<Arc<dyn LanguageModel>>,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
@@ -352,6 +366,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::Five
             | Model::FiveMini
             | Model::FiveNano
+            | Model::Realtime
             | Model::O1
             | Model::O3
             | Model::O4Mini => true,
@@ -359,6 +374,7 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::Four
             | Model::FourTurbo
             | Model::O3Mini
+            | Model::Audio
             | Model::Custom { .. } => false,
         }
     }
@@ -371,6 +387,10 @@ impl LanguageModel for OpenAiLanguageModel {
         }
     }
 
+    fn is_realtime(&self) -> bool {
+        self.model.is_realtime()
+    }
+
     fn telemetry_id(&self) -> String {
         format!("openai/{}", self.model.id())
     }
@@ -381,6 +401,10 @@ impl LanguageModel for OpenAiLanguageModel {
 
     fn max_output_tokens(&self) -> Option<u64> {
         self.model.max_output_tokens()
+    }
+
+    fn get_completion_model(&self) -> Option<Arc<dyn LanguageModel>> {
+        self.completion_model.clone()
     }
 
     fn count_tokens(
@@ -419,6 +443,36 @@ impl LanguageModel for OpenAiLanguageModel {
             Ok(mapper.map_stream(completions.await?).boxed())
         }
         .boxed()
+    }
+
+    fn run_realtime(
+        &self,
+        cx: &App,
+        tools: Vec<LanguageModelRequestTool>,
+    ) -> Option<(
+        Task<Result<()>>,
+        UnboundedSender<RealtimeRequest>,
+        UnboundedReceiver<RealtimeResponse>,
+    )> {
+        if self.is_realtime() {
+            let Some(api_key) = cx.read_entity(&self.state, |state, _cx| state.api_key.clone())
+            else {
+                return None;
+            };
+            let (output_tx, output_rx) = unbounded::<RealtimeRequest>();
+            let (input_tx, input_rx) = unbounded::<RealtimeResponse>();
+
+            let model = self.model.clone();
+
+            let task = Tokio::spawn_result(cx, async move {
+                OpenAiRealtimeClient::run(api_key, model, tools, output_rx, input_tx).await?;
+                Ok(())
+            });
+
+            Some((task, output_tx, input_rx))
+        } else {
+            None
+        }
     }
 }
 
@@ -744,7 +798,9 @@ pub fn count_open_ai_tokens(
             | Model::O1
             | Model::O3
             | Model::O3Mini
-            | Model::O4Mini => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
+            | Model::O4Mini
+            | Model::Audio
+            | Model::Realtime => tiktoken_rs::num_tokens_from_messages(model.id(), &messages),
             // GPT-5 models don't have tiktoken support yet; fall back on gpt-4o tokenizer
             Model::Five | Model::FiveMini | Model::FiveNano => {
                 tiktoken_rs::num_tokens_from_messages("gpt-4o", &messages)

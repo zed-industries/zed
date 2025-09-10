@@ -129,6 +129,7 @@ members = [
     "crates/project_symbols",
     "crates/prompt_store",
     "crates/proto",
+#    "crates/realtime_models",
     "crates/recent_projects",
     "crates/refineable",
     "crates/refineable/derive_refineable",
@@ -251,7 +252,7 @@ assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 assistant_tool = { path = "crates/assistant_tool" }
 assistant_tools = { path = "crates/assistant_tools" }
-audio = { path = "crates/audio" }
+audio = { path = "crates/audio", features = ["webrtc-processing"] }
 auto_update = { path = "crates/auto_update" }
 auto_update_helper = { path = "crates/auto_update_helper" }
 auto_update_ui = { path = "crates/auto_update_ui" }
@@ -360,6 +361,7 @@ project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
 prompt_store = { path = "crates/prompt_store" }
 proto = { path = "crates/proto" }
+# realtime_models = { path = "crates/realtime_models" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
@@ -369,7 +371,7 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
-rodio = { version = "0.21.1", default-features = false }
+rodio = { git = "https://github.com/RustAudio/rodio.git", branch = "microphone", default-features = false, features = ["recording"] }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
@@ -437,6 +439,7 @@ agent-client-protocol = { version = "0.2.0-alpha.6", features = ["unstable"]}
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
+aec-rs = "1.0.0"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
 ashpd = { version = "0.11", default-features = false, features = ["async-std"] }
@@ -451,6 +454,7 @@ async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.29.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
+audio_thread_priority = "0.33.0"
 aws-config = { version = "1.6.1", features = ["behavior-version-latest"] }
 aws-credential-types = { version = "1.2.2", features = [
     "hardcoded-credentials",
@@ -484,6 +488,7 @@ cpal = "0.16"
 crash-handler = "0.6"
 criterion = { version = "0.5", features = ["html_reports"] }
 ctor = "0.4.0"
+dasp_sample = "0.11.0"
 dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "1b461b310481d01e02b2603c16d7144b926339f8" }
 dashmap = "6.0"
 derive_more = "0.99.17"
@@ -495,10 +500,12 @@ emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
 fancy-regex = "0.14.0"
+fixed-resample = "0.9.1"
 fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
+futures-util = "0.3"
 git2 = { version = "0.20.1", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
@@ -592,6 +599,7 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
 rand = "0.9"
 rayon = "1.8"
+ringbuf = "0.4.7"
 ref-cast = "1.0.24"
 regex = "1.5"
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c770a32f1998d6e999cef3e59e0013e6c4415", default-features = false, features = [
@@ -604,6 +612,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "stream",
 ] }
 rsa = "0.9.6"
+rtrb = "0.3.2"
 runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
@@ -614,6 +623,7 @@ rustls = { version = "0.23.26" }
 rustls-platform-verifier = "0.5.0"
 scap = { git = "https://github.com/zed-industries/scap", rev = "808aa5c45b41e8f44729d02e38fd00a2fe2722e7", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
+spin_sleep = "1.3.0"
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -699,6 +709,9 @@ wasmtime = { version = "29", default-features = false, features = [
     "parallel-compilation",
 ] }
 wasmtime-wasi = "29"
+webrtc-audio-processing = { version = "0.4.0", features = [
+    "derive_serde",
+] }
 which = "6.0.0"
 windows-core = "0.61"
 wit-component = "0.221"

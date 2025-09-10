@@ -1162,7 +1162,10 @@ fn init_paths() -> HashMap<io::ErrorKind, Vec<&'static Path>> {
 }
 
 pub fn stdout_is_a_pty() -> bool {
-    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME).ok().is_none() && io::stdout().is_terminal()
+    std::env::var(FORCE_CLI_MODE_ENV_VAR_NAME)
+        .ok()
+        .is_none_or(|x| x.is_empty())
+        && io::stdout().is_terminal()
 }
 
 #[derive(Parser, Debug)]
