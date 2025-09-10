@@ -878,11 +878,7 @@ impl ConfigurationView {
                     h_flex()
                         .gap_2()
                         .child(Indicator::dot().color(Color::Success))
-                        .child(
-                            v_flex()
-                                .gap_1()
-                                .child(Label::new(format!("API URL configured. {}", api_url))),
-                        ),
+                        .child(v_flex().gap_1().child(Label::new(api_url))),
                 )
                 .child(
                     Button::new("reset-api-url", "Reset API URL")
