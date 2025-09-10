@@ -2481,12 +2481,17 @@ impl AcpThreadView {
                 .is_some_and(|call| call.id == tool_call_id)
         });
         let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
-        let buttons = div()
+
+        div()
+            .p_1()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .w_full()
             .map(|this| {
                 if kind == acp::ToolKind::SwitchMode {
-                    this.w_full().v_flex()
+                    this.v_flex()
                 } else {
-                    this.h_flex()
+                    this.h_flex().justify_end().flex_wrap()
                 }
             })
             .gap_0p5()
@@ -2544,24 +2549,7 @@ impl AcpThreadView {
                             );
                         }
                     }))
-            }));
-
-        h_flex()
-            .py_1()
-            .px_1()
-            .gap_1()
-            .justify_between()
-            .flex_wrap()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .when(kind != acp::ToolKind::SwitchMode, |this| {
-                this.pl_2().child(
-                    div().min_w(rems_from_px(145.)).child(
-                        LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small),
-                    ),
-                )
-            })
-            .child(buttons)
+            }))
     }
 
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
