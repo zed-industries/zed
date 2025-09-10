@@ -14,6 +14,7 @@
 //! If you're looking to improve Vim mode, you should check out Vim crate that wraps Editor and overrides its behavior.
 pub mod actions;
 mod blink_manager;
+mod bracket_highlights;
 mod clangd_ext;
 pub mod code_context_menus;
 pub mod display_map;
@@ -21,7 +22,6 @@ mod editor_settings;
 mod editor_settings_controls;
 mod element;
 mod git;
-mod highlight_matching_bracket;
 mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
@@ -206,9 +206,9 @@ use workspace::{
 };
 
 use crate::{
+    bracket_highlights::BracketRefreshReason,
     code_context_menus::CompletionsMenuSource,
     editor_settings::MultiCursorModifier,
-    highlight_matching_bracket::BracketRefreshReason,
     hover_links::{find_url, find_url_from_range},
     scroll::{ScrollOffset, ScrollPixelOffset},
     signature_help::{SignatureHelpHiddenBy, SignatureHelpState},
