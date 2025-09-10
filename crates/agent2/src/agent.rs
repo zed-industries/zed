@@ -392,9 +392,6 @@ impl NativeAgent {
             })
         });
 
-        log::debug!("Initializing realtime audio context");
-        gpui_tokio::Tokio::spawn(cx, audio::async_init()).detach_and_log_err(cx);
-
         let task = acp_thread.update(cx, |_acp_thread, cx| {
             cx.spawn(async |acp_thread, cx| {
                 if let Some(events) = events_task.await? {
