@@ -454,7 +454,7 @@ impl PickerDelegate for BranchListDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = &self.matches[ix];
+        let entry = &self.matches.get(ix)?;
 
         let (commit_time, author_name, subject) = entry
             .branch

@@ -1446,7 +1446,7 @@ impl PickerDelegate for DebugDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
 
         let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),

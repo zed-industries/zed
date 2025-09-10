@@ -171,7 +171,7 @@ impl PickerDelegate for LineEndingSelectorDelegate {
         _: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let line_ending = self.matches[ix];
+        let line_ending = self.matches.get(ix)?;
         let label = match line_ending {
             LineEnding::Unix => "LF",
             LineEnding::Windows => "CRLF",
