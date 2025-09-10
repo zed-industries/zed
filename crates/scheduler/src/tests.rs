@@ -153,7 +153,7 @@ fn test_randomize_order() {
     // Test deterministic mode: different seeds should produce same execution order
     let mut deterministic_results = HashSet::new();
     for seed in 0..10 {
-        let config = SchedulerConfig {
+        let config = TestSchedulerConfig {
             seed,
             randomize_order: false,
             ..Default::default()
@@ -173,7 +173,7 @@ fn test_randomize_order() {
     // Test randomized mode: different seeds can produce different execution orders
     let mut randomized_results = HashSet::new();
     for seed in 0..20 {
-        let config = SchedulerConfig::with_seed(seed);
+        let config = TestSchedulerConfig::with_seed(seed);
         let order = block_on(capture_execution_order(config));
         assert_eq!(order.len(), 6);
         randomized_results.insert(order);
@@ -186,7 +186,7 @@ fn test_randomize_order() {
     );
 }
 
-async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
+async fn capture_execution_order(config: TestSchedulerConfig) -> Vec<String> {
     let scheduler = Arc::new(TestScheduler::new(config));
     let foreground = scheduler.foreground();
     let background = scheduler.background();
@@ -221,49 +221,55 @@ async fn capture_execution_order(config: SchedulerConfig) -> Vec<String> {
 
 #[test]
 fn test_block() {
-    let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
-    let executor = BackgroundExecutor::new(scheduler);
+    let scheduler = Arc::new(TestScheduler::new(TestSchedulerConfig::default()));
     let (tx, rx) = oneshot::channel();
 
     // Spawn background task to send value
-    let _ = executor
+    let _ = scheduler
+        .background()
         .spawn(async move {
             tx.send(42).unwrap();
         })
         .detach();
 
     // Block on receiving the value
-    let result = executor.block_on(async { rx.await.unwrap() });
+    let result = scheduler.foreground().block_on(async { rx.await.unwrap() });
     assert_eq!(result, 42);
 }
 
 #[test]
-#[should_panic(expected = "Parking forbidden")]
+#[should_panic(expected = "futures_channel::oneshot::Inner")]
 fn test_parking_panics() {
-    let scheduler = Arc::new(TestScheduler::new(SchedulerConfig::default()));
-    let executor = BackgroundExecutor::new(scheduler);
-    executor.block_on(future::pending::<()>());
+    let config = TestSchedulerConfig {
+        capture_pending_traces: true,
+        ..Default::default()
+    };
+    let scheduler = Arc::new(TestScheduler::new(config));
+    scheduler.foreground().block_on(async {
+        let (_tx, rx) = oneshot::channel::<()>();
+        rx.await.unwrap(); // This will never complete
+    });
 }
 
 #[test]
 fn test_block_with_parking() {
-    let config = SchedulerConfig {
+    let config = TestSchedulerConfig {
         allow_parking: true,
         ..Default::default()
     };
     let scheduler = Arc::new(TestScheduler::new(config));
-    let executor = BackgroundExecutor::new(scheduler);
     let (tx, rx) = oneshot::channel();
 
     // Spawn background task to send value
-    let _ = executor
+    let _ = scheduler
+        .background()
         .spawn(async move {
             tx.send(42).unwrap();
         })
         .detach();
 
     // Block on receiving the value (will park if needed)
-    let result = executor.block_on(async { rx.await.unwrap() });
+    let result = scheduler.foreground().block_on(async { rx.await.unwrap() });
     assert_eq!(result, 42);
 }
 
@@ -298,34 +304,62 @@ fn test_helper_methods() {
 fn test_block_with_timeout() {
     // Test case: future completes within timeout
     TestScheduler::once(async |scheduler| {
-        let background = scheduler.background();
-        let mut future = future::ready(42);
-        let output = background.block_with_timeout(&mut future, Duration::from_millis(100));
-        assert_eq!(output, Some(42));
+        let foreground = scheduler.foreground();
+        let future = future::ready(42);
+        let output = foreground.block_with_timeout(Duration::from_millis(100), future);
+        assert_eq!(output.unwrap(), 42);
     });
 
     // Test case: future times out
     TestScheduler::once(async |scheduler| {
-        let background = scheduler.background();
-        let mut future = future::pending::<()>();
-        let output = background.block_with_timeout(&mut future, Duration::from_millis(50));
-        assert_eq!(output, None);
+        let foreground = scheduler.foreground();
+        let future = future::pending::<()>();
+        let output = foreground.block_with_timeout(Duration::from_millis(50), future);
+        let _ = output.expect_err("future should not have finished");
     });
 
     // Test case: future makes progress via timer but still times out
     let mut results = BTreeSet::new();
     TestScheduler::many(100, async |scheduler| {
-        let background = scheduler.background();
-        let mut task = background.spawn(async move {
+        let task = scheduler.background().spawn(async move {
             Yield { polls: 10 }.await;
             42
         });
-        let output = background.block_with_timeout(&mut task, Duration::from_millis(50));
-        results.insert(output);
+        let output = scheduler
+            .foreground()
+            .block_with_timeout(Duration::from_millis(50), task);
+        results.insert(output.ok());
     });
     assert_eq!(
         results.into_iter().collect::<Vec<_>>(),
         vec![None, Some(42)]
+    );
+}
+
+// When calling block, we shouldn't make progress on foreground-spawned futures with the same session id.
+#[test]
+fn test_block_does_not_progress_same_session_foreground() {
+    let mut task2_made_progress_once = false;
+    TestScheduler::many(1000, async |scheduler| {
+        let foreground1 = scheduler.foreground();
+        let foreground2 = scheduler.foreground();
+
+        let task1 = foreground1.spawn(async move {});
+        let task2 = foreground2.spawn(async move {});
+
+        foreground1.block_on(async {
+            scheduler.yield_random().await;
+            assert!(!task1.is_ready());
+            task2_made_progress_once |= task2.is_ready();
+        });
+
+        task1.await;
+        task2.await;
+    });
+
+    assert!(
+        task2_made_progress_once,
+        "Expected task from different foreground executor to make progress (at least once)"
     );
 }
 

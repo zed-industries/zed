@@ -1,8 +1,12 @@
-use std::any::TypeId;
+use std::{
+    any::TypeId,
+    num::{NonZeroU32, NonZeroUsize},
+    rc::Rc,
+};
 
 use anyhow::Context as _;
 use fs::Fs;
-use gpui::{AnyElement, App, AppContext as _, ReadGlobal as _, Window};
+use gpui::{AnyElement, App, AppContext as _, ReadGlobal as _, SharedString, Window};
 use smallvec::SmallVec;
 
 use crate::SettingsStore;
@@ -24,6 +28,7 @@ pub trait SettingsUi {
     }
 }
 
+#[derive(Clone)]
 pub struct SettingsUiEntry {
     /// The path in the settings JSON file for this setting. Relative to parent
     /// None implies `#[serde(flatten)]` or `Settings::KEY.is_none()` for top level settings
@@ -35,8 +40,10 @@ pub struct SettingsUiEntry {
     pub item: SettingsUiItem,
 }
 
+#[derive(Clone)]
 pub enum SettingsUiItemSingle {
     SwitchField,
+    TextField,
     /// A numeric stepper for a specific type of number
     NumericStepper(NumType),
     ToggleGroup {
@@ -52,13 +59,13 @@ pub enum SettingsUiItemSingle {
         /// Must be the same length as `variants`
         labels: &'static [&'static str],
     },
-    Custom(Box<dyn Fn(SettingsValue<serde_json::Value>, &mut Window, &mut App) -> AnyElement>),
+    Custom(Rc<dyn Fn(SettingsValue<serde_json::Value>, &mut Window, &mut App) -> AnyElement>),
 }
 
 pub struct SettingsValue<T> {
-    pub title: &'static str,
-    pub documentation: Option<&'static str>,
-    pub path: SmallVec<[&'static str; 1]>,
+    pub title: SharedString,
+    pub documentation: Option<SharedString>,
+    pub path: SmallVec<[SharedString; 1]>,
     pub value: Option<T>,
     pub default_value: T,
 }
@@ -73,11 +80,12 @@ impl<T> SettingsValue<T> {
 }
 
 impl SettingsValue<serde_json::Value> {
-    pub fn write_value(path: &SmallVec<[&'static str; 1]>, value: serde_json::Value, cx: &mut App) {
+    pub fn write_value(path: &SmallVec<[SharedString; 1]>, value: serde_json::Value, cx: &mut App) {
         let settings_store = SettingsStore::global(cx);
         let fs = <dyn Fs>::global(cx);
 
         let rx = settings_store.update_settings_file_at_path(fs.clone(), path.as_slice(), value);
+
         let path = path.clone();
         cx.background_spawn(async move {
             rx.await?
@@ -89,7 +97,7 @@ impl SettingsValue<serde_json::Value> {
 
 impl<T: serde::Serialize> SettingsValue<T> {
     pub fn write(
-        path: &SmallVec<[&'static str; 1]>,
+        path: &SmallVec<[SharedString; 1]>,
         value: T,
         cx: &mut App,
     ) -> Result<(), serde_json::Error> {
@@ -98,19 +106,36 @@ impl<T: serde::Serialize> SettingsValue<T> {
     }
 }
 
-pub struct SettingsUiItemDynamic {
+#[derive(Clone)]
+pub struct SettingsUiItemUnion {
     pub options: Vec<SettingsUiEntry>,
     pub determine_option: fn(&serde_json::Value, &App) -> usize,
 }
 
+pub struct SettingsUiEntryMetaData {
+    pub title: SharedString,
+    pub path: SharedString,
+    pub documentation: Option<SharedString>,
+}
+
+#[derive(Clone)]
+pub struct SettingsUiItemDynamicMap {
+    pub item: fn() -> SettingsUiItem,
+    pub determine_items: fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
+    pub defaults_path: &'static [&'static str],
+}
+
+#[derive(Clone)]
 pub struct SettingsUiItemGroup {
     pub items: Vec<SettingsUiEntry>,
 }
 
+#[derive(Clone)]
 pub enum SettingsUiItem {
     Group(SettingsUiItemGroup),
     Single(SettingsUiItemSingle),
-    Dynamic(SettingsUiItemDynamic),
+    Union(SettingsUiItemUnion),
+    DynamicMap(SettingsUiItemDynamicMap),
     None,
 }
 
@@ -126,6 +151,18 @@ impl SettingsUi for Option<bool> {
     }
 }
 
+impl SettingsUi for String {
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem::Single(SettingsUiItemSingle::TextField)
+    }
+}
+
+impl SettingsUi for SettingsUiItem {
+    fn settings_ui_item() -> SettingsUiItem {
+        SettingsUiItem::Single(SettingsUiItemSingle::TextField)
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NumType {
@@ -133,6 +170,7 @@ pub enum NumType {
     U32 = 1,
     F32 = 2,
     USIZE = 3,
+    U32NONZERO = 4,
 }
 
 pub static NUM_TYPE_NAMES: std::sync::LazyLock<[&'static str; NumType::COUNT]> =
@@ -150,6 +188,7 @@ impl NumType {
             NumType::U32 => TypeId::of::<u32>(),
             NumType::F32 => TypeId::of::<f32>(),
             NumType::USIZE => TypeId::of::<usize>(),
+            NumType::U32NONZERO => TypeId::of::<NonZeroU32>(),
         }
     }
 
@@ -159,6 +198,7 @@ impl NumType {
             NumType::U32 => std::any::type_name::<u32>(),
             NumType::F32 => std::any::type_name::<f32>(),
             NumType::USIZE => std::any::type_name::<usize>(),
+            NumType::U32NONZERO => std::any::type_name::<NonZeroU32>(),
         }
     }
 }
@@ -184,3 +224,4 @@ numeric_stepper_for_num_type!(u32, U32);
 // todo(settings_ui) is there a better ui for f32?
 numeric_stepper_for_num_type!(f32, F32);
 numeric_stepper_for_num_type!(usize, USIZE);
+numeric_stepper_for_num_type!(NonZeroUsize, U32NONZERO);

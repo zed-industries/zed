@@ -24,7 +24,6 @@ acp_tools.workspace = true
 agent.workspace = true
 agent_ui.workspace = true
 agent_settings.workspace = true
-agent_servers.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -90,6 +89,7 @@ language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
 language_models.workspace = true
+language_onboarding.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }

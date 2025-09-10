@@ -1520,7 +1520,15 @@ impl EditAgentTest {
         selected_model: &SelectedModel,
         cx: &mut AsyncApp,
     ) -> Result<Arc<dyn LanguageModel>> {
-        let (provider, model) = cx.update(|cx| {
+        cx.update(|cx| {
+            let registry = LanguageModelRegistry::read_global(cx);
+            let provider = registry
+                .provider(&selected_model.provider)
+                .expect("Provider not found");
+            provider.authenticate(cx)
+        })?
+        .await?;
+        cx.update(|cx| {
             let models = LanguageModelRegistry::read_global(cx);
             let model = models
                 .available_models(cx)
@@ -1529,11 +1537,8 @@ impl EditAgentTest {
                         && model.id() == selected_model.model
                 })
                 .expect("Model not found");
-            let provider = models.provider(&model.provider_id()).unwrap();
-            (provider, model)
-        })?;
-        cx.update(|cx| provider.authenticate(cx))?.await?;
-        Ok(model)
+            model
+        })
     }
 
     async fn eval(&self, eval: EvalInput, cx: &mut TestAppContext) -> Result<EvalOutput> {

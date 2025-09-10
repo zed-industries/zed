@@ -1,6 +1,7 @@
 use collab_ui::collab_panel;
 use gpui::{Menu, MenuItem, OsAction};
 use terminal_view::terminal_panel;
+use zed_actions::ToggleFocus as ToggleDebugPanel;
 
 pub fn app_menus() -> Vec<Menu> {
     use zed_actions::Quit;
@@ -38,7 +39,8 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
                 MenuItem::action("Extensions", zed_actions::Extensions::default()),
-                MenuItem::action("Install CLI", install_cli::Install),
+                #[cfg(not(target_os = "windows"))]
+                MenuItem::action("Install CLI", install_cli::InstallCliBinary),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Zed", super::Hide),
@@ -126,6 +128,11 @@ pub fn app_menus() -> Vec<Menu> {
                 ),
                 MenuItem::action("Expand Selection", editor::actions::SelectLargerSyntaxNode),
                 MenuItem::action("Shrink Selection", editor::actions::SelectSmallerSyntaxNode),
+                MenuItem::action("Select Next Sibling", editor::actions::SelectNextSyntaxNode),
+                MenuItem::action(
+                    "Select Previous Sibling",
+                    editor::actions::SelectPreviousSyntaxNode,
+                ),
                 MenuItem::separator(),
                 MenuItem::action("Add Cursor Above", editor::actions::AddSelectionAbove),
                 MenuItem::action("Add Cursor Below", editor::actions::AddSelectionBelow),
@@ -175,6 +182,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Outline Panel", outline_panel::ToggleFocus),
                 MenuItem::action("Collab Panel", collab_panel::ToggleFocus),
                 MenuItem::action("Terminal Panel", terminal_panel::ToggleFocus),
+                MenuItem::action("Debugger Panel", ToggleDebugPanel),
                 MenuItem::separator(),
                 MenuItem::action("Diagnostics", diagnostics::Deploy),
                 MenuItem::separator(),

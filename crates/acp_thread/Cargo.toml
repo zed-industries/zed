@@ -18,8 +18,8 @@ test-support = ["gpui/test-support", "project/test-support", "dep:parking_lot"]
 [dependencies]
 action_log.workspace = true
 agent-client-protocol.workspace = true
-anyhow.workspace = true
 agent_settings.workspace = true
+anyhow.workspace = true
 buffer_diff.workspace = true
 collections.workspace = true
 editor.workspace = true

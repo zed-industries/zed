@@ -405,7 +405,15 @@ message Envelope {
         GetProcessesResponse get_processes_response = 370;
 
         ResolveToolchain resolve_toolchain = 371;
-        ResolveToolchainResponse resolve_toolchain_response = 372; // current max
+        ResolveToolchainResponse resolve_toolchain_response = 372;
+
+        GetAgentServerCommand get_agent_server_command = 373;
+        AgentServerCommand agent_server_command = 374;
+
+        ExternalAgentsUpdated external_agents_updated = 375;
+
+        ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
+        NewExternalAgentVersionAvailable new_external_agent_version_available = 377; // current max
     }
 
     reserved 87 to 88;

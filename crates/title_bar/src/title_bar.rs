@@ -31,10 +31,10 @@ use gpui::{
 };
 use keymap_editor;
 use onboarding_banner::OnboardingBanner;
-use project::Project;
+use project::{Project, WorktreeSettings};
 use remote::RemoteConnectionOptions;
-use settings::Settings as _;
-use std::sync::Arc;
+use settings::{Settings, SettingsLocation};
+use std::{path::Path, sync::Arc};
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
@@ -433,14 +433,24 @@ impl TitleBar {
     }
 
     pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = {
-            let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
+        let name = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
                 let worktree = worktree.read(cx);
-                worktree.root_name()
-            });
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.id(),
+                    path: Path::new(""),
+                };
 
-            names.next()
-        };
+                let settings = WorktreeSettings::get(Some(settings_location), cx);
+                match &settings.project_name {
+                    Some(name) => name.as_str(),
+                    None => worktree.root_name(),
+                }
+            })
+            .next();
         let is_project_selected = name.is_some();
         let name = if let Some(name) = name {
             util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
@@ -659,9 +669,15 @@ impl TitleBar {
                         let user_login = user.github_login.clone();
 
                         let (plan_name, label_color, bg_color) = match plan {
-                            None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
-                            Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
-                            Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                            None | Some(Plan::ZedFree | Plan::ZedFreeV2) => {
+                                ("Free", Color::Default, free_chip_bg)
+                            }
+                            Some(Plan::ZedProTrial | Plan::ZedProTrialV2) => {
+                                ("Pro Trial", Color::Accent, pro_chip_bg)
+                            }
+                            Some(Plan::ZedPro | Plan::ZedProV2) => {
+                                ("Pro", Color::Accent, pro_chip_bg)
+                            }
                         };
 
                         menu.custom_entry(
@@ -689,7 +705,7 @@ impl TitleBar {
                             "Settings Profiles",
                             zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                         )
-                        .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
+                        .action("Keymap Editor", Box::new(keymap_editor::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),

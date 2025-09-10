@@ -1,3 +1,4 @@
+pub mod agent_server_store;
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
@@ -34,7 +35,11 @@ mod yarn;
 
 use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 
-use crate::{git_store::GitStore, lsp_store::log_store::LogKind};
+use crate::{
+    agent_server_store::{AgentServerStore, AllAgentServersSettings},
+    git_store::GitStore,
+    lsp_store::log_store::LogKind,
+};
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
     git_traversal::{ChildEntriesGitIter, GitEntry, GitEntryRef, GitTraversal},
@@ -179,6 +184,7 @@ pub struct Project {
     buffer_ordered_messages_tx: mpsc::UnboundedSender<BufferOrderedMessage>,
     languages: Arc<LanguageRegistry>,
     dap_store: Entity<DapStore>,
+    agent_server_store: Entity<AgentServerStore>,
 
     breakpoint_store: Entity<BreakpointStore>,
     collab_client: Arc<client::Client>,
@@ -1019,6 +1025,7 @@ impl Project {
         WorktreeSettings::register(cx);
         ProjectSettings::register(cx);
         DisableAiSettings::register(cx);
+        AllAgentServersSettings::register(cx);
     }
 
     pub fn init(client: &Arc<Client>, cx: &mut App) {
@@ -1174,6 +1181,10 @@ impl Project {
                 )
             });
 
+            let agent_server_store = cx.new(|cx| {
+                AgentServerStore::local(node.clone(), fs.clone(), environment.clone(), cx)
+            });
+
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             Self {
@@ -1200,6 +1211,7 @@ impl Project {
                 remote_client: None,
                 breakpoint_store,
                 dap_store,
+                agent_server_store,
 
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
@@ -1338,6 +1350,9 @@ impl Project {
                 )
             });
 
+            let agent_server_store =
+                cx.new(|cx| AgentServerStore::remote(REMOTE_SERVER_PROJECT_ID, remote.clone(), cx));
+
             cx.subscribe(&remote, Self::on_remote_client_event).detach();
 
             let this = Self {
@@ -1353,6 +1368,7 @@ impl Project {
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 git_store,
+                agent_server_store,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -1407,6 +1423,7 @@ impl Project {
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.dap_store);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.settings_observer);
             remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.git_store);
+            remote_proto.subscribe_to_entity(REMOTE_SERVER_PROJECT_ID, &this.agent_server_store);
 
             remote_proto.add_entity_message_handler(Self::handle_create_buffer_for_peer);
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
@@ -1422,6 +1439,7 @@ impl Project {
             ToolchainStore::init(&remote_proto);
             DapStore::init(&remote_proto, cx);
             GitStore::init(&remote_proto);
+            AgentServerStore::init_remote(&remote_proto);
 
             this
         })
@@ -1564,6 +1582,8 @@ impl Project {
             )
         })?;
 
+        let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx))?;
+
         let project = cx.new(|cx| {
             let replica_id = response.payload.replica_id as ReplicaId;
 
@@ -1624,6 +1644,7 @@ impl Project {
                 breakpoint_store,
                 dap_store: dap_store.clone(),
                 git_store: git_store.clone(),
+                agent_server_store,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -4400,6 +4421,13 @@ impl Project {
             .diagnostic_summary(include_ignored, cx)
     }
 
+    /// Returns a summary of the diagnostics for the provided project path only.
+    pub fn diagnostic_summary_for_path(&self, path: &ProjectPath, cx: &App) -> DiagnosticSummary {
+        self.lsp_store
+            .read(cx)
+            .diagnostic_summary_for_path(path, cx)
+    }
+
     pub fn diagnostic_summaries<'a>(
         &'a self,
         include_ignored: bool,
@@ -4488,6 +4516,23 @@ impl Project {
         }
 
         None
+    }
+
+    /// If there's only one visible worktree, returns the given worktree-relative path with no prefix.
+    ///
+    /// Otherwise, returns the full path for the project path (obtained by prefixing the worktree-relative path with the name of the worktree).
+    pub fn short_full_path_for_project_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &App,
+    ) -> Option<PathBuf> {
+        if self.visible_worktrees(cx).take(2).count() < 2 {
+            return Some(project_path.path.to_path_buf());
+        }
+        self.worktree_for_id(project_path.worktree_id, cx)
+            .and_then(|worktree| {
+                Some(Path::new(worktree.read(cx).abs_path().file_name()?).join(&project_path.path))
+            })
     }
 
     pub fn project_path_for_absolute_path(&self, abs_path: &Path, cx: &App) -> Option<ProjectPath> {
@@ -5173,6 +5218,10 @@ impl Project {
 
     pub fn git_store(&self) -> &Entity<GitStore> {
         &self.git_store
+    }
+
+    pub fn agent_server_store(&self) -> &Entity<AgentServerStore> {
+        &self.agent_server_store
     }
 
     #[cfg(test)]
