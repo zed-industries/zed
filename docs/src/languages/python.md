@@ -11,15 +11,10 @@ Python support is available natively in Zed.
   - [python-lsp/python-lsp-server](https://github.com/python-lsp/python-lsp-server) (PyLSP)
 - Debug Adapter: [debugpy](https://github.com/microsoft/debugpy)
 
-## Install Zed and Python on Your Machine
-Zed supports Python development natively. You'll need both Zed and Python installed before you can begin.
+## Install Python
+You'll need both Zed and Python installed before you can begin.
 
-### Step 1: Install Zed
-- Go to [zed.dev/download](https://zed.dev/download) and download the latest release.
-- Open the `.dmg` file and drag Zed into your Applications folder.
-- Launch Zed. If on Mac, You may need to right-click > Open to bypass macOS Gatekeeper on first launch.
-
-### Step 2: Install Python
+### Step 1: Install Python
 Zed does not bundle a Python runtime, so you’ll need to install one yourself.
 Choose one of the following options:
 - Astral (recommended):
@@ -33,7 +28,7 @@ brew install python
 ```
 - Python.org installer: Download the latest version from [python.org/downloads](https://python.org/downloads).
 
-### Step 3: Verify Python Installation
+### Step 2: Verify Python Installation
 Confirm Python is installed and available in your shell:
 ```json
 uv --version
