@@ -6395,8 +6395,10 @@ impl LspStore {
                     ranges_to_query.push((
                         row_chunk,
                         buffer_snapshot.anchor_before(Point::new(row_chunk.start, 0))
-                        // TODO kb wrong, needs max column instead. Store BufferPoints instead, as chunks do not change?
-                            ..buffer_snapshot.anchor_after(Point::new(row_chunk.end, 0)),
+                            ..buffer_snapshot.anchor_after(Point::new(
+                                row_chunk.end,
+                                buffer_snapshot.line_len(row_chunk.end),
+                            )),
                     ));
                 }
                 (None, Some(fetched_hints)) => {
