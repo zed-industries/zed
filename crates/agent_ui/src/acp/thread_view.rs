@@ -10,6 +10,7 @@ use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use anyhow::{Context as _, Result, anyhow, bail};
+use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
@@ -2473,6 +2474,72 @@ impl AcpThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
+        let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
+        let buttons = div()
+            .map(|this| {
+                if kind == acp::ToolKind::SwitchMode {
+                    this.w_full().v_flex()
+                } else {
+                    this.h_flex()
+                }
+            })
+            .gap_0p5()
+            .children(options.iter().map(move |option| {
+                let option_id = SharedString::from(option.id.0.clone());
+                Button::new((option_id, entry_ix), option.name.clone())
+                    .map(|this| {
+                        let (this, action) = match option.kind {
+                            acp::PermissionOptionKind::AllowOnce => (
+                                this.icon(IconName::Check).icon_color(Color::Success),
+                                Some(&AllowOnce as &dyn Action),
+                            ),
+                            acp::PermissionOptionKind::AllowAlways => (
+                                this.icon(IconName::CheckDouble).icon_color(Color::Success),
+                                Some(&AllowAlways as &dyn Action),
+                            ),
+                            acp::PermissionOptionKind::RejectOnce => (
+                                this.icon(IconName::Close).icon_color(Color::Error),
+                                Some(&RejectOnce as &dyn Action),
+                            ),
+                            acp::PermissionOptionKind::RejectAlways => {
+                                (this.icon(IconName::Close).icon_color(Color::Error), None)
+                            }
+                        };
+
+                        let Some(action) = action else {
+                            return this;
+                        };
+
+                        if seen_kinds.contains(&option.kind) {
+                            return this;
+                        }
+
+                        seen_kinds.push(option.kind);
+
+                        this.key_binding(
+                            KeyBinding::for_action_in(action, &self.focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                        )
+                    })
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
+                    .on_click(cx.listener({
+                        let tool_call_id = tool_call_id.clone();
+                        let option_id = option.id.clone();
+                        let option_kind = option.kind;
+                        move |this, _, window, cx| {
+                            this.authorize_tool_call(
+                                tool_call_id.clone(),
+                                option_id.clone(),
+                                option_kind,
+                                window,
+                                cx,
+                            );
+                        }
+                    }))
+            }));
+
         h_flex()
             .py_1()
             .px_1()
@@ -2488,79 +2555,7 @@ impl AcpThreadView {
                     ),
                 )
             })
-            .child({
-                div()
-                    .map(|this| {
-                        if kind == acp::ToolKind::SwitchMode {
-                            this.w_full().v_flex()
-                        } else {
-                            this.h_flex()
-                        }
-                    })
-                    .gap_0p5()
-                    .children(options.iter().map(|option| {
-                        let option_id = SharedString::from(option.id.0.clone());
-                        Button::new((option_id, entry_ix), option.name.clone())
-                            .map(|this| match option.kind {
-                                acp::PermissionOptionKind::AllowOnce => this
-                                    .icon(IconName::Check)
-                                    .icon_color(Color::Success)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &AllowOnce,
-                                            &self.focus_handle.clone(),
-                                            window,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                    ),
-                                acp::PermissionOptionKind::AllowAlways => this
-                                    .icon(IconName::CheckDouble)
-                                    .icon_color(Color::Success)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &AllowAlways,
-                                            &self.focus_handle.clone(),
-                                            window,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                    ),
-                                acp::PermissionOptionKind::RejectOnce => this
-                                    .icon(IconName::Close)
-                                    .icon_color(Color::Error)
-                                    .key_binding(
-                                        KeyBinding::for_action_in(
-                                            &RejectOnce,
-                                            &self.focus_handle.clone(),
-                                            window,
-                                            cx,
-                                        )
-                                        .map(|kb| kb.size(rems_from_px(10.))),
-                                    ),
-                                acp::PermissionOptionKind::RejectAlways => {
-                                    this.icon(IconName::Close).icon_color(Color::Error)
-                                }
-                            })
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .label_size(LabelSize::Small)
-                            .on_click(cx.listener({
-                                let tool_call_id = tool_call_id.clone();
-                                let option_id = option.id.clone();
-                                let option_kind = option.kind;
-                                move |this, _, window, cx| {
-                                    this.authorize_tool_call(
-                                        tool_call_id.clone(),
-                                        option_id.clone(),
-                                        option_kind,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            }))
-                    }))
-            })
+            .child(buttons)
     }
 
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
