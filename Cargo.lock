@@ -4043,6 +4043,7 @@ dependencies = [
  "smol",
  "system_specs",
  "workspace-hack",
+ "zstd",
 ]
 
 [[package]]
