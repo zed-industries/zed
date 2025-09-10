@@ -830,14 +830,12 @@ impl ToolchainLister for PythonToolchainProvider {
             let proj_ordering = || {
                 let lhs_project = lhs
                     .project
-                    .as_ref()
-                    .map(|p| p.to_path_buf())
+                    .clone()
                     .or_else(|| get_venv_parent_dir(lhs))
                     .map(|p| p.to_path_buf());
                 let rhs_project = rhs
                     .project
-                    .as_ref()
-                    .map(|p| p.to_path_buf())
+                    .clone()
                     .or_else(|| get_venv_parent_dir(rhs))
                     .map(|p| p.to_path_buf());
                 match (&lhs_project, &rhs_project) {
