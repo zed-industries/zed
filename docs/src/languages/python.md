@@ -122,16 +122,75 @@ For more information, see the basedpyright [settings documentation](https://docs
 
 See [Python Language Server Configuration](https://github.com/python-lsp/python-lsp-server/blob/develop/CONFIGURATION.md) for more.
 
-## Virtual environments
+## Set Up and Activate Python Virtual Environments
 
-Many Python projects use [virtual environments](https://docs.python.org/3/library/venv.html) to manage a project-specific Python toolchain and set of installed dependencies; in larger projects, multiple virtual environments may be used, each covering a different part of the codebase. Zed uses the [Python Environment Tools](https://github.com/microsoft/python-environment-tools) library to discover all relevant virtual environments (and other Python toolchains) when opening a project, and it will automatically start language server instances that use the appropriate toolchain and set of dependencies for each part of the codebase.
+If you don’t already have a virtual environment set up on your computer, follow these steps to create one. Use a [virtual environments](https://docs.python.org/3/library/venv.html) to isolate your project’s dependencies and interpreter. Zed detects and activates virtual environments automatically in its terminal.
+
+### Create and Activate a Virtual Environment
+In your project root:
+`python3 -m venv .venv
+source .venv/bin/activate`
+
+Zed will recognize .venv and activate it in the terminal without extra configuration.
+
+Link Virtual Environment to Language Server
+For Pyright, create a pyrightconfig.json at the root of your project:
+``` json {
+  "venvPath": ".",
+  "venv": ".venv"
+}
+```
+
+Or, if you're using pyproject.toml, add:
+`[tool.pyright]
+venvPath = "."
+venv = ".venv"`
+
+You can also set the path directly in `settings.json` as shown above.
+This ensures Pyright uses the correct interpreter and dependencies when analyzing your code.
 
 ## Virtual Environments in the Terminal {#terminal-detect_venv}
 
 Zed will detect Python virtual environments and automatically activate them in terminal if available.
 See: [detect_venv documentation](../configuring-zed.md#terminal-detect_venv) for more.
 
-## Code formatting & Linting
+## Fine-Tune Pyright for Python IDE Features
+Pyright can be configured to match your preferred level of type safety and analysis depth. It supports project-level and workspace-level settings.
+
+### Control Diagnostics and Type Checking
+In your `pyrightconfig.json` or `pyproject.toml`, specify how aggressively Pyright should analyze your code:
+``` json
+{
+  "typeCheckingMode": "strict",
+  "diagnosticMode": "workspace"
+}
+```
+- typeCheckingMode: Accepts "off", "basic", or "strict".
+- diagnosticMode: Use "openFilesOnly" or "workspace" to control scope.
+
+These options can also be set in settings.json under the python.analysis key.
+
+### Set the Python Interpreter Path
+Point Pyright to a specific interpreter—typically within a virtual environment—so it can resolve imports and packages correctly.
+
+In `settings.json`:
+```json
+{
+  "lsp": {
+    "pyright": {
+      "settings": {
+        "python": {
+          "pythonPath": ".venv/bin/python"
+        }
+      }
+    }
+  }
+}
+```
+
+This is useful when working across projects with different environments.
+
+## Code Formatting & Linting
 
 Zed provides the [Ruff](https://docs.astral.sh/ruff/) formatter and linter, which is enabled by default. (Specifically, Zed runs Ruff as an LSP server using the `ruff server` subcommand.) Ruff has many configurable options, which can be set in the following places, among others:
 
