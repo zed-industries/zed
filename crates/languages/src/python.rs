@@ -1763,6 +1763,26 @@ mod tests {
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n\n"
             );
 
+            // reset to a for loop statement
+            let statement = "for i in range(10):\n  print(i)\n";
+            buffer.edit([(0..buffer.len(), statement)], None, cx);
+
+            // insert single line comment after each line
+            let eol_ixs = statement
+                .char_indices()
+                .filter_map(|(ix, c)| if c == '\n' { Some(ix) } else { None })
+                .collect::<Vec<usize>>();
+            let editions = eol_ixs
+                .iter()
+                .enumerate()
+                .map(|(i, &eol_ix)| (eol_ix..eol_ix, format!(" # comment {}", i + 1)))
+                .collect::<Vec<(std::ops::Range<usize>, String)>>();
+            buffer.edit(editions, Some(AutoindentMode::EachLine), cx);
+            assert_eq!(
+                buffer.text(),
+                "for i in range(10): # comment 1\n  print(i) # comment 2\n"
+            );
+
             // reset to a simple if statement
             buffer.edit([(0..buffer.len(), "if a:\n  b(\n  )")], None, cx);
 
