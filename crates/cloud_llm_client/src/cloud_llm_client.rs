@@ -74,38 +74,60 @@ impl FromStr for UsageLimit {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Plan {
-    #[default]
-    #[serde(alias = "Free")]
-    ZedFree,
-    ZedFreeV2,
-    #[serde(alias = "ZedPro")]
-    ZedPro,
-    ZedProV2,
-    #[serde(alias = "ZedProTrial")]
-    ZedProTrial,
-    ZedProTrialV2,
+    V1(PlanV1),
+    V2(PlanV2),
 }
 
 impl Plan {
     pub fn is_v2(&self) -> bool {
-        matches!(self, Plan::ZedFreeV2 | Plan::ZedProV2 | Plan::ZedProTrialV2)
+        matches!(self, Self::V2(_))
     }
 }
 
-impl FromStr for Plan {
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanV1 {
+    #[default]
+    #[serde(alias = "Free")]
+    ZedFree,
+    #[serde(alias = "ZedPro")]
+    ZedPro,
+    #[serde(alias = "ZedProTrial")]
+    ZedProTrial,
+}
+
+impl FromStr for PlanV1 {
     type Err = anyhow::Error;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "zed_free" => Ok(Plan::ZedFree),
-            "zed_free_v2" => Ok(Plan::ZedFreeV2),
-            "zed_pro" => Ok(Plan::ZedPro),
-            "zed_pro_v2" => Ok(Plan::ZedProV2),
-            "zed_pro_trial" => Ok(Plan::ZedProTrial),
-            "zed_pro_trial_v2" => Ok(Plan::ZedProTrialV2),
+            "zed_free" => Ok(Self::ZedFree),
+            "zed_pro" => Ok(Self::ZedPro),
+            "zed_pro_trial" => Ok(Self::ZedProTrial),
+            plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanV2 {
+    #[default]
+    ZedFree,
+    ZedPro,
+    ZedProTrial,
+}
+
+impl FromStr for PlanV2 {
+    type Err = anyhow::Error;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "zed_free" => Ok(Self::ZedFree),
+            "zed_pro" => Ok(Self::ZedPro),
+            "zed_pro_trial" => Ok(Self::ZedProTrial),
             plan => Err(anyhow::anyhow!("invalid plan: {plan:?}")),
         }
     }
@@ -306,7 +328,7 @@ pub struct ListModelsResponse {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GetSubscriptionResponse {
-    pub plan: Plan,
+    pub plan: PlanV1,
     pub usage: Option<CurrentUsage>,
 }
 
@@ -330,33 +352,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_plan_deserialize_snake_case() {
-        let plan = serde_json::from_value::<Plan>(json!("zed_free")).unwrap();
-        assert_eq!(plan, Plan::ZedFree);
+    fn test_plan_v1_deserialize_snake_case() {
+        let plan = serde_json::from_value::<PlanV1>(json!("zed_free")).unwrap();
+        assert_eq!(plan, PlanV1::ZedFree);
 
-        let plan = serde_json::from_value::<Plan>(json!("zed_pro")).unwrap();
-        assert_eq!(plan, Plan::ZedPro);
+        let plan = serde_json::from_value::<PlanV1>(json!("zed_pro")).unwrap();
+        assert_eq!(plan, PlanV1::ZedPro);
 
-        let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial")).unwrap();
-        assert_eq!(plan, Plan::ZedProTrial);
-
-        let plan = serde_json::from_value::<Plan>(json!("zed_pro_v2")).unwrap();
-        assert_eq!(plan, Plan::ZedProV2);
-
-        let plan = serde_json::from_value::<Plan>(json!("zed_pro_trial_v2")).unwrap();
-        assert_eq!(plan, Plan::ZedProTrialV2);
+        let plan = serde_json::from_value::<PlanV1>(json!("zed_pro_trial")).unwrap();
+        assert_eq!(plan, PlanV1::ZedProTrial);
     }
 
     #[test]
-    fn test_plan_deserialize_aliases() {
-        let plan = serde_json::from_value::<Plan>(json!("Free")).unwrap();
-        assert_eq!(plan, Plan::ZedFree);
+    fn test_plan_v1_deserialize_aliases() {
+        let plan = serde_json::from_value::<PlanV1>(json!("Free")).unwrap();
+        assert_eq!(plan, PlanV1::ZedFree);
 
-        let plan = serde_json::from_value::<Plan>(json!("ZedPro")).unwrap();
-        assert_eq!(plan, Plan::ZedPro);
+        let plan = serde_json::from_value::<PlanV1>(json!("ZedPro")).unwrap();
+        assert_eq!(plan, PlanV1::ZedPro);
 
-        let plan = serde_json::from_value::<Plan>(json!("ZedProTrial")).unwrap();
-        assert_eq!(plan, Plan::ZedProTrial);
+        let plan = serde_json::from_value::<PlanV1>(json!("ZedProTrial")).unwrap();
+        assert_eq!(plan, PlanV1::ZedProTrial);
+    }
+
+    #[test]
+    fn test_plan_v2_deserialize_snake_case() {
+        let plan = serde_json::from_value::<PlanV2>(json!("zed_free")).unwrap();
+        assert_eq!(plan, PlanV2::ZedFree);
+
+        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro")).unwrap();
+        assert_eq!(plan, PlanV2::ZedPro);
+
+        let plan = serde_json::from_value::<PlanV2>(json!("zed_pro_trial")).unwrap();
+        assert_eq!(plan, PlanV2::ZedProTrial);
     }
 
     #[test]

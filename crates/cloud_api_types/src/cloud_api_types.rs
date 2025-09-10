@@ -1,6 +1,7 @@
 mod timestamp;
 pub mod websocket_protocol;
 
+use cloud_llm_client::Plan;
 use serde::{Deserialize, Serialize};
 
 pub use crate::timestamp::Timestamp;
@@ -27,13 +28,19 @@ pub struct AuthenticatedUser {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlanInfo {
-    pub plan: cloud_llm_client::Plan,
+    pub plan: cloud_llm_client::PlanV1,
     pub subscription_period: Option<SubscriptionPeriod>,
     pub usage: cloud_llm_client::CurrentUsage,
     pub trial_started_at: Option<Timestamp>,
     pub is_usage_based_billing_enabled: bool,
     pub is_account_too_young: bool,
     pub has_overdue_invoices: bool,
+}
+
+impl PlanInfo {
+    pub fn plan(&self) -> Plan {
+        Plan::V1(self.plan)
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
