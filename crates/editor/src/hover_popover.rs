@@ -993,7 +993,7 @@ mod tests {
         actions::ConfirmCompletion,
         editor_tests::{handle_completion_request, init_test},
         hover_links::update_inlay_link_and_hover_points,
-        inlay_hint_cache::tests::{cached_hint_labels, visible_hint_labels},
+        inlays::inlay_hints::tests::{cached_hint_labels, visible_hint_labels},
         test::editor_lsp_test_context::EditorLspTestContext,
     };
     use collections::BTreeSet;
