@@ -24418,5 +24418,5 @@ pub fn multibuffer_context_lines(cx: &App) -> u32 {
     EditorSettings::try_get(cx)
         .map(|settings| settings.excerpt_context_lines)
         .unwrap_or(2)
-        .clamp(1, 32)
+        .min(32)
 }
