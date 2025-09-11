@@ -5612,9 +5612,18 @@ impl Render for ProjectPanel {
                                 .block_mouse_except_scroll()
                                 .flex_grow()
                                 .when(
-                                    self.drag_target_entry.as_ref().is_some_and(|entry| {
-                                        matches!(entry, DragTarget::Background)
-                                    }),
+                                    self.drag_target_entry.as_ref().is_some_and(
+                                        |entry| match entry {
+                                            DragTarget::Background => true,
+                                            DragTarget::Entry {
+                                                highlight_entry_id, ..
+                                            } => {
+                                                self.last_worktree_root_id.is_some_and(|root_id| {
+                                                    *highlight_entry_id == root_id
+                                                })
+                                            }
+                                        },
+                                    ),
                                     |div| div.bg(cx.theme().colors().drop_target_background),
                                 )
                                 .on_drag_move::<DraggedSelection>(cx.listener(
