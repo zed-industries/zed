@@ -642,7 +642,9 @@
       "ctrl-k shift-up": "workspace::SwapPaneUp",
       "ctrl-k shift-down": "workspace::SwapPaneDown",
       "ctrl-shift-x": "zed::Extensions",
-      "ctrl-shift-r": "task::Rerun",
+      // All task parameters are captured and unchanged between reruns by default.
+      // Use the `"reevaluate_context"` parameter to control this.
+      "ctrl-shift-r": ["task::Rerun", { "reevaluate_context": false }],
       "alt-t": "task::Rerun",
       "shift-alt-t": "task::Spawn",
       "shift-alt-r": ["task::Spawn", { "reveal_target": "center" }],
