@@ -5609,15 +5609,16 @@ impl Render for ProjectPanel {
                                                             drag_state.active_selection.entry_id,
                                                             cx,
                                                         )
-                                                        .map(|e| e.path.parent())
-                                                        .flatten()
+                                                        .and_then(|e| {
+                                                            e.path.parent().map(|p| p.to_path_buf())
+                                                        })
                                                     {
                                                         let project = this.project.read(cx);
                                                         project
                                                             .path_for_entry(last_root_id, cx)
                                                             .is_some_and(|p| {
                                                                 p.path.as_ref()
-                                                                    == active_parent_path
+                                                                    == active_parent_path.as_path()
                                                             })
                                                     } else {
                                                         false
