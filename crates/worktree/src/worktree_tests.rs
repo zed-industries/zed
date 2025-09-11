@@ -2201,7 +2201,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
 
     // Ignore statuses are updated when excludesFile changes
     fs.write(
-        Path::new(path!("/home/zed/.config/git/ignore")),
+        &home.join(".config").join("git").join("ignore"),
         "/bar\nbaz\n".as_bytes(),
     )
     .await
@@ -2225,7 +2225,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
 
     // Statuses are updated when .git added/removed
     fs.remove_dir(
-        Path::new(path!("/home/zed/project/subrepo/.git")),
+        &home.join("project").join("subrepo").join(".git"),
         RemoveOptions {
             recursive: true,
             ..Default::default()

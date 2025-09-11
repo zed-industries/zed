@@ -7993,7 +7993,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
                 .read(cx)
                 .work_directory_abs_path
                 .as_ref(),
-            Path::new(path!("/home/zed"))
+            home,
         );
     });
 }
