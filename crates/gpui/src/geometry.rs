@@ -1567,6 +1567,7 @@ impl<T: PartialOrd + Clone + Debug + Default + PartialEq> Bounds<T> {
     /// # Returns
     ///
     /// Returns `true` if either the width or the height of the bounds is less than or equal to zero, indicating an empty area.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.size.width <= T::default() || self.size.height <= T::default()
     }
@@ -2112,7 +2113,7 @@ impl From<Pixels> for Edges<Pixels> {
 }
 
 /// Identifies a corner of a 2d box.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Corner {
     /// The top left corner
     TopLeft,
@@ -2130,9 +2131,10 @@ impl Corner {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Corner;
+    /// # use gpui::Corner;
     /// assert_eq!(Corner::TopLeft.opposite_corner(), Corner::BottomRight);
     /// ```
+    #[must_use]
     pub fn opposite_corner(self) -> Self {
         match self {
             Corner::TopLeft => Corner::BottomRight,
@@ -2147,10 +2149,11 @@ impl Corner {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Corner;
+    /// # use gpui::{Axis, Corner};
     /// let result = Corner::TopLeft.other_side_corner_along(Axis::Horizontal);
     /// assert_eq!(result, Corner::TopRight);
     /// ```
+    #[must_use]
     pub fn other_side_corner_along(self, axis: Axis) -> Self {
         match axis {
             Axis::Vertical => match self {
@@ -2232,7 +2235,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Corner, Corners};
+    /// # use gpui::{Corner, Corners};
     /// let corners = Corners {
     ///     top_left: 1,
     ///     top_right: 2,
@@ -2241,6 +2244,7 @@ where
     /// };
     /// assert_eq!(corners.corner(Corner::BottomLeft), 3);
     /// ```
+    #[must_use]
     pub fn corner(&self, corner: Corner) -> T {
         match corner {
             Corner::TopLeft => self.top_left.clone(),
@@ -2265,7 +2269,7 @@ impl Corners<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Corners, AbsoluteLength, Pixels, Size};
+    /// # use gpui::{Corners, AbsoluteLength, Pixels, Rems, Size};
     /// let corners = Corners {
     ///     top_left: AbsoluteLength::Pixels(Pixels(15.0)),
     ///     top_right: AbsoluteLength::Rems(Rems(1.0)),
@@ -2273,7 +2277,7 @@ impl Corners<AbsoluteLength> {
     ///     bottom_left: AbsoluteLength::Rems(Rems(2.0)),
     /// };
     /// let rem_size = Pixels(16.0);
-    /// let corners_in_pixels = corners.to_pixels(size, rem_size);
+    /// let corners_in_pixels = corners.to_pixels(rem_size);
     ///
     /// assert_eq!(corners_in_pixels.top_left, Pixels(15.0));
     /// assert_eq!(corners_in_pixels.top_right, Pixels(16.0)); // 1 rem converted to pixels
@@ -2306,7 +2310,7 @@ impl Corners<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Corners, Pixels};
+    /// # use gpui::{Corners, Pixels, ScaledPixels};
     /// let corners = Corners {
     ///     top_left: Pixels(10.0),
     ///     top_right: Pixels(20.0),
@@ -2319,6 +2323,7 @@ impl Corners<Pixels> {
     /// assert_eq!(scaled_corners.bottom_right, ScaledPixels(60.0));
     /// assert_eq!(scaled_corners.bottom_left, ScaledPixels(80.0));
     /// ```
+    #[must_use]
     pub fn scale(&self, factor: f32) -> Corners<ScaledPixels> {
         Corners {
             top_left: self.top_left.scale(factor),
@@ -2333,6 +2338,7 @@ impl Corners<Pixels> {
     /// # Returns
     ///
     /// The maximum `Pixels` value among all four corners.
+    #[must_use]
     pub fn max(&self) -> Pixels {
         self.top_left
             .max(self.top_right)
@@ -2351,6 +2357,7 @@ impl<T: Div<f32, Output = T> + Ord + Clone + Debug + Default + PartialEq> Corner
     /// # Returns
     ///
     /// Corner radii values clamped to fit.
+    #[must_use]
     pub fn clamp_radii_for_quad_size(self, size: Size<T>) -> Corners<T> {
         let max = cmp::min(size.width, size.height) / 2.;
         Corners {
@@ -2380,7 +2387,7 @@ impl<T: Clone + Debug + Default + PartialEq> Corners<T> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Corners, Pixels};
+    /// # use gpui::{Corners, Pixels, Rems};
     /// let corners = Corners {
     ///     top_left: Pixels(10.0),
     ///     top_right: Pixels(20.0),
@@ -2395,6 +2402,7 @@ impl<T: Clone + Debug + Default + PartialEq> Corners<T> {
     ///     bottom_left: Rems(2.5),
     /// });
     /// ```
+    #[must_use]
     pub fn map<U>(&self, f: impl Fn(&T) -> U) -> Corners<U>
     where
         U: Clone + Debug + Default + PartialEq,
