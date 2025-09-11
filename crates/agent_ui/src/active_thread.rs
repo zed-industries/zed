@@ -53,6 +53,8 @@ use util::markdown::MarkdownCodeBlock;
 use workspace::{CollaboratorId, Workspace};
 use zed_actions::assistant::OpenRulesLibrary;
 
+use crate::ManageProfiles;
+
 const CODEBLOCK_CONTAINER_GROUP: &str = "codeblock_container";
 const EDIT_PREVIOUS_MESSAGE_MIN_LINES: usize = 1;
 const RESPONSE_PADDING_X: Pixels = px(19.);
@@ -3283,19 +3285,35 @@ impl ActiveThread {
             return div().into_any();
         };
 
-        let user_rules_text = if project_context.user_rules.is_empty() {
+        let default_rules_text = if project_context.user_rules.is_empty() {
             None
         } else if project_context.user_rules.len() == 1 {
             let user_rules = &project_context.user_rules[0];
 
             match user_rules.title.as_ref() {
-                Some(title) => Some(format!("Using \"{title}\" user rule")),
-                None => Some("Using user rule".into()),
+                Some(title) => Some(format!("Using \"{title}\" default rule")),
+                None => Some("Using default rule".into()),
             }
         } else {
             Some(format!(
-                "Using {} user rules",
+                "Using {} default rules",
                 project_context.user_rules.len()
+            ))
+        };
+
+        let profile_rules_text = if project_context.profile_rules.is_empty() {
+            None
+        } else if project_context.profile_rules.len() == 1 {
+            let profile_rules = &project_context.profile_rules[0];
+
+            match profile_rules.title.as_ref() {
+                Some(title) => Some(format!("Using \"{title}\" profile rule")),
+                None => Some("Using profile rule".into()),
+            }
+        } else {
+            Some(format!(
+                "Using {} profile rules",
+                project_context.profile_rules.len()
             ))
         };
 
@@ -3303,6 +3321,11 @@ impl ActiveThread {
             .user_rules
             .first()
             .map(|user_rules| user_rules.uuid.0);
+
+        let _first_profile_rules_id = project_context
+            .profile_rules
+            .first()
+            .map(|profile_rules| profile_rules.uuid.0);
 
         let rules_files = project_context
             .worktrees
@@ -3319,7 +3342,8 @@ impl ActiveThread {
             rules_files => Some(format!("Using {} project rules files", rules_files.len())),
         };
 
-        if user_rules_text.is_none() && rules_file_text.is_none() {
+        if default_rules_text.is_none() && profile_rules_text.is_none() && rules_file_text.is_none()
+        {
             return div().into_any();
         }
 
@@ -3327,7 +3351,7 @@ impl ActiveThread {
             .pt_2()
             .px_2p5()
             .gap_1()
-            .when_some(user_rules_text, |parent, user_rules_text| {
+            .when_some(default_rules_text, |parent, default_rules_text| {
                 parent.child(
                     h_flex()
                         .w_full()
@@ -3337,7 +3361,7 @@ impl ActiveThread {
                                 .color(Color::Disabled),
                         )
                         .child(
-                            Label::new(user_rules_text)
+                            Label::new(default_rules_text)
                                 .size(LabelSize::XSmall)
                                 .color(Color::Muted)
                                 .truncate()
@@ -3351,7 +3375,7 @@ impl ActiveThread {
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Ignored)
                                 // TODO: Figure out a way to pass focus handle here so we can display the `OpenRulesLibrary`  keybinding
-                                .tooltip(Tooltip::text("View User Rules"))
+                                .tooltip(Tooltip::text("View Default Rules"))
                                 .on_click(move |_event, window, cx| {
                                     window.dispatch_action(
                                         Box::new(OpenRulesLibrary {
@@ -3359,6 +3383,43 @@ impl ActiveThread {
                                         }),
                                         cx,
                                     )
+                                }),
+                        ),
+                )
+            })
+            .when_some(profile_rules_text, |parent, profile_rules_text| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .child(
+                            Icon::new(RULES_ICON)
+                                .size(IconSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                        .child(
+                            Label::new(profile_rules_text)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted)
+                                .truncate()
+                                .buffer_font(cx)
+                                .ml_1p5()
+                                .mr_0p5(),
+                        )
+                        .child(
+                            IconButton::new("open-profile-prompt-library", IconName::ArrowUpRight)
+                                .shape(ui::IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Ignored)
+                                .tooltip(Tooltip::text("View Profile Rules"))
+                                .on_click({
+                                    let thread = self.thread.clone();
+                                    move |_event, window, cx| {
+                                        let profile_id = thread.read(cx).profile().id().clone();
+                                        window.dispatch_action(
+                                            Box::new(ManageProfiles::configure_rules(profile_id)),
+                                            cx,
+                                        )
+                                    }
                                 }),
                         ),
                 )

@@ -46,6 +46,7 @@ pub struct AgentProfileSettings {
     pub tools: IndexMap<Arc<str>, bool>,
     pub enable_all_context_servers: bool,
     pub context_servers: IndexMap<Arc<str>, ContextServerPreset>,
+    pub rules: IndexMap<String, bool>,
 }
 
 impl AgentProfileSettings {

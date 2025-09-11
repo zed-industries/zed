@@ -216,6 +216,7 @@ impl AgentSettingsContent {
                         )
                     })
                     .collect(),
+                rules: profile_settings.rules,
             },
         );
 
@@ -392,6 +393,8 @@ pub struct AgentProfileContent {
     pub enable_all_context_servers: Option<bool>,
     #[serde(default)]
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
+    #[serde(default)]
+    pub rules: IndexMap<String, bool>,
 }
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -497,6 +500,7 @@ impl Settings for AgentSettings {
                                         )
                                     })
                                     .collect(),
+                                rules: profile.rules.clone(),
                             },
                         )
                     }));
@@ -533,5 +537,232 @@ impl Settings for AgentSettings {
 fn merge<T>(target: &mut T, value: Option<T>) {
     if let Some(value) = value {
         *target = value;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use collections::IndexMap;
+
+    #[test]
+    fn test_agent_profile_settings_with_rules() {
+        let mut profile = AgentProfileSettings {
+            name: "Test Profile".into(),
+            tools: IndexMap::default(),
+            enable_all_context_servers: false,
+            context_servers: IndexMap::default(),
+            rules: IndexMap::default(),
+        };
+
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440001".to_string(), true);
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440002".to_string(), false);
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440003".to_string(), true);
+
+        assert!(
+            profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440001")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            !profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440002")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440003")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            !profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440099")
+                .copied()
+                .unwrap_or(false)
+        );
+
+        assert_eq!(profile.rules.len(), 3);
+        let enabled_count = profile
+            .rules
+            .iter()
+            .filter(|(_, enabled)| **enabled)
+            .count();
+        assert_eq!(enabled_count, 2);
+    }
+
+    #[test]
+    fn test_agent_profile_settings_rules_serialization() {
+        let profile = AgentProfileSettings {
+            name: "Serialization Test".into(),
+            tools: IndexMap::from_iter([("tool1".into(), true), ("tool2".into(), false)]),
+            enable_all_context_servers: false,
+            context_servers: IndexMap::default(),
+            rules: IndexMap::from_iter([
+                ("rule1".to_string(), true),
+                ("rule2".to_string(), false),
+                ("rule3".to_string(), true),
+            ]),
+        };
+
+        assert!(profile.rules.contains_key("rule1"));
+        assert!(profile.rules.contains_key("rule2"));
+        assert!(profile.rules.contains_key("rule3"));
+        assert_eq!(profile.rules.len(), 3);
+    }
+
+    #[test]
+    fn test_agent_profile_settings_rules_edge_cases() {
+        let mut profile = AgentProfileSettings {
+            name: "Edge Cases Test".into(),
+            tools: IndexMap::default(),
+            enable_all_context_servers: false,
+            context_servers: IndexMap::default(),
+            rules: IndexMap::default(),
+        };
+
+        profile.rules.insert("".to_string(), true);
+        assert!(profile.rules.get("").copied().unwrap_or(false));
+
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440010".to_string(), true);
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440011".to_string(), false);
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440012".to_string(), true);
+
+        assert!(
+            profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440010")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            !profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440011")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440012")
+                .copied()
+                .unwrap_or(false)
+        );
+    }
+
+    #[test]
+    fn test_agent_profile_settings_rules_update() {
+        let mut profile = AgentProfileSettings {
+            name: "Update Test".into(),
+            tools: IndexMap::default(),
+            enable_all_context_servers: false,
+            context_servers: IndexMap::default(),
+            rules: IndexMap::default(),
+        };
+
+        assert!(
+            !profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440020")
+                .copied()
+                .unwrap_or(false)
+        );
+
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440020".to_string(), true);
+        assert!(
+            profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440020")
+                .copied()
+                .unwrap_or(false)
+        );
+
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440020".to_string(), false);
+        assert!(
+            !profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440020")
+                .copied()
+                .unwrap_or(false)
+        );
+
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440020".to_string(), true);
+        assert!(
+            profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440020")
+                .copied()
+                .unwrap_or(false)
+        );
+    }
+
+    #[test]
+    fn test_agent_profile_settings_structure_with_rules() {
+        let mut profile = AgentProfileSettings {
+            name: "Test Profile".into(),
+            tools: IndexMap::from_iter([("tool1".into(), true), ("tool2".into(), false)]),
+            enable_all_context_servers: false,
+            context_servers: IndexMap::default(),
+            rules: IndexMap::default(),
+        };
+
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440030".to_string(), true);
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440031".to_string(), false);
+        profile
+            .rules
+            .insert("550e8400-e29b-41d4-a716-446655440032".to_string(), true);
+
+        assert_eq!(profile.name, "Test Profile");
+        assert!(
+            profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440030")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            !profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440031")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440032")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert_eq!(profile.rules.len(), 3);
     }
 }

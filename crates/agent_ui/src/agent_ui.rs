@@ -215,12 +215,22 @@ impl ExternalAgent {
 pub struct ManageProfiles {
     #[serde(default)]
     pub customize_tools: Option<AgentProfileId>,
+    #[serde(default)]
+    pub configure_rules: Option<AgentProfileId>,
 }
 
 impl ManageProfiles {
     pub fn customize_tools(profile_id: AgentProfileId) -> Self {
         Self {
             customize_tools: Some(profile_id),
+            configure_rules: None,
+        }
+    }
+
+    pub fn configure_rules(profile_id: AgentProfileId) -> Self {
+        Self {
+            customize_tools: None,
+            configure_rules: Some(profile_id),
         }
     }
 }

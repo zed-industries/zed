@@ -1,4 +1,4 @@
-mod profile_modal_header;
+pub mod profile_modal_header;
 
 use std::sync::Arc;
 
@@ -7,12 +7,15 @@ use assistant_tool::ToolWorkingSet;
 use editor::Editor;
 use fs::Fs;
 use gpui::{DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Subscription, prelude::*};
+use prompt_store::PromptStore;
 use settings::Settings as _;
 use ui::{
     KeyBinding, ListItem, ListItemSpacing, ListSeparator, Navigable, NavigableEntry, prelude::*,
 };
-use workspace::{ModalView, Workspace};
 
+use workspace::{ModalView, Workspace, with_active_or_new_workspace};
+
+use crate::agent_configuration::configure_profile_rules_modal::ConfigureProfileRulesModal;
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AgentPanel, ManageProfiles};
@@ -87,6 +90,7 @@ pub struct ViewProfileMode {
     fork_profile: NavigableEntry,
     configure_tools: NavigableEntry,
     configure_mcps: NavigableEntry,
+    configure_rules: NavigableEntry,
     cancel_item: NavigableEntry,
 }
 
@@ -101,6 +105,7 @@ pub struct ManageProfilesModal {
     tools: Entity<ToolWorkingSet>,
     focus_handle: FocusHandle,
     mode: Mode,
+    prompt_store: Option<Entity<PromptStore>>,
 }
 
 impl ManageProfilesModal {
@@ -114,11 +119,14 @@ impl ManageProfilesModal {
                 let fs = workspace.app_state().fs.clone();
                 let thread_store = panel.read(cx).thread_store();
                 let tools = thread_store.read(cx).tools();
+                let prompt_store = thread_store.read(cx).prompt_store().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let mut this = Self::new(fs, tools, window, cx);
+                    let mut this = Self::new(fs, tools, prompt_store, window, cx);
 
                     if let Some(profile_id) = action.customize_tools.clone() {
                         this.configure_builtin_tools(profile_id, window, cx);
+                    } else if let Some(profile_id) = action.configure_rules.clone() {
+                        this.configure_profile_rules(profile_id, window, cx);
                     }
 
                     this
@@ -130,6 +138,7 @@ impl ManageProfilesModal {
     pub fn new(
         fs: Arc<dyn Fs>,
         tools: Entity<ToolWorkingSet>,
+        prompt_store: Option<Entity<PromptStore>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -140,6 +149,7 @@ impl ManageProfilesModal {
             tools,
             focus_handle,
             mode: Mode::choose_profile(window, cx),
+            prompt_store,
         }
     }
 
@@ -177,6 +187,7 @@ impl ManageProfilesModal {
             fork_profile: NavigableEntry::focusable(cx),
             configure_tools: NavigableEntry::focusable(cx),
             configure_mcps: NavigableEntry::focusable(cx),
+            configure_rules: NavigableEntry::focusable(cx),
             cancel_item: NavigableEntry::focusable(cx),
         });
         self.focus_handle(cx).focus(window);
@@ -256,6 +267,56 @@ impl ManageProfilesModal {
         self.focus_handle(cx).focus(window);
     }
 
+    fn configure_profile_rules(
+        &mut self,
+        profile_id: AgentProfileId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let fs = self.fs.clone();
+        let prompt_store = self.prompt_store.clone();
+        let tools = self.tools.clone();
+
+        cx.emit(DismissEvent);
+
+        cx.defer(move |cx| {
+            with_active_or_new_workspace(cx, move |workspace, window, cx| {
+                workspace.toggle_modal(window, cx, move |_window, cx| {
+                    let fs_clone = fs.clone();
+                    let tools_clone = tools.clone();
+                    let prompt_store_clone = prompt_store.clone();
+                    let profile_id_clone = profile_id.clone();
+
+                    let mut modal =
+                        ConfigureProfileRulesModal::new(fs, profile_id, prompt_store, cx);
+
+                    modal.set_go_back_callback(Box::new(move |cx| {
+                        let fs_for_modal = fs_clone.clone();
+                        let tools_for_modal = tools_clone.clone();
+                        let prompt_store_for_modal = prompt_store_clone.clone();
+                        let profile_id_for_modal = profile_id_clone.clone();
+
+                        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+                            workspace.toggle_modal(window, cx, move |window, cx| {
+                                let mut manage_modal = ManageProfilesModal::new(
+                                    fs_for_modal,
+                                    tools_for_modal,
+                                    prompt_store_for_modal,
+                                    window,
+                                    cx,
+                                );
+                                manage_modal.view_profile(profile_id_for_modal, window, cx);
+                                manage_modal
+                            });
+                        });
+                    }));
+
+                    modal
+                });
+            });
+        });
+    }
+
     fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match &self.mode {
             Mode::ChooseProfile { .. } => {}
@@ -312,51 +373,6 @@ impl Focusable for ManageProfilesModal {
 impl EventEmitter<DismissEvent> for ManageProfilesModal {}
 
 impl ManageProfilesModal {
-    fn render_profile(
-        &self,
-        profile: &ProfileEntry,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
-        div()
-            .id(SharedString::from(format!("profile-{}", profile.id)))
-            .track_focus(&profile.navigation.focus_handle)
-            .on_action({
-                let profile_id = profile.id.clone();
-                cx.listener(move |this, _: &menu::Confirm, window, cx| {
-                    this.view_profile(profile_id.clone(), window, cx);
-                })
-            })
-            .child(
-                ListItem::new(SharedString::from(format!("profile-{}", profile.id)))
-                    .toggle_state(profile.navigation.focus_handle.contains_focused(window, cx))
-                    .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
-                    .child(Label::new(profile.name.clone()))
-                    .end_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Label::new("Customize")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .children(KeyBinding::for_action_in(
-                                &menu::Confirm,
-                                &self.focus_handle,
-                                window,
-                                cx,
-                            )),
-                    )
-                    .on_click({
-                        let profile_id = profile.id.clone();
-                        cx.listener(move |this, _, window, cx| {
-                            this.view_profile(profile_id.clone(), window, cx);
-                        })
-                    }),
-            )
-    }
-
     fn render_choose_profile(
         &mut self,
         mode: ChooseProfileMode,
@@ -372,11 +388,38 @@ impl ManageProfilesModal {
                     v_flex()
                         .pb_1()
                         .child(ListSeparator)
-                        .children(
-                            mode.builtin_profiles
-                                .iter()
-                                .map(|profile| self.render_profile(profile, window, cx)),
-                        )
+                        .children(mode.builtin_profiles.iter().map(|profile| {
+                            div()
+                                .id(SharedString::from(format!("profile-{}", profile.id)))
+                                .track_focus(&profile.navigation.focus_handle)
+                                .on_action({
+                                    let profile_id = profile.id.clone();
+                                    cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                        this.view_profile(profile_id.clone(), window, cx);
+                                    })
+                                })
+                                .child(
+                                    ListItem::new(SharedString::from(format!(
+                                        "profile-item-{}",
+                                        profile.id
+                                    )))
+                                    .toggle_state(
+                                        profile
+                                            .navigation
+                                            .focus_handle
+                                            .contains_focused(window, cx),
+                                    )
+                                    .inset(true)
+                                    .spacing(ListItemSpacing::Sparse)
+                                    .child(Label::new(profile.name.clone()))
+                                    .on_click({
+                                        let profile_id = profile.id.clone();
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.view_profile(profile_id.clone(), window, cx);
+                                        })
+                                    }),
+                                )
+                        }))
                         .when(!mode.custom_profiles.is_empty(), |this| {
                             this.child(ListSeparator)
                                 .child(
@@ -386,11 +429,48 @@ impl ManageProfilesModal {
                                             .color(Color::Muted),
                                     ),
                                 )
-                                .children(
-                                    mode.custom_profiles
-                                        .iter()
-                                        .map(|profile| self.render_profile(profile, window, cx)),
-                                )
+                                .children(mode.custom_profiles.iter().map(|profile| {
+                                    div()
+                                        .id(SharedString::from(format!("profile-{}", profile.id)))
+                                        .track_focus(&profile.navigation.focus_handle)
+                                        .on_action({
+                                            let profile_id = profile.id.clone();
+                                            cx.listener(
+                                                move |this, _: &menu::Confirm, window, cx| {
+                                                    this.view_profile(
+                                                        profile_id.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                },
+                                            )
+                                        })
+                                        .child(
+                                            ListItem::new(SharedString::from(format!(
+                                                "profile-item-{}",
+                                                profile.id
+                                            )))
+                                            .toggle_state(
+                                                profile
+                                                    .navigation
+                                                    .focus_handle
+                                                    .contains_focused(window, cx),
+                                            )
+                                            .inset(true)
+                                            .spacing(ListItemSpacing::Sparse)
+                                            .child(Label::new(profile.name.clone()))
+                                            .on_click({
+                                                let profile_id = profile.id.clone();
+                                                cx.listener(move |this, _, window, cx| {
+                                                    this.view_profile(
+                                                        profile_id.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                            }),
+                                        )
+                                }))
                         })
                         .child(ListSeparator)
                         .child(
@@ -441,30 +521,37 @@ impl ManageProfilesModal {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let settings = AgentSettings::get_global(cx);
+        let base_profile_name = mode
+            .base_profile_id
+            .as_ref()
+            .and_then(|id| settings.profiles.get(id))
+            .map(|profile| profile.name.clone());
 
-        let base_profile_name = mode.base_profile_id.as_ref().map(|base_profile_id| {
-            settings
-                .profiles
-                .get(base_profile_id)
-                .map(|profile| profile.name.clone())
-                .unwrap_or_else(|| "Unknown".into())
-        });
-
-        v_flex()
-            .id("new-profile")
+        div()
             .track_focus(&self.focus_handle(cx))
+            .size_full()
             .child(ProfileModalHeader::new(
-                match &base_profile_name {
-                    Some(base_profile) => format!("Fork {base_profile}"),
-                    None => "New Profile".into(),
-                },
+                "New Profile",
                 match base_profile_name {
                     Some(_) => Some(IconName::Scissors),
                     None => Some(IconName::Plus),
                 },
             ))
-            .child(ListSeparator)
-            .child(h_flex().p_2().child(mode.name_editor))
+            .child(
+                v_flex()
+                    .pb_1()
+                    .child(ListSeparator)
+                    .child(div().p_2().child(mode.name_editor))
+                    .when_some(base_profile_name, |this, base_profile_name| {
+                        this.child(
+                            div()
+                                .px_2()
+                                .pb_2()
+                                .child(Label::new(format!("Based on: {}", base_profile_name))),
+                        )
+                    }),
+            )
+            .into_any_element()
     }
 
     fn render_view_profile(
@@ -611,6 +698,47 @@ impl ManageProfilesModal {
                                         }),
                                 ),
                         )
+                        .child(
+                            div()
+                                .id("configure-profile-rules")
+                                .track_focus(&mode.configure_rules.focus_handle)
+                                .on_action({
+                                    let profile_id = mode.profile_id.clone();
+                                    cx.listener(move |this, _: &menu::Confirm, window, cx| {
+                                        this.configure_profile_rules(
+                                            profile_id.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    })
+                                })
+                                .child(
+                                    ListItem::new("configure-profile-rules-item")
+                                        .toggle_state(
+                                            mode.configure_rules
+                                                .focus_handle
+                                                .contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ListItemSpacing::Sparse)
+                                        .start_slot(
+                                            Icon::new(IconName::Book)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(Label::new("Configure Profile Rules"))
+                                        .on_click({
+                                            let profile_id = mode.profile_id.clone();
+                                            cx.listener(move |this, _, window, cx| {
+                                                this.configure_profile_rules(
+                                                    profile_id.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            })
+                                        }),
+                                ),
+                        )
                         .child(ListSeparator)
                         .child(
                             div()
@@ -660,6 +788,7 @@ impl ManageProfilesModal {
         .entry(mode.fork_profile)
         .entry(mode.configure_tools)
         .entry(mode.configure_mcps)
+        .entry(mode.configure_rules)
         .entry(mode.cancel_item)
     }
 }

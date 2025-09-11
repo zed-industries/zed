@@ -45,7 +45,12 @@ impl AgentProfile {
                 .map(|profile| profile.enable_all_context_servers)
                 .unwrap_or_default(),
             context_servers: base_profile
-                .map(|profile| profile.context_servers)
+                .as_ref()
+                .map(|profile| profile.context_servers.clone())
+                .unwrap_or_default(),
+            rules: base_profile
+                .as_ref()
+                .map(|profile| profile.rules.clone())
                 .unwrap_or_default(),
         };
 
@@ -223,6 +228,206 @@ mod tests {
         assert_eq!(enabled_tools, expected_tools);
     }
 
+    #[gpui::test]
+    async fn test_profile_rules_configuration(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let id = AgentProfileId("test_profile_with_rules".into());
+        let profile_settings = cx.read(|cx| {
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(&id)
+                .unwrap()
+                .clone()
+        });
+
+        assert!(
+            profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440001")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            !profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440002")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440003")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            !profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440099")
+                .copied()
+                .unwrap_or(false)
+        );
+
+        let enabled_rules_count = profile_settings
+            .rules
+            .iter()
+            .filter(|(_, enabled)| **enabled)
+            .count();
+        assert_eq!(enabled_rules_count, 2);
+    }
+
+    #[gpui::test]
+    async fn test_profile_rules_inheritance(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let base_id = AgentProfileId::default();
+        let derived_id = AgentProfileId("derived_profile".into());
+
+        let base_profile = cx.read(|cx| {
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(&base_id)
+                .unwrap()
+                .clone()
+        });
+
+        let derived_profile = cx.read(|cx| {
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(&derived_id)
+                .unwrap()
+                .clone()
+        });
+
+        assert_eq!(
+            base_profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440010"),
+            Some(&true)
+        );
+        assert_eq!(
+            derived_profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440010"),
+            Some(&true)
+        );
+
+        // Test that derived profile can override inherited rules
+        assert_eq!(
+            base_profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440011"),
+            Some(&true)
+        );
+        assert_eq!(
+            derived_profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440011"),
+            Some(&false)
+        );
+
+        // Test that derived profile can have its own rules
+        assert_eq!(
+            base_profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440012"),
+            None
+        );
+        assert_eq!(
+            derived_profile
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440012"),
+            Some(&true)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_profile_rules_validation(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let id = AgentProfileId("validation_test_profile".into());
+        let profile_settings = cx.read(|cx| {
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(&id)
+                .unwrap()
+                .clone()
+        });
+
+        assert!(
+            profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440020")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440021")
+                .copied()
+                .unwrap_or(false)
+        );
+        assert!(
+            profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440022")
+                .copied()
+                .unwrap_or(false)
+        );
+
+        // Test that disabled rules return false
+        assert!(
+            !profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440023")
+                .copied()
+                .unwrap_or(false)
+        );
+
+        // Test that non-existent rules return false
+        assert!(!profile_settings.rules.get("").copied().unwrap_or(false));
+        assert!(
+            !profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440099")
+                .copied()
+                .unwrap_or(false)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_profile_rules_empty_state(cx: &mut TestAppContext) {
+        init_test_settings(cx);
+
+        let id = AgentProfileId("empty_rules_profile".into());
+        let profile_settings = cx.read(|cx| {
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(&id)
+                .unwrap()
+                .clone()
+        });
+
+        assert!(profile_settings.rules.is_empty());
+        assert!(
+            !profile_settings
+                .rules
+                .get("550e8400-e29b-41d4-a716-446655440099")
+                .copied()
+                .unwrap_or(false)
+        );
+
+        let enabled_rules_count = profile_settings
+            .rules
+            .iter()
+            .filter(|(_, enabled)| **enabled)
+            .count();
+        assert_eq!(enabled_rules_count, 0);
+    }
+
     fn init_test_settings(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -236,12 +441,32 @@ mod tests {
 
         cx.update(|cx| {
             let mut agent_settings = AgentSettings::get_global(cx).clone();
+
+            if let Some(default_profile) =
+                agent_settings.profiles.get_mut(&AgentProfileId::default())
+            {
+                default_profile
+                    .rules
+                    .insert("550e8400-e29b-41d4-a716-446655440010".to_string(), true);
+                default_profile
+                    .rules
+                    .insert("550e8400-e29b-41d4-a716-446655440011".to_string(), true);
+            }
+
             agent_settings.profiles.insert(
                 AgentProfileId("write_minus_mcp".into()),
                 AgentProfileSettings {
                     name: "write_minus_mcp".into(),
+                    tools: agent_settings.profiles[&AgentProfileId::default()]
+                        .tools
+                        .clone(),
                     enable_all_context_servers: false,
-                    ..agent_settings.profiles[&AgentProfileId::default()].clone()
+                    context_servers: agent_settings.profiles[&AgentProfileId::default()]
+                        .context_servers
+                        .clone(),
+                    rules: agent_settings.profiles[&AgentProfileId::default()]
+                        .rules
+                        .clone(),
                 },
             );
             agent_settings.profiles.insert(
@@ -251,8 +476,67 @@ mod tests {
                     tools: IndexMap::default(),
                     enable_all_context_servers: false,
                     context_servers: IndexMap::from_iter([("mcp".into(), context_server_preset())]),
+                    rules: IndexMap::default(),
                 },
             );
+
+            agent_settings.profiles.insert(
+                AgentProfileId("test_profile_with_rules".into()),
+                AgentProfileSettings {
+                    name: "Test Profile with Rules".into(),
+                    tools: IndexMap::default(),
+                    enable_all_context_servers: false,
+                    context_servers: IndexMap::default(),
+                    rules: IndexMap::from_iter([
+                        ("550e8400-e29b-41d4-a716-446655440001".to_string(), true),
+                        ("550e8400-e29b-41d4-a716-446655440002".to_string(), false),
+                        ("550e8400-e29b-41d4-a716-446655440003".to_string(), true),
+                    ]),
+                },
+            );
+
+            agent_settings.profiles.insert(
+                AgentProfileId("derived_profile".into()),
+                AgentProfileSettings {
+                    name: "Derived Profile".into(),
+                    tools: IndexMap::default(),
+                    enable_all_context_servers: false,
+                    context_servers: IndexMap::default(),
+                    rules: IndexMap::from_iter([
+                        ("550e8400-e29b-41d4-a716-446655440010".to_string(), true), // Same as base
+                        ("550e8400-e29b-41d4-a716-446655440011".to_string(), false), // Overrides base
+                        ("550e8400-e29b-41d4-a716-446655440012".to_string(), true),  // New rule
+                    ]),
+                },
+            );
+
+            agent_settings.profiles.insert(
+                AgentProfileId("validation_test_profile".into()),
+                AgentProfileSettings {
+                    name: "Validation Test Profile".into(),
+                    tools: IndexMap::default(),
+                    enable_all_context_servers: false,
+                    context_servers: IndexMap::default(),
+                    rules: IndexMap::from_iter([
+                        ("550e8400-e29b-41d4-a716-446655440020".to_string(), true),
+                        ("550e8400-e29b-41d4-a716-446655440021".to_string(), true),
+                        ("550e8400-e29b-41d4-a716-446655440022".to_string(), true),
+                        ("550e8400-e29b-41d4-a716-446655440023".to_string(), false),
+                    ]),
+                },
+            );
+
+            agent_settings.profiles.insert(
+                AgentProfileId("empty_rules_profile".into()),
+                AgentProfileSettings {
+                    name: "Empty Rules Profile".into(),
+                    tools: IndexMap::default(),
+                    enable_all_context_servers: false,
+                    context_servers: IndexMap::default(),
+                    rules: IndexMap::default(),
+                },
+            );
+
             AgentSettings::override_global(agent_settings, cx);
         })
     }

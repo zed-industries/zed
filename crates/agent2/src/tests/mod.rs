@@ -2536,3 +2536,205 @@ fn setup_context_server(
     cx.run_until_parked();
     mcp_tool_calls_rx
 }
+
+#[gpui::test]
+async fn test_profile_rules_integration(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "always_allow_tool_actions": true,
+                "profiles": {
+                    "rules_test": {
+                        "name": "Rules Test Profile",
+                        "tools": {
+                            EchoTool::name(): true,
+                        },
+                        "rules": {
+                            "test_rule_1": true,
+                            "test_rule_2": false,
+                            "coding_standard": true
+                        }
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, _| {
+        thread.set_profile(AgentProfileId("rules_test".into()))
+    });
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Test message with rules"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    thread.read_with(cx, |thread, _cx| {
+        assert_eq!(thread.profile(), &AgentProfileId("rules_test".into()));
+    });
+
+    let _completion = fake_model.pending_completions().pop().unwrap();
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::Text(
+        "Response with profile rules applied".into(),
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+
+    cx.run_until_parked();
+    drop(events);
+}
+
+#[gpui::test]
+async fn test_profile_rules_with_mcp_tools(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model,
+        thread,
+        context_server_store,
+        fs,
+        ..
+    } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "always_allow_tool_actions": true,
+                "profiles": {
+                    "combined_test": {
+                        "name": "Combined Test Profile",
+                        "enable_all_context_servers": true,
+                        "tools": {
+                            EchoTool::name(): true,
+                        },
+                        "rules": {
+                            "mcp_rule": true,
+                            "disabled_rule": false
+                        }
+                    },
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, _| {
+        thread.set_profile(AgentProfileId("combined_test".into()))
+    });
+
+    let _mcp_tool_calls = setup_context_server(
+        "combined_server",
+        vec![context_server::types::Tool {
+            name: "combined_tool".into(),
+            description: None,
+            input_schema: serde_json::to_value(
+                EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
+            )
+            .unwrap(),
+            output_schema: None,
+            annotations: None,
+        }],
+        &context_server_store,
+        cx,
+    );
+
+    let events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Test with both rules and MCP"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+
+    let completion = fake_model.pending_completions().pop().unwrap();
+    assert_eq!(
+        tool_names_for_completion(&completion),
+        vec!["combined_tool"]
+    );
+
+    thread.read_with(cx, |thread, _cx| {
+        assert_eq!(thread.profile(), &AgentProfileId("combined_test".into()));
+    });
+
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    cx.run_until_parked();
+    drop(events);
+}
+
+#[gpui::test]
+async fn test_profile_rules_inheritance_integration(cx: &mut TestAppContext) {
+    let ThreadTest {
+        model, thread, fs, ..
+    } = setup(cx, TestModel::Fake).await;
+    let _fake_model = model.as_fake();
+
+    fs.insert_file(
+        paths::settings_file(),
+        json!({
+            "agent": {
+                "always_allow_tool_actions": true,
+                "profiles": {
+                    "base": {
+                        "name": "Base Profile",
+                        "tools": {},
+                        "rules": {
+                            "base_rule": true,
+                            "overridable_rule": true
+                        }
+                    },
+                    "derived": {
+                        "name": "Derived Profile",
+                        "tools": {},
+                        "rules": {
+                            "base_rule": true,
+                            "overridable_rule": false,
+                            "derived_rule": true
+                        }
+                    }
+                }
+            }
+        })
+        .to_string()
+        .into_bytes(),
+    )
+    .await;
+    cx.run_until_parked();
+
+    thread.update(cx, |thread, _| {
+        thread.set_profile(AgentProfileId("base".into()))
+    });
+
+    thread.read_with(cx, |thread, _cx| {
+        assert_eq!(thread.profile(), &AgentProfileId("base".into()));
+    });
+
+    thread.update(cx, |thread, _| {
+        thread.set_profile(AgentProfileId("derived".into()))
+    });
+
+    thread.read_with(cx, |thread, _cx| {
+        assert_eq!(thread.profile(), &AgentProfileId("derived".into()));
+    });
+
+    let _events = thread.update(cx, |thread, cx| {
+        thread
+            .send(UserMessageId::new(), ["Test derived profile"], cx)
+            .unwrap()
+    });
+    cx.run_until_parked();
+}

@@ -108,8 +108,10 @@ You can also extend the set of available tools via [MCP Servers](./mcp.md).
 
 ### Profiles {#profiles}
 
-Profiles act as a way to group tools.
+Profiles act as a way to group tools and configure rules.
 Zed offers three built-in profiles and you can create as many custom ones as you want.
+
+Each profile can have its own set of rules that are automatically included in conversations when that profile is active, in addition to any default rules you have configured.
 
 #### Built-in Profiles {#built-in-profiles}
 
@@ -117,7 +119,7 @@ Zed offers three built-in profiles and you can create as many custom ones as you
 - `Ask`: A profile with read-only tools. Best for asking questions about your code base without the concern of the agent making changes.
 - `Minimal`: A profile with no tools. Best for general conversations with the LLM where no knowledge of your code base is necessary.
 
-You can explore the exact tools enabled in each profile by clicking on the profile selector button > `Configure Profiles…` > the one you want to check out.
+You can explore the exact tools and rules enabled in each profile by clicking on the profile selector button > `Configure Profiles…` > the one you want to check out.
 
 #### Custom Profiles {#custom-profiles}
 
@@ -125,11 +127,25 @@ You can create a custom profile via the `Configure Profiles…` option in the pr
 From here, you can choose to `Add New Profile` or fork an existing one with a custom name and your preferred set of tools.
 
 You can also override built-in profiles.
-With a built-in profile selected, in the profile selector, navigate to `Configure Tools`, and select the tools you'd like.
+With a built-in profile selected, in the profile selector, navigate to `Configure Tools` to select the tools you'd like, or `Configure Profile Rules` to choose which rules should be active for that profile.
 
 Zed will store this profile in your settings using the same profile name as the default you overrode.
 
 All custom profiles can be edited via the UI or by hand under the `assistant.profiles` key in your `settings.json` file.
+
+#### Profile Rules {#profile-rules}
+
+Profile rules are additional rules that are automatically included when using a specific profile. These work alongside your default rules to provide profile-specific behavior.
+
+To configure profile rules:
+
+1. Click on the profile selector in the Agent Panel
+2. Select `Configure Profiles…`
+3. Choose the profile you want to customize
+4. Click `Configure Profile Rules`
+5. Toggle the rules you want active for this profile
+
+You can see which profile rules are active in the current thread by looking at the rules indicator in the thread view, which will show both default rules and profile rules separately.
 
 ### Tool Approval
 

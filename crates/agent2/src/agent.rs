@@ -6,7 +6,7 @@ use crate::{HistoryStore, TerminalHandle, ThreadEnvironment, TitleUpdated, Token
 use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
+use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
@@ -21,7 +21,7 @@ use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
 };
-use settings::update_settings_file;
+use settings::{Settings, update_settings_file};
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -233,7 +233,7 @@ impl NativeAgent {
         log::debug!("Creating new NativeAgent");
 
         let project_context = cx
-            .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), cx))?
+            .update(|cx| Self::build_project_context(&project, prompt_store.as_ref(), None, cx))?
             .await;
 
         cx.new(|cx| {
@@ -344,7 +344,7 @@ impl NativeAgent {
         while needs_refresh.changed().await.is_ok() {
             let project_context = this
                 .update(cx, |this, cx| {
-                    Self::build_project_context(&this.project, this.prompt_store.as_ref(), cx)
+                    Self::build_project_context(&this.project, this.prompt_store.as_ref(), None, cx)
                 })?
                 .await;
             this.update(cx, |this, cx| {
@@ -358,6 +358,7 @@ impl NativeAgent {
     fn build_project_context(
         project: &Entity<Project>,
         prompt_store: Option<&Entity<PromptStore>>,
+        profile_id: Option<&AgentProfileId>,
         cx: &mut App,
     ) -> Task<ProjectContext> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
@@ -380,9 +381,46 @@ impl NativeAgent {
             Task::ready(vec![])
         };
 
+        let profile_id = profile_id.unwrap_or(&AgentSettings::get_global(cx).default_profile);
+        let profile_rules_task = {
+            let settings = AgentSettings::get_global(cx);
+            if let (Some(profile_settings), Some(prompt_store)) =
+                (settings.profiles.get(profile_id), prompt_store.as_ref())
+            {
+                let enabled_rules: Vec<_> = profile_settings
+                    .rules
+                    .iter()
+                    .filter_map(|(rule_id_string, &enabled)| {
+                        if enabled {
+                            match PromptId::from_string(rule_id_string) {
+                                Ok(rule_id) => Some(rule_id),
+                                Err(_) => None,
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                prompt_store.read_with(cx, |prompt_store, cx| {
+                    let load_tasks = enabled_rules.into_iter().map(|rule_id| {
+                        let metadata = prompt_store.metadata(rule_id);
+                        let contents = prompt_store.load(rule_id, cx);
+                        async move { (rule_id, metadata, contents.await) }
+                    });
+                    cx.background_spawn(future::join_all(load_tasks))
+                })
+            } else {
+                Task::ready(vec![])
+            }
+        };
+
         cx.spawn(async move |_cx| {
-            let (worktrees, default_user_rules) =
-                future::join(future::join_all(worktree_tasks), default_user_rules_task).await;
+            let ((worktrees, default_user_rules), profile_rule_results) = future::join(
+                future::join(future::join_all(worktree_tasks), default_user_rules_task),
+                profile_rules_task,
+            )
+            .await;
 
             let worktrees = worktrees
                 .into_iter()
@@ -419,7 +457,44 @@ impl NativeAgent {
                 })
                 .collect::<Vec<_>>();
 
-            ProjectContext::new(worktrees, default_user_rules)
+            let profile_rules: Vec<UserRulesContext> = profile_rule_results
+                .into_iter()
+                .filter_map(|(rule_id, metadata, content_result)| match rule_id {
+                    PromptId::User { uuid } => {
+                        let is_duplicate = default_user_rules.iter().any(|rule| rule.uuid == uuid);
+
+                        if is_duplicate {
+                            return None;
+                        }
+
+                        let title = metadata
+                            .and_then(|m| m.title)
+                            .map(|t| t.to_string())
+                            .unwrap_or_else(|| format!("Profile Rule ({})", uuid.0));
+
+                        let contents = match content_result {
+                            Ok(contents) => contents,
+                            Err(err) => {
+                                format!("Error loading rule content: {}", err)
+                            }
+                        };
+
+                        Some(UserRulesContext {
+                            uuid,
+                            title: Some(title),
+                            contents,
+                        })
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            let context = ProjectContext::new_with_profile_rules(
+                worktrees,
+                default_user_rules.clone(),
+                profile_rules.clone(),
+            );
+            context
         })
     }
 

@@ -52,6 +52,8 @@ use workspace::{CollaboratorId, Workspace};
 use zed_actions::agent::{Chat, ToggleModelSelector};
 use zed_actions::assistant::OpenRulesLibrary;
 
+use crate::ManageProfiles;
+
 use super::entry_view_state::EntryViewState;
 use crate::acp::AcpModelSelectorPopover;
 use crate::acp::entry_view_state::{EntryViewEvent, ViewEvent};
@@ -2810,19 +2812,35 @@ impl AcpThreadView {
             .project_context()
             .read(cx);
 
-        let user_rules_text = if project_context.user_rules.is_empty() {
+        let default_rules_text = if project_context.user_rules.is_empty() {
             None
         } else if project_context.user_rules.len() == 1 {
             let user_rules = &project_context.user_rules[0];
 
             match user_rules.title.as_ref() {
-                Some(title) => Some(format!("Using \"{title}\" user rule")),
-                None => Some("Using user rule".into()),
+                Some(title) => Some(format!("Using \"{title}\" default rule")),
+                None => Some("Using default rule".into()),
             }
         } else {
             Some(format!(
-                "Using {} user rules",
+                "Using {} default rules",
                 project_context.user_rules.len()
+            ))
+        };
+
+        let profile_rules_text = if project_context.profile_rules.is_empty() {
+            None
+        } else if project_context.profile_rules.len() == 1 {
+            let profile_rules = &project_context.profile_rules[0];
+
+            match profile_rules.title.as_ref() {
+                Some(title) => Some(format!("Using \"{title}\" profile rule")),
+                None => Some("Using profile rule".into()),
+            }
+        } else {
+            Some(format!(
+                "Using {} profile rules",
+                project_context.profile_rules.len()
             ))
         };
 
@@ -2830,6 +2848,11 @@ impl AcpThreadView {
             .user_rules
             .first()
             .map(|user_rules| user_rules.uuid.0);
+
+        let _first_profile_rules_id = project_context
+            .profile_rules
+            .first()
+            .map(|profile_rules| profile_rules.uuid.0);
 
         let rules_files = project_context
             .worktrees
@@ -2846,11 +2869,17 @@ impl AcpThreadView {
             rules_files => Some(format!("Using {} project rules files", rules_files.len())),
         };
 
-        if user_rules_text.is_none() && rules_file_text.is_none() {
+        if default_rules_text.is_none() && profile_rules_text.is_none() && rules_file_text.is_none()
+        {
             return None;
         }
 
-        let has_both = user_rules_text.is_some() && rules_file_text.is_some();
+        let rule_sections = [
+            default_rules_text.as_ref(),
+            profile_rules_text.as_ref(),
+            rules_file_text.as_ref(),
+        ];
+        let active_sections = rule_sections.iter().filter(|s| s.is_some()).count();
 
         Some(
             h_flex()
@@ -2860,20 +2889,20 @@ impl AcpThreadView {
                         .size(IconSize::XSmall)
                         .color(Color::Disabled),
                 )
-                .when_some(user_rules_text, |parent, user_rules_text| {
+                .when_some(default_rules_text.clone(), |parent, default_rules_text| {
                     parent.child(
                         h_flex()
-                            .id("user-rules")
+                            .id("default-rules")
                             .ml_1()
-                            .mr_1p5()
+                            .when(active_sections > 1, |this| this.mr_1p5())
                             .child(
-                                Label::new(user_rules_text)
+                                Label::new(default_rules_text)
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
                                     .truncate(),
                             )
                             .hover(|s| s.bg(cx.theme().colors().element_hover))
-                            .tooltip(Tooltip::text("View User Rules"))
+                            .tooltip(Tooltip::text("View Default Rules"))
                             .on_click(move |_event, window, cx| {
                                 window.dispatch_action(
                                     Box::new(OpenRulesLibrary {
@@ -2884,13 +2913,55 @@ impl AcpThreadView {
                             }),
                     )
                 })
-                .when(has_both, |this| {
-                    this.child(
-                        Label::new("•")
-                            .size(LabelSize::XSmall)
-                            .color(Color::Disabled),
+                .when(
+                    default_rules_text.is_some()
+                        && (profile_rules_text.is_some() || rules_file_text.is_some()),
+                    |this| {
+                        this.child(
+                            Label::new("•")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                    },
+                )
+                .when_some(profile_rules_text.clone(), |parent, profile_rules_text| {
+                    parent.child(
+                        h_flex()
+                            .id("profile-rules")
+                            .ml_1p5()
+                            .when(rules_file_text.is_some(), |this| this.mr_1p5())
+                            .child(
+                                Label::new(profile_rules_text)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            )
+                            .hover(|s| s.bg(cx.theme().colors().element_hover))
+                            .tooltip(Tooltip::text("View Profile Rules"))
+                            .on_click({
+                                let thread = self.as_native_thread(cx);
+                                move |_event, window, cx| {
+                                    if let Some(thread) = thread.clone() {
+                                        let profile_id = thread.read(cx).profile().clone();
+                                        window.dispatch_action(
+                                            Box::new(ManageProfiles::configure_rules(profile_id)),
+                                            cx,
+                                        )
+                                    }
+                                }
+                            }),
                     )
                 })
+                .when(
+                    profile_rules_text.is_some() && rules_file_text.is_some(),
+                    |this| {
+                        this.child(
+                            Label::new("•")
+                                .size(LabelSize::XSmall)
+                                .color(Color::Disabled),
+                        )
+                    },
+                )
                 .when_some(rules_file_text, |parent, rules_file_text| {
                     parent.child(
                         h_flex()

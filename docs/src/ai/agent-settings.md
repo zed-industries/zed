@@ -224,3 +224,73 @@ The default value is `true`.
   }
 }
 ```
+
+## Profile Configuration {#profile-configuration}
+
+Agent profiles allow you to group tools and rules for different use cases. Each profile can have its own set of enabled tools and rules that are automatically applied when that profile is active.
+
+### Default Profile
+
+Set which profile should be used by default when starting new agent threads:
+
+```json
+{
+  "agent": {
+    "default_profile": "write"
+  }
+}
+```
+
+### Custom Profiles
+
+You can create and customize profiles through the UI or by editing your settings directly. Each profile can specify:
+
+- **Tools**: Which built-in and MCP tools are available
+- **Rules**: Which rules from your Rules Library are automatically included
+- **Context Servers**: Which MCP context servers are enabled
+
+```json
+{
+  "agent": {
+    "profiles": {
+      "code-review": {
+        "name": "Code Review",
+        "tools": {
+          "file_search": true,
+          "file_finder": true,
+          "edit_file": false,
+          "run_command": false
+        },
+        "enable_all_context_servers": false,
+        "context_servers": {
+          "github": {
+            "tools": {
+              "search_issues": true,
+              "create_issue": false
+            }
+          }
+        },
+        "rules": {
+          "550e8400-e29b-41d4-a716-446655440000": true,
+          "f47ac10b-58cc-4372-a567-0e02b2c3d479": true,
+          "6ba7b810-9dad-11d1-80b4-00c04fd430c8": false
+        }
+      }
+    }
+  }
+}
+```
+
+> **Note**: Rule IDs in the configuration are UUIDs for user-created rules or specific identifiers for built-in rules. You can find these IDs in the Rules Library or by using the UI configuration interface, which handles the ID mapping automatically.
+
+### Profile Rules
+
+Profile rules are automatically included in conversations when a specific profile is active, in addition to your default rules. This allows you to have specialized behavior for different workflows:
+
+- **Default Rules**: Always included across all profiles
+- **Profile Rules**: Only included when the specific profile is active
+- **Project Rules**: Always included when working in projects with `.rules` files
+
+You can configure profile rules through:
+
+The rules are referenced by their unique ID from your Rules Library (UUIDs for user-created rules), and the boolean value indicates whether that rule is active for the profile. It's recommended to use the UI configuration interface rather than editing these IDs manually, as the UI handles the ID mapping automatically.

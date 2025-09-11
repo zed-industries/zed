@@ -293,6 +293,7 @@ impl PickerDelegate for ToolPickerDelegate {
                                 )
                             })
                             .collect(),
+                        rules: default_profile.rules,
                     });
 
                 if let Some(server_id) = server_id {

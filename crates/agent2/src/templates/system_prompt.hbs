@@ -146,7 +146,7 @@ Otherwise, follow debugging best practices:
 Operating System: {{os}}
 Default Shell: {{shell}}
 
-{{#if (or has_rules has_user_rules)}}
+{{#if (or has_rules has_user_rules has_profile_rules)}}
 ## User's Custom Instructions
 
 The following additional instructions are provided by the user, and should be followed to the best of your ability{{#if (gt (len available_tools) 0)}} without interfering with the tool use guidelines{{/if}}.
@@ -172,6 +172,19 @@ Rules title: {{title}}
 {{/if}}
 ``````
 {{contents}}}
+``````
+{{/each}}
+{{/if}}
+
+{{#if has_profile_rules}}
+The user has configured the following profile-specific rules that should be applied:
+{{#each profile_rules}}
+
+{{#if title}}
+Profile rule: {{title}}
+{{/if}}
+``````
+{{contents}}
 ``````
 {{/each}}
 {{/if}}
