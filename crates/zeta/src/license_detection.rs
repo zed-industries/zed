@@ -202,22 +202,48 @@ fn check_pattern(pattern: &[PatternPart], input: &str) -> bool {
             match_any_chars.end += part.match_any_chars.end;
             continue;
         }
-        let search_range_start = input_ix.saturating_sub(match_any_chars.end + part.text.len());
-        let search_range_end = input_ix.saturating_sub(match_any_chars.start);
-        let found_ix = &input[search_range_start..search_range_end].rfind(&part.text);
+
+        let search_range_end = n_chars_before_offset(match_any_chars.start, input_ix, input);
+        let search_range_start = n_chars_before_offset(
+            match_any_chars.len() + part.text.len(),
+            search_range_end,
+            input,
+        );
+        let found_ix = input[search_range_start..search_range_end].rfind(&part.text);
+
         if let Some(found_ix) = found_ix {
             input_ix = search_range_start + found_ix;
             match_any_chars = part.match_any_chars.clone();
         } else if !part.optional {
             log::trace!(
-                "Failed to match pattern `...{}` against input `...{}`",
-                &part.text[part.text.len().saturating_sub(128)..],
-                &input[input_ix.saturating_sub(128)..]
+                "Failed to match pattern\n`...{}`\nagainst input\n`...{}`",
+                &part.text[n_chars_before_offset(128, part.text.len(), &part.text)..],
+                &input[n_chars_before_offset(128, search_range_end, input)..search_range_end],
             );
             return false;
         }
     }
-    match_any_chars.contains(&input_ix)
+    is_char_count_within_range(&input[..input_ix], match_any_chars)
+}
+
+fn n_chars_before_offset(char_count: usize, offset: usize, string: &str) -> usize {
+    if char_count == 0 {
+        return offset;
+    }
+    string[..offset]
+        .char_indices()
+        .nth_back(char_count.saturating_sub(1))
+        .map_or(0, |(byte_ix, _)| byte_ix)
+}
+
+fn is_char_count_within_range(string: &str, char_count_range: Range<usize>) -> bool {
+    if string.len() >= char_count_range.start * 4 && string.len() < char_count_range.end {
+        return true;
+    }
+    if string.len() < char_count_range.start || string.len() >= char_count_range.end * 4 {
+        return false;
+    }
+    char_count_range.contains(&string.chars().count())
 }
 
 /// Canonicalizes license text by removing all non-alphanumeric characters, lowercasing, and turning
