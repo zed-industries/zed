@@ -9,7 +9,8 @@ use std::{
 use crossbeam::queue::ArrayQueue;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("Replay duration is too short must be >= 100ms")]
 pub struct ReplayDurationTooShort;
 
 pub trait RodioExt: Source + Sized {
@@ -338,6 +339,7 @@ impl<S: Source> Iterator for Replayable<S> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(sample) = self.inner.next() {
             self.buffer.push(sample);
+            // If the buffer is full send it
             if self.buffer.len() == self.chunk_size {
                 self.tx.push_normal(std::mem::take(&mut self.buffer));
             }
@@ -422,6 +424,9 @@ impl Iterator for Replay {
                 return None;
             }
 
+            // The queue does not support blocking on a next item. We want this queue as it
+            // is quite fast and provides a fixed size. We know how many samples are in a
+            // buffer so if we do not get one now we must be getting one after `sleep_duration`.
             std::thread::sleep(self.sleep_duration);
         }
     }
