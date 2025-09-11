@@ -89,7 +89,23 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             (format!("{file_path}:{line_number}"), false, python_match)
         })
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
-        let (file_path, actual_match) = extend_multiline_path(term, word_match, regex_searches);
+        let text = term.bounds_to_string(*word_match.start(), *word_match.end());
+        let (file_path, actual_match) = if text.contains('/') && !text.contains('.') {
+            if let Some(next_match) = visible_regex_match_iter(term, &mut regex_searches.word_regex)
+                .find(|m| m.start().line == word_match.end().line + 1 && m.start().column.0 <= 2)
+            {
+                let next_text = term.bounds_to_string(*next_match.start(), *next_match.end());
+                if next_text.contains('.') && !next_text.contains('/') {
+                    (format!("{}{}", text, next_text), Match::new(*word_match.start(), *next_match.end()))
+                } else {
+                    (text, word_match)
+                }
+            } else {
+                (text, word_match)
+            }
+        } else {
+            (text, word_match)
+        };
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
             let mut word_match = actual_match;
