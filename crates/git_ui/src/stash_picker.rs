@@ -397,10 +397,13 @@ impl PickerDelegate for StashListDelegate {
         let stash_message =
             Self::format_message(entry_match.entry.index, &entry_match.entry.message);
         let positions = entry_match.positions.clone();
-        let stash_label = HighlightedLabel::new(stash_message, positions).into_any_element();
+        let stash_label = HighlightedLabel::new(stash_message, positions)
+            .truncate()
+            .into_any_element();
         let branch_name = entry_match.entry.branch.clone().unwrap_or_default();
         let branch_label = h_flex()
             .gap_1()
+            .w_full()
             .child(
                 Icon::new(IconName::GitBranch)
                     .color(Color::Muted)
@@ -408,6 +411,7 @@ impl PickerDelegate for StashListDelegate {
             )
             .child(
                 Label::new(branch_name)
+                    .truncate()
                     .color(Color::Muted)
                     .size(LabelSize::Small),
             );
@@ -424,6 +428,8 @@ impl PickerDelegate for StashListDelegate {
                 .toggle_state(selected)
                 .child(
                     v_flex()
+                        .w_full()
+                        .overflow_hidden()
                         .child(stash_label)
                         .child(branch_label.into_element()),
                 )
