@@ -1,8 +1,8 @@
 use alacritty_terminal::{
+    Term,
     event::EventListener,
     grid::Dimensions,
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
-    Term,
     term::search::{Match, RegexIter, RegexSearch},
 };
 use regex::Regex;
@@ -321,10 +321,10 @@ fn is_broken_path(text: &str) -> bool {
 
     let has_complete_extension = text
         .split('/')
-        .last()
-        .or_else(|| text.split('\\').last())
+        .next_back()
+        .or_else(|| text.split('\\').next_back())
         .map(|filename| {
-            filename.contains('.') && filename.split('.').last().unwrap_or("").len() <= 5
+            filename.contains('.') && filename.split('.').next_back().unwrap_or("").len() <= 5
         })
         .unwrap_or(false);
 
@@ -341,13 +341,13 @@ fn is_continuation(existing_path: &str, candidate: &str) -> bool {
 
     let has_file_extension = combined
         .split('/')
-        .last()
-        .or_else(|| combined.split('\\').last())
+        .next_back()
+        .or_else(|| combined.split('\\').next_back())
         .map(|filename| {
             filename.contains('.')
                 && filename
                     .split('.')
-                    .last()
+                    .next_back()
                     .map(|ext| ext.len() <= 5 && ext.chars().all(|c| c.is_alphanumeric()))
                     .unwrap_or(false)
         })
@@ -364,7 +364,7 @@ fn is_path_fragment(text: &str) -> bool {
     text.contains('.')
         && text
             .split('.')
-            .last()
+            .next_back()
             .map(|ext| ext.len() <= 5 && ext.chars().all(|c| c.is_alphanumeric()))
             .unwrap_or(false)
 }
