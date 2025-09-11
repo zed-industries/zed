@@ -88,7 +88,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let json_lsp_adapter = Arc::new(json::JsonLspAdapter::new(node.clone(), languages.clone()));
     let node_version_lsp_adapter = Arc::new(json::NodeVersionAdapter);
     let py_lsp_adapter = Arc::new(python::PyLspAdapter::new());
-    let ty_lsp_adapter = Arc::new(python::TyLspAdapter::new(cx));
+    let ty_lsp_adapter = Arc::new(python::TyLspAdapter::new(fs.clone()));
     let python_context_provider = Arc::new(python::PythonContextProvider);
     let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new());

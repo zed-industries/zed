@@ -134,10 +134,8 @@ impl TyLspAdapter {
 impl TyLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("ty");
 
-    pub fn new(cx: &mut App) -> TyLspAdapter {
-        TyLspAdapter {
-            fs: <dyn Fs>::global(cx),
-        }
+    pub fn new(fs: Arc<dyn Fs>) -> TyLspAdapter {
+        TyLspAdapter { fs }
     }
 
     fn build_asset_name() -> Result<(String, String)> {
@@ -299,7 +297,6 @@ impl LspAdapter for TyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         _cx: &mut AsyncApp,
