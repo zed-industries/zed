@@ -35,24 +35,7 @@ pub struct ProjectContext {
 }
 
 impl ProjectContext {
-    pub fn new(worktrees: Vec<WorktreeContext>, default_user_rules: Vec<UserRulesContext>) -> Self {
-        let has_rules = worktrees
-            .iter()
-            .any(|worktree| worktree.rules_file.is_some());
-        Self {
-            worktrees,
-            has_rules,
-            has_user_rules: !default_user_rules.is_empty(),
-            user_rules: default_user_rules,
-            profile_rules: Vec::new(),
-            has_profile_rules: false,
-            os: std::env::consts::OS.to_string(),
-            arch: std::env::consts::ARCH.to_string(),
-            shell: get_system_shell(),
-        }
-    }
-
-    pub fn new_with_profile_rules(
+    pub fn new(
         worktrees: Vec<WorktreeContext>,
         default_user_rules: Vec<UserRulesContext>,
         profile_rules: Vec<UserRulesContext>,
@@ -491,7 +474,7 @@ mod test {
             title: Some("Rules title".into()),
             contents: "Rules contents".into(),
         }];
-        let project_context = ProjectContext::new(worktrees, default_user_rules);
+        let project_context = ProjectContext::new(worktrees, default_user_rules, Vec::new());
         let model_context = ModelContext {
             available_tools: ["grep".into()].to_vec(),
         };
@@ -513,7 +496,7 @@ mod test {
             rules_file: None,
         }];
         let default_user_rules = vec![];
-        let project_context = ProjectContext::new(worktrees, default_user_rules);
+        let project_context = ProjectContext::new(worktrees, default_user_rules, Vec::new());
         let prompt_builder = PromptBuilder::new(None).unwrap();
 
         // When the `grep` tool is enabled, it should be mentioned in the prompt

@@ -314,8 +314,11 @@ impl ThreadStore {
                 .collect::<Vec<_>>();
 
             this.update(cx, |this, _cx| {
-                *this.project_context.0.borrow_mut() =
-                    Some(ProjectContext::new(worktrees, default_user_rules));
+                *this.project_context.0.borrow_mut() = Some(ProjectContext::new(
+                    worktrees,
+                    default_user_rules,
+                    Vec::new(),
+                ));
             })
             .ok();
         })

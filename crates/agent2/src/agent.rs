@@ -489,11 +489,8 @@ impl NativeAgent {
                 })
                 .collect();
 
-            let context = ProjectContext::new_with_profile_rules(
-                worktrees,
-                default_user_rules.clone(),
-                profile_rules.clone(),
-            );
+            let context =
+                ProjectContext::new(worktrees, default_user_rules.clone(), profile_rules.clone());
             context
         })
     }
