@@ -2256,7 +2256,6 @@ impl LspAdapter for FakeLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
