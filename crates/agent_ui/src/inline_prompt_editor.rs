@@ -229,7 +229,7 @@ impl<T: 'static> PromptEditor<T> {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text("Add a prompt…", window, cx);
             editor.set_text(prompt, window, cx);
             insert_message_creases(
                 &mut editor,
@@ -782,7 +782,7 @@ impl PromptEditor<BufferCodegen> {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_placeholder_text(&Self::placeholder_text(&mode, window, cx), window, cx);
             editor.register_addon(ContextCreasesAddon::new());
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
@@ -949,7 +949,7 @@ impl PromptEditor<TerminalCodegen> {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_placeholder_text(&Self::placeholder_text(&mode, window, cx), window, cx);
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,

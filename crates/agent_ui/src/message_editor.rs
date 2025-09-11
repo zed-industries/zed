@@ -17,7 +17,7 @@ use agent::{
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use ai_onboarding::ApiKeysWithProviders;
 use buffer_diff::BufferDiff;
-use cloud_llm_client::CompletionIntent;
+use cloud_llm_client::{CompletionIntent, PlanV1};
 use collections::{HashMap, HashSet};
 use editor::actions::{MoveUp, Paste};
 use editor::display_map::CreaseId;
@@ -124,7 +124,7 @@ pub(crate) fn create_editor(
             window,
             cx,
         );
-        editor.set_placeholder_text("Message the agent – @ to include context", cx);
+        editor.set_placeholder_text("Message the agent – @ to include context", window, cx);
         editor.disable_word_completions();
         editor.set_show_indent_guides(false, cx);
         editor.set_soft_wrap();
@@ -1298,7 +1298,9 @@ impl MessageEditor {
             return None;
         }
 
-        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
+        let plan = user_store
+            .plan()
+            .unwrap_or(cloud_llm_client::Plan::V1(PlanV1::ZedFree));
 
         let usage = user_store.model_request_usage()?;
 

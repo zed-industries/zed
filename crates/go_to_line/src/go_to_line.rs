@@ -103,17 +103,20 @@ impl GoToLine {
                             return;
                         };
                         editor.update(cx, |editor, cx| {
-                            if let Some(placeholder_text) = editor.placeholder_text()
+                            if let Some(placeholder_text) = editor.placeholder_text(cx)
                                 && editor.text(cx).is_empty()
                             {
-                                let placeholder_text = placeholder_text.to_string();
                                 editor.set_text(placeholder_text, window, cx);
                             }
                         });
                     }
                 })
                 .detach();
-            editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
+            editor.set_placeholder_text(
+                &format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"),
+                window,
+                cx,
+            );
             editor
         });
         let line_editor_change = cx.subscribe_in(&line_editor, window, Self::on_line_editor_event);
@@ -691,11 +694,11 @@ mod tests {
         let go_to_line_view = open_go_to_line_view(workspace, cx);
         go_to_line_view.update(cx, |go_to_line_view, cx| {
             assert_eq!(
-                go_to_line_view
-                    .line_editor
-                    .read(cx)
-                    .placeholder_text()
-                    .expect("No placeholder text"),
+                go_to_line_view.line_editor.update(cx, |line_editor, cx| {
+                    line_editor
+                        .placeholder_text(cx)
+                        .expect("No placeholder text")
+                }),
                 format!(
                     "{}:{}",
                     expected_placeholder.line, expected_placeholder.character

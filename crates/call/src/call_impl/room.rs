@@ -9,6 +9,7 @@ use client::{
     proto::{self, PeerId},
 };
 use collections::{BTreeMap, HashMap, HashSet};
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{
@@ -1322,8 +1323,18 @@ impl Room {
             return Task::ready(Err(anyhow!("live-kit was not initialized")));
         };
 
+        let is_staff = cx.is_staff();
+        let user_name = self
+            .user_store
+            .read(cx)
+            .current_user()
+            .and_then(|user| user.name.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
         cx.spawn(async move |this, cx| {
-            let publication = room.publish_local_microphone_track(cx).await;
+            let publication = room
+                .publish_local_microphone_track(user_name, is_staff, cx)
+                .await;
             this.update(cx, |this, cx| {
                 let live_kit = this
                     .live_kit

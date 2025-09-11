@@ -60,7 +60,9 @@ pub fn init_panic_hook(
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_else(|| "Box<Any>".to_string());
 
-        if *release_channel::RELEASE_CHANNEL != ReleaseChannel::Dev {
+        if *release_channel::RELEASE_CHANNEL != ReleaseChannel::Dev
+            || env::var("ZED_GENERATE_MINIDUMPS").is_ok()
+        {
             crashes::handle_panic(payload.clone(), info.location());
         }
 

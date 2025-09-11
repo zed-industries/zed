@@ -135,6 +135,12 @@ impl TestScheduler {
         }
     }
 
+    pub fn run_with_clock_advancement(&self) {
+        while self.step() || self.advance_clock_to_next_timer() {
+            // Continue until no work remains
+        }
+    }
+
     fn step(&self) -> bool {
         let elapsed_timers = {
             let mut state = self.state.lock();

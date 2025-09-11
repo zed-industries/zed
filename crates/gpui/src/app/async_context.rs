@@ -218,6 +218,23 @@ impl AsyncApp {
         Some(read(app.try_global()?, &app))
     }
 
+    /// Reads the global state of the specified type, passing it to the given callback.
+    /// A default value is assigned if a global of this type has not yet been assigned.
+    ///
+    /// # Errors
+    /// If the app has ben dropped this returns an error.
+    pub fn try_read_default_global<G: Global + Default, R>(
+        &self,
+        read: impl FnOnce(&G, &App) -> R,
+    ) -> Result<R> {
+        let app = self.app.upgrade().context("app was released")?;
+        let mut app = app.borrow_mut();
+        app.update(|cx| {
+            cx.default_global::<G>();
+        });
+        Ok(read(app.try_global().context("app was released")?, &app))
+    }
+
     /// A convenience method for [`App::update_global`](BorrowAppContext::update_global)
     /// for updating the global state of the specified type.
     pub fn update_global<G: Global, R>(
