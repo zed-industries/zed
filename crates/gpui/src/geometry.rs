@@ -2544,14 +2544,14 @@ impl From<Percentage> for Radians {
 /// # Examples
 ///
 /// ```
-/// use gpui::Pixels;
+/// use gpui::{Pixels, ScaledPixels};
 ///
 /// // Define a length of 10 pixels
 /// let length = Pixels(10.0);
 ///
 /// // Define a length and scale it by a factor of 2
 /// let scaled_length = length.scale(2.0);
-/// assert_eq!(scaled_length, Pixels(20.0));
+/// assert_eq!(scaled_length, ScaledPixels(20.0));
 /// ```
 #[derive(
     Clone,
@@ -2705,6 +2705,7 @@ impl Pixels {
     ///
     /// The resulting `ScaledPixels` represent the scaled value which can be used for rendering
     /// calculations where display scaling is considered.
+    #[must_use]
     pub fn scale(&self, factor: f32) -> ScaledPixels {
         ScaledPixels(self.0 * factor)
     }
