@@ -267,9 +267,43 @@ pub trait Extension: Send + Sync {
 #[macro_export]
 macro_rules! register_extension {
     ($extension_type:ty) => {
+        #[cfg(target_os = "wasi")]
+        mod wasi_ext {
+            unsafe extern "C" {
+                static mut errno: i32;
+                pub static mut __wasilibc_cwd: *mut std::ffi::c_char;
+            }
+
+            pub fn init_cwd() {
+                unsafe {
+                    // Ensure that our chdir function is linked, instead of the
+                    // one from wasi-libc in the chdir.o translation unit. Otherwise
+                    // we risk linking in `__wasilibc_find_relpath_alloc` which
+                    // is a weak symbol and is being used by
+                    // `__wasilibc_find_relpath`, which we do not want on
+                    // Windows.
+                    chdir(std::ptr::null());
+
+                    __wasilibc_cwd = std::ffi::CString::new(std::env::var("PWD").unwrap())
+                        .unwrap()
+                        .into_raw()
+                        .cast();
+                }
+            }
+
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn chdir(raw_path: *const std::ffi::c_char) -> i32 {
+                // Forbid extensions from changing CWD and so return an appropriate error code.
+                errno = 58; // NOTSUP
+                return -1;
+            }
+        }
+
         #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
-            std::env::set_current_dir(std::env::var("PWD").unwrap()).unwrap();
+            #[cfg(target_os = "wasi")]
+            wasi_ext::init_cwd();
+
             zed_extension_api::register_extension(|| {
                 Box::new(<$extension_type as zed_extension_api::Extension>::new())
             });

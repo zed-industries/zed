@@ -12,7 +12,10 @@ use util::{ResultExt, asset_str};
 
 pub use language::*;
 
-use crate::{json::JsonTaskProvider, python::BasedPyrightLspAdapter};
+use crate::{
+    json::JsonTaskProvider,
+    python::{BasedPyrightLspAdapter, RuffLspAdapter},
+};
 
 mod bash;
 mod c;
@@ -92,6 +95,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     let python_context_provider = Arc::new(python::PythonContextProvider);
     let python_lsp_adapter = Arc::new(python::PyrightLspAdapter::new(node.clone()));
     let basedpyright_lsp_adapter = Arc::new(BasedPyrightLspAdapter::new());
+    let ruff_lsp_adapter = Arc::new(RuffLspAdapter::new(fs.clone()));
     let python_toolchain_provider = Arc::new(python::PythonToolchainProvider);
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
@@ -172,7 +176,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         },
         LanguageInfo {
             name: "python",
-            adapters: vec![basedpyright_lsp_adapter],
+            adapters: vec![basedpyright_lsp_adapter, ruff_lsp_adapter],
             context: Some(python_context_provider),
             toolchain: Some(python_toolchain_provider),
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
