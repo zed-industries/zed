@@ -1407,8 +1407,8 @@ where
     /// let inside_point = Point { x: 5, y: 5 };
     /// let outside_point = Point { x: 15, y: 15 };
     ///
-    /// assert!(bounds.contains_point(&inside_point));
-    /// assert!(!bounds.contains_point(&outside_point));
+    /// assert!(bounds.contains(&inside_point));
+    /// assert!(!bounds.contains(&outside_point));
     /// ```
     pub fn contains(&self, point: &Point<T>) -> bool {
         point.x >= self.origin.x
