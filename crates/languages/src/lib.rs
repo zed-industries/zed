@@ -54,7 +54,7 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
         ))
     });
 
-pub fn init(languages: Arc<LanguageRegistry>, _: Arc<dyn Fs>, node: NodeRuntime, cx: &mut App) {
+pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
         ("bash", tree_sitter_bash::LANGUAGE),
@@ -78,8 +78,6 @@ pub fn init(languages: Arc<LanguageRegistry>, _: Arc<dyn Fs>, node: NodeRuntime,
         ("yaml", tree_sitter_yaml::LANGUAGE),
         ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
     ]);
-
-    let fs = <dyn Fs>::global(cx);
 
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
     let css_lsp_adapter = Arc::new(css::CssLspAdapter::new(node.clone()));
