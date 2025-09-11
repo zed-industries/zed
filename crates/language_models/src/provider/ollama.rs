@@ -24,7 +24,7 @@ use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonLike, ElevationIndex, Indicator, List, Tooltip, prelude::*};
+use ui::{ButtonLike, ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt;
 
@@ -823,7 +823,7 @@ impl ConfigurationView {
                 .child(
                     h_flex()
                         .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
+                        .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(
                             Label::new(
                                 if state.api_key_from_env {
