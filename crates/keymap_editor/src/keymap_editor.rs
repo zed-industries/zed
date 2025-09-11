@@ -37,6 +37,7 @@ use workspace::{
 };
 
 pub use ui_components::*;
+use zed_actions::OpenKeymapEditor;
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
@@ -47,14 +48,6 @@ use crate::{
 };
 
 const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
-
-actions!(
-    zed,
-    [
-        /// Opens the keymap editor.
-        OpenKeymapEditor
-    ]
-);
 
 actions!(
     keymap_editor,
@@ -442,7 +435,7 @@ impl KeymapEditor {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Filter action names…", cx);
+            editor.set_placeholder_text("Filter action names…", window, cx);
             editor
         });
 
@@ -2804,7 +2797,7 @@ impl ActionArgumentsEditor {
             editor.set_text(arguments, window, cx);
         } else {
             // TODO: default value from schema?
-            editor.set_placeholder_text("Action Arguments", cx);
+            editor.set_placeholder_text("Action Arguments", window, cx);
         }
     }
 

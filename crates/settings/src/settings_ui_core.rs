@@ -108,9 +108,18 @@ impl<T: serde::Serialize> SettingsValue<T> {
 
 #[derive(Clone)]
 pub struct SettingsUiItemUnion {
-    pub options: Vec<SettingsUiEntry>,
+    /// Must be the same length as `labels` and `options`
+    pub defaults: Box<[serde_json::Value]>,
+    /// Must be the same length as defaults` and `options`
+    pub labels: &'static [&'static str],
+    /// Must be the same length as `defaults` and `labels`
+    pub options: Box<[Option<SettingsUiEntry>]>,
     pub determine_option: fn(&serde_json::Value, &App) -> usize,
 }
+
+// todo(settings_ui): use in ToggleGroup and Dropdown
+#[derive(Clone)]
+pub struct SettingsEnumVariants {}
 
 pub struct SettingsUiEntryMetaData {
     pub title: SharedString,
@@ -136,6 +145,7 @@ pub enum SettingsUiItem {
     Single(SettingsUiItemSingle),
     Union(SettingsUiItemUnion),
     DynamicMap(SettingsUiItemDynamicMap),
+    // Array(SettingsUiItemArray), // code-actions: array of objects, array of string
     None,
 }
 

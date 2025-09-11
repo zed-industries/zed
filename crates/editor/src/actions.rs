@@ -253,6 +253,15 @@ pub struct DeleteToPreviousWordStart {
     pub ignore_brackets: bool,
 }
 
+/// Cuts from cursor to end of line.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct CutToEndOfLine {
+    #[serde(default)]
+    pub stop_at_newlines: bool,
+}
+
 /// Folds all code blocks at the specified indentation level.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -412,8 +421,6 @@ actions!(
         CopyPermalinkToLine,
         /// Cuts selected text to the clipboard.
         Cut,
-        /// Cuts from cursor to end of line.
-        CutToEndOfLine,
         /// Deletes the character after the cursor.
         Delete,
         /// Deletes the current line.

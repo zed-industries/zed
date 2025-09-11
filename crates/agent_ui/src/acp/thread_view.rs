@@ -10,9 +10,11 @@ use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
 use anyhow::{Context as _, Result, anyhow, bail};
+use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
+use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
@@ -65,9 +67,9 @@ use crate::ui::{
     AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
 };
 use crate::{
-    AgentDiffPane, AgentPanel, ContinueThread, ContinueWithBurnMode, CycleModeSelector,
-    ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll, ToggleBurnMode,
-    ToggleProfileSelector,
+    AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
+    CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll,
+    RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
 
 pub const MIN_EDITOR_LINES: usize = 4;
@@ -249,6 +251,7 @@ impl ThreadFeedbackState {
             );
             editor.set_placeholder_text(
                 "What went wrong? Share your feedback so we can improve.",
+                window,
                 cx,
             );
             editor
@@ -354,7 +357,7 @@ impl AcpThreadView {
                 prompt_capabilities.clone(),
                 available_commands.clone(),
                 agent.name(),
-                placeholder,
+                &placeholder,
                 editor::EditorMode::AutoHeight {
                     min_lines: MIN_EDITOR_LINES,
                     max_lines: Some(MAX_EDITOR_LINES),
@@ -1604,7 +1607,7 @@ impl AcpThreadView {
             task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(&login, window, cx)
+                terminal_panel.spawn_task(login.clone(), window, cx)
             })?;
 
             let terminal = terminal.await?;
@@ -2167,6 +2170,7 @@ impl AcpThreadView {
                             options,
                             entry_ix,
                             tool_call.id.clone(),
+                            window,
                             cx,
                         ))
                         .into_any(),
@@ -2469,69 +2473,85 @@ impl AcpThreadView {
         options: &[acp::PermissionOption],
         entry_ix: usize,
         tool_call_id: acp::ToolCallId,
+        window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        h_flex()
-            .py_1()
-            .px_1()
-            .gap_1()
-            .justify_between()
-            .flex_wrap()
+        let is_first = self.thread().is_some_and(|thread| {
+            thread
+                .read(cx)
+                .first_tool_awaiting_confirmation()
+                .is_some_and(|call| call.id == tool_call_id)
+        });
+        let mut seen_kinds: ArrayVec<acp::PermissionOptionKind, 3> = ArrayVec::new();
+
+        div()
+            .p_1()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .when(kind != acp::ToolKind::SwitchMode, |this| {
-                this.pl_2().child(
-                    div().min_w(rems_from_px(145.)).child(
-                        LoadingLabel::new("Waiting for Confirmation").size(LabelSize::Small),
-                    ),
-                )
+            .w_full()
+            .map(|this| {
+                if kind == acp::ToolKind::SwitchMode {
+                    this.v_flex()
+                } else {
+                    this.h_flex().justify_end().flex_wrap()
+                }
             })
-            .child({
-                div()
+            .gap_0p5()
+            .children(options.iter().map(move |option| {
+                let option_id = SharedString::from(option.id.0.clone());
+                Button::new((option_id, entry_ix), option.name.clone())
                     .map(|this| {
-                        if kind == acp::ToolKind::SwitchMode {
-                            this.w_full().v_flex()
-                        } else {
-                            this.h_flex()
+                        let (this, action) = match option.kind {
+                            acp::PermissionOptionKind::AllowOnce => (
+                                this.icon(IconName::Check).icon_color(Color::Success),
+                                Some(&AllowOnce as &dyn Action),
+                            ),
+                            acp::PermissionOptionKind::AllowAlways => (
+                                this.icon(IconName::CheckDouble).icon_color(Color::Success),
+                                Some(&AllowAlways as &dyn Action),
+                            ),
+                            acp::PermissionOptionKind::RejectOnce => (
+                                this.icon(IconName::Close).icon_color(Color::Error),
+                                Some(&RejectOnce as &dyn Action),
+                            ),
+                            acp::PermissionOptionKind::RejectAlways => {
+                                (this.icon(IconName::Close).icon_color(Color::Error), None)
+                            }
+                        };
+
+                        let Some(action) = action else {
+                            return this;
+                        };
+
+                        if !is_first || seen_kinds.contains(&option.kind) {
+                            return this;
                         }
+
+                        seen_kinds.push(option.kind);
+
+                        this.key_binding(
+                            KeyBinding::for_action_in(action, &self.focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(10.))),
+                        )
                     })
-                    .gap_0p5()
-                    .children(options.iter().map(|option| {
-                        let option_id = SharedString::from(option.id.0.clone());
-                        Button::new((option_id, entry_ix), option.name.clone())
-                            .map(|this| match option.kind {
-                                acp::PermissionOptionKind::AllowOnce => {
-                                    this.icon(IconName::Check).icon_color(Color::Success)
-                                }
-                                acp::PermissionOptionKind::AllowAlways => {
-                                    this.icon(IconName::CheckDouble).icon_color(Color::Success)
-                                }
-                                acp::PermissionOptionKind::RejectOnce => {
-                                    this.icon(IconName::Close).icon_color(Color::Error)
-                                }
-                                acp::PermissionOptionKind::RejectAlways => {
-                                    this.icon(IconName::Close).icon_color(Color::Error)
-                                }
-                            })
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .label_size(LabelSize::Small)
-                            .on_click(cx.listener({
-                                let tool_call_id = tool_call_id.clone();
-                                let option_id = option.id.clone();
-                                let option_kind = option.kind;
-                                move |this, _, window, cx| {
-                                    this.authorize_tool_call(
-                                        tool_call_id.clone(),
-                                        option_id.clone(),
-                                        option_kind,
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            }))
+                    .icon_position(IconPosition::Start)
+                    .icon_size(IconSize::XSmall)
+                    .label_size(LabelSize::Small)
+                    .on_click(cx.listener({
+                        let tool_call_id = tool_call_id.clone();
+                        let option_id = option.id.clone();
+                        let option_kind = option.kind;
+                        move |this, _, window, cx| {
+                            this.authorize_tool_call(
+                                tool_call_id.clone(),
+                                option_id.clone(),
+                                option_kind,
+                                window,
+                                cx,
+                            );
+                        }
                     }))
-            })
+            }))
     }
 
     fn render_diff_loading(&self, cx: &Context<Self>) -> AnyElement {
@@ -3978,6 +3998,42 @@ impl AcpThreadView {
             .detach();
     }
 
+    fn allow_always(&mut self, _: &AllowAlways, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowAlways, window, cx);
+    }
+
+    fn allow_once(&mut self, _: &AllowOnce, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::AllowOnce, window, cx);
+    }
+
+    fn reject_once(&mut self, _: &RejectOnce, window: &mut Window, cx: &mut Context<Self>) {
+        self.authorize_pending_tool_call(acp::PermissionOptionKind::RejectOnce, window, cx);
+    }
+
+    fn authorize_pending_tool_call(
+        &mut self,
+        kind: acp::PermissionOptionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<()> {
+        let thread = self.thread()?.read(cx);
+        let tool_call = thread.first_tool_awaiting_confirmation()?;
+        let ToolCallStatus::WaitingForConfirmation { options, .. } = &tool_call.status else {
+            return None;
+        };
+        let option = options.iter().find(|o| o.kind == kind)?;
+
+        self.authorize_tool_call(
+            tool_call.id.clone(),
+            option.id.clone(),
+            option.kind,
+            window,
+            cx,
+        );
+
+        Some(())
+    }
+
     fn render_burn_mode_toggle(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let thread = self.as_native_thread(cx)?.read(cx);
 
@@ -4820,7 +4876,9 @@ impl AcpThreadView {
             return None;
         }
 
-        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
+        let plan = user_store
+            .plan()
+            .unwrap_or(cloud_llm_client::Plan::V1(PlanV1::ZedFree));
 
         let usage = user_store.model_request_usage()?;
 
@@ -5079,13 +5137,12 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Callout {
         let error_message = match plan {
-            cloud_llm_client::Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
-            cloud_llm_client::Plan::ZedProTrial | cloud_llm_client::Plan::ZedFree => {
-                "Upgrade to Zed Pro for more prompts."
+            cloud_llm_client::Plan::V1(PlanV1::ZedPro) => {
+                "Upgrade to usage-based billing for more prompts."
             }
-            cloud_llm_client::Plan::ZedProV2
-            | cloud_llm_client::Plan::ZedProTrialV2
-            | cloud_llm_client::Plan::ZedFreeV2 => "",
+            cloud_llm_client::Plan::V1(PlanV1::ZedProTrial)
+            | cloud_llm_client::Plan::V1(PlanV1::ZedFree) => "Upgrade to Zed Pro for more prompts.",
+            cloud_llm_client::Plan::V2(_) => "",
         };
 
         Callout::new()
@@ -5299,6 +5356,9 @@ impl Render for AcpThreadView {
             .on_action(cx.listener(Self::toggle_burn_mode))
             .on_action(cx.listener(Self::keep_all))
             .on_action(cx.listener(Self::reject_all))
+            .on_action(cx.listener(Self::allow_always))
+            .on_action(cx.listener(Self::allow_once))
+            .on_action(cx.listener(Self::reject_once))
             .track_focus(&self.focus_handle)
             .bg(cx.theme().colors().panel_background)
             .child(match &self.thread_state {

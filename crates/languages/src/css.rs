@@ -5,7 +5,7 @@ use gpui::AsyncApp;
 use language::{LspAdapter, LspAdapterDelegate, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
-use project::{Fs, lsp_store::language_server_settings};
+use project::lsp_store::language_server_settings;
 use serde_json::json;
 use smol::fs;
 use std::{
@@ -133,7 +133,6 @@ impl LspAdapter for CssLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -143,7 +142,6 @@ impl LspAdapter for CssLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -237,7 +235,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(
             outline
                 .items
