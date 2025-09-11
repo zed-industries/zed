@@ -1090,7 +1090,6 @@ impl ContextProvider for ContextProviderWithTasks {
 
 #[cfg(test)]
 mod tests {
-    use fs::FakeFs;
     use gpui::TestAppContext;
     use paths::tasks_file;
     use pretty_assertions::assert_eq;
