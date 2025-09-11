@@ -1,6 +1,5 @@
 use std::{ops::Range, sync::Arc};
 
-use clock::Global;
 use collections::HashMap;
 use futures::future::Shared;
 use gpui::{App, Entity, Task};
@@ -19,11 +18,10 @@ pub struct RowChunkCachedHints {
 }
 
 pub struct BufferInlayHints {
-    pub chunks_for_version: Global,
     snapshot: BufferSnapshot,
-    pub(super) buffer_chunks: Vec<BufferChunk>,
-    pub(super) hints_by_chunks: Vec<Option<CacheInlayHints>>,
-    pub(super) fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
+    buffer_chunks: Vec<BufferChunk>,
+    hints_by_chunks: Vec<Option<CacheInlayHints>>,
+    fetches_by_chunks: Vec<Option<CacheInlayHintsTask>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,7 +34,6 @@ pub struct BufferChunk {
 impl std::fmt::Debug for BufferInlayHints {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BufferInlayHints")
-            .field("chunks_for_version", &self.chunks_for_version)
             .field("buffer_chunks", &self.buffer_chunks)
             .field("hints_by_chunks", &self.hints_by_chunks)
             .field("fetches_by_chunks", &self.fetches_by_chunks)
@@ -68,7 +65,6 @@ impl BufferInlayHints {
             .collect::<Vec<_>>();
 
         Self {
-            chunks_for_version: buffer.version(),
             hints_by_chunks: vec![None; buffer_chunks.len()],
             fetches_by_chunks: vec![None; buffer_chunks.len()],
             snapshot,
@@ -124,5 +120,10 @@ impl BufferInlayHints {
                 }
             }
         }
+    }
+
+    pub fn clear(&mut self) {
+        self.hints_by_chunks = vec![None; self.buffer_chunks.len()];
+        self.fetches_by_chunks = vec![None; self.buffer_chunks.len()];
     }
 }

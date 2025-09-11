@@ -100,7 +100,6 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
-    collections::hash_map,
     convert::TryInto,
     ffi::OsStr,
     future::ready,
@@ -3473,10 +3472,37 @@ pub struct LspStore {
     diagnostic_summaries:
         HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
-    lsp_document_colors: HashMap<BufferId, DocumentColorData>,
-    lsp_code_lens: HashMap<BufferId, CodeLensData>,
-    pub inlay_hint_data: HashMap<BufferId, BufferInlayHints>,
-    running_lsp_requests: HashMap<TypeId, (Global, HashMap<LspRequestId, Task<()>>)>,
+    pub lsp_data: HashMap<BufferId, BufferLspData>,
+}
+
+pub struct BufferLspData {
+    buffer_version: Global,
+    document_colors: DocumentColorData,
+    code_lens: CodeLensData,
+    pub inlay_hints: BufferInlayHints,
+    lsp_requests: HashMap<TypeId, HashMap<LspRequestId, Task<()>>>,
+    // TODO kb deduplicate requests by range per buffer too
+}
+
+impl BufferLspData {
+    fn new(buffer: &Entity<Buffer>, cx: &mut App) -> Self {
+        Self {
+            buffer_version: buffer.read(cx).version(),
+            document_colors: DocumentColorData::default(),
+            code_lens: CodeLensData::default(),
+            inlay_hints: BufferInlayHints::new(buffer, cx),
+            lsp_requests: HashMap::default(),
+        }
+    }
+
+    fn remove_server_data(&mut self, for_server: LanguageServerId) {
+        self.document_colors.colors.remove(&for_server);
+        self.document_colors.cache_version += 1;
+
+        self.code_lens.lens.remove(&for_server);
+
+        self.inlay_hints.remove_server_data(for_server);
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -3490,7 +3516,6 @@ type CodeLensTask = Shared<Task<std::result::Result<Option<Vec<CodeAction>>, Arc
 
 #[derive(Debug, Default)]
 struct DocumentColorData {
-    colors_for_version: Global,
     colors: HashMap<LanguageServerId, HashSet<DocumentColor>>,
     cache_version: usize,
     colors_update: Option<(Global, DocumentColorTask)>,
@@ -3498,7 +3523,6 @@ struct DocumentColorData {
 
 #[derive(Debug, Default)]
 struct CodeLensData {
-    lens_for_version: Global,
     lens: HashMap<LanguageServerId, Vec<CodeAction>>,
     update: Option<(Global, CodeLensTask)>,
 }
@@ -3746,10 +3770,7 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
-            lsp_document_colors: HashMap::default(),
-            lsp_code_lens: HashMap::default(),
-            inlay_hint_data: HashMap::default(),
-            running_lsp_requests: HashMap::default(),
+            lsp_data: HashMap::default(),
             active_entry: None,
             _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
@@ -3808,10 +3829,7 @@ impl LspStore {
             nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
-            lsp_document_colors: HashMap::default(),
-            lsp_code_lens: HashMap::default(),
-            inlay_hint_data: HashMap::default(),
-            running_lsp_requests: HashMap::default(),
+            lsp_data: HashMap::default(),
             active_entry: None,
 
             _maintain_workspace_config,
@@ -4008,9 +4026,7 @@ impl LspStore {
                         *refcount
                     };
                     if refcount == 0 {
-                        lsp_store.lsp_document_colors.remove(&buffer_id);
-                        lsp_store.lsp_code_lens.remove(&buffer_id);
-                        lsp_store.inlay_hint_data.remove(&buffer_id);
+                        lsp_store.lsp_data.remove(&buffer_id);
                         let local = lsp_store.as_local_mut().unwrap();
                         local.registered_buffers.remove(&buffer_id);
                         local.buffers_opened_in_servers.remove(&buffer_id);
@@ -5523,8 +5539,8 @@ impl LspStore {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
 
-        if let Some(cached_data) = self.lsp_code_lens.get(&buffer_id)
-            && !version_queried_for.changed_since(&cached_data.lens_for_version)
+        if let Some(cached_data) = self.lsp_data.get(&buffer_id)
+            && !version_queried_for.changed_since(&cached_data.buffer_version)
         {
             let has_different_servers = self.as_local().is_some_and(|local| {
                 local
@@ -5532,17 +5548,27 @@ impl LspStore {
                     .get(&buffer_id)
                     .cloned()
                     .unwrap_or_default()
-                    != cached_data.lens.keys().copied().collect()
+                    != cached_data.code_lens.lens.keys().copied().collect()
             });
             if !has_different_servers {
                 return Task::ready(Ok(Some(
-                    cached_data.lens.values().flatten().cloned().collect(),
+                    cached_data
+                        .code_lens
+                        .lens
+                        .values()
+                        .flatten()
+                        .cloned()
+                        .collect(),
                 )))
                 .shared();
             }
         }
 
-        let lsp_data = self.lsp_code_lens.entry(buffer_id).or_default();
+        let lsp_data = &mut self
+            .lsp_data
+            .entry(buffer_id)
+            .or_insert_with(|| BufferLspData::new(buffer, cx))
+            .code_lens;
         if let Some((updating_for, running_update)) = &lsp_data.update
             && !version_queried_for.changed_since(updating_for)
         {
@@ -5566,7 +5592,9 @@ impl LspStore {
                     Err(e) => {
                         lsp_store
                             .update(cx, |lsp_store, _| {
-                                lsp_store.lsp_code_lens.entry(buffer_id).or_default().update = None;
+                                if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id) {
+                                    lsp_data.code_lens.update = None;
+                                }
                             })
                             .ok();
                         return Err(e);
@@ -5574,21 +5602,32 @@ impl LspStore {
                 };
 
                 lsp_store
-                    .update(cx, |lsp_store, _| {
-                        let lsp_data = lsp_store.lsp_code_lens.entry(buffer_id).or_default();
+                    .update(cx, |lsp_store, cx| {
+                        let lsp_data = &mut lsp_store
+                            .lsp_data
+                            .entry(buffer_id)
+                            .or_insert_with(|| BufferLspData::new(&buffer, cx));
                         if let Some(fetched_lens) = fetched_lens {
-                            if lsp_data.lens_for_version == query_version_queried_for {
-                                lsp_data.lens.extend(fetched_lens);
+                            if lsp_data.buffer_version == query_version_queried_for {
+                                lsp_data.code_lens.lens.extend(fetched_lens);
                             } else if !lsp_data
-                                .lens_for_version
+                                .buffer_version
                                 .changed_since(&query_version_queried_for)
                             {
-                                lsp_data.lens_for_version = query_version_queried_for;
-                                lsp_data.lens = fetched_lens;
+                                lsp_data.buffer_version = query_version_queried_for;
+                                lsp_data.code_lens.lens = fetched_lens;
                             }
                         }
-                        lsp_data.update = None;
-                        Some(lsp_data.lens.values().flatten().cloned().collect())
+                        lsp_data.code_lens.update = None;
+                        Some(
+                            lsp_data
+                                .code_lens
+                                .lens
+                                .values()
+                                .flatten()
+                                .cloned()
+                                .collect(),
+                        )
                     })
                     .map_err(Arc::new)
             })
@@ -6364,11 +6403,12 @@ impl LspStore {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer.read(cx).remote_id();
 
-        let existing_inlay_hints = self
-            .inlay_hint_data
+        let lsp_data = self
+            .lsp_data
             .entry(buffer_id)
-            .or_insert_with(|| BufferInlayHints::new(&buffer, cx));
-        if buffer_version.changed_since(&existing_inlay_hints.chunks_for_version) {
+            .or_insert_with(|| BufferLspData::new(&buffer, cx));
+        let existing_inlay_hints = &mut lsp_data.inlay_hints;
+        if buffer_version.changed_since(&lsp_data.buffer_version) {
             *existing_inlay_hints = BufferInlayHints::new(&buffer, cx);
         }
 
@@ -6450,8 +6490,8 @@ impl LspStore {
                         let new_inlay_hints = cx
                             .background_spawn(async move { new_fetch_task.await.map_err(Arc::new) })
                             .shared();
-                        if let Some(buffer_hints) = lsp_store.inlay_hint_data.get_mut(&buffer_id) {
-                            let fetch_task = buffer_hints.fetched_hints(&chunk);
+                        if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id) {
+                            let fetch_task = lsp_data.inlay_hints.fetched_hints(&chunk);
                             if fetch_task.is_none() {
                                 *fetch_task = Some(new_inlay_hints.clone());
                             }
@@ -6479,30 +6519,16 @@ impl LspStore {
                     })
                     .collect::<HashMap<_, _>>();
                 lsp_store.update(cx, |lsp_store, cx| {
-                    let buffer_hints = match lsp_store.inlay_hint_data.entry(buffer_id) {
-                        hash_map::Entry::Occupied(o) => {
-                            let cached_hints = o.into_mut();
-                            if invalidate_cache {
-                                cached_hints.hints_by_chunks =
-                                    vec![None; cached_hints.buffer_chunks.len()];
-                                cached_hints.fetches_by_chunks =
-                                    vec![None; cached_hints.buffer_chunks.len()];
-                            }
-                            Some(cached_hints)
-                        }
-                        hash_map::Entry::Vacant(v) => {
-                            if !invalidate_cache {
-                                None
-                            } else {
-                                Some(v.insert(BufferInlayHints::new(&buffer, cx)))
-                            }
-                        }
-                    };
-                    let Some(buffer_hints) = buffer_hints else {
-                        combined_hints.clear();
-                        return;
-                    };
-                    if !invalidate_cache && buffer_hints.chunks_for_version != buffer_version {
+                    let lsp_data = lsp_store
+                        .lsp_data
+                        .entry(buffer_id)
+                        .or_insert_with(|| BufferLspData::new(&buffer, cx));
+                    let buffer_hints = &mut lsp_data.inlay_hints;
+                    if invalidate_cache {
+                        buffer_hints.clear();
+                    }
+                    // TODO kb check all version checks and rewrites in the new code
+                    if !invalidate_cache && lsp_data.buffer_version != buffer_version {
                         combined_hints.clear();
                         return;
                     }
@@ -6727,30 +6753,31 @@ impl LspStore {
             LspFetchStrategy::UseCache {
                 known_cache_version,
             } => {
-                if let Some(cached_data) = self.lsp_document_colors.get(&buffer_id)
-                    && !version_queried_for.changed_since(&cached_data.colors_for_version)
+                let current_language_servers = self
+                    .as_local()
+                    .and_then(|local| local.buffers_opened_in_servers.get(&buffer_id).cloned())
+                    .unwrap_or_default();
+
+                if let Some(lsp_data) = self.lsp_data.get_mut(&buffer_id)
+                    && !version_queried_for.changed_since(&lsp_data.buffer_version)
                 {
-                    let has_different_servers = self.as_local().is_some_and(|local| {
-                        local
-                            .buffers_opened_in_servers
-                            .get(&buffer_id)
-                            .cloned()
-                            .unwrap_or_default()
-                            != cached_data.colors.keys().copied().collect()
-                    });
-                    if !has_different_servers {
-                        if Some(cached_data.cache_version) == known_cache_version {
+                    if current_language_servers
+                        == lsp_data.document_colors.colors.keys().copied().collect()
+                    {
+                        let cache_version = lsp_data.document_colors.cache_version;
+                        if Some(cache_version) == known_cache_version {
                             return None;
                         } else {
                             return Some(
                                 Task::ready(Ok(DocumentColors {
-                                    colors: cached_data
+                                    colors: lsp_data
+                                        .document_colors
                                         .colors
                                         .values()
                                         .flatten()
                                         .cloned()
                                         .collect(),
-                                    cache_version: Some(cached_data.cache_version),
+                                    cache_version: Some(cache_version),
                                 }))
                                 .shared(),
                             );
@@ -6760,7 +6787,11 @@ impl LspStore {
             }
         }
 
-        let lsp_data = self.lsp_document_colors.entry(buffer_id).or_default();
+        let lsp_data = &mut self
+            .lsp_data
+            .entry(buffer_id)
+            .or_insert_with(|| BufferLspData::new(&buffer, cx))
+            .document_colors;
         if let Some((updating_for, running_update)) = &lsp_data.colors_update
             && !version_queried_for.changed_since(updating_for)
         {
@@ -6796,11 +6827,9 @@ impl LspStore {
                     Err(e) => {
                         lsp_store
                             .update(cx, |lsp_store, _| {
-                                lsp_store
-                                    .lsp_document_colors
-                                    .entry(buffer_id)
-                                    .or_default()
-                                    .colors_update = None;
+                                if let Some(lsp_data) = lsp_store.lsp_data.get_mut(&buffer_id) {
+                                    lsp_data.document_colors.colors_update = None;
+                                }
                             })
                             .ok();
                         return Err(e);
@@ -6808,24 +6837,28 @@ impl LspStore {
                 };
 
                 lsp_store
-                    .update(cx, |lsp_store, _| {
-                        let lsp_data = lsp_store.lsp_document_colors.entry(buffer_id).or_default();
+                    .update(cx, |lsp_store, cx| {
+                        let lsp_data = lsp_store
+                            .lsp_data
+                            .entry(buffer_id)
+                            .or_insert_with(|| BufferLspData::new(&buffer, cx));
+                        let lsp_colors = &mut lsp_data.document_colors;
 
                         if let Some(fetched_colors) = fetched_colors {
-                            if lsp_data.colors_for_version == query_version_queried_for {
-                                lsp_data.colors.extend(fetched_colors);
-                                lsp_data.cache_version += 1;
+                            if lsp_data.buffer_version == query_version_queried_for {
+                                lsp_colors.colors.extend(fetched_colors);
+                                lsp_colors.cache_version += 1;
                             } else if !lsp_data
-                                .colors_for_version
+                                .buffer_version
                                 .changed_since(&query_version_queried_for)
                             {
-                                lsp_data.colors_for_version = query_version_queried_for;
-                                lsp_data.colors = fetched_colors;
-                                lsp_data.cache_version += 1;
+                                lsp_data.buffer_version = query_version_queried_for;
+                                lsp_colors.colors = fetched_colors;
+                                lsp_colors.cache_version += 1;
                             }
                         }
-                        lsp_data.colors_update = None;
-                        let colors = lsp_data
+                        lsp_colors.colors_update = None;
+                        let colors = lsp_colors
                             .colors
                             .values()
                             .flatten()
@@ -6833,7 +6866,7 @@ impl LspStore {
                             .collect::<HashSet<_>>();
                         DocumentColors {
                             colors,
-                            cache_version: Some(lsp_data.cache_version),
+                            cache_version: Some(lsp_colors.cache_version),
                         }
                     })
                     .map_err(Arc::new)
@@ -8304,16 +8337,24 @@ impl LspStore {
                     })?
                     .await?;
                 lsp_store.update(&mut cx, |lsp_store, cx| {
-                    let existing_queries = lsp_store
-                        .running_lsp_requests
+                    let lsp_data = lsp_store
+                        .lsp_data
+                        .entry(buffer_id)
+                        .or_insert_with(|| BufferLspData::new(&buffer, cx));
+                    if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
+                    ) || buffer
+                        .read(cx)
+                        .version
+                        .changed_since(&lsp_data.buffer_version)
+                    {
+                        *lsp_data = BufferLspData::new(&buffer, cx);
+                    }
+
+                    let existing_queries = lsp_data
+                        .lsp_requests
                         .entry(TypeId::of::<GetDocumentDiagnostics>())
                         .or_default();
-                    if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
-                    ) || buffer.read(cx).version.changed_since(&existing_queries.0)
-                    {
-                        existing_queries.1.clear();
-                    }
-                    existing_queries.1.insert(
+                    existing_queries.insert(
                         lsp_request_id,
                         cx.spawn(async move |lsp_store, cx| {
                             let diagnostics_pull = lsp_store
@@ -11218,22 +11259,14 @@ impl LspStore {
 
     fn cleanup_lsp_data(&mut self, for_server: LanguageServerId) {
         self.lsp_server_capabilities.remove(&for_server);
-        for buffer_colors in self.lsp_document_colors.values_mut() {
-            buffer_colors.colors.remove(&for_server);
-            buffer_colors.cache_version += 1;
-        }
-        for buffer_lens in self.lsp_code_lens.values_mut() {
-            buffer_lens.lens.remove(&for_server);
+        for lsp_data in self.lsp_data.values_mut() {
+            lsp_data.remove_server_data(for_server);
         }
         if let Some(local) = self.as_local_mut() {
             local.buffer_pull_diagnostics_result_ids.remove(&for_server);
             for buffer_servers in local.buffers_opened_in_servers.values_mut() {
                 buffer_servers.remove(&for_server);
             }
-        }
-
-        for inlay_hint_cache in self.inlay_hint_data.values_mut() {
-            inlay_hint_cache.remove_server_data(for_server);
         }
     }
 
@@ -11866,54 +11899,59 @@ impl LspStore {
         lsp_store.update(&mut cx, |lsp_store, cx| {
             let request_task =
                 lsp_store.request_multiple_lsp_locally(&buffer, position, request, cx);
-            let existing_queries = lsp_store
-                .running_lsp_requests
-                .entry(TypeId::of::<T>())
-                .or_default();
+            let lsp_data = lsp_store
+                .lsp_data
+                .entry(buffer_id)
+                .or_insert_with(|| BufferLspData::new(&buffer, cx));
             if T::ProtoRequest::stop_previous_requests()
-                || buffer_version.changed_since(&existing_queries.0)
+                || buffer_version.changed_since(&lsp_data.buffer_version)
             {
-                existing_queries.1.clear();
+                *lsp_data = BufferLspData::new(&buffer, cx);
             }
-            existing_queries.1.insert(
-                lsp_request_id,
-                cx.spawn(async move |lsp_store, cx| {
-                    let response = request_task.await;
-                    lsp_store
-                        .update(cx, |lsp_store, cx| {
-                            if let Some((client, project_id)) = lsp_store.downstream_client.clone()
-                            {
-                                let response = response
-                                    .into_iter()
-                                    .map(|(server_id, response)| {
-                                        (
-                                            server_id.to_proto(),
-                                            T::response_to_proto(
-                                                response,
-                                                lsp_store,
-                                                sender_id,
-                                                &buffer_version,
-                                                cx,
+            lsp_data
+                .lsp_requests
+                .entry(TypeId::of::<T>())
+                .or_default()
+                .insert(
+                    lsp_request_id,
+                    cx.spawn(async move |lsp_store, cx| {
+                        let response = request_task.await;
+                        lsp_store
+                            .update(cx, |lsp_store, cx| {
+                                if let Some((client, project_id)) =
+                                    lsp_store.downstream_client.clone()
+                                {
+                                    let response = response
+                                        .into_iter()
+                                        .map(|(server_id, response)| {
+                                            (
+                                                server_id.to_proto(),
+                                                T::response_to_proto(
+                                                    response,
+                                                    lsp_store,
+                                                    sender_id,
+                                                    &buffer_version,
+                                                    cx,
+                                                )
+                                                .into(),
                                             )
-                                            .into(),
-                                        )
-                                    })
-                                    .collect::<HashMap<_, _>>();
-                                match client.send_lsp_response::<T::ProtoRequest>(
-                                    project_id,
-                                    lsp_request_id,
-                                    response,
-                                ) {
-                                    Ok(()) => {}
-                                    Err(e) => {
-                                        log::error!("Failed to send LSP response: {e:#}",)
+                                        })
+                                        .collect::<HashMap<_, _>>();
+                                    match client.send_lsp_response::<T::ProtoRequest>(
+                                        project_id,
+                                        lsp_request_id,
+                                        response,
+                                    ) {
+                                        Ok(()) => {}
+                                        Err(e) => {
+                                            log::error!("Failed to send LSP response: {e:#}",)
+                                        }
                                     }
                                 }
-                            }
-                        })
-                        .ok();
-                }),
-            );
+                            })
+                            .ok();
+                    }),
+                );
         })?;
         Ok(())
     }
@@ -11934,8 +11972,14 @@ impl LspStore {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn forget_code_lens_task(&mut self, buffer_id: BufferId) -> Option<CodeLensTask> {
-        let data = self.lsp_code_lens.get_mut(&buffer_id)?;
-        Some(data.update.take()?.1)
+        Some(
+            self.lsp_data
+                .get_mut(&buffer_id)?
+                .code_lens
+                .update
+                .take()?
+                .1,
+        )
     }
 
     pub fn downstream_client(&self) -> Option<(AnyProtoClient, u64)> {

@@ -8,7 +8,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
-use text::{ChunkBitmaps, Patch, Rope};
+use text::{ChunkBitmaps, Patch};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
