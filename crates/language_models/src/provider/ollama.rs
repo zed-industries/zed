@@ -770,29 +770,32 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_getting_started() -> Div {
+    fn render_instructions() -> Div {
         v_flex()
             .gap_2()
-            .child(
-            Label::new("Run powerful language models locally on your machine with Ollama. Get started with Llama 3.3, Mistral, Gemma 2, and hundreds of other models.")
-                .size(LabelSize::Small)
-                .color(Color::Muted)
-            )
-            .child(
-                Label::new("Getting Started")
-                    .size(LabelSize::Small)
-                    .color(Color::Default)
-            )
+            .child(Label::new(
+                "Run LLMs locally on your machine with Ollama, or connect to an Ollama server. \
+                Can provide access to Llama, Mistral, Gemma, and hundreds of other models.",
+            ))
+            .child(Label::new("To use local Ollama:"))
             .child(
                 List::new()
-                    .child(InstructionListItem::text_only("1. Download and install Ollama from ollama.com"))
-                    .child(InstructionListItem::text_only("2. Start Ollama and download a model: `ollama run gpt-oss:20b`"))
-                    .child(InstructionListItem::text_only("3. Click 'Connect' below to start using Ollama in Zed"))
-            ).child(
-                Label::new("API Keys and API URLs are optional, Zed will default to local ollama usage.")
-                .size(LabelSize::Small)
-                .color(Color::Muted)
+                    .child(InstructionListItem::new(
+                        "Download and install Ollama from",
+                        Some("ollama.com"),
+                        Some("https://ollama.com/download"),
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Start Ollama and download a model: `ollama run gpt-oss:20b`",
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Click 'Connect' below to start using Ollama in Zed",
+                    )),
             )
+            .child(Label::new(
+                "Alternatively, you can connect to an Ollama server by specifying its \
+                URL and API key (may not be required):",
+            ))
     }
 
     fn render_api_key_editor(&self, cx: &Context<Self>) -> Div {
@@ -893,9 +896,7 @@ impl Render for ConfigurationView {
 
         v_flex()
             .gap_2()
-            .when(!is_authenticated, |this| {
-                this.child(Self::render_getting_started())
-            })
+            .child(Self::render_instructions())
             .child(self.render_api_url_editor(cx))
             .child(self.render_api_key_editor(cx))
             .child(
