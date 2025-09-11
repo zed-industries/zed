@@ -1618,4 +1618,145 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_multiline_filename_break_issue() {
+        // Test the issue where file paths that break in the middle of filenames
+        // are detected as separate hyperlinks instead of one complete path
+        
+        let term = Term::new(Config::default(), &TermSize::new(50, 10), VoidListener);
+        let mut regex_searches = RegexSearches::new();
+        
+        // Create a scenario where a filename gets broken across lines
+        // This simulates terminal output where line wrapping breaks a filename
+        let test_input = "Error in /project/src/components/very-long-file-na\nme.tsx at line 42";
+        
+        let mut term = term;
+        // Input character by character, including the newline
+        for c in test_input.chars() {
+            if c == '\n' {
+                term.move_down_and_cr(1);
+            } else {
+                term.input(c);
+            }
+        }
+        
+        // Print the terminal content to see the layout
+        let grid = term.grid();
+        println!("Terminal content (width: {}):", term.columns());
+        for line_idx in 0..std::cmp::min(3, grid.screen_lines()) {
+            let mut line_content = String::new();
+            for col_idx in 0..grid.columns() {
+                let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
+                let cell = grid.index(point);
+                line_content.push(cell.c);
+            }
+            println!("Line {}: '{}'", line_idx, line_content.trim_end());
+        }
+        
+        // Find all word matches to see how they're parsed
+        let all_word_matches: Vec<_> = visible_regex_match_iter(&term, &mut regex_searches.word_regex).collect();
+        println!("Found {} word matches:", all_word_matches.len());
+        for (i, m) in all_word_matches.iter().enumerate() {
+            let word_text = term.bounds_to_string(*m.start(), *m.end());
+            println!("  Match {}: '{}' at {:?}..={:?}", i, word_text, m.start(), m.end());
+        }
+        
+        // Find specific test points
+        let mut first_part_point = None;   // Click on the first part of the broken filename
+        let mut second_part_point = None;  // Click on the second part of the broken filename
+        
+        for line_idx in 0..std::cmp::min(3, grid.screen_lines()) {
+            for col_idx in 0..grid.columns() {
+                let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
+                let cell = grid.index(point);
+                
+                // Find "file-na" on the first line (part of the broken filename)
+                if cell.c == 'f' && line_idx == 0 && first_part_point.is_none() {
+                    // Check if this is "file-na" (part of very-long-file-name.tsx)
+                    let check_str = "file-na";
+                    let mut is_filename_start = true;
+                    for (i, expected_char) in check_str.chars().enumerate() {
+                        if col_idx + i >= grid.columns() {
+                            is_filename_start = false;
+                            break;
+                        }
+                        let check_point = AlacPoint::new(Line(line_idx as i32), Column(col_idx + i));
+                        let check_cell = grid.index(check_point);
+                        if check_cell.c != expected_char {
+                            is_filename_start = false;
+                            break;
+                        }
+                    }
+                    if is_filename_start {
+                        first_part_point = Some(point);
+                    }
+                }
+                
+                // Find "me.tsx" on the second line (continuation of the broken filename)
+                if cell.c == 'm' && line_idx == 1 && second_part_point.is_none() {
+                    // Check if this is "me.tsx"
+                    let check_str = "me.tsx";
+                    let mut is_filename_end = true;
+                    for (i, expected_char) in check_str.chars().enumerate() {
+                        if col_idx + i >= grid.columns() {
+                            is_filename_end = false;
+                            break;
+                        }
+                        let check_point = AlacPoint::new(Line(line_idx as i32), Column(col_idx + i));
+                        let check_cell = grid.index(check_point);
+                        if check_cell.c != expected_char {
+                            is_filename_end = false;
+                            break;
+                        }
+                    }
+                    if is_filename_end {
+                        second_part_point = Some(point);
+                    }
+                }
+            }
+        }
+        
+        println!("Test points:");
+        println!("  First part point: {:?}", first_part_point);
+        println!("  Second part point: {:?}", second_part_point);
+        
+        // Test file path detection at each point
+        if let Some(first_pt) = first_part_point {
+            let first_result = find_from_grid_point(&term, first_pt, &mut regex_searches);
+            println!("First part result: {:?}", first_result.as_ref().map(|(path, _, _)| path));
+            
+            if let Some(second_pt) = second_part_point {
+                let second_result = find_from_grid_point(&term, second_pt, &mut regex_searches);
+                println!("Second part result: {:?}", second_result.as_ref().map(|(path, _, _)| path));
+                
+                // This demonstrates the issue
+                match (&first_result, &second_result) {
+                    (Some((first_path, _, _)), Some((second_path, _, _))) => {
+                        if first_path == second_path {
+                            println!("✓ SUCCESS: Both parts detected same complete path: {}", first_path);
+                        } else {
+                            println!("✗ BUG CONFIRMED: Different paths detected for same file:");
+                            println!("  First part: {}", first_path);
+                            println!("  Second part: {}", second_path);
+                            println!("This shows the multi-line filename break issue!");
+                            assert!(false, "Multi-line filename break bug: broken filename detected as separate paths");
+                        }
+                    }
+                    (Some((first_path, _, _)), None) => {
+                        println!("✗ PARTIAL BUG: First part found '{}' but second part found nothing", first_path);
+                        println!("This confirms the multi-line filename break issue!");
+                        assert!(false, "Multi-line filename break bug: only first part clickable");
+                    }
+                    (None, Some((second_path, _, _))) => {
+                        println!("✗ PARTIAL BUG: Second part found '{}' but first part found nothing", second_path);
+                        assert!(false, "Multi-line filename break bug: only second part clickable");
+                    }
+                    (None, None) => {
+                        println!("✗ No file paths detected at either point");
+                    }
+                }
+            }
+        }
+    }
 }
