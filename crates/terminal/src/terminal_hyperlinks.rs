@@ -1,8 +1,8 @@
 use alacritty_terminal::{
-    Term,
     event::EventListener,
     grid::Dimensions,
     index::{Boundary, Column, Direction as AlacDirection, Line, Point as AlacPoint},
+    Term,
     term::search::{Match, RegexIter, RegexSearch},
 };
 use regex::Regex;
