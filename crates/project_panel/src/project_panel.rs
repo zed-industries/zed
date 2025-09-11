@@ -4270,7 +4270,7 @@ impl ProjectPanel {
                         this.drag_target_entry = None;
                         this.hover_scroll_task.take();
                         this.hover_expand_task.take();
-                        if  folded_directory_drag_target.is_some() {
+                        if folded_directory_drag_target.is_some() {
                             return;
                         }
                         this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
@@ -5592,12 +5592,58 @@ impl Render for ProjectPanel {
                                 })
                                 .drag_over::<ExternalPaths>(|style, _, _, cx| {
                                     style.bg(cx.theme().colors().drop_target_background)
-                                }),
-                            // .on_drag_move::<DraggedSelection>(cx.listener(
-                            //     move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
-                            //         //
-                            //     },
-                            // ))
+                                })
+                                .on_drag_move::<DraggedSelection>(cx.listener(
+                                    move |this, event: &DragMoveEvent<DraggedSelection>, _, cx| {
+                                        let Some(last_root_id) = this.last_worktree_root_id else {
+                                            return;
+                                        };
+                                        if event.bounds.contains(&event.event.position) {
+                                            let should_highlight = {
+                                                let drag_state = event.drag(cx);
+                                                if drag_state.items().count() == 1 {
+                                                    if let Some(active_parent_path) = this
+                                                        .project
+                                                        .read(cx)
+                                                        .path_for_entry(
+                                                            drag_state.active_selection.entry_id,
+                                                            cx,
+                                                        )
+                                                        .map(|e| e.path.parent())
+                                                        .flatten()
+                                                    {
+                                                        let project = this.project.read(cx);
+                                                        project
+                                                            .path_for_entry(last_root_id, cx)
+                                                            .is_some_and(|p| {
+                                                                p.path.as_ref()
+                                                                    == active_parent_path
+                                                            })
+                                                    } else {
+                                                        false
+                                                    }
+                                                } else {
+                                                    // If multiple entries are dragged, always highlight
+                                                    true
+                                                }
+                                            };
+                                            if should_highlight {
+                                                this.drag_target_entry = Some(DragTargetEntry {
+                                                    entry_id: last_root_id,
+                                                    highlight_entry_id: Some(last_root_id),
+                                                });
+                                            }
+                                        } else {
+                                            if this
+                                                .drag_target_entry
+                                                .as_ref()
+                                                .is_some_and(|e| e.entry_id == last_root_id)
+                                            {
+                                                this.drag_target_entry = None;
+                                            }
+                                        }
+                                    },
+                                )),
                         )
                         .size_full(),
                 )
