@@ -210,15 +210,12 @@ impl FromProto for Arc<Path> {
     }
 }
 
-impl ToProto for PathBuf {
+impl<T> ToProto for T
+where
+    T: AsRef<Path>,
+{
     fn to_proto(self) -> String {
-        to_proto_path(&self)
-    }
-}
-
-impl ToProto for &Path {
-    fn to_proto(self) -> String {
-        to_proto_path(self)
+        to_proto_path(self.as_ref())
     }
 }
 

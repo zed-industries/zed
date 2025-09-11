@@ -19,6 +19,7 @@ use std::{
 };
 use util::ResultExt;
 use util::archive::extract_zip;
+use util::paths::{SanitizedPath, SanitizedPathBuf};
 
 const NODE_CA_CERTS_ENV_VAR: &str = "NODE_EXTRA_CA_CERTS";
 
@@ -371,7 +372,7 @@ trait NodeRuntimeTrait: Send + Sync {
 
 #[derive(Clone)]
 struct ManagedNodeRuntime {
-    installation_path: PathBuf,
+    installation_path: SanitizedPathBuf,
 }
 
 impl ManagedNodeRuntime {
@@ -483,9 +484,13 @@ impl ManagedNodeRuntime {
                 ArchiveType::TarGz => {
                     let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
                     let archive = Archive::new(decompressed_bytes);
-                    archive.unpack(&node_containing_dir).await?;
+                    archive
+                        .unpack(node_containing_dir.as_path().as_path())
+                        .await?;
                 }
-                ArchiveType::Zip => extract_zip(&node_containing_dir, body).await?,
+                ArchiveType::Zip => {
+                    extract_zip(node_containing_dir.as_path().as_path(), body).await?
+                }
             }
             log::info!("Extracted Node.js to {}", node_containing_dir.display())
         }
@@ -501,7 +506,7 @@ impl ManagedNodeRuntime {
     }
 }
 
-fn path_with_node_binary_prepended(node_binary: &Path) -> Option<OsString> {
+fn path_with_node_binary_prepended(node_binary: &SanitizedPath) -> Option<OsString> {
     let existing_path = env::var_os("PATH");
     let node_bin_dir = node_binary.parent().map(|dir| dir.as_os_str());
     match (existing_path, node_bin_dir) {
@@ -606,15 +611,15 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
 
 #[derive(Debug, Clone)]
 pub struct SystemNodeRuntime {
-    node: PathBuf,
-    npm: PathBuf,
-    global_node_modules: PathBuf,
-    scratch_dir: PathBuf,
+    node: SanitizedPathBuf,
+    npm: SanitizedPathBuf,
+    global_node_modules: SanitizedPathBuf,
+    scratch_dir: SanitizedPathBuf,
 }
 
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(20, 0, 0);
-    async fn new(node: PathBuf, npm: PathBuf) -> Result<Self> {
+    async fn new(node: SanitizedPathBuf, npm: SanitizedPathBuf) -> Result<Self> {
         let output = util::command::new_smol_command(&node)
             .arg("--version")
             .output()
@@ -645,19 +650,19 @@ impl SystemNodeRuntime {
         let mut this = Self {
             node,
             npm,
-            global_node_modules: PathBuf::default(),
+            global_node_modules: SanitizedPathBuf::default(),
             scratch_dir,
         };
         let output = this.run_npm_subcommand(None, None, "root", &["-g"]).await?;
         this.global_node_modules =
-            PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string());
+            PathBuf::from(String::from_utf8_lossy(&output.stdout).to_string()).into();
 
         Ok(this)
     }
 
     async fn detect() -> std::result::Result<Self, DetectError> {
-        let node = which::which("node").map_err(DetectError::NotInPath)?;
-        let npm = which::which("npm").map_err(DetectError::NotInPath)?;
+        let node = which::which("node").map_err(DetectError::NotInPath)?.into();
+        let npm = which::which("npm").map_err(DetectError::NotInPath)?.into();
         Self::new(node, npm).await.map_err(DetectError::Other)
     }
 }
