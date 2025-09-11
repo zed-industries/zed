@@ -196,9 +196,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.2.0-alpha.6"
+version = "0.2.0-alpha.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d02292efd75080932b6466471d428c70e2ac06908ae24792fc7c36ecbaf67ca"
+checksum = "08539e8d6b2ccca6cd00afdd42211698f7677adef09108a09414c11f1f45fdaf"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -355,6 +355,7 @@ dependencies = [
  "agent_settings",
  "ai_onboarding",
  "anyhow",
+ "arrayvec",
  "assistant_context",
  "assistant_slash_command",
  "assistant_slash_commands",
@@ -482,6 +483,7 @@ dependencies = [
  "client",
  "cloud_llm_client",
  "component",
+ "feature_flags",
  "gpui",
  "language_model",
  "serde",
@@ -1381,12 +1383,19 @@ name = "audio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-tar",
  "collections",
+ "crossbeam",
  "gpui",
+ "libwebrtc",
+ "log",
+ "parking_lot",
  "rodio",
  "schemars",
  "serde",
  "settings",
+ "smol",
+ "thiserror 2.0.12",
  "util",
  "workspace-hack",
 ]
@@ -2607,6 +2616,7 @@ dependencies = [
  "audio",
  "client",
  "collections",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -2843,9 +2853,9 @@ dependencies = [
 
 [[package]]
 name = "cfg-if"
-version = "1.0.0"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
 
 [[package]]
 name = "cfg_aliases"
@@ -2882,11 +2892,9 @@ dependencies = [
  "language",
  "log",
  "postage",
- "rand 0.9.1",
  "release_channel",
  "rpc",
  "settings",
- "sum_tree",
  "text",
  "time",
  "util",
@@ -3374,12 +3382,10 @@ dependencies = [
  "collections",
  "db",
  "editor",
- "emojis",
  "futures 0.3.31",
  "fuzzy",
  "gpui",
  "http_client",
- "language",
  "log",
  "menu",
  "notifications",
@@ -3387,7 +3393,6 @@ dependencies = [
  "pretty_assertions",
  "project",
  "release_channel",
- "rich_text",
  "rpc",
  "schemars",
  "serde",
@@ -4035,6 +4040,7 @@ name = "crashes"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "cfg-if",
  "crash-handler",
  "log",
  "mach2 0.5.0",
@@ -4046,6 +4052,7 @@ dependencies = [
  "smol",
  "system_specs",
  "workspace-hack",
+ "zstd",
 ]
 
 [[package]]
@@ -4138,6 +4145,19 @@ checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
 dependencies = [
  "cast",
  "itertools 0.10.5",
+]
+
+[[package]]
+name = "crossbeam"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1137cd7e7fc0fb5d3c5a8678be38ec56e819125d8d7907411fe24ccb943faca8"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -5020,6 +5040,7 @@ dependencies = [
  "clock",
  "collections",
  "convert_case 0.8.0",
+ "criterion",
  "ctor",
  "dap",
  "db",
@@ -9282,6 +9303,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "sha2",
+ "shlex",
  "smol",
  "snippet_provider",
  "task",
@@ -9660,6 +9682,7 @@ dependencies = [
  "scap",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "settings",
  "sha2",
  "simplelog",
@@ -9922,6 +9945,7 @@ dependencies = [
  "assets",
  "base64 0.22.1",
  "env_logger 0.11.8",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "language",
@@ -13480,9 +13504,7 @@ dependencies = [
  "askpass",
  "assistant_tool",
  "assistant_tools",
- "backtrace",
  "cargo_toml",
- "chrono",
  "clap",
  "client",
  "clock",
@@ -13527,7 +13549,6 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "sysinfo",
- "telemetry_events",
  "thiserror 2.0.12",
  "toml 0.8.20",
  "unindent",
@@ -13863,15 +13884,15 @@ dependencies = [
 [[package]]
 name = "rodio"
 version = "0.21.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e40ecf59e742e03336be6a3d53755e789fd05a059fa22dfa0ed624722319e183"
+source = "git+https://github.com/RustAudio/rodio?branch=better_wav_output#82514bd1f2c6cfd9a1a885019b26a8ffea75bc5c"
 dependencies = [
  "cpal",
  "dasp_sample",
  "hound",
  "num-rational",
+ "rtrb",
  "symphonia",
- "tracing",
+ "thiserror 2.0.12",
 ]
 
 [[package]]
@@ -13944,6 +13965,12 @@ dependencies = [
  "subtle",
  "zeroize",
 ]
+
+[[package]]
+name = "rtrb"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad8388ea1a9e0ea807e442e8263a699e7edcb320ecbcd21b4fa8ff859acce3ba"
 
 [[package]]
 name = "rules_library"
@@ -14352,9 +14379,9 @@ name = "scheduler"
 version = "0.1.0"
 dependencies = [
  "async-task",
+ "backtrace",
  "chrono",
  "futures 0.3.31",
- "parking",
  "parking_lot",
  "rand 0.9.1",
  "workspace-hack",
@@ -14875,6 +14902,7 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
+ "menu",
  "serde",
  "serde_json",
  "settings",
@@ -15873,9 +15901,11 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
+ "project",
  "ui",
  "workspace",
  "workspace-hack",
+ "worktree",
 ]
 
 [[package]]
@@ -15906,10 +15936,51 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "815c942ae7ee74737bb00f965fa5b5a2ac2ce7b6c01c0cc169bbeaf7abd5f5a9"
 dependencies = [
  "lazy_static",
+ "symphonia-bundle-flac",
+ "symphonia-bundle-mp3",
+ "symphonia-codec-aac",
  "symphonia-codec-pcm",
+ "symphonia-codec-vorbis",
  "symphonia-core",
+ "symphonia-format-isomp4",
+ "symphonia-format-ogg",
  "symphonia-format-riff",
  "symphonia-metadata",
+]
+
+[[package]]
+name = "symphonia-bundle-flac"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72e34f34298a7308d4397a6c7fbf5b84c5d491231ce3dd379707ba673ab3bd97"
+dependencies = [
+ "log",
+ "symphonia-core",
+ "symphonia-metadata",
+ "symphonia-utils-xiph",
+]
+
+[[package]]
+name = "symphonia-bundle-mp3"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c01c2aae70f0f1fb096b6f0ff112a930b1fb3626178fba3ae68b09dce71706d4"
+dependencies = [
+ "lazy_static",
+ "log",
+ "symphonia-core",
+ "symphonia-metadata",
+]
+
+[[package]]
+name = "symphonia-codec-aac"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdbf25b545ad0d3ee3e891ea643ad115aff4ca92f6aec472086b957a58522f70"
+dependencies = [
+ "lazy_static",
+ "log",
+ "symphonia-core",
 ]
 
 [[package]]
@@ -15923,6 +15994,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "symphonia-codec-vorbis"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a98765fb46a0a6732b007f7e2870c2129b6f78d87db7987e6533c8f164a9f30"
+dependencies = [
+ "log",
+ "symphonia-core",
+ "symphonia-utils-xiph",
+]
+
+[[package]]
 name = "symphonia-core"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15933,6 +16015,31 @@ dependencies = [
  "bytemuck",
  "lazy_static",
  "log",
+]
+
+[[package]]
+name = "symphonia-format-isomp4"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abfdf178d697e50ce1e5d9b982ba1b94c47218e03ec35022d9f0e071a16dc844"
+dependencies = [
+ "encoding_rs",
+ "log",
+ "symphonia-core",
+ "symphonia-metadata",
+ "symphonia-utils-xiph",
+]
+
+[[package]]
+name = "symphonia-format-ogg"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ada3505789516bcf00fc1157c67729eded428b455c27ca370e41f4d785bfa931"
+dependencies = [
+ "log",
+ "symphonia-core",
+ "symphonia-metadata",
+ "symphonia-utils-xiph",
 ]
 
 [[package]]
@@ -15957,6 +16064,16 @@ dependencies = [
  "lazy_static",
  "log",
  "symphonia-core",
+]
+
+[[package]]
+name = "symphonia-utils-xiph"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "484472580fa49991afda5f6550ece662237b00c6f562c7d9638d1b086ed010fe"
+dependencies = [
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]
@@ -16710,7 +16827,6 @@ dependencies = [
  "db",
  "gpui",
  "http_client",
- "keymap_editor",
  "notifications",
  "pretty_assertions",
  "project",
@@ -19849,6 +19965,7 @@ dependencies = [
  "core-foundation-sys",
  "cranelift-codegen",
  "crc32fast",
+ "crossbeam-channel",
  "crossbeam-epoch",
  "crossbeam-utils",
  "crypto-common",
@@ -19892,6 +20009,7 @@ dependencies = [
  "libsqlite3-sys",
  "linux-raw-sys 0.4.15",
  "linux-raw-sys 0.9.4",
+ "livekit-runtime",
  "log",
  "lyon",
  "lyon_path",
@@ -20372,7 +20490,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.204.0"
+version = "0.205.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -20393,7 +20511,6 @@ dependencies = [
  "breadcrumbs",
  "call",
  "channel",
- "chrono",
  "clap",
  "cli",
  "client",
@@ -20444,9 +20561,7 @@ dependencies = [
  "language_selector",
  "language_tools",
  "languages",
- "libc",
  "line_ending_selector",
- "livekit_client",
  "log",
  "markdown",
  "markdown_preview",

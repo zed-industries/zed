@@ -803,12 +803,12 @@ impl ConfigureMode {
     pub(super) fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("ENV=Zed ~/bin/program --option", cx);
+            this.set_placeholder_text("ENV=Zed ~/bin/program --option", window, cx);
         });
 
         let cwd = cx.new(|cx| Editor::single_line(window, cx));
         cwd.update(cx, |this, cx| {
-            this.set_placeholder_text("Ex: $ZED_WORKTREE_ROOT", cx);
+            this.set_placeholder_text("Ex: $ZED_WORKTREE_ROOT", window, cx);
         });
 
         cx.new(|_| Self {
@@ -1446,7 +1446,7 @@ impl PickerDelegate for DebugDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
 
         let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),

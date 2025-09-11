@@ -5,7 +5,7 @@ use gpui::AsyncApp;
 use language::{LspAdapter, LspAdapterDelegate, Toolchain, language_settings::AllLanguageSettings};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
-use project::{Fs, lsp_store::language_server_settings};
+use project::lsp_store::language_server_settings;
 use serde_json::Value;
 use settings::{Settings, SettingsLocation};
 use smol::fs;
@@ -132,7 +132,7 @@ impl LspAdapter for YamlLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
+
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         cx: &mut AsyncApp,

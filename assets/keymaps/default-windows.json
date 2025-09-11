@@ -249,7 +249,10 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "super-ctrl-b": "agent::ToggleBurnMode",
-      "alt-enter": "agent::ContinueWithBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "ctrl-y": "agent::AllowOnce",
+      "ctrl-alt-y": "agent::AllowAlways",
+      "ctrl-d": "agent::RejectOnce"
     }
   },
   {
@@ -337,13 +340,20 @@
     }
   },
   {
+    "context": "AcpThread > ModeSelector",
+    "bindings": {
+      "ctrl-enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll"
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {
@@ -485,8 +495,8 @@
       "alt-down": "editor::MoveLineDown",
       "shift-alt-up": "editor::DuplicateLineUp",
       "shift-alt-down": "editor::DuplicateLineDown",
-      "shift-alt-right": "editor::SelectLargerSyntaxNode", // Expand Selection
-      "shift-alt-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "shift-alt-right": "editor::SelectLargerSyntaxNode", // Expand selection
+      "shift-alt-left": "editor::SelectSmallerSyntaxNode", // Shrink selection
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch  / find_under_expand
@@ -632,7 +642,9 @@
       "ctrl-k shift-up": "workspace::SwapPaneUp",
       "ctrl-k shift-down": "workspace::SwapPaneDown",
       "ctrl-shift-x": "zed::Extensions",
-      "ctrl-shift-r": "task::Rerun",
+      // All task parameters are captured and unchanged between reruns by default.
+      // Use the `"reevaluate_context"` parameter to control this.
+      "ctrl-shift-r": ["task::Rerun", { "reevaluate_context": false }],
       "alt-t": "task::Rerun",
       "shift-alt-t": "task::Spawn",
       "shift-alt-r": ["task::Spawn", { "reveal_target": "center" }],

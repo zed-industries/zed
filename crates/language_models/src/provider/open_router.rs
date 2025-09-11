@@ -787,8 +787,11 @@ impl ConfigurationView {
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor
-                .set_placeholder_text("sk_or_000000000000000000000000000000000000000000000000", cx);
+            editor.set_placeholder_text(
+                "sk_or_000000000000000000000000000000000000000000000000",
+                window,
+                cx,
+            );
             editor
         });
 

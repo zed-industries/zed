@@ -21,6 +21,7 @@ fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct VtslsLspAdapter {
     node: NodeRuntime,
+    fs: Arc<dyn Fs>,
 }
 
 impl VtslsLspAdapter {
@@ -30,11 +31,11 @@ impl VtslsLspAdapter {
     const TYPESCRIPT_PACKAGE_NAME: &'static str = "typescript";
     const TYPESCRIPT_TSDK_PATH: &'static str = "node_modules/typescript/lib";
 
-    pub fn new(node: NodeRuntime) -> Self {
-        VtslsLspAdapter { node }
+    pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
+        VtslsLspAdapter { node, fs }
     }
 
-    async fn tsdk_path(fs: &dyn Fs, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
+    async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
             .await
@@ -46,7 +47,8 @@ impl VtslsLspAdapter {
             Self::TYPESCRIPT_TSDK_PATH
         };
 
-        if fs
+        if self
+            .fs
             .is_dir(&adapter.worktree_root_path().join(tsdk_path))
             .await
         {
@@ -210,12 +212,11 @@ impl LspAdapter for VtslsLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
-        let tsdk_path = Self::tsdk_path(fs, delegate).await;
+        let tsdk_path = self.tsdk_path(delegate).await;
         let config = serde_json::json!({
             "tsdk": tsdk_path,
             "suggest": {

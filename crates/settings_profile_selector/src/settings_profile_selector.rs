@@ -257,8 +257,8 @@ impl PickerDelegate for SettingsProfileSelectorDelegate {
         _: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
-        let profile_name = &self.profile_names[mat.candidate_id];
+        let mat = &self.matches.get(ix)?;
+        let profile_name = &self.profile_names.get(mat.candidate_id)?;
 
         Some(
             ListItem::new(ix)

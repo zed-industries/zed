@@ -51,7 +51,7 @@ use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use client::{UserStore, zed_urls};
-use cloud_llm_client::{CompletionIntent, Plan, UsageLimit};
+use cloud_llm_client::{CompletionIntent, Plan, PlanV1, PlanV2, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
 use feature_flags::{self, ClaudeCodeFeatureFlag, FeatureFlagAppExt, GeminiAndNativeFeatureFlag};
 use fs::Fs;
@@ -2538,7 +2538,7 @@ impl AgentPanel {
                     }
                 },
             )
-            .anchor(Corner::TopLeft)
+            .anchor(Corner::TopRight)
             .with_handle(self.new_thread_menu_handle.clone())
             .menu({
                 let workspace = self.workspace.clone();
@@ -2717,10 +2717,13 @@ impl AgentPanel {
                                                                 panel.update(cx, |panel, cx| {
                                                                     panel.new_agent_thread(
                                                                         AgentType::Custom {
-                                                                            name: agent_name
-                                                                                .clone()
-                                                                                .into(),
-                                                                            command: custom_settings.get(&agent_name.0).map(|settings| settings.command.clone()).unwrap_or(placeholder_command())
+                                                                            name: agent_name.clone().into(),
+                                                                            command: custom_settings
+                                                                                .get(&agent_name.0)
+                                                                                .map(|settings| {
+                                                                                    settings.command.clone()
+                                                                                })
+                                                                                .unwrap_or(placeholder_command()),
                                                                         },
                                                                         window,
                                                                         cx,
@@ -2973,7 +2976,10 @@ impl AgentPanel {
         let plan = self.user_store.read(cx).plan();
         let has_previous_trial = self.user_store.read(cx).trial_started_at().is_some();
 
-        matches!(plan, Some(Plan::ZedFree)) && has_previous_trial
+        matches!(
+            plan,
+            Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree))
+        ) && has_previous_trial
     }
 
     fn should_render_onboarding(&self, cx: &mut Context<Self>) -> bool {
@@ -2985,7 +2991,7 @@ impl AgentPanel {
 
         if user_store
             .plan()
-            .is_some_and(|plan| matches!(plan, Plan::ZedPro))
+            .is_some_and(|plan| matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)))
             && user_store
                 .subscription_period()
                 .and_then(|period| period.0.checked_add_days(chrono::Days::new(1)))
@@ -3005,6 +3011,9 @@ impl AgentPanel {
             _ => {
                 let history_is_empty = if cx.has_flag::<GeminiAndNativeFeatureFlag>() {
                     self.acp_history_store.read(cx).is_empty(cx)
+                        && self
+                            .history_store
+                            .update(cx, |store, cx| store.recent_entries(1, cx).is_empty())
                 } else {
                     self.history_store
                         .update(cx, |store, cx| store.recent_entries(1, cx).is_empty())
@@ -3066,6 +3075,8 @@ impl AgentPanel {
             return None;
         }
 
+        let plan = self.user_store.read(cx).plan()?;
+
         Some(
             v_flex()
                 .absolute()
@@ -3074,15 +3085,18 @@ impl AgentPanel {
                 .bg(cx.theme().colors().panel_background)
                 .opacity(0.85)
                 .block_mouse_except_scroll()
-                .child(EndTrialUpsell::new(Arc::new({
-                    let this = cx.entity();
-                    move |_, cx| {
-                        this.update(cx, |_this, cx| {
-                            TrialEndUpsell::set_dismissed(true, cx);
-                            cx.notify();
-                        });
-                    }
-                }))),
+                .child(EndTrialUpsell::new(
+                    plan,
+                    Arc::new({
+                        let this = cx.entity();
+                        move |_, cx| {
+                            this.update(cx, |_this, cx| {
+                                TrialEndUpsell::set_dismissed(true, cx);
+                                cx.notify();
+                            });
+                        }
+                    }),
+                )),
         )
     }
 
@@ -3516,8 +3530,11 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let error_message = match plan {
-            Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
-            Plan::ZedProTrial | Plan::ZedFree => "Upgrade to Zed Pro for more prompts.",
+            Plan::V1(PlanV1::ZedPro) => "Upgrade to usage-based billing for more prompts.",
+            Plan::V1(PlanV1::ZedProTrial) | Plan::V1(PlanV1::ZedFree) => {
+                "Upgrade to Zed Pro for more prompts."
+            }
+            Plan::V2(_) => "",
         };
 
         Callout::new()

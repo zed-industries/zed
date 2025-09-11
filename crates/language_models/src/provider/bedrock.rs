@@ -1053,22 +1053,22 @@ impl ConfigurationView {
         Self {
             access_key_id_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, window, cx);
                 editor
             }),
             secret_access_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, window, cx);
                 editor
             }),
             session_token_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_SESSION_TOKEN_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SESSION_TOKEN_TEXT, window, cx);
                 editor
             }),
             region_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_REGION, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_REGION, window, cx);
                 editor
             }),
             state,

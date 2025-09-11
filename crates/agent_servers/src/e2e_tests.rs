@@ -5,7 +5,7 @@ use futures::{FutureExt, StreamExt, channel::mpsc, select};
 use gpui::{AppContext, Entity, TestAppContext};
 use indoc::indoc;
 #[cfg(test)]
-use project::agent_server_store::{AgentServerCommand, CustomAgentServerSettings};
+use project::agent_server_store::BuiltinAgentServerSettings;
 use project::{FakeFs, Project, agent_server_store::AllAgentServersSettings};
 use std::{
     path::{Path, PathBuf},
@@ -472,12 +472,12 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
         #[cfg(test)]
         AllAgentServersSettings::override_global(
             AllAgentServersSettings {
-                claude: Some(CustomAgentServerSettings {
-                    command: AgentServerCommand {
-                        path: "claude-code-acp".into(),
-                        args: vec![],
-                        env: None,
-                    },
+                claude: Some(BuiltinAgentServerSettings {
+                    path: Some("claude-code-acp".into()),
+                    args: None,
+                    env: None,
+                    ignore_system_version: None,
+                    default_mode: None,
                 }),
                 gemini: Some(crate::gemini::tests::local_command().into()),
                 custom: collections::HashMap::default(),

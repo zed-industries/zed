@@ -5644,6 +5644,241 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "src": {
+                "main.rs": "",
+                "lib.rs": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "src": {
+                "main.rs": "",
+                "test.rs": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+
+        let worktree_a = &worktrees[0];
+        let main_rs_from_a = worktree_a.read(cx).entry_for_path("src/main.rs").unwrap();
+
+        let worktree_b = &worktrees[1];
+        let src_dir_from_b = worktree_b.read(cx).entry_for_path("src").unwrap();
+        let main_rs_from_b = worktree_b.read(cx).entry_for_path("src/main.rs").unwrap();
+
+        // Test dragging file from worktree A onto parent of file with same relative path in worktree B
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree_a.read(cx).id(),
+                entry_id: main_rs_from_a.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree_a.read(cx).id(),
+                entry_id: main_rs_from_a.id,
+            }]),
+        };
+
+        let result = panel.highlight_entry_for_selection_drag(
+            src_dir_from_b,
+            worktree_b.read(cx),
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(
+            result,
+            Some(src_dir_from_b.id),
+            "Should highlight target directory from different worktree even with same relative path"
+        );
+
+        // Test dragging file from worktree A onto file with same relative path in worktree B
+        let result = panel.highlight_entry_for_selection_drag(
+            main_rs_from_b,
+            worktree_b.read(cx),
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(
+            result,
+            Some(src_dir_from_b.id),
+            "Should highlight parent of target file from different worktree"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "parent_dir": {
+                "child_file.txt": "",
+                "nested_dir": {
+                    "nested_file.txt": ""
+                }
+            },
+            "root_file.txt": ""
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "other_dir": {
+                "other_file.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+        let worktree1 = worktrees[0].read(cx);
+        let worktree2 = worktrees[1].read(cx);
+        let worktree1_id = worktree1.id();
+        let _worktree2_id = worktree2.id();
+
+        let root1_entry = worktree1.root_entry().unwrap();
+        let root2_entry = worktree2.root_entry().unwrap();
+        let _parent_dir = worktree1.entry_for_path("parent_dir").unwrap();
+        let child_file = worktree1
+            .entry_for_path("parent_dir/child_file.txt")
+            .unwrap();
+        let nested_file = worktree1
+            .entry_for_path("parent_dir/nested_dir/nested_file.txt")
+            .unwrap();
+        let root_file = worktree1.entry_for_path("root_file.txt").unwrap();
+
+        // Test 1: Multiple entries - should always highlight background
+        let multiple_dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new([
+                SelectedEntry {
+                    worktree_id: worktree1_id,
+                    entry_id: child_file.id,
+                },
+                SelectedEntry {
+                    worktree_id: worktree1_id,
+                    entry_id: nested_file.id,
+                },
+            ]),
+        };
+
+        let result = panel.should_highlight_background_for_selection_drag(
+            &multiple_dragged_selection,
+            root1_entry.id,
+            cx,
+        );
+        assert!(result, "Should highlight background for multiple entries");
+
+        // Test 2: Single entry with non-empty parent path - should highlight background
+        let nested_dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: nested_file.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: nested_file.id,
+            }]),
+        };
+
+        let result = panel.should_highlight_background_for_selection_drag(
+            &nested_dragged_selection,
+            root1_entry.id,
+            cx,
+        );
+        assert!(result, "Should highlight background for nested file");
+
+        // Test 3: Single entry at root level, same worktree - should NOT highlight background
+        let root_file_dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: root_file.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: root_file.id,
+            }]),
+        };
+
+        let result = panel.should_highlight_background_for_selection_drag(
+            &root_file_dragged_selection,
+            root1_entry.id,
+            cx,
+        );
+        assert!(
+            !result,
+            "Should NOT highlight background for root file in same worktree"
+        );
+
+        // Test 4: Single entry at root level, different worktree - should highlight background
+        let result = panel.should_highlight_background_for_selection_drag(
+            &root_file_dragged_selection,
+            root2_entry.id,
+            cx,
+        );
+        assert!(
+            result,
+            "Should highlight background for root file from different worktree"
+        );
+
+        // Test 5: Single entry in subdirectory - should highlight background
+        let child_file_dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: child_file.id,
+            }]),
+        };
+
+        let result = panel.should_highlight_background_for_selection_drag(
+            &child_file_dragged_selection,
+            root1_entry.id,
+            cx,
+        );
+        assert!(
+            result,
+            "Should highlight background for file with non-empty parent path"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_hide_root(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

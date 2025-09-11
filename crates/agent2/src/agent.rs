@@ -771,7 +771,9 @@ impl NativeAgentConnection {
                                 response,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(tool_call, options, cx)
+                                    thread.request_tool_call_authorization(
+                                        tool_call, options, true, cx,
+                                    )
                                 })??;
                                 cx.background_spawn(async move {
                                     if let acp::RequestPermissionOutcome::Selected { option_id } =

@@ -60,7 +60,7 @@ use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
     LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, ManifestDelegate, ManifestName,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain, Transaction,
+    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPoint, ToPointUtf16, Toolchain, Transaction,
     Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
@@ -361,7 +361,7 @@ impl LocalLspStore {
             let adapter = adapter.clone();
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
-            let fs = self.fs.clone();
+
             let pull_diagnostics = ProjectSettings::get_global(cx)
                 .diagnostics
                 .lsp_pull_diagnostics
@@ -372,7 +372,6 @@ impl LocalLspStore {
 
                     let workspace_config = Self::workspace_configuration_for_adapter(
                         adapter.adapter.clone(),
-                        fs.as_ref(),
                         &delegate,
                         toolchain,
                         cx,
@@ -381,7 +380,6 @@ impl LocalLspStore {
 
                     let mut initialization_options = Self::initialization_options_for_adapter(
                         adapter.adapter.clone(),
-                        fs.as_ref(),
                         &delegate,
                     )
                     .await?;
@@ -403,7 +401,6 @@ impl LocalLspStore {
 
                     Self::setup_lsp_messages(
                         lsp_store.clone(),
-                        fs,
                         &language_server,
                         delegate.clone(),
                         adapter.clone(),
@@ -568,7 +565,7 @@ impl LocalLspStore {
 
     fn setup_lsp_messages(
         this: WeakEntity<LspStore>,
-        fs: Arc<dyn Fs>,
+
         language_server: &LanguageServer,
         delegate: Arc<dyn LspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
@@ -623,12 +620,11 @@ impl LocalLspStore {
                 let adapter = adapter.adapter.clone();
                 let delegate = delegate.clone();
                 let this = this.clone();
-                let fs = fs.clone();
+
                 move |params, cx| {
                     let adapter = adapter.clone();
                     let delegate = delegate.clone();
                     let this = this.clone();
-                    let fs = fs.clone();
                     let mut cx = cx.clone();
                     async move {
                         let toolchain_for_id = this
@@ -642,7 +638,6 @@ impl LocalLspStore {
                             .context("Expected the LSP store to be in a local mode")?;
                         let workspace_config = Self::workspace_configuration_for_adapter(
                             adapter.clone(),
-                            fs.as_ref(),
                             &delegate,
                             toolchain_for_id,
                             &mut cx,
@@ -3370,11 +3365,10 @@ impl LocalLspStore {
 
     async fn initialization_options_for_adapter(
         adapter: Arc<dyn LspAdapter>,
-        fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         let Some(mut initialization_config) =
-            adapter.clone().initialization_options(fs, delegate).await?
+            adapter.clone().initialization_options(delegate).await?
         else {
             return Ok(None);
         };
@@ -3385,7 +3379,7 @@ impl LocalLspStore {
             }
             if let Ok(Some(target_config)) = other_adapter
                 .clone()
-                .additional_initialization_options(adapter.name(), fs, delegate)
+                .additional_initialization_options(adapter.name(), delegate)
                 .await
             {
                 merge_json_value_into(target_config.clone(), &mut initialization_config);
@@ -3395,20 +3389,15 @@ impl LocalLspStore {
         Ok(Some(initialization_config))
     }
 
-    fn toolchain_store(&self) -> &Entity<LocalToolchainStore> {
-        &self.toolchain_store
-    }
-
     async fn workspace_configuration_for_adapter(
         adapter: Arc<dyn LspAdapter>,
-        fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
         let mut workspace_config = adapter
             .clone()
-            .workspace_configuration(fs, delegate, toolchain, cx)
+            .workspace_configuration(delegate, toolchain, cx)
             .await?;
 
         for other_adapter in delegate.registered_lsp_adapters() {
@@ -3417,7 +3406,7 @@ impl LocalLspStore {
             }
             if let Ok(Some(target_config)) = other_adapter
                 .clone()
-                .additional_workspace_configuration(adapter.name(), fs, delegate, cx)
+                .additional_workspace_configuration(adapter.name(), delegate, cx)
                 .await
             {
                 merge_json_value_into(target_config.clone(), &mut workspace_config);
@@ -3586,7 +3575,6 @@ impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_request_handler(Self::handle_lsp_query);
         client.add_entity_message_handler(Self::handle_lsp_query_response);
-        client.add_entity_request_handler(Self::handle_multi_lsp_query);
         client.add_entity_request_handler(Self::handle_restart_language_servers);
         client.add_entity_request_handler(Self::handle_stop_language_servers);
         client.add_entity_request_handler(Self::handle_cancel_language_server_work);
@@ -3610,9 +3598,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_entity_request_handler(Self::handle_rename_project_entry);
         client.add_entity_request_handler(Self::handle_pull_workspace_diagnostics);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCompletions>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetHover>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentHighlights>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentSymbols>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
@@ -3633,7 +3619,6 @@ impl LspStore {
         client.add_entity_request_handler(
             Self::handle_lsp_command::<lsp_ext_command::SwitchSourceHeader>,
         );
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetDocumentDiagnostics>);
     }
 
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
@@ -3709,10 +3694,7 @@ impl LspStore {
 
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
-            (
-                Self::maintain_workspace_config(fs.clone(), receiver, cx),
-                sender,
-            )
+            (Self::maintain_workspace_config(receiver, cx), sender)
         };
 
         Self {
@@ -3799,7 +3781,6 @@ impl LspStore {
         languages: Arc<LanguageRegistry>,
         upstream_client: AnyProtoClient,
         project_id: u64,
-        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
@@ -3809,7 +3790,7 @@ impl LspStore {
         subscribe_to_binary_statuses(&languages, cx).detach();
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
-            (Self::maintain_workspace_config(fs, receiver, cx), sender)
+            (Self::maintain_workspace_config(receiver, cx), sender)
         };
         Self {
             mode: LspStoreMode::Remote(RemoteLspStore {
@@ -4049,19 +4030,11 @@ impl LspStore {
                 return;
             };
 
-            let Ok(Some((fs, _))) = this.read_with(cx, |this, _| {
-                let local = this.as_local()?;
-                let toolchain_store = local.toolchain_store().clone();
-                Some((local.fs.clone(), toolchain_store))
-            }) else {
-                return;
-            };
             for (adapter, server, delegate) in servers {
                 adapter.clear_zed_json_schema_cache().await;
 
                 let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
                         adapter,
-                        fs.as_ref(),
                         &delegate,
                         None,
                         cx,
@@ -6356,14 +6329,38 @@ impl LspStore {
 
                         for (range, text) in edits {
                             let primary = &completion.replace_range;
-                            let start_within = primary.start.cmp(&range.start, buffer).is_le()
-                                && primary.end.cmp(&range.start, buffer).is_ge();
-                            let end_within = range.start.cmp(&primary.end, buffer).is_le()
-                                && range.end.cmp(&primary.end, buffer).is_ge();
+
+                            // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
+                            // and the primary completion is just an insertion (empty range), then this is likely
+                            // an auto-import scenario and should not be considered overlapping
+                            // https://github.com/zed-industries/zed/issues/26136
+                            let is_file_start_auto_import = {
+                                let snapshot = buffer.snapshot();
+                                let primary_start_point = primary.start.to_point(&snapshot);
+                                let range_start_point = range.start.to_point(&snapshot);
+
+                                let result = primary_start_point.row == 0
+                                    && primary_start_point.column == 0
+                                    && range_start_point.row == 0
+                                    && range_start_point.column == 0;
+
+                                result
+                            };
+
+                            let has_overlap = if is_file_start_auto_import {
+                                false
+                            } else {
+                                let start_within = primary.start.cmp(&range.start, buffer).is_le()
+                                    && primary.end.cmp(&range.start, buffer).is_ge();
+                                let end_within = range.start.cmp(&primary.end, buffer).is_le()
+                                    && range.end.cmp(&primary.end, buffer).is_ge();
+                                let result = start_within || end_within;
+                                result
+                            };
 
                             //Skip additional edits which overlap with the primary completion edit
                             //https://github.com/zed-industries/zed/pull/1871
-                            if !start_within && !end_within {
+                            if !has_overlap {
                                 buffer.edit([(range, text)], None, cx);
                             }
                         }
@@ -7338,11 +7335,7 @@ impl LspStore {
         None
     }
 
-    async fn refresh_workspace_configurations(
-        lsp_store: &WeakEntity<Self>,
-        fs: Arc<dyn Fs>,
-        cx: &mut AsyncApp,
-    ) {
+    async fn refresh_workspace_configurations(lsp_store: &WeakEntity<Self>, cx: &mut AsyncApp) {
         maybe!(async move {
             let mut refreshed_servers = HashSet::default();
             let servers = lsp_store
@@ -7378,8 +7371,6 @@ impl LspStore {
                                 LanguageServerState::Running {
                                     adapter, server, ..
                                 } => {
-                                    let fs = fs.clone();
-
                                     let adapter = adapter.clone();
                                     let server = server.clone();
                                     refreshed_servers.insert(server.name());
@@ -7388,7 +7379,6 @@ impl LspStore {
                                         let settings =
                                             LocalLspStore::workspace_configuration_for_adapter(
                                                 adapter.adapter.clone(),
-                                                fs.as_ref(),
                                                 &delegate,
                                                 toolchain,
                                                 cx,
@@ -7425,7 +7415,6 @@ impl LspStore {
     }
 
     fn maintain_workspace_config(
-        fs: Arc<dyn Fs>,
         external_refresh_requests: watch::Receiver<()>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -7451,7 +7440,7 @@ impl LspStore {
                 })
                 .ok();
 
-                Self::refresh_workspace_configurations(&this, fs.clone(), cx).await;
+                Self::refresh_workspace_configurations(&this, cx).await;
             }
 
             drop(settings_observation);
@@ -8243,473 +8232,6 @@ impl LspStore {
             }
         })?;
         Ok(())
-    }
-
-    // todo(lsp) remove after Zed Stable hits v0.204.x
-    async fn handle_multi_lsp_query(
-        lsp_store: Entity<Self>,
-        envelope: TypedEnvelope<proto::MultiLspQuery>,
-        mut cx: AsyncApp,
-    ) -> Result<proto::MultiLspQueryResponse> {
-        let response_from_ssh = lsp_store.read_with(&cx, |this, _| {
-            let (upstream_client, project_id) = this.upstream_client()?;
-            let mut payload = envelope.payload.clone();
-            payload.project_id = project_id;
-
-            Some(upstream_client.request(payload))
-        })?;
-        if let Some(response_from_ssh) = response_from_ssh {
-            return response_from_ssh.await;
-        }
-
-        let sender_id = envelope.original_sender_id().unwrap_or_default();
-        let buffer_id = BufferId::new(envelope.payload.buffer_id)?;
-        let version = deserialize_version(&envelope.payload.version);
-        let buffer = lsp_store.update(&mut cx, |this, cx| {
-            this.buffer_store.read(cx).get_existing(buffer_id)
-        })??;
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(version.clone())
-            })?
-            .await?;
-        let buffer_version = buffer.read_with(&cx, |buffer, _| buffer.version())?;
-        match envelope
-            .payload
-            .strategy
-            .context("invalid request without the strategy")?
-        {
-            proto::multi_lsp_query::Strategy::All(_) => {
-                // currently, there's only one multiple language servers query strategy,
-                // so just ensure it's specified correctly
-            }
-        }
-        match envelope.payload.request {
-            Some(proto::multi_lsp_query::Request::GetHover(message)) => {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(&message.version))
-                    })?
-                    .await?;
-                let get_hover =
-                    GetHover::from_proto(message, lsp_store.clone(), buffer.clone(), cx.clone())
-                        .await?;
-                let all_hovers = lsp_store
-                    .update(&mut cx, |this, cx| {
-                        this.request_multiple_lsp_locally(
-                            &buffer,
-                            Some(get_hover.position),
-                            get_hover,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter()
-                    .filter_map(|(server_id, hover)| {
-                        Some((server_id, remove_empty_hover_blocks(hover?)?))
-                    });
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: all_hovers
-                        .map(|(server_id, hover)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(proto::lsp_response::Response::GetHoverResponse(
-                                GetHover::response_to_proto(
-                                    Some(hover),
-                                    project,
-                                    sender_id,
-                                    &buffer_version,
-                                    cx,
-                                ),
-                            )),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetCodeActions(message)) => {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(&message.version))
-                    })?
-                    .await?;
-                let get_code_actions = GetCodeActions::from_proto(
-                    message,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
-
-                let all_actions = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            Some(get_code_actions.range.start),
-                            get_code_actions,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: all_actions
-                        .map(|(server_id, code_actions)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(proto::lsp_response::Response::GetCodeActionsResponse(
-                                GetCodeActions::response_to_proto(
-                                    code_actions,
-                                    project,
-                                    sender_id,
-                                    &buffer_version,
-                                    cx,
-                                ),
-                            )),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetSignatureHelp(message)) => {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(&message.version))
-                    })?
-                    .await?;
-                let get_signature_help = GetSignatureHelp::from_proto(
-                    message,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
-
-                let all_signatures = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            Some(get_signature_help.position),
-                            get_signature_help,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: all_signatures
-                        .map(|(server_id, signature_help)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(
-                                proto::lsp_response::Response::GetSignatureHelpResponse(
-                                    GetSignatureHelp::response_to_proto(
-                                        signature_help,
-                                        project,
-                                        sender_id,
-                                        &buffer_version,
-                                        cx,
-                                    ),
-                                ),
-                            ),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetCodeLens(message)) => {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(&message.version))
-                    })?
-                    .await?;
-                let get_code_lens =
-                    GetCodeLens::from_proto(message, lsp_store.clone(), buffer.clone(), cx.clone())
-                        .await?;
-
-                let code_lens_actions = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            None::<usize>,
-                            get_code_lens,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: code_lens_actions
-                        .map(|(server_id, actions)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(proto::lsp_response::Response::GetCodeLensResponse(
-                                GetCodeLens::response_to_proto(
-                                    actions,
-                                    project,
-                                    sender_id,
-                                    &buffer_version,
-                                    cx,
-                                ),
-                            )),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(message)) => {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(&message.version))
-                    })?
-                    .await?;
-                lsp_store
-                    .update(&mut cx, |lsp_store, cx| {
-                        lsp_store.pull_diagnostics_for_buffer(buffer, cx)
-                    })?
-                    .await?;
-                // `pull_diagnostics_for_buffer` will merge in the new diagnostics and send them to the client.
-                // The client cannot merge anything into its non-local LspStore, so we do not need to return anything.
-                Ok(proto::MultiLspQueryResponse {
-                    responses: Vec::new(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetDocumentColor(message)) => {
-                buffer
-                    .update(&mut cx, |buffer, _| {
-                        buffer.wait_for_version(deserialize_version(&message.version))
-                    })?
-                    .await?;
-                let get_document_color = GetDocumentColor::from_proto(
-                    message,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
-
-                let all_colors = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            None::<usize>,
-                            get_document_color,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: all_colors
-                        .map(|(server_id, colors)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(
-                                proto::lsp_response::Response::GetDocumentColorResponse(
-                                    GetDocumentColor::response_to_proto(
-                                        colors,
-                                        project,
-                                        sender_id,
-                                        &buffer_version,
-                                        cx,
-                                    ),
-                                ),
-                            ),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetDefinition(message)) => {
-                let get_definitions = GetDefinitions::from_proto(
-                    message,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
-
-                let definitions = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            Some(get_definitions.position),
-                            get_definitions,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: definitions
-                        .map(|(server_id, definitions)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(proto::lsp_response::Response::GetDefinitionResponse(
-                                GetDefinitions::response_to_proto(
-                                    definitions,
-                                    project,
-                                    sender_id,
-                                    &buffer_version,
-                                    cx,
-                                ),
-                            )),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetDeclaration(message)) => {
-                let get_declarations = GetDeclarations::from_proto(
-                    message,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
-
-                let declarations = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            Some(get_declarations.position),
-                            get_declarations,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: declarations
-                        .map(|(server_id, declarations)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(proto::lsp_response::Response::GetDeclarationResponse(
-                                GetDeclarations::response_to_proto(
-                                    declarations,
-                                    project,
-                                    sender_id,
-                                    &buffer_version,
-                                    cx,
-                                ),
-                            )),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetTypeDefinition(message)) => {
-                let get_type_definitions = GetTypeDefinitions::from_proto(
-                    message,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
-
-                let type_definitions = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            Some(get_type_definitions.position),
-                            get_type_definitions,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: type_definitions
-                        .map(|(server_id, type_definitions)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(
-                                proto::lsp_response::Response::GetTypeDefinitionResponse(
-                                    GetTypeDefinitions::response_to_proto(
-                                        type_definitions,
-                                        project,
-                                        sender_id,
-                                        &buffer_version,
-                                        cx,
-                                    ),
-                                ),
-                            ),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetImplementation(message)) => {
-                let get_implementations = GetImplementations::from_proto(
-                    message,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
-
-                let implementations = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            Some(get_implementations.position),
-                            get_implementations,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: implementations
-                        .map(|(server_id, implementations)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(
-                                proto::lsp_response::Response::GetImplementationResponse(
-                                    GetImplementations::response_to_proto(
-                                        implementations,
-                                        project,
-                                        sender_id,
-                                        &buffer_version,
-                                        cx,
-                                    ),
-                                ),
-                            ),
-                        })
-                        .collect(),
-                })
-            }
-            Some(proto::multi_lsp_query::Request::GetReferences(message)) => {
-                let get_references = GetReferences::from_proto(
-                    message,
-                    lsp_store.clone(),
-                    buffer.clone(),
-                    cx.clone(),
-                )
-                .await?;
-
-                let references = lsp_store
-                    .update(&mut cx, |project, cx| {
-                        project.request_multiple_lsp_locally(
-                            &buffer,
-                            Some(get_references.position),
-                            get_references,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .into_iter();
-
-                lsp_store.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
-                    responses: references
-                        .map(|(server_id, references)| proto::LspResponse {
-                            server_id: server_id.to_proto(),
-                            response: Some(proto::lsp_response::Response::GetReferencesResponse(
-                                GetReferences::response_to_proto(
-                                    references,
-                                    project,
-                                    sender_id,
-                                    &buffer_version,
-                                    cx,
-                                ),
-                            )),
-                        })
-                        .collect(),
-                })
-            }
-            None => anyhow::bail!("empty multi lsp query request"),
-        }
     }
 
     async fn handle_apply_code_action(
@@ -13065,7 +12587,6 @@ impl LspAdapter for SshLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         let Some(options) = &self.initialization_options else {

@@ -159,7 +159,6 @@ impl TaskStore {
     }
 
     pub fn local(
-        fs: Arc<dyn Fs>,
         buffer_store: WeakEntity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -171,7 +170,7 @@ impl TaskStore {
                 downstream_client: None,
                 environment,
             },
-            task_inventory: Inventory::new(fs, cx),
+            task_inventory: Inventory::new(cx),
             buffer_store,
             toolchain_store,
             worktree_store,
@@ -179,7 +178,6 @@ impl TaskStore {
     }
 
     pub fn remote(
-        fs: Arc<dyn Fs>,
         buffer_store: WeakEntity<BufferStore>,
         worktree_store: Entity<WorktreeStore>,
         toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -192,7 +190,7 @@ impl TaskStore {
                 upstream_client,
                 project_id,
             },
-            task_inventory: Inventory::new(fs, cx),
+            task_inventory: Inventory::new(cx),
             buffer_store,
             toolchain_store,
             worktree_store,

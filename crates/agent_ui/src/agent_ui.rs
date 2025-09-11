@@ -72,8 +72,10 @@ actions!(
         ToggleOptionsMenu,
         /// Deletes the recently opened thread from history.
         DeleteRecentlyOpenThread,
-        /// Toggles the profile selector for switching between agent profiles.
+        /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Cycles through available session modes.
+        CycleModeSelector,
         /// Removes all added context from the current conversation.
         RemoveAllContext,
         /// Expands the message editor to full size.
@@ -114,6 +116,12 @@ actions!(
         RejectAll,
         /// Keeps all suggestions or changes.
         KeepAll,
+        /// Allow this operation only this time.
+        AllowOnce,
+        /// Allow this operation and remember the choice.
+        AllowAlways,
+        /// Reject this operation only this time.
+        RejectOnce,
         /// Follows the agent's suggestions.
         Follow,
         /// Resets the trial upsell notification.
