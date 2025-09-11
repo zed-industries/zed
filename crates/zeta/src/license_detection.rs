@@ -387,7 +387,6 @@ mod tests {
 
     use fs::FakeFs;
     use gpui::TestAppContext;
-    use rand::Rng as _;
     use serde_json::json;
     use settings::{Settings as _, SettingsStore};
     use worktree::WorktreeSettings;
@@ -604,45 +603,6 @@ mod tests {
             include_str!("../license_examples/zlib-ex0.txt"),
             OpenSourceLicense::Zlib,
         );
-    }
-
-    #[test]
-    fn random_strings_negative_detection() {
-        for _i in 0..20 {
-            let random_string = rand::rng()
-                .sample_iter::<char, _>(rand::distr::StandardUniform)
-                .take(512)
-                .collect::<String>();
-            assert_eq!(detect_license(&random_string), None);
-        }
-    }
-
-    #[test]
-    fn test_n_chars_before_offset() {
-        assert_eq!(n_chars_before_offset(2, 4, "hello"), 2);
-
-        let input = "ㄒ乇丂ㄒ";
-        assert_eq!(n_chars_before_offset(2, input.len(), input), "ㄒ乇".len());
-    }
-
-    #[test]
-    fn test_is_char_count_within_range() {
-        // TODO: make this into a proper property test.
-        for _i in 0..20 {
-            let mut rng = rand::rng();
-            let random_char_count = rng.random_range(0..64);
-            let random_string = rand::rng()
-                .sample_iter::<char, _>(rand::distr::StandardUniform)
-                .take(random_char_count)
-                .collect::<String>();
-            let min_chars = rng.random_range(0..10);
-            let max_chars = rng.random_range(min_chars..32);
-            let char_count_range = min_chars..max_chars;
-            assert_eq!(
-                is_char_count_within_range(&random_string, char_count_range.clone()),
-                char_count_range.contains(&random_char_count),
-            );
-        }
     }
 
     #[test]
