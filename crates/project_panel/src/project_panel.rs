@@ -5587,12 +5587,6 @@ impl Render for ProjectPanel {
                             div()
                                 .block_mouse_except_scroll()
                                 .flex_grow()
-                                .drag_over::<DraggedSelection>(|style, _, _, cx| {
-                                    style.bg(cx.theme().colors().drop_target_background)
-                                })
-                                .drag_over::<ExternalPaths>(|style, _, _, cx| {
-                                    style.bg(cx.theme().colors().drop_target_background)
-                                })
                                 .on_drag_move::<DraggedSelection>(cx.listener(
                                     move |this, event: &DragMoveEvent<DraggedSelection>, _, cx| {
                                         let Some(last_root_id) = this.last_worktree_root_id else {
@@ -5621,7 +5615,7 @@ impl Render for ProjectPanel {
                                                                 .path_for_entry(last_root_id, cx)
                                                                 .is_some_and(|p| {
                                                                     p.path.as_ref()
-                                                                        == parent_path.as_path()
+                                                                        != parent_path.as_path()
                                                                 })
                                                         })
                                                 }
