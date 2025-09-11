@@ -1629,8 +1629,14 @@ impl Bounds<Pixels> {
     /// let display_scale_factor = 2.0;
     /// let scaled_bounds = bounds.scale(display_scale_factor);
     /// assert_eq!(scaled_bounds, Bounds {
-    ///     origin: Point { x: ScaledPixels(20.0), y: ScaledPixels(40.0) },
-    ///     size: Size { width: ScaledPixels(60.0), height: ScaledPixels(80.0) },
+    ///     origin: Point {
+    ///         x: ScaledPixels(20.0),
+    ///         y: ScaledPixels(40.0),
+    ///     },
+    ///     size: Size {
+    ///         width: ScaledPixels(60.0),
+    ///         height: ScaledPixels(80.0)
+    ///     },
     /// });
     /// ```
     pub fn scale(&self, factor: f32) -> Bounds<ScaledPixels> {
@@ -2926,7 +2932,7 @@ impl From<usize> for DevicePixels {
 /// display resolutions.
 #[derive(Clone, Copy, Default, Add, AddAssign, Sub, SubAssign, Div, DivAssign, PartialEq)]
 #[repr(transparent)]
-pub struct ScaledPixels(pub(crate) f32);
+pub struct ScaledPixels(pub f32);
 
 impl ScaledPixels {
     /// Floors the `ScaledPixels` value to the nearest whole number.
