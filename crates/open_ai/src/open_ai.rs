@@ -84,7 +84,8 @@ pub enum Model {
     #[serde(rename = "custom")]
     Custom {
         name: String,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
+        /// The name displayed in the UI, such as in the assistant panel model
+        /// dropdown menu.
         display_name: Option<String>,
         max_tokens: u64,
         max_output_tokens: Option<u64>,
@@ -217,11 +218,9 @@ impl Model {
         }
     }
 
-    /// Returns whether the given model supports the `parallel_tool_calls`
-    /// parameter.
+    /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
-    /// If the model does not support the parameter, do not pass it up, or the
-    /// API will return an error.
+    /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::ThreePointFiveTurbo
@@ -438,12 +437,10 @@ pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
-    pub prompt_tokens_details: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
-    // This field's type is already correct, no change needed.
     pub index: u32,
     pub delta: ResponseMessageDelta,
     pub finish_reason: Option<String>,
@@ -492,22 +489,22 @@ pub async fn stream_completion(
                     Ok(line) => {
                         let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
                         if line == "[DONE]" {
-                            return None;
-                        }
-
-                        match from_str::<ResponseStreamResult>(&line) {
-                            Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                            Ok(ResponseStreamResult::Err { error }) => {
-                                Some(Err(anyhow!(error.message)))
-                            }
-                            Err(error) => {
-                                log::error!(
-                                    "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
-                                    Original Response: `{}`",
-                                    error,
-                                    line,
-                                );
-                                Some(Err(anyhow!(error)))
+                            None
+                        } else {
+                            match serde_json::from_str(line) {
+                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                                Ok(ResponseStreamResult::Err { error }) => {
+                                    Some(Err(anyhow!(error.message)))
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                                        Response: `{}`",
+                                        error,
+                                        line,
+                                    );
+                                    Some(Err(anyhow!(error)))
+                                }
                             }
                         }
                     }
