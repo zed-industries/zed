@@ -17,7 +17,9 @@ pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
     HOME_DIR.get_or_init(|| {
         if cfg!(any(test, feature = "test-support")) {
-            if cfg!(windows) {
+            if cfg!(target_os = "macos") {
+                PathBuf::from("/Users/zed")
+            } else if cfg!(target_os = "windows") {
                 PathBuf::from("C:\\Users\\zed")
             } else {
                 PathBuf::from("/home/zed")
