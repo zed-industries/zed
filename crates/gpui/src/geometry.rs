@@ -102,7 +102,7 @@ pub struct Point<T: Clone + Debug + Default + PartialEq> {
 /// # Examples
 ///
 /// ```
-/// # use gpui::Point;
+/// use gpui::point;
 /// let p = point(10, 20);
 /// assert_eq!(p.x, 10);
 /// assert_eq!(p.y, 20);
@@ -418,7 +418,7 @@ impl<T: Clone + Debug + Default + PartialEq> Size<T> {
 /// # Examples
 ///
 /// ```
-/// # use gpui::Size;
+/// use gpui::size;
 /// let my_size = size(10, 20);
 /// assert_eq!(my_size.width, 10);
 /// assert_eq!(my_size.height, 20);
@@ -1359,7 +1359,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Corner, Point, Size};
+    /// use gpui::{Bounds, Corner, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
@@ -1399,7 +1399,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Point, Bounds};
+    /// # use gpui::{Point, Bounds, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -1621,7 +1621,7 @@ impl Bounds<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Bounds, Point, Size, Pixels};
+    /// # use gpui::{Bounds, Point, Size, Pixels, ScaledPixels, DevicePixels};
     /// let bounds = Bounds {
     ///     origin: Point { x: Pixels(10.0), y: Pixels(20.0) },
     ///     size: Size { width: Pixels(30.0), height: Pixels(40.0) },
@@ -2053,7 +2053,7 @@ impl Edges<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Edges, Pixels};
+    /// # use gpui::{Edges, Pixels, ScaledPixels};
     /// let edges = Edges {
     ///     top: Pixels(10.0),
     ///     right: Pixels(20.0),
@@ -3160,7 +3160,7 @@ impl AbsoluteLength {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{AbsoluteLength, Pixels};
+    /// # use gpui::{AbsoluteLength, Pixels, Rems};
     /// let length_in_pixels = AbsoluteLength::Pixels(Pixels(42.0));
     /// let length_in_rems = AbsoluteLength::Rems(Rems(2.0));
     /// let rem_size = Pixels(16.0);
