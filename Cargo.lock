@@ -9331,6 +9331,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "unindent",
+ "url",
  "util",
  "workspace",
  "workspace-hack",
