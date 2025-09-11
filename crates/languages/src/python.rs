@@ -1723,6 +1723,36 @@ impl LspAdapter for RuffLspAdapter {
         Self::SERVER_NAME
     }
 
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let ruff_in_venv = if let Some(toolchain) = toolchain
+            && toolchain.language_name.as_ref() == "Python"
+        {
+            Path::new(toolchain.path.as_str())
+                .parent()
+                .map(|path| path.join("ruff"))
+        } else {
+            None
+        };
+
+        for path in ruff_in_venv.into_iter().chain(["ruff".into()]) {
+            if let Some(ruff_bin) = delegate.which(path.as_os_str()).await {
+                let env = delegate.shell_env().await;
+                return Some(LanguageServerBinary {
+                    path: ruff_bin,
+                    env: Some(env),
+                    arguments: vec!["server".into()],
+                });
+            }
+        }
+
+        None
+    }
+
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
