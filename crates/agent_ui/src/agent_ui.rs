@@ -1,5 +1,4 @@
 mod acp;
-mod active_thread;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
@@ -24,7 +23,7 @@ mod ui;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::{Thread, ThreadId};
+use agent::ThreadId;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -44,7 +43,6 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::any::TypeId;
 
-pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
@@ -231,14 +229,12 @@ impl ManageProfiles {
 
 #[derive(Clone)]
 pub(crate) enum ModelUsageContext {
-    Thread(Entity<Thread>),
     InlineAssistant,
 }
 
 impl ModelUsageContext {
     pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
         match self {
-            Self::Thread(thread) => thread.read(cx).configured_model(),
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }

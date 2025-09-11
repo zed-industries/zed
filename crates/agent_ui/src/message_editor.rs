@@ -1,86 +1,14 @@
-use std::rc::Rc;
-use std::sync::Arc;
-
 use agent::{context::AgentContextKey, context_store::ContextStoreEvent};
 use agent_settings::AgentProfileId;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::display_map::CreaseId;
-use editor::{
-    Addon, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, MultiBuffer,
-};
-use gpui::{App, Entity, KeyContext, Subscription, WeakEntity};
-use language::{Buffer, Language};
-use settings::Settings;
+use editor::{Addon, AnchorRangeExt, Editor};
+use gpui::{App, Entity, Subscription};
 use ui::prelude::*;
-use workspace::Workspace;
 
-use crate::context_picker::{ContextPickerCompletionProvider, crease_for_mention};
+use crate::context_picker::crease_for_mention;
 use crate::profile_selector::ProfileProvider;
-use agent::{
-    MessageCrease, Thread,
-    context_store::ContextStore,
-    thread_store::{TextThreadStore, ThreadStore},
-};
-
-pub(crate) fn create_editor(
-    workspace: WeakEntity<Workspace>,
-    context_store: WeakEntity<ContextStore>,
-    thread_store: WeakEntity<ThreadStore>,
-    text_thread_store: WeakEntity<TextThreadStore>,
-    min_lines: usize,
-    max_lines: Option<usize>,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<Editor> {
-    let language = Language::new(
-        language::LanguageConfig {
-            completion_query_characters: HashSet::from_iter(['.', '-', '_', '@']),
-            ..Default::default()
-        },
-        None,
-    );
-
-    let editor = cx.new(|cx| {
-        let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
-        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-        let mut editor = Editor::new(
-            editor::EditorMode::AutoHeight {
-                min_lines,
-                max_lines,
-            },
-            buffer,
-            None,
-            window,
-            cx,
-        );
-        editor.set_placeholder_text("Message the agent – @ to include context", window, cx);
-        editor.disable_word_completions();
-        editor.set_show_indent_guides(false, cx);
-        editor.set_soft_wrap();
-        editor.set_use_modal_editing(true);
-        editor.set_context_menu_options(ContextMenuOptions {
-            min_entries_visible: 12,
-            max_entries_visible: 12,
-            placement: Some(ContextMenuPlacement::Above),
-        });
-        editor.register_addon(ContextCreasesAddon::new());
-        editor.register_addon(MessageEditorAddon::new());
-        editor
-    });
-
-    let editor_entity = editor.downgrade();
-    editor.update(cx, |editor, _| {
-        editor.set_completion_provider(Some(Rc::new(ContextPickerCompletionProvider::new(
-            workspace,
-            context_store,
-            Some(thread_store),
-            Some(text_thread_store),
-            editor_entity,
-            None,
-        ))));
-    });
-    editor
-}
+use agent::{MessageCrease, Thread, context_store::ContextStore};
 
 impl ProfileProvider for Entity<Thread> {
     fn profiles_supported(&self, cx: &App) -> bool {
@@ -104,31 +32,6 @@ impl ProfileProvider for Entity<Thread> {
 pub struct ContextCreasesAddon {
     creases: HashMap<AgentContextKey, Vec<(CreaseId, SharedString)>>,
     _subscription: Option<Subscription>,
-}
-
-pub struct MessageEditorAddon {}
-
-impl MessageEditorAddon {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-
-impl Addon for MessageEditorAddon {
-    fn to_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn to_any_mut(&mut self) -> Option<&mut dyn std::any::Any> {
-        Some(self)
-    }
-
-    fn extend_key_context(&self, key_context: &mut KeyContext, cx: &App) {
-        let settings = agent_settings::AgentSettings::get_global(cx);
-        if settings.use_modifier_to_send {
-            key_context.add("use_modifier_to_send");
-        }
-    }
 }
 
 impl Addon for ContextCreasesAddon {
