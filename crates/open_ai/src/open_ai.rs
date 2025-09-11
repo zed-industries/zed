@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::{Value, from_str, to_string};
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 
@@ -217,9 +217,11 @@ impl Model {
         }
     }
 
-    /// Returns whether the given model supports the `parallel_tool_calls` parameter.
+    /// Returns whether the given model supports the `parallel_tool_calls`
+    /// parameter.
     ///
-    /// If the model does not support the parameter, do not pass it up, or the API will return an error.
+    /// If the model does not support the parameter, do not pass it up, or the
+    /// API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::ThreePointFiveTurbo
@@ -237,7 +239,8 @@ impl Model {
         }
     }
 
-    /// Returns whether the given model supports the `prompt_cache_key` parameter.
+    /// Returns whether the given model supports the `prompt_cache_key`
+    /// parameter.
     ///
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
@@ -402,8 +405,19 @@ pub struct ResponseMessageDelta {
     pub tool_calls: Option<Vec<ToolCallChunk>>,
 }
 
+// Custom deserializer function for the tool_calls index
+fn normalize_tool_call_index<'de, D>(deserializer: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let index = i32::deserialize(deserializer)?;
+    Ok(if index == -1 { 0 } else { index as usize })
+}
+
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
+    // The key change is here: use the custom deserializer to handle the index.
+    #[serde(deserialize_with = "normalize_tool_call_index")]
     pub index: usize,
     pub id: Option<String>,
 
@@ -424,10 +438,12 @@ pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
+    pub prompt_tokens_details: Option<Value>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ChoiceDelta {
+    // This field's type is already correct, no change needed.
     pub index: u32,
     pub delta: ResponseMessageDelta,
     pub finish_reason: Option<String>,
@@ -464,8 +480,9 @@ pub async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
+    let request = request_builder.body(AsyncBody::from(to_string(&request)?))?;
     let mut response = client.send(request).await?;
+
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         Ok(reader
@@ -475,22 +492,22 @@ pub async fn stream_completion(
                     Ok(line) => {
                         let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
                         if line == "[DONE]" {
-                            None
-                        } else {
-                            match serde_json::from_str(line) {
-                                Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error.message)))
-                                }
-                                Err(error) => {
-                                    log::error!(
-                                        "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
-                                        Response: `{}`",
-                                        error,
-                                        line,
-                                    );
-                                    Some(Err(anyhow!(error)))
-                                }
+                            return None;
+                        }
+
+                        match from_str::<ResponseStreamResult>(&line) {
+                            Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
+                            Ok(ResponseStreamResult::Err { error }) => {
+                                Some(Err(anyhow!(error.message)))
+                            }
+                            Err(error) => {
+                                log::error!(
+                                    "Failed to parse OpenAI response into ResponseStreamResult: `{}`\n\
+                                    Original Response: `{}`",
+                                    error,
+                                    line,
+                                );
+                                Some(Err(anyhow!(error)))
                             }
                         }
                     }
@@ -507,7 +524,7 @@ pub async fn stream_completion(
             error: OpenAiError,
         }
 
-        match serde_json::from_str::<OpenAiResponse>(&body) {
+        match from_str::<OpenAiResponse>(&body) {
             Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
                 "API request to {} failed: {}",
                 api_url,
