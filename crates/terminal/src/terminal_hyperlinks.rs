@@ -252,27 +252,6 @@ fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) 
     visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
 }
 
-fn extend_multiline_path<T: EventListener>(
-    term: &Term<T>,
-    word_match: Match,
-    regex_searches: &mut RegexSearches,
-) -> (String, Match) {
-    let text = term.bounds_to_string(*word_match.start(), *word_match.end());
-    
-    if text.contains('/') && !text.contains('.') && word_match.end().column.0 > 10 {
-        if let Some(next_match) = visible_regex_match_iter(term, &mut regex_searches.word_regex)
-            .find(|m| m.start().line == word_match.end().line + 1 && m.start().column.0 <= 2) 
-        {
-            let next_text = term.bounds_to_string(*next_match.start(), *next_match.end());
-            if next_text.contains('.') && !next_text.contains('/') {
-                return (format!("{}{}", text, next_text), Match::new(*word_match.start(), *next_match.end()));
-            }
-        }
-    }
-    
-    (text, word_match)
-}
-
 /// Copied from alacritty/src/display/hint.rs:
 /// Iterate over all visible regex matches.
 fn visible_regex_match_iter<'a, T>(
