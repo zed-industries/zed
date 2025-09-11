@@ -1,0 +1,403 @@
+use language::BufferSnapshot;
+use std::ops::Range;
+use text::{OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _};
+use tree_sitter::{Node, TreeCursor};
+use util::RangeExt;
+
+// TODO:
+//
+// - Handle excessive parent signature size
+//
+// - Use guess offsets for line based to do faster AST based selection?
+//
+// Things to consider:
+//
+// - Still return an excerpt even if the line around the cursor doesn't fit (e.g. for a markdown
+// paragraph).
+//
+// - Truncation of long lines.
+
+#[derive(Debug, Clone)]
+pub struct ExcerptOptions {
+    /// Limit for the number of bytes in the window around the cursor.
+    pub window_max_bytes: usize,
+    /// Target ratio of bytes before the cursor vs after the cursor
+    pub before_cursor_bytes_ratio: f32,
+    /// Whether to include parent signatures
+    pub include_parent_signatures: bool,
+}
+
+#[derive(Clone)]
+pub struct ExcerptRanges {
+    pub range: Range<usize>,
+    pub parent_signature_ranges: Vec<Range<usize>>,
+    pub size: usize,
+}
+
+impl ExcerptRanges {
+    pub fn new(range: Range<usize>, parent_signature_ranges: Vec<Range<usize>>) -> Self {
+        let size = range.len()
+            + parent_signature_ranges
+                .iter()
+                .map(|r| r.len())
+                .sum::<usize>();
+        Self {
+            range,
+            parent_signature_ranges,
+            size,
+        }
+    }
+
+    pub fn with_expanded_range(&self, new_range: Range<usize>) -> Self {
+        if !new_range.contains_inclusive(&self.range) {
+            // this is an issue because parent_signature_ranges may be incorrect
+            log::error!("bug: with_expanded_range called with disjoint range");
+        }
+        let mut parent_signature_ranges = Vec::with_capacity(self.parent_signature_ranges.len());
+        let mut size = new_range.len();
+        for range in &self.parent_signature_ranges {
+            if range.contains_inclusive(&new_range) {
+                break;
+            }
+            parent_signature_ranges.push(range.clone());
+            size += range.len();
+        }
+        Self {
+            range: new_range,
+            parent_signature_ranges,
+            size,
+        }
+    }
+
+    fn parent_signatures_size(&self) -> usize {
+        self.size - self.range.len()
+    }
+}
+
+/// Selects a bounded excerpt around the cursor, attempting to choose logical
+/// boundaries based on TreeSitter structure and approximately targeting a goal
+/// ratio of bytesbefore vs after the cursor. When `include_parent_signatures`
+/// is true, the excerpt also includes the signatures of parent outline items.
+///
+/// First tries to use AST node boundaries to select the excerpt, and falls back
+/// on line-based expansion.
+///
+/// Returns `None` if the line around the cursor doesn't fit.
+pub fn select_excerpt(
+    position: Point,
+    buffer: &BufferSnapshot,
+    options: &ExcerptOptions,
+) -> Option<ExcerptRanges> {
+    if buffer.len() <= options.window_max_bytes {
+        log::debug!(
+            "using entire file for excerpt since source length ({}) <= window max bytes ({})",
+            buffer.len(),
+            options.window_max_bytes
+        );
+        return Some(ExcerptRanges::new(0..buffer.len(), Vec::new()));
+    }
+
+    let query_offset = position.to_offset(buffer);
+    let query_range = Point::new(position.row, 0).to_offset(buffer)
+        ..Point::new(position.row + 1, 0).to_offset(buffer);
+    if query_range.len() >= options.window_max_bytes {
+        return None;
+    }
+
+    // TODO: Don't compute text / annotation_range / skip converting to and from anchors.
+    let outline_items = if options.include_parent_signatures {
+        buffer
+            .outline_items_containing(query_range.clone(), false, None)
+            .into_iter()
+            .map(|item| {
+                // todo!
+                let signature_range = 0..0;
+                ExcerptOutlineItem {
+                    item_range: item.range.to_offset(&buffer),
+                    signature_range,
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let excerpt_selector = ExcerptSelector {
+        query_offset,
+        query_range,
+        outline_items: &outline_items,
+        buffer,
+        options,
+    };
+
+    // TODO: If neighboring nodes are all large, this can be quite a small selection, should
+    // have a fallback in that case. One option is line-based, but a better option would be to
+    // descend into neighboring nodes.
+    //
+    // todo! fall back on line-based for now
+    if let Some(excerpt_ranges) = excerpt_selector.select_tree_sitter_nodes() {
+        return Some(excerpt_ranges);
+    }
+
+    log::debug!("falling back on line-based selection");
+    excerpt_selector.select_lines()
+}
+
+struct ExcerptSelector<'a> {
+    query_offset: usize,
+    query_range: Range<usize>,
+    outline_items: &'a [ExcerptOutlineItem],
+    buffer: &'a BufferSnapshot,
+    options: &'a ExcerptOptions,
+}
+
+struct ExcerptOutlineItem {
+    item_range: Range<usize>,
+    signature_range: Range<usize>,
+}
+
+impl<'a> ExcerptSelector<'a> {
+    /// Finds the largest node that is smaller than the window size and contains `query_range`.
+    fn select_tree_sitter_nodes(&self) -> Option<ExcerptRanges> {
+        let selected_layer_root = self.select_syntax_layer()?;
+        let mut cursor = selected_layer_root.walk();
+
+        loop {
+            let excerpt_range = node_line_start(cursor.node()).to_offset(&self.buffer)
+                ..node_line_end(cursor.node()).to_offset(&self.buffer);
+            if excerpt_range.contains_inclusive(&self.query_range) {
+                let excerpt = self.make_excerpt(excerpt_range);
+                if excerpt.size <= self.options.window_max_bytes {
+                    return Some(self.expand_to_siblings(&mut cursor, excerpt));
+                }
+            } else {
+                // TODO: Should still be able to handle this case via AST nodes. For example, this
+                // can happen if the cursor is between two methods in a large class file.
+                return None;
+            }
+
+            if cursor
+                .goto_first_child_for_byte(self.query_range.start)
+                .is_none()
+            {
+                return None;
+            }
+        }
+    }
+
+    /// Select the smallest syntax layer that exceeds max_len, or the largest if none exceed max_len.
+    fn select_syntax_layer(&self) -> Option<Node<'_>> {
+        // todo! Filter outer layers that don't support edit prediction?
+        let mut smallest_exceeding_max_len: Option<Node<'_>> = None;
+        let mut largest: Option<Node<'_>> = None;
+        for layer in self
+            .buffer
+            .syntax_layers_for_range(self.query_range.start..self.query_range.start, true)
+        {
+            let layer_range = layer.node().byte_range();
+            if !layer_range.contains_inclusive(&self.query_range) {
+                continue;
+            }
+
+            if layer_range.len() > self.options.window_max_bytes {
+                match &smallest_exceeding_max_len {
+                    None => smallest_exceeding_max_len = Some(layer.node()),
+                    Some(existing) => {
+                        if layer_range.len() < existing.byte_range().len() {
+                            smallest_exceeding_max_len = Some(layer.node());
+                        }
+                    }
+                }
+            } else {
+                match &largest {
+                    None => largest = Some(layer.node()),
+                    Some(existing) if layer_range.len() > existing.byte_range().len() => {
+                        largest = Some(layer.node())
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        smallest_exceeding_max_len.or(largest)
+    }
+
+    fn expand_to_siblings(
+        &self,
+        cursor: &mut TreeCursor,
+        mut excerpt: ExcerptRanges,
+    ) -> ExcerptRanges {
+        let mut forward_cursor = cursor.clone();
+        let backward_cursor = cursor;
+        let mut forward_done = !forward_cursor.goto_next_sibling();
+        let mut backward_done = !backward_cursor.goto_previous_sibling();
+        loop {
+            if backward_done && forward_done {
+                break;
+            }
+
+            let mut forward = None;
+            while !forward_done {
+                let new_end = node_line_end(forward_cursor.node()).to_offset(&self.buffer);
+                if new_end > excerpt.range.end {
+                    let new_excerpt = excerpt.with_expanded_range(excerpt.range.start..new_end);
+                    if new_excerpt.size <= self.options.window_max_bytes {
+                        forward = Some(new_excerpt);
+                        break;
+                    } else {
+                        log::debug!("halting forward expansion, as it doesn't fit");
+                        forward_done = true;
+                        break;
+                    }
+                }
+                forward_done = !forward_cursor.goto_next_sibling();
+            }
+
+            let mut backward = None;
+            while !backward_done {
+                let new_start = node_line_start(forward_cursor.node()).to_offset(&self.buffer);
+                if new_start < excerpt.range.start {
+                    let new_excerpt = excerpt.with_expanded_range(new_start..excerpt.range.end);
+                    if new_excerpt.size <= self.options.window_max_bytes {
+                        backward = Some(new_excerpt);
+                        break;
+                    } else {
+                        log::debug!("halting backward expansion, as it doesn't fit");
+                        backward_done = true;
+                        break;
+                    }
+                }
+                backward_done = !backward_cursor.goto_previous_sibling();
+            }
+
+            let go_forward = match (forward, backward) {
+                (Some(forward), Some(backward)) => {
+                    let go_forward = self.is_better_excerpt(&forward, &backward);
+                    if go_forward {
+                        excerpt = forward;
+                    } else {
+                        excerpt = backward;
+                    }
+                    go_forward
+                }
+                (Some(forward), None) => {
+                    log::debug!("expanding forward, since backward expansion has halted");
+                    excerpt = forward;
+                    true
+                }
+                (None, Some(backward)) => {
+                    log::debug!("expanding backward, since forward expansion has halted");
+                    excerpt = backward;
+                    false
+                }
+                (None, None) => break,
+            };
+
+            if go_forward {
+                forward_done = !forward_cursor.goto_next_sibling();
+            } else {
+                backward_done = !backward_cursor.goto_previous_sibling();
+            }
+        }
+
+        excerpt
+    }
+
+    fn select_lines(&self) -> Option<ExcerptRanges> {
+        // early return if line containing query_offset is already too large
+        let excerpt = self.make_excerpt(self.query_range.clone());
+        if excerpt.size > self.options.window_max_bytes {
+            log::debug!(
+                "excerpt for cursor line is {} bytes, which exceeds the window",
+                excerpt.size
+            );
+            return None;
+        }
+        let signatures_size = excerpt.parent_signatures_size();
+        let bytes_remaining = self
+            .options
+            .window_max_bytes
+            .saturating_sub(signatures_size);
+
+        let before_bytes =
+            (self.options.before_cursor_bytes_ratio * bytes_remaining as f32) as usize;
+
+        let start_point = {
+            let offset = self.query_offset.saturating_sub(before_bytes);
+            let point = offset.to_point(self.buffer);
+            Point::new(point.row + 1, 0)
+        };
+        let start_offset = start_point.to_offset(&self.buffer);
+        let end_point = {
+            let offset = start_offset + bytes_remaining;
+            let point = offset.to_point(self.buffer);
+            Point::new(point.row, 0)
+        };
+        let end_offset = end_point.to_offset(&self.buffer);
+
+        // this could be expanded further since recalculated `signature_size` may be smaller, but
+        // skipping that for now for simplicity
+        let excerpt = self.make_excerpt(start_offset..end_offset);
+        if excerpt.size > self.options.window_max_bytes {
+            log::error!(
+                "bug: line-based excerpt selection has size {}, \
+                which is {} bytes larger than the max size",
+                excerpt.size,
+                excerpt.size - self.options.window_max_bytes
+            );
+        }
+        return Some(excerpt);
+    }
+
+    fn make_excerpt(&self, range: Range<usize>) -> ExcerptRanges {
+        let parent_signature_ranges = self
+            .outline_items
+            .iter()
+            .filter(|item| item.item_range.contains_inclusive(&range))
+            .map(|item| item.signature_range.clone())
+            .collect();
+        ExcerptRanges::new(range, parent_signature_ranges)
+    }
+
+    /// Returns `true` if the `forward` excerpt is a better choice than the `backward` excerpt.
+    fn is_better_excerpt(&self, forward: &ExcerptRanges, backward: &ExcerptRanges) -> bool {
+        let forward_ratio = self.excerpt_range_ratio(forward);
+        let backward_ratio = self.excerpt_range_ratio(backward);
+        let forward_delta = (forward_ratio - self.options.before_cursor_bytes_ratio).abs();
+        let backward_delta = (backward_ratio - self.options.before_cursor_bytes_ratio).abs();
+        let forward_is_better = forward_delta <= backward_delta;
+        if forward_is_better {
+            log::debug!(
+                "expanding forward since {} is closer than {} to {}",
+                forward_ratio,
+                backward_ratio,
+                self.options.before_cursor_bytes_ratio
+            );
+        } else {
+            log::debug!(
+                "expanding backward since {} is closer than {} to {}",
+                backward_ratio,
+                forward_ratio,
+                self.options.before_cursor_bytes_ratio
+            );
+        }
+        forward_is_better
+    }
+
+    /// Returns the ratio of bytes before the cursor over bytes within the range.
+    fn excerpt_range_ratio(&self, excerpt: &ExcerptRanges) -> f32 {
+        let Some(bytes_before_cursor) = self.query_offset.checked_sub(excerpt.range.start) else {
+            log::error!("bug: edit prediction cursor offset is not outside the excerpt");
+            return 0.0;
+        };
+        bytes_before_cursor as f32 / excerpt.range.len() as f32
+    }
+}
+
+fn node_line_start(node: Node) -> Point {
+    Point::new(node.start_position().row as u32, 0)
+}
+
+fn node_line_end(node: Node) -> Point {
+    Point::new(node.end_position().row as u32 + 1, 0)
+}

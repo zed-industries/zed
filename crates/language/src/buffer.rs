@@ -3310,16 +3310,23 @@ impl BufferSnapshot {
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
     pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
-        self.syntax
-            .layers_for_range(0..self.len(), &self.text, true)
+        self.syntax_layers_for_range(0..self.len(), true)
     }
 
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
-        self.syntax
-            .layers_for_range(offset..offset, &self.text, false)
+        self.syntax_layers_for_range(offset..offset, false)
             .filter(|l| l.node().end_byte() > offset)
             .last()
+    }
+
+    pub fn syntax_layers_for_range<D: ToOffset>(
+        &self,
+        range: Range<D>,
+        include_hidden: bool,
+    ) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
+        self.syntax
+            .layers_for_range(range, &self.text, include_hidden)
     }
 
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
