@@ -75,6 +75,8 @@ pub struct AgentSettings {
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
+    pub input_min_lines: usize,
+    pub input_max_lines: usize,
 }
 
 impl AgentSettings {
@@ -320,6 +322,14 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     use_modifier_to_send: Option<bool>,
+    /// Minimum number of lines to display in the agent input area.
+    ///
+    /// Default: 4
+    input_min_lines: Option<usize>,
+    /// Maximum number of lines to display in the agent input area.
+    ///
+    /// Default: 8
+    input_max_lines: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -413,7 +423,6 @@ impl Settings for AgentSettings {
         _: &mut gpui::App,
     ) -> anyhow::Result<Self> {
         let mut settings = AgentSettings::default();
-
         for value in sources.defaults_and_customizations() {
             merge(&mut settings.enabled, value.enabled);
             merge(&mut settings.button, value.button);
@@ -472,6 +481,8 @@ impl Settings for AgentSettings {
                 &mut settings.use_modifier_to_send,
                 value.use_modifier_to_send,
             );
+            merge(&mut settings.input_min_lines, value.input_min_lines);
+            merge(&mut settings.input_max_lines, value.input_max_lines);
 
             settings
                 .model_parameters
