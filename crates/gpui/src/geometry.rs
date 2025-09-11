@@ -122,6 +122,7 @@ impl<T: Clone + Debug + Default + PartialEq> Point<T> {
     /// # Examples
     ///
     /// ```
+    /// use gpui::Point;
     /// let p = Point::new(10, 20);
     /// assert_eq!(p.x, 10);
     /// assert_eq!(p.y, 20);
@@ -148,6 +149,7 @@ impl<T: Clone + Debug + Default + PartialEq> Point<T> {
     /// let p_float = p.map(|coord| coord as f32);
     /// assert_eq!(p_float, Point { x: 3.0, y: 4.0 });
     /// ```
+    #[must_use]
     pub fn map<U: Clone + Debug + Default + PartialEq>(&self, f: impl Fn(T) -> U) -> Point<U> {
         Point {
             x: f(self.x.clone()),
