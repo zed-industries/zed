@@ -53,7 +53,7 @@ use assistant_tool::ToolWorkingSet;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{CompletionIntent, Plan, PlanV1, PlanV2, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
-use feature_flags::{self, ClaudeCodeFeatureFlag, FeatureFlagAppExt, GeminiAndNativeFeatureFlag};
+use feature_flags::{self, FeatureFlagAppExt, GeminiAndNativeFeatureFlag};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -1161,11 +1161,7 @@ impl AgentPanel {
                             return;
                         }
                     }
-                    crate::ExternalAgent::ClaudeCode => {
-                        if !cx.has_flag::<ClaudeCodeFeatureFlag>() {
-                            return;
-                        }
-                    }
+                    crate::ExternalAgent::ClaudeCode => {}
                 }
 
                 let selected_agent = ext_agent.into();
@@ -2660,34 +2656,32 @@ impl AgentPanel {
                                         }),
                                 )
                             })
-                            .when(cx.has_flag::<ClaudeCodeFeatureFlag>(), |menu| {
-                                menu.item(
-                                    ContextMenuEntry::new("New Claude Code Thread")
-                                        .icon(IconName::AiClaude)
-                                        .disabled(is_via_collab)
-                                        .icon_color(Color::Muted)
-                                        .handler({
-                                            let workspace = workspace.clone();
-                                            move |window, cx| {
-                                                if let Some(workspace) = workspace.upgrade() {
-                                                    workspace.update(cx, |workspace, cx| {
-                                                        if let Some(panel) =
-                                                            workspace.panel::<AgentPanel>(cx)
-                                                        {
-                                                            panel.update(cx, |panel, cx| {
-                                                                panel.new_agent_thread(
-                                                                    AgentType::ClaudeCode,
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
-                                                    });
-                                                }
+                            .item(
+                                ContextMenuEntry::new("New Claude Code Thread")
+                                    .icon(IconName::AiClaude)
+                                    .disabled(is_via_collab)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.new_agent_thread(
+                                                                AgentType::ClaudeCode,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                });
                                             }
-                                        }),
-                                )
-                            })
+                                        }
+                                    }),
+                            )
                             .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |mut menu| {
                                 let agent_names = agent_server_store
                                     .read(cx)
@@ -2811,9 +2805,7 @@ impl AgentPanel {
     }
 
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if cx.has_flag::<feature_flags::GeminiAndNativeFeatureFlag>()
-            || cx.has_flag::<feature_flags::ClaudeCodeFeatureFlag>()
-        {
+        if cx.has_flag::<feature_flags::GeminiAndNativeFeatureFlag>() {
             self.render_toolbar_new(window, cx).into_any_element()
         } else {
             self.render_toolbar_old(window, cx).into_any_element()

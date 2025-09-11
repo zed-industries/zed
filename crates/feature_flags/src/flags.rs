@@ -44,13 +44,3 @@ impl FeatureFlag for GeminiAndNativeFeatureFlag {
         true
     }
 }
-
-pub struct ClaudeCodeFeatureFlag;
-
-impl FeatureFlag for ClaudeCodeFeatureFlag {
-    const NAME: &'static str = "claude-code";
-
-    fn enabled_for_all() -> bool {
-        true
-    }
-}
