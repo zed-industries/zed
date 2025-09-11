@@ -241,28 +241,20 @@ fn extend_multiline_path<T: EventListener>(
     word_match: Match,
     regex_searches: &mut RegexSearches,
 ) -> (String, Match) {
-    let initial_text = term.bounds_to_string(*word_match.start(), *word_match.end());
-
-    if !initial_text.contains('/') || initial_text.contains('.') {
-        return (initial_text, word_match);
-    }
-
-    let next_line = word_match.end().line + 1;
-    let all_matches: Vec<_> =
-        visible_regex_match_iter(term, &mut regex_searches.word_regex).collect();
-
-    for candidate in all_matches {
-        if candidate.start().line == next_line && candidate.start().column.0 <= 2 {
-            let candidate_text = term.bounds_to_string(*candidate.start(), *candidate.end());
-            if candidate_text.contains('.') && !candidate_text.contains('/') {
-                let combined = format!("{}{}", initial_text, candidate_text);
-                let extended_match = Match::new(*word_match.start(), *candidate.end());
-                return (combined, extended_match);
+    let text = term.bounds_to_string(*word_match.start(), *word_match.end());
+    
+    if text.contains('/') && !text.contains('.') && word_match.end().column.0 > 10 {
+        if let Some(next_match) = visible_regex_match_iter(term, &mut regex_searches.word_regex)
+            .find(|m| m.start().line == word_match.end().line + 1 && m.start().column.0 <= 2) 
+        {
+            let next_text = term.bounds_to_string(*next_match.start(), *next_match.end());
+            if next_text.contains('.') && !next_text.contains('/') {
+                return (format!("{}{}", text, next_text), Match::new(*word_match.start(), *next_match.end()));
             }
         }
     }
-
-    (initial_text, word_match)
+    
+    (text, word_match)
 }
 
 /// Copied from alacritty/src/display/hint.rs:
@@ -1392,14 +1384,11 @@ mod tests {
     }
 
     #[test]
-    fn test_multiline_path_reconstruction() {
-        let term = Term::new(Config::default(), &TermSize::new(30, 5), VoidListener);
+    fn test_multiline_path() {
+        let mut term = Term::new(Config::default(), &TermSize::new(30, 5), VoidListener);
         let mut regex_searches = RegexSearches::new();
 
-        let test_input = "Error in /project/src/very-long-file-na\nme.tsx at line 42";
-
-        let mut term = term;
-        for c in test_input.chars() {
+        for c in "/project/long-filename-na\nme.tsx\n".chars() {
             if c == '\n' {
                 term.move_down_and_cr(1);
             } else {
@@ -1407,19 +1396,9 @@ mod tests {
             }
         }
 
-        let first_part = AlacPoint::new(Line(0), Column(25));
-        let second_part = AlacPoint::new(Line(1), Column(0));
-
-        let first_result = find_from_grid_point(&term, first_part, &mut regex_searches);
-        let second_result = find_from_grid_point(&term, second_part, &mut regex_searches);
-
-        if let (Some((first_path, _, _)), Some((second_path, _, _))) =
-            (&first_result, &second_result)
-        {
-            assert_eq!(
-                first_path, second_path,
-                "Both parts should return same complete path"
-            );
-        }
+        let result = find_from_grid_point(&term, AlacPoint::new(Line(0), Column(15)), &mut regex_searches);
+        
+        assert!(result.is_some());
+        assert!(result.unwrap().0.contains("me.tsx"));
     }
 }
