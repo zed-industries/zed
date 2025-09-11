@@ -17,7 +17,11 @@ pub fn home_dir() -> &'static PathBuf {
     static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
     HOME_DIR.get_or_init(|| {
         if cfg!(any(test, feature = "test-support")) {
-            PathBuf::from("/home/zed")
+            if cfg!(windows) {
+                PathBuf::from("C:\\Users\\zed")
+            } else {
+                PathBuf::from("/home/zed")
+            }
         } else {
             dirs::home_dir().expect("failed to determine home directory")
         }

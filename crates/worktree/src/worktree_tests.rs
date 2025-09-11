@@ -2144,9 +2144,10 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
 async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 
+    let home = paths::home_dir();
     let fs = FakeFs::new(executor);
     fs.insert_tree(
-        path!("/home/zed"),
+        home,
         json!({
             ".config": {
                 "git": {
@@ -2171,7 +2172,7 @@ async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppCon
     )
     .await;
     let worktree = Worktree::local(
-        path!("/home/zed/project").as_ref(),
+        home.join("project"),
         true,
         fs.clone(),
         Arc::default(),
