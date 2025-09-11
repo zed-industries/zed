@@ -61,7 +61,6 @@ impl FeatureFlag for PredictEditsRateCompletionsFeatureFlag {
     const NAME: &'static str = "predict-edits-rate-completions";
 }
 
-
 pub struct BillingV2FeatureFlag {}
 
 impl FeatureFlag for BillingV2FeatureFlag {
