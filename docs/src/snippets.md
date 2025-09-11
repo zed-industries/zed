@@ -31,7 +31,7 @@ The scope is determined by the language name in lowercase e.g. `python.json` for
 | JSX        | javascript.json |
 | Plain Text | plaintext.json  |
 
-To create JSX snippets you have to use `javascript.json` snippets file, instead of `jsx.json`, but this does not apply to TSX and Typescript which follow the above rule.
+To create JSX snippets you have to use `javascript.json` snippets file, instead of `jsx.json`, but this does not apply to TSX and TypeScript which follow the above rule.
 
 ## Known Limitations
 

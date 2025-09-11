@@ -27,6 +27,7 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
     Task, TaskLabel, TextStyle,
 };
+
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
@@ -500,6 +501,10 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// A bitset of which characters are tabs in this string.
+    pub tabs: u128,
+    /// Bitmap of character indices in this chunk
+    pub chars: u128,
     /// Whether this chunk of text was originally a tab character.
     pub is_inlay: bool,
     /// Whether to underline the corresponding text range in the editor.
@@ -635,13 +640,13 @@ impl HighlightedTextBuilder {
             self.text.push_str(chunk.text);
             let end = self.text.len();
 
-            if let Some(mut highlight_style) = chunk
+            if let Some(highlight_style) = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(syntax_theme))
             {
-                if let Some(override_style) = override_style {
-                    highlight_style.highlight(override_style);
-                }
+                let highlight_style = override_style.map_or(highlight_style, |override_style| {
+                    highlight_style.highlight(override_style)
+                });
                 self.highlights.push((start..end, highlight_style));
             } else if let Some(override_style) = override_style {
                 self.highlights.push((start..end, override_style));
@@ -3701,9 +3706,8 @@ impl BufferSnapshot {
     ///
     /// This method allows passing an optional [`SyntaxTheme`] to
     /// syntax-highlight the returned symbols.
-    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
-        self.outline_items_containing(0..self.len(), true, theme)
-            .map(Outline::new)
+    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Outline<Anchor> {
+        Outline::new(self.outline_items_containing(0..self.len(), true, theme))
     }
 
     /// Returns all the symbols that contain the given position.
@@ -3714,20 +3718,20 @@ impl BufferSnapshot {
         &self,
         position: T,
         theme: Option<&SyntaxTheme>,
-    ) -> Option<Vec<OutlineItem<Anchor>>> {
+    ) -> Vec<OutlineItem<Anchor>> {
         let position = position.to_offset(self);
         let mut items = self.outline_items_containing(
             position.saturating_sub(1)..self.len().min(position + 1),
             false,
             theme,
-        )?;
+        );
         let mut prev_depth = None;
         items.retain(|item| {
             let result = prev_depth.is_none_or(|prev_depth| item.depth > prev_depth);
             prev_depth = Some(item.depth);
             result
         });
-        Some(items)
+        items
     }
 
     pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
@@ -3777,21 +3781,19 @@ impl BufferSnapshot {
         range: Range<T>,
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
-    ) -> Option<Vec<OutlineItem<Anchor>>> {
+    ) -> Vec<OutlineItem<Anchor>> {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
         });
-        let configs = matches
-            .grammars()
-            .iter()
-            .map(|g| g.outline_config.as_ref().unwrap())
-            .collect::<Vec<_>>();
 
         let mut items = Vec::new();
         let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
         while let Some(mat) = matches.peek() {
-            let config = &configs[mat.grammar_index];
+            let config = matches.grammars()[mat.grammar_index]
+                .outline_config
+                .as_ref()
+                .unwrap();
             if let Some(item) =
                 self.next_outline_item(config, &mat, &range, include_extra_context, theme)
             {
@@ -3870,7 +3872,7 @@ impl BufferSnapshot {
             item_ends_stack.push(item.range.end);
         }
 
-        Some(anchor_items)
+        anchor_items
     }
 
     fn next_outline_item(
@@ -4922,7 +4924,12 @@ impl<'a> Iterator for BufferChunks<'a> {
         }
         self.diagnostic_endpoints = diagnostic_endpoints;
 
-        if let Some(chunk) = self.chunks.peek() {
+        if let Some(ChunkBitmaps {
+            text: chunk,
+            chars: chars_map,
+            tabs,
+        }) = self.chunks.peek_tabs()
+        {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
@@ -4937,6 +4944,16 @@ impl<'a> Iterator for BufferChunks<'a> {
 
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+            let bit_end = chunk_end - self.chunks.offset();
+
+            let mask = if bit_end >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << bit_end) - 1
+            };
+            let tabs = (tabs >> (chunk_start - self.chunks.offset())) & mask;
+            let chars_map = (chars_map >> (chunk_start - self.chunks.offset())) & mask;
+
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
                 self.chunks.next().unwrap();
@@ -4948,6 +4965,8 @@ impl<'a> Iterator for BufferChunks<'a> {
                 underline: self.underline,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
+                tabs,
+                chars: chars_map,
                 ..Chunk::default()
             })
         } else {

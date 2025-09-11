@@ -531,10 +531,14 @@ impl TerminalBuilder {
             },
         };
 
-        if cfg!(not(target_os = "windows")) && !activation_script.is_empty() && no_task {
+        if !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
                 terminal.input(activation_script.into_bytes());
-                terminal.write_to_pty(b"\n");
+                terminal.write_to_pty(if cfg!(windows) {
+                    &b"\r\n"[..]
+                } else {
+                    &b"\n"[..]
+                });
             }
             terminal.clear();
         }

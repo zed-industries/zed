@@ -216,7 +216,7 @@ impl PickerDelegate for PickerPromptDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
         let shortened_option = util::truncate_and_trailoff(&hit.string, self.max_match_length);
 
         Some(

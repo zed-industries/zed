@@ -166,7 +166,7 @@ impl ManageProfilesModal {
     ) {
         let name_editor = cx.new(|cx| Editor::single_line(window, cx));
         name_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Profile name", cx);
+            editor.set_placeholder_text("Profile name", window, cx);
         });
 
         self.mode = Mode::NewProfile(NewProfileMode {

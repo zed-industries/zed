@@ -149,6 +149,14 @@ pub fn init(cx: &mut App) {
                 panel.unstage_all(action, window, cx);
             });
         });
+        workspace.register_action(|workspace, _: &git::Uncommit, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.uncommit(window, cx);
+            })
+        });
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&[
                 zed_actions::OpenGitIntegrationOnboarding.type_id(),
@@ -629,7 +637,7 @@ impl GitCloneModal {
     pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let repo_input = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter repository URL…", cx);
+            editor.set_placeholder_text("Enter repository URL…", window, cx);
             editor
         });
         let focus_handle = repo_input.focus_handle(cx);

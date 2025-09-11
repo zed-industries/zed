@@ -17,7 +17,7 @@ pub fn app_menus() -> Vec<Menu> {
                     name: "Settings".into(),
                     items: vec![
                         MenuItem::action("Open Settings", super::OpenSettings),
-                        MenuItem::action("Open Key Bindings", keymap_editor::OpenKeymapEditor),
+                        MenuItem::action("Open Key Bindings", zed_actions::OpenKeymapEditor),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action(
                             "Open Default Key Bindings",
@@ -39,7 +39,8 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::os_submenu("Services", gpui::SystemMenuType::Services),
                 MenuItem::separator(),
                 MenuItem::action("Extensions", zed_actions::Extensions::default()),
-                MenuItem::action("Install CLI", install_cli::Install),
+                #[cfg(not(target_os = "windows"))]
+                MenuItem::action("Install CLI", install_cli::InstallCliBinary),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Zed", super::Hide),
