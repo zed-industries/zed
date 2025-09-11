@@ -1856,7 +1856,7 @@ impl Edges<Length> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::Edges;
+    /// # use gpui::{Edges, Length};
     /// let auto_edges = Edges::auto();
     /// assert_eq!(auto_edges.top, Length::Auto);
     /// assert_eq!(auto_edges.right, Length::Auto);
@@ -1884,8 +1884,8 @@ impl Edges<Length> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::Edges;
-    /// let no_edges = Edges::zero();
+    /// # use gpui::{DefiniteLength, Edges, Length, Pixels};
+    /// let no_edges = Edges::<Length>::zero();
     /// assert_eq!(no_edges.top, Length::Definite(DefiniteLength::from(Pixels(0.))));
     /// assert_eq!(no_edges.right, Length::Definite(DefiniteLength::from(Pixels(0.))));
     /// assert_eq!(no_edges.bottom, Length::Definite(DefiniteLength::from(Pixels(0.))));
@@ -1914,8 +1914,8 @@ impl Edges<DefiniteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{px, Edges};
-    /// let no_edges = Edges::zero();
+    /// # use gpui::{px, DefiniteLength, Edges};
+    /// let no_edges = Edges::<DefiniteLength>::zero();
     /// assert_eq!(no_edges.top, DefiniteLength::from(px(0.)));
     /// assert_eq!(no_edges.right, DefiniteLength::from(px(0.)));
     /// assert_eq!(no_edges.bottom, DefiniteLength::from(px(0.)));
@@ -1947,7 +1947,7 @@ impl Edges<DefiniteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Edges, DefiniteLength, px, AbsoluteLength, Size};
+    /// # use gpui::{Edges, DefiniteLength, px, AbsoluteLength, rems, Size};
     /// let edges = Edges {
     ///     top: DefiniteLength::Absolute(AbsoluteLength::Pixels(px(10.0))),
     ///     right: DefiniteLength::Fraction(0.5),
@@ -1989,8 +1989,8 @@ impl Edges<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::Edges;
-    /// let no_edges = Edges::zero();
+    /// # use gpui::{AbsoluteLength, Edges, Pixels};
+    /// let no_edges = Edges::<AbsoluteLength>::zero();
     /// assert_eq!(no_edges.top, AbsoluteLength::Pixels(Pixels(0.0)));
     /// assert_eq!(no_edges.right, AbsoluteLength::Pixels(Pixels(0.0)));
     /// assert_eq!(no_edges.bottom, AbsoluteLength::Pixels(Pixels(0.0)));
@@ -2021,7 +2021,7 @@ impl Edges<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use gpui::{Edges, AbsoluteLength, Pixels, px};
+    /// # use gpui::{Edges, AbsoluteLength, Pixels, px, rems};
     /// let edges = Edges {
     ///     top: AbsoluteLength::Pixels(px(10.0)),
     ///     right: AbsoluteLength::Rems(rems(1.0)),
