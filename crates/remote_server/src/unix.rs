@@ -29,11 +29,10 @@ use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, REMOTE_SERVER_PROJECT_ID};
 use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{Settings, SettingsStore, watch_config_file};
+use smol::Async;
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
-use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
-use thiserror::Error;
 use std::{
     env,
     ffi::OsStr,
@@ -46,6 +45,7 @@ use std::{
     str::FromStr,
     sync::{Arc, LazyLock},
 };
+use thiserror::Error;
 
 pub static VERSION: LazyLock<&str> = LazyLock::new(|| match *RELEASE_CHANNEL {
     ReleaseChannel::Stable | ReleaseChannel::Preview => env!("ZED_PKG_VERSION"),
