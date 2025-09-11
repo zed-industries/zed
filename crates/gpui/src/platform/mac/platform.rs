@@ -1370,6 +1370,19 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
             object: nil
         ];
 
+        let defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
+        let keys: [id; 6] = [
+            ns_string("NSAutomaticTextCompletionEnabled"),
+            ns_string("NSAutomaticSpellingCorrectionEnabled"),
+            ns_string("NSAutomaticQuoteSubstitutionEnabled"),
+            ns_string("NSAutomaticDashSubstitutionEnabled"),
+            ns_string("NSAutomaticPeriodSubstitutionEnabled"),
+            ns_string("NSAutomaticCapitalizationEnabled"),
+        ];
+        for key in keys {
+            let _: () = msg_send![defaults, setBool: NO forKey: key];
+        }
+
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
