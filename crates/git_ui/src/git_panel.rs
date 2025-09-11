@@ -3257,8 +3257,10 @@ impl GitPanel {
         if self.amend_pending {
             if self.has_staged_changes() {
                 "Amend"
-            } else {
+            } else if self.has_tracked_changes() {
                 "Amend Tracked"
+            } else {
+                "Amend"
             }
         } else if self.has_staged_changes() {
             "Commit"
