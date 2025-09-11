@@ -12,8 +12,8 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, ScrollHandle, actions};
 use settings::{
     NumType, SettingsStore, SettingsUiEntry, SettingsUiEntryMetaData, SettingsUiItem,
-    SettingsUiItemDynamicMap, SettingsUiItemGroup, SettingsUiItemSingle, SettingsUiItemUnion,
-    SettingsValue,
+    SettingsUiItemArray, SettingsUiItemDynamicMap, SettingsUiItemGroup, SettingsUiItemSingle,
+    SettingsUiItemUnion, SettingsValue,
 };
 use smallvec::SmallVec;
 use ui::{
@@ -157,6 +157,7 @@ struct UiEntry {
         fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
         SmallVec<[SharedString; 1]>,
     )>,
+    array: Option<SettingsUiItemArray>,
 }
 
 impl UiEntry {
@@ -207,6 +208,7 @@ fn build_tree_item(
         next_sibling: None,
         dynamic_render: None,
         generate_items: None,
+        array: None,
     });
     if let Some(prev_index) = prev_index {
         tree[prev_index].next_sibling = Some(index);
@@ -259,6 +261,9 @@ fn build_tree_item(
                     .map(SharedString::new_static)
                     .collect(),
             ));
+        }
+        SettingsUiItem::Array(array) => {
+            tree[index].array = Some(array);
         }
         SettingsUiItem::None => {
             return;
@@ -473,6 +478,51 @@ fn render_recursive(
                 window,
                 cx,
             );
+        }
+    } else if let Some(array) = child.array.as_ref() {
+        let generated_items = (array.determine_items)(settings_value.read(), cx);
+        let mut ui_items = Vec::with_capacity(generated_items.len());
+        let settings_ui_item = (array.item)();
+
+        for item in generated_items {
+            let settings_ui_entry = SettingsUiEntry {
+                path: None,
+                title: "",
+                documentation: None,
+                item: settings_ui_item.clone(),
+            };
+            let prev_index = if ui_items.is_empty() {
+                None
+            } else {
+                Some(ui_items.len() - 1)
+            };
+            let item_index = ui_items.len();
+            build_tree_item(
+                &mut ui_items,
+                settings_ui_entry,
+                child._depth + 1,
+                prev_index,
+            );
+            if item_index < ui_items.len() {
+                ui_items[item_index].path = None;
+                ui_items[item_index].title = item.title.clone();
+                ui_items[item_index].documentation = item.documentation.clone();
+
+                // push path instead of setting path on ui item so that the path isn't pushed to default_path as well
+                // when we recurse
+                path.push(item.path.clone());
+                element = render_recursive(
+                    &ui_items,
+                    item_index,
+                    path,
+                    element,
+                    &mut Some(defaults_path.clone()),
+                    true,
+                    window,
+                    cx,
+                );
+                path.pop();
+            }
         }
     } else if let Some((settings_ui_item, generate_items, defaults_path)) =
         child.generate_items.as_ref()
