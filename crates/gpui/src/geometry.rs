@@ -1025,12 +1025,13 @@ where
     ///     origin: Point { x: 10, y: 10 },
     ///     size: Size { width: 10, height: 10 },
     /// };
-    /// bounds.dilate(5);
-    /// assert_eq!(bounds, Bounds {
+    /// let expanded_bounds = bounds.dilate(5);
+    /// assert_eq!(expanded_bounds, Bounds {
     ///     origin: Point { x: 5, y: 5 },
     ///     size: Size { width: 20, height: 20 },
     /// });
     /// ```
+    #[must_use]
     pub fn dilate(&self, amount: T) -> Bounds<T> {
         let double_amount = amount.clone() + amount.clone();
         Bounds {
@@ -1040,6 +1041,7 @@ where
     }
 
     /// Extends the bounds different amounts in each direction.
+    #[must_use]
     pub fn extend(&self, amount: Edges<T>) -> Bounds<T> {
         Bounds {
             origin: self.origin.clone() - point(amount.left.clone(), amount.top.clone()),
