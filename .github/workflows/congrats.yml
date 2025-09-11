@@ -51,5 +51,16 @@ jobs:
     needs: check-author
     if: needs.check-author.outputs.should_congratulate == 'true'
     uses: withastro/automation/.github/workflows/congratsbot.yml@main
+    with:
+      EMOJIS: 🎉,🎊,🧑‍🚀,🥳,🙌,🚀,🦀,🔥,🚢
+      COAUTHOR_TEMPLATES: >
+        [
+          "Thank you for making Zed better, <names>! In Rust we trust!",
+          "Successfully moved this PR into main! No lifetime errors here, thanks <names>!",
+          "Ferris approves! Thanks <names>!",
+          "Crab rave time! Code from <names> has been oxidized and merged!",
+          "The borrow checker is happy, and so are we! Welcome to the cargo club, <names>!",
+          "Crabs can live up to 100 years, but this PR from <names> will live forever in our git history!"
+        ]
     secrets:
       DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_CONGRATS }}
