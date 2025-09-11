@@ -901,9 +901,7 @@ impl EditPredictionButton {
             }
 
             // Check if ollama settings exist before building menu
-            let has_ollama_settings = Self::ollama_settings_exist_in_content(
-                &std::fs::read_to_string(paths::settings_file()).unwrap_or_default(),
-            );
+            let has_ollama_settings = Self::ollama_settings_exist(cx);
 
             // API URL configuration - only show if Ollama settings exist in the user's config
             let menu = if has_ollama_settings {
@@ -1027,10 +1025,9 @@ impl EditPredictionButton {
         }
     }
 
-    fn ollama_settings_exist_in_content(content: &str) -> bool {
-        let api_url_pattern = r#""language_models"\s*:\s*\{[\s\S]*?"ollama"\s*:\s*\{[\s\S]*?"api_url"\s*:\s*"([^"]*)"#;
-        let regex = regex::Regex::new(api_url_pattern).unwrap();
-        regex.is_match(content)
+    fn ollama_settings_exist(cx: &App) -> bool {
+        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
+        !settings.api_url.is_empty() || !settings.available_models.is_empty()
     }
 
     fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
