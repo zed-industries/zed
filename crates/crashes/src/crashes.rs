@@ -298,13 +298,15 @@ pub fn panic_hook(info: &PanicHookInfo) {
                 Ordering::SeqCst,
             );
 
-            #[cfg(target_os = "linux")]
-            {
-                CrashHandler.simulate_signal(crash_handler::Signal::Trap as u32);
-                break;
+            cfg_if::cfg_if! {
+                if #[cfg(target_os = "windows")] {
+                    // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+                    CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
+                    break;
+                } else {
+                    std::process::abort();
+                }
             }
-            #[cfg(not(target_os = "linux"))]
-            std::process::abort();
         }
         thread::sleep(retry_frequency);
     }
