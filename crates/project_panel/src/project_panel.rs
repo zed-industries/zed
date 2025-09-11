@@ -5650,36 +5650,44 @@ impl Render for ProjectPanel {
                                             return;
                                         };
                                         if event.bounds.contains(&event.event.position) {
-                                            let should_highlight = {
-                                                let drag_state = event.drag(cx);
-                                                if drag_state.items().count() > 1 {
-                                                    // Always highlight for multiple entries
-                                                    true
-                                                } else {
-                                                    // For single entry check if parent matches root
-                                                    this.project
-                                                        .read(cx)
-                                                        .path_for_entry(
-                                                            drag_state.active_selection.entry_id,
-                                                            cx,
-                                                        )
-                                                        .and_then(|e| {
-                                                            e.path.parent().map(|p| p.to_path_buf())
-                                                        })
-                                                        .is_some_and(|parent_path| {
-                                                            this.project
-                                                                .read(cx)
-                                                                .path_for_entry(last_root_id, cx)
-                                                                .is_some_and(|p| {
-                                                                    p.path.as_ref()
-                                                                        != parent_path.as_path()
-                                                                })
-                                                        })
-                                                }
-                                            };
-                                            if should_highlight {
+                                            let drag_state = event.drag(cx);
+
+                                            // Always highlight for multiple entries
+                                            if drag_state.items().count() > 1 {
                                                 this.drag_target_entry =
                                                     Some(DragTarget::Background);
+                                                return;
+                                            }
+
+                                            // Since root will always have empty relative path
+                                            if let Some(entry_path) =
+                                                this.project.read(cx).path_for_entry(
+                                                    drag_state.active_selection.entry_id,
+                                                    cx,
+                                                )
+                                            {
+                                                if let Some(parent_path) = entry_path.path.parent()
+                                                {
+                                                    if !parent_path.as_os_str().is_empty() {
+                                                        this.drag_target_entry =
+                                                            Some(DragTarget::Background);
+                                                        return;
+                                                    }
+                                                }
+                                            }
+
+                                            // If parent is empty, check if different worktree
+                                            if let Some(last_root_worktree_id) = this
+                                                .project
+                                                .read(cx)
+                                                .worktree_id_for_entry(last_root_id, cx)
+                                            {
+                                                if drag_state.active_selection.worktree_id
+                                                    != last_root_worktree_id
+                                                {
+                                                    this.drag_target_entry =
+                                                        Some(DragTarget::Background);
+                                                }
                                             }
                                         } else {
                                             if this.drag_target_entry.as_ref().is_some_and(|e| {
