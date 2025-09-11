@@ -268,21 +268,6 @@ impl MessageEditor {
         &self.context_store
     }
 
-    pub fn get_text(&self, cx: &App) -> String {
-        self.editor.read(cx).text(cx)
-    }
-
-    pub fn set_text(
-        &mut self,
-        text: impl Into<Arc<str>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_text(text, window, cx);
-        });
-    }
-
     pub fn expand_message_editor(
         &mut self,
         _: &ExpandMessageEditor,
@@ -368,10 +353,6 @@ impl MessageEditor {
 
     fn is_editor_empty(&self, cx: &App) -> bool {
         self.editor.read(cx).text(cx).trim().is_empty()
-    }
-
-    pub fn is_editor_fully_empty(&self, cx: &App) -> bool {
-        self.editor.read(cx).is_empty(cx)
     }
 
     fn send_to_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1365,14 +1346,6 @@ impl MessageEditor {
                 .border_color(cx.theme().colors().border)
                 .child(callout),
         )
-    }
-
-    pub fn last_estimated_token_count(&self) -> Option<u64> {
-        self.last_estimated_token_count
-    }
-
-    pub fn is_waiting_to_update_token_count(&self) -> bool {
-        self.update_token_count_task.is_some()
     }
 
     fn reload_context(&mut self, cx: &mut Context<Self>) -> Task<Option<ContextLoadResult>> {
