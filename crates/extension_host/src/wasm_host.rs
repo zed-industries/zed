@@ -617,9 +617,7 @@ impl WasmHost {
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
-                    ctx: this
-                        .build_wasi_ctx(&manifest, requires_relative_paths_for_fs)
-                        .await?,
+                    ctx: this.build_wasi_ctx(&manifest).await?,
                     manifest: manifest.clone(),
                     table: ResourceTable::new(),
                     host: this.clone(),
@@ -666,11 +664,7 @@ impl WasmHost {
         })
     }
 
-    async fn build_wasi_ctx(
-        &self,
-        manifest: &Arc<ExtensionManifest>,
-        requires_relative_paths: bool,
-    ) -> Result<wasi::WasiCtx> {
+    async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
         let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
         self.fs
             .create_dir(&extension_work_dir)
@@ -686,11 +680,7 @@ impl WasmHost {
             .env("PWD", path.to_string())
             .env("RUST_BACKTRACE", "full");
 
-        ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
-
-        if !requires_relative_paths || cfg!(target_os = "windows") {
-            ctx.preopened_dir(&extension_work_dir, path.to_string(), dir_perms, file_perms)?;
-        }
+        ctx.preopened_dir(&path, path.to_string(), dir_perms, file_perms)?;
 
         Ok(ctx.build())
     }
