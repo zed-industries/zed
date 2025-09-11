@@ -309,12 +309,14 @@ impl LspAdapter for TyLspAdapter {
             serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
         }) {
             _ = maybe!({
-                let uri = toolchain.executable.clone()?;
+                let uri = url::Url::from_file_path(toolchain.executable?).ok()?;
                 let sys_prefix = toolchain.prefix.clone()?;
-                let environment = json!({"executable": {
-                    "uri": uri,
-                    "sysPrefix":sys_prefix
-                }});
+                let environment = json!({
+                    "executable": {
+                        "uri": uri,
+                        "sysPrefix": sys_prefix
+                    }
+                });
                 ret.as_object_mut()?.insert(
                     "pythonExtension".into(),
                     json!({ "activeEnvironment": environment }),
@@ -322,7 +324,7 @@ impl LspAdapter for TyLspAdapter {
                 Some(())
             });
         }
-        Ok(ret)
+        Ok(json!({"ty": ret}))
     }
 }
 
