@@ -5704,6 +5704,16 @@ impl Render for ProjectPanel {
                                         }
                                         cx.stop_propagation();
                                     },
+                                ))
+                                .on_drop(cx.listener(
+                                    move |this, selections: &DraggedSelection, window, cx| {
+                                        this.drag_target_entry = None;
+                                        this.hover_scroll_task.take();
+                                        if let Some(entry_id) = this.last_worktree_root_id {
+                                            this.drag_onto(selections, entry_id, false, window, cx);
+                                        }
+                                        cx.stop_propagation();
+                                    },
                                 )),
                         )
                         .size_full(),
