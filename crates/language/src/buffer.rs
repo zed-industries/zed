@@ -3463,8 +3463,11 @@ impl BufferSnapshot {
         (start..end, word_kind)
     }
 
-    /// Returns the smallest descendant or ancestor syntax node enclosing the given range. When
-    /// `require_larger` is true,
+    /// Moves the TreeCursor to the smallest descendant or ancestor syntax node enclosing the given
+    /// range. When `require_larger` is true, the node found must be larger than the query range.
+    ///
+    /// Returns true if a node was found, and false otherwise. In the `false` case the cursor will
+    /// be moved to the root of the tree.
     fn goto_node_enclosing_range(
         cursor: &mut tree_sitter::TreeCursor,
         query_range: &Range<usize>,
@@ -3472,7 +3475,23 @@ impl BufferSnapshot {
     ) -> bool {
         let mut ascending = false;
         loop {
-            let range = cursor.node().byte_range();
+            let mut range = cursor.node().byte_range();
+            if query_range.is_empty() {
+                // When the query range is empty and the current node starts after it, move to the
+                // previous sibling to find the node the containing node.
+                if range.start > query_range.start {
+                    cursor.goto_previous_sibling();
+                    range = cursor.node().byte_range();
+                }
+            } else {
+                // When the query range is non-empty and the current node ends exactly at the start,
+                // move to the next sibling to find a node that extends beyond the start.
+                if range.end == query_range.start {
+                    cursor.goto_next_sibling();
+                    range = cursor.node().byte_range();
+                }
+            }
+
             let encloses = range.contains_inclusive(query_range)
                 && (!require_larger || range.len() > query_range.len());
             if !encloses {
@@ -3484,17 +3503,7 @@ impl BufferSnapshot {
             } else if ascending {
                 return true;
             }
-            // If the range is non-empty and the current node ends exactly at the start,
-            // move to the next sibling to find a node that extends beyond the start.
-            if !query_range.is_empty() && range.end == query_range.start {
-                cursor.goto_next_sibling();
-            }
-            // If the range is empty and the current node starts after the range position,
-            // move to the previous sibling to find the node that contains the position.
-            let range = cursor.node().byte_range();
-            if query_range.is_empty() && range.start > query_range.start {
-                cursor.goto_previous_sibling();
-            }
+
             // Descend into the current node.
             if cursor
                 .goto_first_child_for_byte(query_range.start)
