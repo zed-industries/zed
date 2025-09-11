@@ -218,9 +218,11 @@ impl Model {
         }
     }
 
-    /// Returns whether the given model supports the `parallel_tool_calls` parameter.
+    /// Returns whether the given model supports the `parallel_tool_calls`
+    /// parameter.
     ///
-    /// If the model does not support the parameter, do not pass it up, or the API will return an error.
+    /// If the model does not support the parameter, do not pass it up, or the
+    /// API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::ThreePointFiveTurbo
@@ -415,7 +417,6 @@ where
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
-    // The key change is here: use the custom deserializer to handle the index.
     #[serde(deserialize_with = "normalize_tool_call_index")]
     pub index: usize,
     pub id: Option<String>,
@@ -477,7 +478,7 @@ pub async fn stream_completion(
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key.trim()));
 
-    let request = request_builder.body(AsyncBody::from(to_string(&request)?))?;
+    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
 
     if response.status().is_success() {
