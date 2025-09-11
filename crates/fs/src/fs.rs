@@ -343,7 +343,19 @@ impl Fs for RealFs {
 
         #[cfg(windows)]
         if smol::fs::metadata(&target).await?.is_dir() {
-            smol::fs::windows::symlink_dir(target, path).await?
+            let status = smol::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .args([path, target.as_path()])
+                .status()
+                .await?;
+
+            if !status.success() {
+                return Err(anyhow::anyhow!(
+                    "Failed to create junction from {:?} to {:?}",
+                    path,
+                    target
+                ));
+            }
         } else {
             smol::fs::windows::symlink_file(target, path).await?
         }
