@@ -12,6 +12,7 @@ Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed;
 MimeType=text/plain;application/x-zerosize;x-scheme-handler/zed;
 Actions=NewWorkspace;
+StartupWMClass=dev.zed.Zed
 
 [Desktop Action NewWorkspace]
 Exec=$APP_CLI --new $APP_ARGS
