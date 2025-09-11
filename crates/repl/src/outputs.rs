@@ -33,16 +33,13 @@
 //! This module is designed to work with Jupyter message protocols,
 //! interpreting and displaying various types of Jupyter output.
 
-use std::time::Duration;
-
 use editor::{Editor, MultiBuffer};
-use gpui::{
-    Animation, AnimationExt, AnyElement, ClipboardItem, Entity, Render, Transformation, WeakEntity,
-    percentage,
-};
+use gpui::{AnyElement, ClipboardItem, Entity, Render, WeakEntity};
 use language::Buffer;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
-use ui::{Context, IntoElement, Styled, Tooltip, Window, div, prelude::*, v_flex};
+use ui::{
+    CommonAnimationExt, Context, IntoElement, Styled, Tooltip, Window, div, prelude::*, v_flex,
+};
 
 mod image;
 use image::ImageView;
@@ -228,26 +225,23 @@ impl Output {
             .child(div().flex_1().children(content))
             .children(match self {
                 Self::Plain { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Markdown { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Stream { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::Image { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
-                Self::ErrorOutput(err) => Self::render_output_controls(
-                    err.traceback.clone(),
-                    workspace.clone(),
-                    window,
-                    cx,
-                ),
+                Self::ErrorOutput(err) => {
+                    Self::render_output_controls(err.traceback.clone(), workspace, window, cx)
+                }
                 Self::Message(_) => None,
                 Self::Table { content, .. } => {
-                    Self::render_output_controls(content.clone(), workspace.clone(), window, cx)
+                    Self::render_output_controls(content.clone(), workspace, window, cx)
                 }
                 Self::ClearOutputWaitMarker => None,
             })
@@ -412,10 +406,10 @@ impl ExecutionView {
         };
 
         // Check for a clear output marker as the previous output, so we can clear it out
-        if let Some(output) = self.outputs.last() {
-            if let Output::ClearOutputWaitMarker = output {
-                self.outputs.clear();
-            }
+        if let Some(output) = self.outputs.last()
+            && let Output::ClearOutputWaitMarker = output
+        {
+            self.outputs.clear();
         }
 
         self.outputs.push(output);
@@ -433,11 +427,11 @@ impl ExecutionView {
         let mut any = false;
 
         self.outputs.iter_mut().for_each(|output| {
-            if let Some(other_display_id) = output.display_id().as_ref() {
-                if other_display_id == display_id {
-                    *output = Output::new(data, Some(display_id.to_owned()), window, cx);
-                    any = true;
-                }
+            if let Some(other_display_id) = output.display_id().as_ref()
+                && other_display_id == display_id
+            {
+                *output = Output::new(data, Some(display_id.to_owned()), window, cx);
+                any = true;
             }
         });
 
@@ -452,19 +446,18 @@ impl ExecutionView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Output> {
-        if let Some(last_output) = self.outputs.last_mut() {
-            if let Output::Stream {
+        if let Some(last_output) = self.outputs.last_mut()
+            && let Output::Stream {
                 content: last_stream,
             } = last_output
-            {
-                // Don't need to add a new output, we already have a terminal output
-                // and can just update the most recent terminal output
-                last_stream.update(cx, |last_stream, cx| {
-                    last_stream.append_text(text, cx);
-                    cx.notify();
-                });
-                return None;
-            }
+        {
+            // Don't need to add a new output, we already have a terminal output
+            // and can just update the most recent terminal output
+            last_stream.update(cx, |last_stream, cx| {
+                last_stream.append_text(text, cx);
+                cx.notify();
+            });
+            return None;
         }
 
         Some(Output::Stream {
@@ -485,11 +478,7 @@ impl Render for ExecutionView {
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
                         .color(Color::Muted)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(3)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
+                        .with_rotate_animation(3),
                 )
                 .child(Label::new("Executing...").color(Color::Muted))
                 .into_any_element(),

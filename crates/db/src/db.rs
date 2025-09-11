@@ -17,9 +17,10 @@ use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
 use std::future::Future;
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::{LazyLock, atomic::Ordering};
-use std::{env, sync::atomic::AtomicBool};
 use util::{ResultExt, maybe};
+use zed_env_vars::ZED_STATELESS;
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
     PRAGMA foreign_keys=TRUE;
@@ -35,9 +36,6 @@ const DB_INITIALIZE_QUERY: &str = sql!(
 const FALLBACK_DB_NAME: &str = "FALLBACK_MEMORY_DB";
 
 const DB_FILE_NAME: &str = "db.sqlite";
-
-pub static ZED_STATELESS: LazyLock<bool> =
-    LazyLock::new(|| env::var("ZED_STATELESS").map_or(false, |v| !v.is_empty()));
 
 pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(false));
 
@@ -74,7 +72,7 @@ pub async fn open_db<M: Migrator + 'static>(db_dir: &Path, scope: &str) -> Threa
 }
 
 async fn open_main_db<M: Migrator>(db_path: &Path) -> Option<ThreadSafeConnection> {
-    log::info!("Opening database {}", db_path.display());
+    log::trace!("Opening database {}", db_path.display());
     ThreadSafeConnection::builder::<M>(db_path.to_string_lossy().as_ref(), true)
         .with_db_initialization_query(DB_INITIALIZE_QUERY)
         .with_connection_initialize_query(CONNECTION_INITIALIZE_QUERY)
@@ -110,26 +108,19 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection {
 }
 
 /// Implements a basic DB wrapper for a given domain
+///
+/// Arguments:
+/// - static variable name for connection
+/// - type of connection wrapper
+/// - dependencies, whose migrations should be run prior to this domain's migrations
 #[macro_export]
-macro_rules! define_connection {
-    (pub static ref $id:ident: $t:ident<()> = $migrations:expr; $($global:ident)?) => {
-        pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection);
-
+macro_rules! static_connection {
+    ($id:ident, $t:ident, [ $($d:ty),* ] $(, $global:ident)?) => {
         impl ::std::ops::Deref for $t {
             type Target = $crate::sqlez::thread_safe_connection::ThreadSafeConnection;
 
             fn deref(&self) -> &Self::Target {
                 &self.0
-            }
-        }
-
-        impl $crate::sqlez::domain::Domain for $t {
-            fn name() -> &'static str {
-                stringify!($t)
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                $migrations
             }
         }
 
@@ -142,7 +133,8 @@ macro_rules! define_connection {
 
         #[cfg(any(test, feature = "test-support"))]
         pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            $t($crate::smol::block_on($crate::open_test_db::<$t>(stringify!($id))))
+            #[allow(unused_parens)]
+            $t($crate::smol::block_on($crate::open_test_db::<($($d,)* $t)>(stringify!($id))))
         });
 
         #[cfg(not(any(test, feature = "test-support")))]
@@ -153,46 +145,10 @@ macro_rules! define_connection {
             } else {
                 $crate::RELEASE_CHANNEL.dev_name()
             };
-            $t($crate::smol::block_on($crate::open_db::<$t>(db_dir, scope)))
+            #[allow(unused_parens)]
+            $t($crate::smol::block_on($crate::open_db::<($($d,)* $t)>(db_dir, scope)))
         });
-    };
-    (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr; $($global:ident)?) => {
-        pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection);
-
-        impl ::std::ops::Deref for $t {
-            type Target = $crate::sqlez::thread_safe_connection::ThreadSafeConnection;
-
-            fn deref(&self) -> &Self::Target {
-                &self.0
-            }
-        }
-
-        impl $crate::sqlez::domain::Domain for $t {
-            fn name() -> &'static str {
-                stringify!($t)
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                $migrations
-            }
-        }
-
-        #[cfg(any(test, feature = "test-support"))]
-        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            $t($crate::smol::block_on($crate::open_test_db::<($($d),+, $t)>(stringify!($id))))
-        });
-
-        #[cfg(not(any(test, feature = "test-support")))]
-        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            let db_dir = $crate::database_dir();
-            let scope = if false $(|| stringify!($global) == "global")? {
-                "global"
-            } else {
-                $crate::RELEASE_CHANNEL.dev_name()
-            };
-            $t($crate::smol::block_on($crate::open_db::<($($d),+, $t)>(db_dir, scope)))
-        });
-    };
+    }
 }
 
 pub fn write_and_log<F>(cx: &App, db_write: impl FnOnce() -> F + Send + 'static)
@@ -219,17 +175,12 @@ mod tests {
         enum BadDB {}
 
         impl Domain for BadDB {
-            fn name() -> &'static str {
-                "db_tests"
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                &[
-                    sql!(CREATE TABLE test(value);),
-                    // failure because test already exists
-                    sql!(CREATE TABLE test(value);),
-                ]
-            }
+            const NAME: &str = "db_tests";
+            const MIGRATIONS: &[&str] = &[
+                sql!(CREATE TABLE test(value);),
+                // failure because test already exists
+                sql!(CREATE TABLE test(value);),
+            ];
         }
 
         let tempdir = tempfile::Builder::new()
@@ -238,7 +189,7 @@ mod tests {
             .unwrap();
         let _bad_db = open_db::<BadDB>(
             tempdir.path(),
-            &release_channel::ReleaseChannel::Dev.dev_name(),
+            release_channel::ReleaseChannel::Dev.dev_name(),
         )
         .await;
     }
@@ -251,25 +202,15 @@ mod tests {
         enum CorruptedDB {}
 
         impl Domain for CorruptedDB {
-            fn name() -> &'static str {
-                "db_tests"
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                &[sql!(CREATE TABLE test(value);)]
-            }
+            const NAME: &str = "db_tests";
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test(value);)];
         }
 
         enum GoodDB {}
 
         impl Domain for GoodDB {
-            fn name() -> &'static str {
-                "db_tests" //Notice same name
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                &[sql!(CREATE TABLE test2(value);)] //But different migration
-            }
+            const NAME: &str = "db_tests"; //Notice same name
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test2(value);)];
         }
 
         let tempdir = tempfile::Builder::new()
@@ -279,7 +220,7 @@ mod tests {
         {
             let corrupt_db = open_db::<CorruptedDB>(
                 tempdir.path(),
-                &release_channel::ReleaseChannel::Dev.dev_name(),
+                release_channel::ReleaseChannel::Dev.dev_name(),
             )
             .await;
             assert!(corrupt_db.persistent());
@@ -287,7 +228,7 @@ mod tests {
 
         let good_db = open_db::<GoodDB>(
             tempdir.path(),
-            &release_channel::ReleaseChannel::Dev.dev_name(),
+            release_channel::ReleaseChannel::Dev.dev_name(),
         )
         .await;
         assert!(
@@ -305,25 +246,16 @@ mod tests {
         enum CorruptedDB {}
 
         impl Domain for CorruptedDB {
-            fn name() -> &'static str {
-                "db_tests"
-            }
+            const NAME: &str = "db_tests";
 
-            fn migrations() -> &'static [&'static str] {
-                &[sql!(CREATE TABLE test(value);)]
-            }
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test(value);)];
         }
 
         enum GoodDB {}
 
         impl Domain for GoodDB {
-            fn name() -> &'static str {
-                "db_tests" //Notice same name
-            }
-
-            fn migrations() -> &'static [&'static str] {
-                &[sql!(CREATE TABLE test2(value);)] //But different migration
-            }
+            const NAME: &str = "db_tests"; //Notice same name
+            const MIGRATIONS: &[&str] = &[sql!(CREATE TABLE test2(value);)]; // But different migration
         }
 
         let tempdir = tempfile::Builder::new()
@@ -334,7 +266,7 @@ mod tests {
             // Setup the bad database
             let corrupt_db = open_db::<CorruptedDB>(
                 tempdir.path(),
-                &release_channel::ReleaseChannel::Dev.dev_name(),
+                release_channel::ReleaseChannel::Dev.dev_name(),
             )
             .await;
             assert!(corrupt_db.persistent());
@@ -347,7 +279,7 @@ mod tests {
             let guard = thread::spawn(move || {
                 let good_db = smol::block_on(open_db::<GoodDB>(
                     tmp_path.as_path(),
-                    &release_channel::ReleaseChannel::Dev.dev_name(),
+                    release_channel::ReleaseChannel::Dev.dev_name(),
                 ));
                 assert!(
                     good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()

@@ -6,62 +6,6 @@ message UpdateInviteInfo {
     uint32 count = 2;
 }
 
-message GetPrivateUserInfo {}
-
-message GetPrivateUserInfoResponse {
-    string metrics_id = 1;
-    bool staff = 2;
-    repeated string flags = 3;
-    optional uint64 accepted_tos_at = 4;
-}
-
-enum Plan {
-    Free = 0;
-    ZedPro = 1;
-    ZedProTrial = 2;
-}
-
-message UpdateUserPlan {
-    Plan plan = 1;
-    optional uint64 trial_started_at = 2;
-    optional bool is_usage_based_billing_enabled = 3;
-    optional SubscriptionUsage usage = 4;
-    optional SubscriptionPeriod subscription_period = 5;
-    optional bool account_too_young = 6;
-    optional bool has_overdue_invoices = 7;
-}
-
-message SubscriptionPeriod {
-    uint64 started_at = 1;
-    uint64 ended_at = 2;
-}
-
-message SubscriptionUsage {
-    uint32 model_requests_usage_amount = 1;
-    UsageLimit model_requests_usage_limit = 2;
-    uint32 edit_predictions_usage_amount = 3;
-    UsageLimit edit_predictions_usage_limit = 4;
-}
-
-message UsageLimit {
-    oneof variant {
-        Limited limited = 1;
-        Unlimited unlimited = 2;
-    }
-
-    message Limited {
-        uint32 limit = 1;
-    }
-
-    message Unlimited {}
-}
-
-message AcceptTermsOfService {}
-
-message AcceptTermsOfServiceResponse {
-    uint64 accepted_tos_at = 1;
-}
-
 message ShutdownRemoteServer {}
 
 message Toast {
@@ -84,11 +28,13 @@ message GetCrashFiles {
 
 message GetCrashFilesResponse {
     repeated CrashReport crashes = 1;
+    repeated string legacy_panics = 2;
 }
 
 message CrashReport {
-    optional string panic_contents = 1;
-    optional bytes minidump_contents = 2;
+    reserved 1, 2;
+    string metadata = 3;
+    bytes minidump_contents = 4;
 }
 
 message Extension {

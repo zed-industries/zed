@@ -56,13 +56,13 @@ pub struct OpenAiLanguageModelProvider {
 pub struct State {
     api_key: Option<String>,
     api_key_from_env: bool,
+    last_api_url: String,
     _subscription: Subscription,
 }
 
 const OPENAI_API_KEY_VAR: &str = "OPENAI_API_KEY";
 
 impl State {
-    //
     fn is_authenticated(&self) -> bool {
         self.api_key.is_some()
     }
@@ -75,7 +75,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -94,7 +94,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -104,11 +104,7 @@ impl State {
         })
     }
 
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
+    fn get_api_key(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         let api_url = AllLanguageModelSettings::get_global(cx)
             .openai
@@ -119,7 +115,7 @@ impl State {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
+                    .read_credentials(&api_url, cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
@@ -136,14 +132,52 @@ impl State {
             Ok(())
         })
     }
+
+    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        if self.is_authenticated() {
+            return Task::ready(Ok(()));
+        }
+
+        self.get_api_key(cx)
+    }
 }
 
 impl OpenAiLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
+        let initial_api_url = AllLanguageModelSettings::get_global(cx)
+            .openai
+            .api_url
+            .clone();
+
         let state = cx.new(|cx| State {
             api_key: None,
             api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
+            last_api_url: initial_api_url.clone(),
+            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let current_api_url = AllLanguageModelSettings::get_global(cx)
+                    .openai
+                    .api_url
+                    .clone();
+
+                if this.last_api_url != current_api_url {
+                    this.last_api_url = current_api_url;
+                    if !this.api_key_from_env {
+                        this.api_key = None;
+                        let spawn_task = cx.spawn(async move |handle, cx| {
+                            if let Ok(task) = handle.update(cx, |this, cx| this.get_api_key(cx)) {
+                                if let Err(_) = task.await {
+                                    handle
+                                        .update(cx, |this, _| {
+                                            this.api_key = None;
+                                            this.api_key_from_env = false;
+                                        })
+                                        .ok();
+                                }
+                            }
+                        });
+                        spawn_task.detach();
+                    }
+                }
                 cx.notify();
             }),
         });
@@ -233,7 +267,12 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -370,6 +409,7 @@ impl LanguageModel for OpenAiLanguageModel {
             request,
             self.model.id(),
             self.model.supports_parallel_tool_calls(),
+            self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
             self.model.reasoning_effort(),
         );
@@ -386,6 +426,7 @@ pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
     supports_parallel_tool_calls: bool,
+    supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
     reasoning_effort: Option<ReasoningEffort>,
 ) -> open_ai::Request {
@@ -397,7 +438,7 @@ pub fn into_open_ai(
             match content {
                 MessageContent::Text(text) | MessageContent::Thinking { text, .. } => {
                     add_message_content_part(
-                        open_ai::MessagePart::Text { text: text },
+                        open_ai::MessagePart::Text { text },
                         message.role,
                         &mut messages,
                     )
@@ -477,7 +518,11 @@ pub fn into_open_ai(
         } else {
             None
         },
-        prompt_cache_key: request.thread_id,
+        prompt_cache_key: if supports_prompt_cache_key {
+            request.thread_id
+        } else {
+            None
+        },
         tools: request
             .tools
             .into_iter()
@@ -575,7 +620,9 @@ impl OpenAiEventMapper {
         };
 
         if let Some(content) = choice.delta.content.clone() {
-            events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            if !content.is_empty() {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {

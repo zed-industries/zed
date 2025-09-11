@@ -91,7 +91,7 @@ fn convert_outputs(
     cx: &mut App,
 ) -> Vec<Output> {
     outputs
-        .into_iter()
+        .iter()
         .map(|output| match output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
                 content: cx.new(|cx| TerminalOutput::from(&text.0, window, cx)),

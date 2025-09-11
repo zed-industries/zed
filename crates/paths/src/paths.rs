@@ -33,6 +33,11 @@ pub fn remote_server_dir_relative() -> &'static Path {
     Path::new(".zed_server")
 }
 
+/// Returns the relative path to the zed_wsl_server directory on the wsl host.
+pub fn remote_wsl_server_dir_relative() -> &'static Path {
+    Path::new(".zed_wsl_server")
+}
+
 /// Sets a custom directory for all user data, overriding the default data directory.
 /// This function must be called before any other path operations that depend on the data directory.
 /// The directory's path will be canonicalized to an absolute path by a blocking FS operation.
@@ -41,7 +46,7 @@ pub fn remote_server_dir_relative() -> &'static Path {
 /// # Arguments
 ///
 /// * `dir` - The path to use as the custom data directory. This will be used as the base
-///           directory for all user data, including databases, extensions, and logs.
+///   directory for all user data, including databases, extensions, and logs.
 ///
 /// # Returns
 ///
@@ -63,7 +68,7 @@ pub fn set_custom_data_dir(dir: &str) -> &'static PathBuf {
             let abs_path = path
                 .canonicalize()
                 .expect("failed to canonicalize custom data directory's path to an absolute path");
-            path = PathBuf::from(util::paths::SanitizedPath::from(abs_path))
+            path = util::paths::SanitizedPath::new(&abs_path).into()
         }
         std::fs::create_dir_all(&path).expect("failed to create custom data directory");
         path

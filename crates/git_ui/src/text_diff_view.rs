@@ -48,7 +48,7 @@ impl TextDiffView {
 
         let selection_data = source_editor.update(cx, |editor, cx| {
             let multibuffer = editor.buffer().read(cx);
-            let source_buffer = multibuffer.as_singleton()?.clone();
+            let source_buffer = multibuffer.as_singleton()?;
             let selections = editor.selections.all::<Point>(cx);
             let buffer_snapshot = source_buffer.read(cx);
             let first_selection = selections.first()?;
@@ -207,7 +207,7 @@ impl TextDiffView {
             path: Some(format!("Clipboard ↔ {selection_location_path}").into()),
             buffer_changes_tx,
             _recalculate_diff_task: cx.spawn(async move |_, cx| {
-                while let Ok(_) = buffer_changes_rx.recv().await {
+                while buffer_changes_rx.recv().await.is_ok() {
                     loop {
                         let mut timer = cx
                             .background_executor()
@@ -259,7 +259,7 @@ async fn update_diff_buffer(
     let source_buffer_snapshot = source_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
 
     let base_buffer_snapshot = clipboard_buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let base_text = base_buffer_snapshot.text().to_string();
+    let base_text = base_buffer_snapshot.text();
 
     let diff_snapshot = cx
         .update(|cx| {
@@ -686,7 +686,7 @@ mod tests {
 
         let project = Project::test(fs, [project_root.as_ref()], cx).await;
 
-        let (workspace, mut cx) =
+        let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         let buffer = project
@@ -725,7 +725,7 @@ mod tests {
 
         assert_state_with_diff(
             &diff_view.read_with(cx, |diff_view, _| diff_view.diff_editor.clone()),
-            &mut cx,
+            cx,
             expected_diff,
         );
 

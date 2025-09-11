@@ -8,13 +8,15 @@ use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
 
 pub const SUMMARIZE_THREAD_PROMPT: &str =
     include_str!("../../agent/src/prompts/summarize_thread_prompt.txt");
+pub const SUMMARIZE_THREAD_DETAILED_PROMPT: &str =
+    include_str!("../../agent/src/prompts/summarize_thread_detailed_prompt.txt");
 
 pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
@@ -116,15 +118,15 @@ pub struct LanguageModelParameters {
 
 impl LanguageModelParameters {
     pub fn matches(&self, model: &Arc<dyn LanguageModel>) -> bool {
-        if let Some(provider) = &self.provider {
-            if provider.0 != model.provider_id().0 {
-                return false;
-            }
+        if let Some(provider) = &self.provider
+            && provider.0 != model.provider_id().0
+        {
+            return false;
         }
-        if let Some(setting_model) = &self.model {
-            if *setting_model != model.id().0 {
-                return false;
-            }
+        if let Some(setting_model) = &self.model
+            && *setting_model != model.id().0
+        {
+            return false;
         }
         true
     }
@@ -221,7 +223,8 @@ impl AgentSettingsContent {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default, SettingsUi, SettingsKey)]
+#[settings_key(key = "agent", fallback_key = "assistant")]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///
@@ -266,6 +269,10 @@ pub struct AgentSettingsContent {
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
     ///
+    /// This setting has no effect on external agents that support permission modes, such as Claude Code.
+    ///
+    /// Set `agent_servers.claude.default_mode` to `bypassPermissions`, to disable all permission requests when using Claude Code.
+    ///
     /// Default: false
     always_allow_tool_actions: Option<bool>,
     /// Where to show a popup notification when the agent is waiting for user input.
@@ -309,7 +316,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     expand_terminal_card: Option<bool>,
-    /// Whether to always use cmd-enter (or ctrl-enter on Linux) to send messages in the agent panel.
+    /// Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
     ///
     /// Default: false
     use_modifier_to_send: Option<bool>,
@@ -350,18 +357,19 @@ impl JsonSchema for LanguageModelProviderSetting {
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
         json_schema!({
             "enum": [
-                "anthropic",
                 "amazon-bedrock",
-                "google",
-                "lmstudio",
-                "ollama",
-                "openai",
-                "zed.dev",
+                "anthropic",
                 "copilot_chat",
                 "deepseek",
-                "openrouter",
+                "google",
+                "lmstudio",
                 "mistral",
-                "vercel"
+                "ollama",
+                "openai",
+                "openrouter",
+                "vercel",
+                "x_ai",
+                "zed.dev"
             ]
         })
     }
@@ -396,10 +404,6 @@ pub struct ContextServerPresetContent {
 }
 
 impl Settings for AgentSettings {
-    const KEY: Option<&'static str> = Some("agent");
-
-    const FALLBACK_KEY: Option<&'static str> = Some("assistant");
-
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
     type FileContent = AgentSettingsContent;
@@ -503,9 +507,8 @@ impl Settings for AgentSettings {
             }
         }
 
-        debug_assert_eq!(
-            sources.default.always_allow_tool_actions.unwrap_or(false),
-            false,
+        debug_assert!(
+            !sources.default.always_allow_tool_actions.unwrap_or(false),
             "For security, agent.always_allow_tool_actions should always be false in default.json. If it's true, that is a bug that should be fixed!"
         );
 

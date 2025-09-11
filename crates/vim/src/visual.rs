@@ -53,6 +53,10 @@ actions!(
         SelectSmallerSyntaxNode,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Selects the next syntax node sibling.
+        SelectNextSyntaxNode,
+        /// Selects the previous syntax node sibling.
+        SelectPreviousSyntaxNode,
         /// Restores the previous visual selection.
         RestoreVisualSelection,
         /// Inserts at the end of each line in visual selection.
@@ -109,6 +113,30 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             });
         }
     });
+
+    Vim::action(editor, cx, |vim, _: &SelectNextSyntaxNode, window, cx| {
+        let count = Vim::take_count(cx).unwrap_or(1);
+        Vim::take_forced_motion(cx);
+        for _ in 0..count {
+            vim.update_editor(cx, |_, editor, cx| {
+                editor.select_next_syntax_node(&Default::default(), window, cx);
+            });
+        }
+    });
+
+    Vim::action(
+        editor,
+        cx,
+        |vim, _: &SelectPreviousSyntaxNode, window, cx| {
+            let count = Vim::take_count(cx).unwrap_or(1);
+            Vim::take_forced_motion(cx);
+            for _ in 0..count {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.select_prev_syntax_node(&Default::default(), window, cx);
+                });
+            }
+        },
+    );
 
     Vim::action(
         editor,
@@ -216,7 +244,6 @@ impl Vim {
                         // If the file ends with a newline (which is common) we don't do this.
                         // so that if you go to the end of such a file you can use "up" to go
                         // to the previous line and have it work somewhat as expected.
-                        #[allow(clippy::nonminimal_bool)]
                         if !selection.reversed
                             && !selection.is_empty()
                             && !(selection.end.column() == 0 && selection.end == map.max_point())
@@ -414,6 +441,8 @@ impl Vim {
                             );
                         }
 
+                        let original_point = selection.tail().to_point(map);
+
                         if let Some(range) = object.range(map, mut_selection, around, count) {
                             if !range.is_empty() {
                                 let expand_both_ways = object.always_expands_both_ways()
@@ -461,6 +490,37 @@ impl Vim {
                                     Point::new(row_of_selection_end_line, 1)
                                 };
                                 selection.end = new_selection_end.to_display_point(map);
+                            }
+
+                            // To match vim, if the range starts of the same line as it originally
+                            // did, we keep the tail of the selection in the same place instead of
+                            // snapping it to the start of the line
+                            if target_mode == Mode::VisualLine {
+                                let new_start_point = selection.start.to_point(map);
+                                if new_start_point.row == original_point.row {
+                                    if selection.end.to_point(map).row > new_start_point.row {
+                                        if original_point.column
+                                            == map
+                                                .buffer_snapshot
+                                                .line_len(MultiBufferRow(original_point.row))
+                                        {
+                                            selection.start = movement::saturating_left(
+                                                map,
+                                                original_point.to_display_point(map),
+                                            )
+                                        } else {
+                                            selection.start = original_point.to_display_point(map)
+                                        }
+                                    } else {
+                                        selection.end = movement::saturating_right(
+                                            map,
+                                            original_point.to_display_point(map),
+                                        );
+                                        if original_point.column > 0 {
+                                            selection.reversed = true
+                                        }
+                                    }
+                                }
                             }
                         }
                     });
@@ -1170,7 +1230,7 @@ mod test {
                     the lazy dog"});
         assert_eq!(
             cx.read_from_clipboard()
-                .map(|item| item.text().unwrap().to_string())
+                .map(|item| item.text().unwrap())
                 .unwrap(),
             "The q"
         );
@@ -1806,5 +1866,38 @@ mod test {
             brown
             fˇ»ox"
         });
+    }
+
+    #[gpui::test]
+    async fn test_visual_syntax_sibling_selection(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+                fn test() {
+                    let ˇa = 1;
+                    let b = 2;
+                    let c = 3;
+                }
+            "},
+            Mode::Normal,
+        );
+
+        // Enter visual mode and select the statement
+        cx.simulate_keystrokes("v w w w");
+        cx.assert_state(
+            indoc! {"
+                fn test() {
+                    let «a = 1;ˇ»
+                    let b = 2;
+                    let c = 3;
+                }
+            "},
+            Mode::Visual,
+        );
+
+        // The specific behavior of syntax sibling selection in vim mode
+        // would depend on the key bindings configured, but the actions
+        // are now available for use
     }
 }

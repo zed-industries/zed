@@ -15,7 +15,7 @@ use gpui::{
 use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
-    Completion, CompletionResponse,
+    Completion, CompletionDisplayOptions, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
     lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
@@ -83,7 +83,7 @@ impl Console {
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Evaluate an expression", cx);
+            editor.set_placeholder_text("Evaluate an expression", window, cx);
             editor.set_use_autoclose(false);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
@@ -365,7 +365,7 @@ impl Console {
                         Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                             context_menu
                                 .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                                    el.context(keybinding_target.clone())
+                                    el.context(keybinding_target)
                                 })
                                 .action("Watch Expression", WatchExpression.boxed_clone())
                         }))
@@ -611,17 +611,16 @@ impl ConsoleQueryBarCompletionProvider {
             for variable in console.variable_list.update(cx, |variable_list, cx| {
                 variable_list.completion_variables(cx)
             }) {
-                if let Some(evaluate_name) = &variable.evaluate_name {
-                    if variables
+                if let Some(evaluate_name) = &variable.evaluate_name
+                    && variables
                         .insert(evaluate_name.clone(), variable.value.clone())
                         .is_none()
-                    {
-                        string_matches.push(StringMatchCandidate {
-                            id: 0,
-                            string: evaluate_name.clone(),
-                            char_bag: evaluate_name.chars().collect(),
-                        });
-                    }
+                {
+                    string_matches.push(StringMatchCandidate {
+                        id: 0,
+                        string: evaluate_name.clone(),
+                        char_bag: evaluate_name.chars().collect(),
+                    });
                 }
 
                 if variables
@@ -686,6 +685,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 is_incomplete: completions.len() >= LIMIT,
+                display_options: CompletionDisplayOptions::default(),
                 completions,
             }])
         })
@@ -697,7 +697,7 @@ impl ConsoleQueryBarCompletionProvider {
         new_bytes: &[u8],
         snapshot: &TextBufferSnapshot,
     ) -> Range<Anchor> {
-        let buffer_offset = buffer_position.to_offset(&snapshot);
+        let buffer_offset = buffer_position.to_offset(snapshot);
         let buffer_bytes = &buffer_text.as_bytes()[0..buffer_offset];
 
         let mut prefix_len = 0;
@@ -798,6 +798,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: false,
             }])
         })
@@ -977,7 +978,7 @@ mod tests {
             &cx.buffer_text(),
             snapshot.anchor_before(buffer_position),
             replacement.as_bytes(),
-            &snapshot,
+            snapshot,
         );
 
         cx.update_editor(|editor, _, cx| {

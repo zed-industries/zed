@@ -287,7 +287,7 @@ impl KeyBindingContextPredicate {
                         return false;
                     }
                 }
-                return true;
+                true
             }
             // Workspace > Pane > Editor
             //
@@ -305,7 +305,7 @@ impl KeyBindingContextPredicate {
                         return true;
                     }
                 }
-                return false;
+                false
             }
             Self::And(left, right) => {
                 left.eval_inner(contexts, all_contexts) && right.eval_inner(contexts, all_contexts)
@@ -668,11 +668,7 @@ mod tests {
         let contexts = vec![other_context.clone(), child_context.clone()];
         assert!(!predicate.eval(&contexts));
 
-        let contexts = vec![
-            parent_context.clone(),
-            other_context.clone(),
-            child_context.clone(),
-        ];
+        let contexts = vec![parent_context.clone(), other_context, child_context.clone()];
         assert!(predicate.eval(&contexts));
 
         assert!(!predicate.eval(&[]));
@@ -681,7 +677,7 @@ mod tests {
 
         let zany_predicate = KeyBindingContextPredicate::parse("child > child").unwrap();
         assert!(!zany_predicate.eval(slice::from_ref(&child_context)));
-        assert!(zany_predicate.eval(&[child_context.clone(), child_context.clone()]));
+        assert!(zany_predicate.eval(&[child_context.clone(), child_context]));
     }
 
     #[test]
@@ -718,7 +714,7 @@ mod tests {
         let not_descendant = KeyBindingContextPredicate::parse("parent > !child").unwrap();
         assert!(!not_descendant.eval(slice::from_ref(&parent_context)));
         assert!(!not_descendant.eval(slice::from_ref(&child_context)));
-        assert!(!not_descendant.eval(&[parent_context.clone(), child_context.clone()]));
+        assert!(!not_descendant.eval(&[parent_context, child_context]));
 
         let double_not = KeyBindingContextPredicate::parse("!!editor").unwrap();
         assert!(double_not.eval(slice::from_ref(&editor_context)));

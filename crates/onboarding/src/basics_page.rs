@@ -16,6 +16,23 @@ use vim_mode_setting::VimModeSetting;
 
 use crate::theme_preview::{ThemePreviewStyle, ThemePreviewTile};
 
+const LIGHT_THEMES: [&str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
+const DARK_THEMES: [&str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
+const FAMILY_NAMES: [SharedString; 3] = [
+    SharedString::new_static("One"),
+    SharedString::new_static("Ayu"),
+    SharedString::new_static("Gruvbox"),
+];
+
+fn get_theme_family_themes(theme_name: &str) -> Option<(&'static str, &'static str)> {
+    for i in 0..LIGHT_THEMES.len() {
+        if LIGHT_THEMES[i] == theme_name || DARK_THEMES[i] == theme_name {
+            return Some((LIGHT_THEMES[i], DARK_THEMES[i]));
+        }
+    }
+    None
+}
+
 fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
     let theme_selection = ThemeSettings::get_global(cx).theme_selection.clone();
     let system_appearance = theme::SystemAppearance::global(cx);
@@ -51,6 +68,12 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                             MODE_NAMES[mode as usize].clone(),
                             move |_, _, cx| {
                                 write_mode_change(mode, cx);
+
+                                telemetry::event!(
+                                    "Welcome Theme mode Changed",
+                                    from = theme_mode,
+                                    to = mode
+                                );
                             },
                         )
                     }),
@@ -88,15 +111,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
             ThemeMode::Dark => Appearance::Dark,
             ThemeMode::System => *system_appearance,
         };
-        let current_theme_name = theme_selection.theme(appearance);
-
-        const LIGHT_THEMES: [&'static str; 3] = ["One Light", "Ayu Light", "Gruvbox Light"];
-        const DARK_THEMES: [&'static str; 3] = ["One Dark", "Ayu Dark", "Gruvbox Dark"];
-        const FAMILY_NAMES: [SharedString; 3] = [
-            SharedString::new_static("One"),
-            SharedString::new_static("Ayu"),
-            SharedString::new_static("Gruvbox"),
-        ];
+        let current_theme_name = SharedString::new(theme_selection.theme(appearance));
 
         let theme_names = match appearance {
             Appearance::Light => LIGHT_THEMES,
@@ -105,7 +120,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
 
         let themes = theme_names.map(|theme| theme_registry.get(theme).unwrap());
 
-        let theme_previews = [0, 1, 2].map(|index| {
+        [0, 1, 2].map(|index| {
             let theme = &themes[index];
             let is_selected = theme.name == current_theme_name;
             let name = theme.name.clone();
@@ -117,7 +132,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                 .gap_1()
                 .child(
                     h_flex()
-                        .id(name.clone())
+                        .id(name)
                         .relative()
                         .w_full()
                         .border_2()
@@ -140,8 +155,15 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                         })
                         .on_click({
                             let theme_name = theme.name.clone();
+                            let current_theme_name = current_theme_name.clone();
+
                             move |_, _, cx| {
                                 write_theme_change(theme_name.clone(), theme_mode, cx);
+                                telemetry::event!(
+                                    "Welcome Theme Changed",
+                                    from = current_theme_name,
+                                    to = theme_name
+                                );
                             }
                         })
                         .map(|this| {
@@ -167,9 +189,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                         .color(Color::Muted)
                         .size(LabelSize::Small),
                 )
-        });
-
-        theme_previews
+        })
     }
 
     fn write_mode_change(mode: ThemeMode, cx: &mut App) {
@@ -184,14 +204,17 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
         let theme = theme.into();
         update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
             if theme_mode == ThemeMode::System {
+                let (light_theme, dark_theme) =
+                    get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
+
                 settings.theme = Some(ThemeSelection::Dynamic {
                     mode: ThemeMode::System,
-                    light: ThemeName(theme.clone()),
-                    dark: ThemeName(theme.clone()),
+                    light: ThemeName(light_theme.into()),
+                    dark: ThemeName(dark_theme.into()),
                 });
             } else {
                 let appearance = *SystemAppearance::global(cx);
-                settings.set_theme(theme.clone(), appearance);
+                settings.set_theme(theme, appearance);
             }
         });
     }
@@ -229,6 +252,17 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                     cx,
                     move |setting, _| setting.metrics = Some(enabled),
                 );
+
+                // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
+                // and can fix it in a timely manner to respect a user's choice.
+                telemetry::event!("Welcome Page Telemetry Metrics Toggled",
+                    options = if enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                );
+
             }},
         ).tab_index({
             *tab_index += 1;
@@ -256,6 +290,16 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                         fs.clone(),
                         cx,
                         move |setting, _| setting.diagnostics = Some(enabled),
+                    );
+
+                    // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
+                    // and can fix it in a timely manner to respect a user's choice.
+                    telemetry::event!("Welcome Page Telemetry Diagnostics Toggled",
+                        options = if enabled {
+                            "on"
+                        } else {
+                            "off"
+                        }
                     );
                 }
             }
@@ -315,8 +359,10 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
         let fs = <dyn Fs>::global(cx);
 
         update_settings_file::<BaseKeymap>(fs, cx, move |setting, _| {
-            *setting = Some(keymap_base);
+            setting.base_keymap = Some(keymap_base);
         });
+
+        telemetry::event!("Welcome Keymap Changed", keymap = keymap_base);
     }
 }
 
@@ -334,13 +380,21 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
         {
             let fs = <dyn Fs>::global(cx);
             move |&selection, _, cx| {
-                update_settings_file::<VimModeSetting>(fs.clone(), cx, move |setting, _| {
-                    *setting = match selection {
-                        ToggleState::Selected => Some(true),
-                        ToggleState::Unselected => Some(false),
-                        ToggleState::Indeterminate => None,
+                let vim_mode = match selection {
+                    ToggleState::Selected => true,
+                    ToggleState::Unselected => false,
+                    ToggleState::Indeterminate => {
+                        return;
                     }
+                };
+                update_settings_file::<VimModeSetting>(fs.clone(), cx, move |setting, _| {
+                    setting.vim_mode = Some(vim_mode);
                 });
+
+                telemetry::event!(
+                    "Welcome Vim Mode Toggled",
+                    options = if vim_mode { "on" } else { "off" },
+                );
             }
         },
     )

@@ -443,7 +443,7 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
         let (source_kind, resolved_task) = &candidates.get(hit.candidate_id)?;
         let template = resolved_task.original_task();
         let display_label = resolved_task.display_label();
@@ -461,7 +461,7 @@ impl PickerDelegate for TasksModalDelegate {
             tooltip_label_text.push_str(&resolved_task.resolved.command_label);
         }
 
-        if template.tags.len() > 0 {
+        if !template.tags.is_empty() {
             tooltip_label_text.push('\n');
             tooltip_label_text.push_str(
                 template
@@ -550,7 +550,7 @@ impl PickerDelegate for TasksModalDelegate {
                     list_item.tooltip(move |_, _| item_label.clone())
                 })
                 .map(|item| {
-                    let item = if matches!(source_kind, TaskSourceKind::UserInput)
+                    if matches!(source_kind, TaskSourceKind::UserInput)
                         || Some(ix) <= self.divider_index
                     {
                         let task_index = hit.candidate_id;
@@ -579,8 +579,7 @@ impl PickerDelegate for TasksModalDelegate {
                         item.end_hover_slot(delete_button)
                     } else {
                         item
-                    };
-                    item
+                    }
                 })
                 .toggle_state(selected)
                 .child(highlighted_location.render(window, cx)),

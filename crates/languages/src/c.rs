@@ -5,8 +5,9 @@ use gpui::{App, AsyncApp};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
-use project::lsp_store::clangd_ext;
+use project::{lsp_store::clangd_ext, project_settings::ProjectSettings};
 use serde_json::json;
+use settings::Settings as _;
 use smol::fs;
 use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
@@ -22,13 +23,13 @@ impl CLspAdapter {
 #[async_trait(?Send)]
 impl super::LspAdapter for CLspAdapter {
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
+        Self::SERVER_NAME
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -42,9 +43,19 @@ impl super::LspAdapter for CLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        cx: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release =
-            latest_github_release("clangd/clangd", true, false, delegate.http_client()).await?;
+        let release = latest_github_release(
+            "clangd/clangd",
+            true,
+            ProjectSettings::try_read_global(cx, |s| {
+                s.lsp.get(&Self::SERVER_NAME)?.fetch.as_ref()?.pre_release
+            })
+            .flatten()
+            .unwrap_or(false),
+            delegate.http_client(),
+        )
+        .await?;
         let os_suffix = match consts::OS {
             "macos" => "mac",
             "linux" => "linux",
@@ -253,8 +264,7 @@ impl super::LspAdapter for CLspAdapter {
                     .grammar()
                     .and_then(|g| g.highlight_id_for_name(highlight_name?))
                 {
-                    let mut label =
-                        CodeLabel::plain(label.to_string(), completion.filter_text.as_deref());
+                    let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
                     label.runs.push((
                         0..label.text.rfind('(').unwrap_or(label.text.len()),
                         highlight_id,
@@ -264,10 +274,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             _ => {}
         }
-        Some(CodeLabel::plain(
-            label.to_string(),
-            completion.filter_text.as_deref(),
-        ))
+        Some(CodeLabel::plain(label, completion.filter_text.as_deref()))
     }
 
     async fn label_for_symbol(

@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use collections::HashSet;
 pub use completion_provider::ContextPickerCompletionProvider;
 use editor::display_map::{Crease, CreaseId, CreaseMetadata, FoldId};
-use editor::{Anchor, AnchorRangeExt as _, Editor, ExcerptId, FoldPlaceholder, ToOffset};
+use editor::{Anchor, Editor, ExcerptId, FoldPlaceholder, ToOffset};
 use fetch_context_picker::FetchContextPicker;
 use file_context_picker::FileContextPicker;
 use file_context_picker::render_file_context_entry;
@@ -228,7 +228,7 @@ impl ContextPicker {
     }
 
     fn build_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Entity<ContextMenu> {
-        let context_picker = cx.entity().clone();
+        let context_picker = cx.entity();
 
         let menu = ContextMenu::build(window, cx, move |menu, _window, cx| {
             let recent = self.recent_entries(cx);
@@ -385,12 +385,11 @@ impl ContextPicker {
     }
 
     pub fn select_first(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match &self.mode {
-            ContextPickerState::Default(entity) => entity.update(cx, |entity, cx| {
+        // Other variants already select their first entry on open automatically
+        if let ContextPickerState::Default(entity) = &self.mode {
+            entity.update(cx, |entity, cx| {
                 entity.select_first(&Default::default(), window, cx)
-            }),
-            // Other variants already select their first entry on open automatically
-            _ => {}
+            })
         }
     }
 
@@ -610,9 +609,7 @@ pub(crate) fn available_context_picker_entries(
         .read(cx)
         .active_item(cx)
         .and_then(|item| item.downcast::<Editor>())
-        .map_or(false, |editor| {
-            editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx))
-        });
+        .is_some_and(|editor| editor.update(cx, |editor, cx| editor.has_non_empty_selection(cx)));
     if has_selection {
         entries.push(ContextPickerEntry::Action(
             ContextPickerAction::AddSelections,
@@ -680,7 +677,7 @@ pub(crate) fn recent_context_picker_entries(
             .filter(|(_, abs_path)| {
                 abs_path
                     .as_ref()
-                    .map_or(true, |path| !exclude_paths.contains(path.as_path()))
+                    .is_none_or(|path| !exclude_paths.contains(path.as_path()))
             })
             .take(4)
             .filter_map(|(project_path, _)| {
@@ -821,13 +818,8 @@ pub fn crease_for_mention(
 
     let render_trailer = move |_row, _unfold, _window: &mut Window, _cx: &mut App| Empty.into_any();
 
-    Crease::inline(
-        range,
-        placeholder.clone(),
-        fold_toggle("mention"),
-        render_trailer,
-    )
-    .with_metadata(CreaseMetadata { icon_path, label })
+    Crease::inline(range, placeholder, fold_toggle("mention"), render_trailer)
+        .with_metadata(CreaseMetadata { icon_path, label })
 }
 
 fn render_fold_icon_button(
@@ -837,42 +829,9 @@ fn render_fold_icon_button(
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut App) -> AnyElement> {
     Arc::new({
         move |fold_id, fold_range, cx| {
-            let is_in_text_selection = editor.upgrade().is_some_and(|editor| {
-                editor.update(cx, |editor, cx| {
-                    let snapshot = editor
-                        .buffer()
-                        .update(cx, |multi_buffer, cx| multi_buffer.snapshot(cx));
-
-                    let is_in_pending_selection = || {
-                        editor
-                            .selections
-                            .pending
-                            .as_ref()
-                            .is_some_and(|pending_selection| {
-                                pending_selection
-                                    .selection
-                                    .range()
-                                    .includes(&fold_range, &snapshot)
-                            })
-                    };
-
-                    let mut is_in_complete_selection = || {
-                        editor
-                            .selections
-                            .disjoint_in_range::<usize>(fold_range.clone(), cx)
-                            .into_iter()
-                            .any(|selection| {
-                                // This is needed to cover a corner case, if we just check for an existing
-                                // selection in the fold range, having a cursor at the start of the fold
-                                // marks it as selected. Non-empty selections don't cause this.
-                                let length = selection.end - selection.start;
-                                length > 0
-                            })
-                    };
-
-                    is_in_pending_selection() || is_in_complete_selection()
-                })
-            });
+            let is_in_text_selection = editor
+                .update(cx, |editor, cx| editor.is_range_selected(&fold_range, cx))
+                .unwrap_or_default();
 
             ButtonLike::new(fold_id)
                 .style(ButtonStyle::Filled)
@@ -1028,7 +987,8 @@ impl MentionLink {
                     .read(cx)
                     .project()
                     .read(cx)
-                    .entry_for_path(&project_path, cx)?;
+                    .entry_for_path(&project_path, cx)?
+                    .clone();
                 Some(MentionLink::File(project_path, entry))
             }
             Self::SYMBOL => {

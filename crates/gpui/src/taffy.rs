@@ -3,6 +3,7 @@ use crate::{
 };
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use stacksafe::{StackSafe, stacksafe};
 use std::{fmt::Debug, ops::Range};
 use taffy::{
     TaffyTree, TraversePartialTree as _,
@@ -11,8 +12,15 @@ use taffy::{
     tree::NodeId,
 };
 
-type NodeMeasureFn = Box<
-    dyn FnMut(Size<Option<Pixels>>, Size<AvailableSpace>, &mut Window, &mut App) -> Size<Pixels>,
+type NodeMeasureFn = StackSafe<
+    Box<
+        dyn FnMut(
+            Size<Option<Pixels>>,
+            Size<AvailableSpace>,
+            &mut Window,
+            &mut App,
+        ) -> Size<Pixels>,
+    >,
 >;
 
 struct NodeContext {
@@ -50,23 +58,21 @@ impl TaffyLayoutEngine {
         children: &[LayoutId],
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
-        let layout_id = if children.is_empty() {
+
+        if children.is_empty() {
             self.taffy
                 .new_leaf(taffy_style)
                 .expect(EXPECT_MESSAGE)
                 .into()
         } else {
-            let parent_id = self
-                .taffy
+            self.taffy
                 // This is safe because LayoutId is repr(transparent) to taffy::tree::NodeId.
                 .new_with_children(taffy_style, unsafe {
                     std::mem::transmute::<&[LayoutId], &[taffy::NodeId]>(children)
                 })
                 .expect(EXPECT_MESSAGE)
-                .into();
-            parent_id
-        };
-        layout_id
+                .into()
+        }
     }
 
     pub fn request_measured_layout(
@@ -83,17 +89,15 @@ impl TaffyLayoutEngine {
     ) -> LayoutId {
         let taffy_style = style.to_taffy(rem_size);
 
-        let layout_id = self
-            .taffy
+        self.taffy
             .new_leaf_with_context(
                 taffy_style,
                 NodeContext {
-                    measure: Box::new(measure),
+                    measure: StackSafe::new(Box::new(measure)),
                 },
             )
             .expect(EXPECT_MESSAGE)
-            .into();
-        layout_id
+            .into()
     }
 
     // Used to understand performance
@@ -143,6 +147,7 @@ impl TaffyLayoutEngine {
         Ok(edges)
     }
 
+    #[stacksafe]
     pub fn compute_layout(
         &mut self,
         id: LayoutId,
@@ -159,7 +164,6 @@ impl TaffyLayoutEngine {
         // for (a, b) in self.get_edges(id)? {
         //     println!("N{} --> N{}", u64::from(a), u64::from(b));
         // }
-        // println!("");
         //
 
         if !self.computed_layouts.insert(id) {

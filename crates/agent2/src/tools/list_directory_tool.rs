@@ -10,14 +10,12 @@ use std::fmt::Write;
 use std::{path::Path, sync::Arc};
 use util::markdown::MarkdownInlineCode;
 
-/// Lists files and directories in a given path. Prefer the `grep` or
-/// `find_path` tools when searching the codebase.
+/// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
     /// The fully-qualified path of the directory to list in the project.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -53,15 +51,19 @@ impl AgentTool for ListDirectoryTool {
     type Input = ListDirectoryToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "list_directory".into()
+    fn name() -> &'static str {
+        "list_directory"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             let path = MarkdownInlineCode(&input.path);
             format!("List the {path} directory's contents").into()

@@ -6,13 +6,21 @@ edition.workspace = true
 license = "GPL-3.0-or-later"
 
 [dependencies]
+bincode.workspace = true
 crash-handler.workspace = true
 log.workspace = true
 minidumper.workspace = true
 paths.workspace = true
 release_channel.workspace = true
 smol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+system_specs.workspace = true
 workspace-hack.workspace = true
+zstd.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+mach2.workspace = true
 
 [lints]
 workspace = true

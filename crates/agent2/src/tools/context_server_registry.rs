@@ -103,7 +103,7 @@ impl ContextServerRegistry {
                         self.reload_tools_for_server(server_id.clone(), cx);
                     }
                     ContextServerStatus::Stopped | ContextServerStatus::Error(_) => {
-                        self.registered_servers.remove(&server_id);
+                        self.registered_servers.remove(server_id);
                         cx.notify();
                     }
                 }
@@ -145,7 +145,7 @@ impl AnyAgentTool for ContextServerTool {
         ToolKind::Other
     }
 
-    fn initial_title(&self, _input: serde_json::Value) -> SharedString {
+    fn initial_title(&self, _input: serde_json::Value, _cx: &mut App) -> SharedString {
         format!("Run MCP tool `{}`", self.tool.name).into()
     }
 
@@ -169,22 +169,23 @@ impl AnyAgentTool for ContextServerTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput>> {
         let Some(server) = self.store.read(cx).get_running_server(&self.server_id) else {
             return Task::ready(Err(anyhow!("Context server not found")));
         };
         let tool_name = self.tool.name.clone();
-        let server_clone = server.clone();
-        let input_clone = input.clone();
+        let authorize = event_stream.authorize(self.initial_title(input.clone(), cx), cx);
 
         cx.spawn(async move |_cx| {
-            let Some(protocol) = server_clone.client() else {
+            authorize.await?;
+
+            let Some(protocol) = server.client() else {
                 bail!("Context server not initialized");
             };
 
-            let arguments = if let serde_json::Value::Object(map) = input_clone {
+            let arguments = if let serde_json::Value::Object(map) = input {
                 Some(map.into_iter().collect())
             } else {
                 None
@@ -227,5 +228,15 @@ impl AnyAgentTool for ContextServerTool {
                 llm_output: result.into(),
             })
         })
+    }
+
+    fn replay(
+        &self,
+        _input: serde_json::Value,
+        _output: serde_json::Value,
+        _event_stream: ToolCallEventStream,
+        _cx: &mut App,
+    ) -> Result<()> {
+        Ok(())
     }
 }

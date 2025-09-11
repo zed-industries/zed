@@ -118,15 +118,19 @@ impl AgentTool for FetchTool {
     type Input = FetchToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "fetch".into()
+    fn name() -> &'static str {
+        "fetch"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Fetch
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         match input {
             Ok(input) => format!("Fetch {}", MarkdownEscaped(&input.url)).into(),
             Err(_) => "Fetch URL".into(),
@@ -136,12 +140,17 @@ impl AgentTool for FetchTool {
     fn run(
         self: Arc<Self>,
         input: Self::Input,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<Self::Output>> {
+        let authorize = event_stream.authorize(input.url.clone(), cx);
+
         let text = cx.background_spawn({
             let http_client = self.http_client.clone();
-            async move { Self::build_message(http_client, &input.url).await }
+            async move {
+                authorize.await?;
+                Self::build_message(http_client, &input.url).await
+            }
         });
 
         cx.foreground_executor().spawn(async move {

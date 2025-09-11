@@ -7,8 +7,9 @@ use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
     CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
     EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE, Plan,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
-    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    PlanV1, PlanV2, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
+    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME, TOOL_USE_LIMIT_REACHED_HEADER_NAME,
+    ZED_VERSION_HEADER_NAME,
 };
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
@@ -23,9 +24,9 @@ use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelProviderTosView, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LlmApiToken,
-    ModelRequestLimitReachedError, PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, LlmApiToken, ModelRequestLimitReachedError,
+    PaymentRequiredError, RateLimiter, RefreshLlmTokenListener,
 };
 use release_channel::AppVersion;
 use schemars::JsonSchema;
@@ -118,7 +119,6 @@ pub struct State {
     llm_api_token: LlmApiToken,
     user_store: Entity<UserStore>,
     status: client::Status,
-    accept_terms_of_service_task: Option<Task<Result<()>>>,
     models: Vec<Arc<cloud_llm_client::LanguageModel>>,
     default_model: Option<Arc<cloud_llm_client::LanguageModel>>,
     default_fast_model: Option<Arc<cloud_llm_client::LanguageModel>>,
@@ -140,9 +140,8 @@ impl State {
         Self {
             client: client.clone(),
             llm_api_token: LlmApiToken::default(),
-            user_store: user_store.clone(),
+            user_store,
             status,
-            accept_terms_of_service_task: None,
             models: Vec::new(),
             default_model: None,
             default_fast_model: None,
@@ -193,28 +192,10 @@ impl State {
     fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let client = self.client.clone();
         cx.spawn(async move |state, cx| {
-            client.sign_in_with_optional_connect(true, &cx).await?;
+            client.sign_in_with_optional_connect(true, cx).await?;
             state.update(cx, |_, cx| cx.notify())
         })
     }
-
-    fn has_accepted_terms_of_service(&self, cx: &App) -> bool {
-        self.user_store.read(cx).has_accepted_terms_of_service()
-    }
-
-    fn accept_terms_of_service(&mut self, cx: &mut Context<Self>) {
-        let user_store = self.user_store.clone();
-        self.accept_terms_of_service_task = Some(cx.spawn(async move |this, cx| {
-            let _ = user_store
-                .update(cx, |store, cx| store.accept_terms_of_service(cx))?
-                .await;
-            this.update(cx, |this, cx| {
-                this.accept_terms_of_service_task = None;
-                cx.notify()
-            })
-        }));
-    }
-
     fn update_models(&mut self, response: ListModelsResponse, cx: &mut Context<Self>) {
         let mut models = Vec::new();
 
@@ -270,7 +251,7 @@ impl State {
         if response.status().is_success() {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
-            return Ok(serde_json::from_str(&body)?);
+            Ok(serde_json::from_str(&body)?)
         } else {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
@@ -307,7 +288,7 @@ impl CloudLanguageModelProvider {
 
         Self {
             client,
-            state: state.clone(),
+            state,
             _maintain_client_status: maintain_client_status,
         }
     }
@@ -320,7 +301,7 @@ impl CloudLanguageModelProvider {
         Arc::new(CloudLanguageModel {
             id: LanguageModelId(SharedString::from(model.id.0.clone())),
             model,
-            llm_api_token: llm_api_token.clone(),
+            llm_api_token,
             client: self.client.clone(),
             request_limiter: RateLimiter::new(4),
         })
@@ -384,121 +365,25 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
 
     fn is_authenticated(&self, cx: &App) -> bool {
         let state = self.state.read(cx);
-        !state.is_signed_out(cx) && state.has_accepted_terms_of_service(cx)
+        !state.is_signed_out(cx)
     }
 
     fn authenticate(&self, _cx: &mut App) -> Task<Result<(), AuthenticateError>> {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|_| ConfigurationView::new(self.state.clone()))
             .into()
     }
 
-    fn must_accept_terms(&self, cx: &App) -> bool {
-        !self.state.read(cx).has_accepted_terms_of_service(cx)
-    }
-
-    fn render_accept_terms(
-        &self,
-        view: LanguageModelProviderTosView,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        let state = self.state.read(cx);
-        if state.has_accepted_terms_of_service(cx) {
-            return None;
-        }
-        Some(
-            render_accept_terms(view, state.accept_terms_of_service_task.is_some(), {
-                let state = self.state.clone();
-                move |_window, cx| {
-                    state.update(cx, |state, cx| state.accept_terms_of_service(cx));
-                }
-            })
-            .into_any_element(),
-        )
-    }
-
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
-    }
-}
-
-fn render_accept_terms(
-    view_kind: LanguageModelProviderTosView,
-    accept_terms_of_service_in_progress: bool,
-    accept_terms_callback: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let thread_fresh_start = matches!(view_kind, LanguageModelProviderTosView::ThreadFreshStart);
-    let thread_empty_state = matches!(view_kind, LanguageModelProviderTosView::ThreadEmptyState);
-
-    let terms_button = Button::new("terms_of_service", "Terms of Service")
-        .style(ButtonStyle::Subtle)
-        .icon(IconName::ArrowUpRight)
-        .icon_color(Color::Muted)
-        .icon_size(IconSize::Small)
-        .when(thread_empty_state, |this| this.label_size(LabelSize::Small))
-        .on_click(move |_, _window, cx| cx.open_url("https://zed.dev/terms-of-service"));
-
-    let button_container = h_flex().child(
-        Button::new("accept_terms", "I accept the Terms of Service")
-            .when(!thread_empty_state, |this| {
-                this.full_width()
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .icon(IconName::Check)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-            })
-            .when(thread_empty_state, |this| {
-                this.style(ButtonStyle::Tinted(TintColor::Warning))
-                    .label_size(LabelSize::Small)
-            })
-            .disabled(accept_terms_of_service_in_progress)
-            .on_click(move |_, window, cx| (accept_terms_callback)(window, cx)),
-    );
-
-    if thread_empty_state {
-        h_flex()
-            .w_full()
-            .flex_wrap()
-            .justify_between()
-            .child(
-                h_flex()
-                    .child(
-                        Label::new("To start using Zed AI, please read and accept the")
-                            .size(LabelSize::Small),
-                    )
-                    .child(terms_button),
-            )
-            .child(button_container)
-    } else {
-        v_flex()
-            .w_full()
-            .gap_2()
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .when(thread_fresh_start, |this| this.justify_center())
-                    .child(Label::new(
-                        "To start using Zed AI, please read and accept the",
-                    ))
-                    .child(terms_button),
-            )
-            .child({
-                match view_kind {
-                    LanguageModelProviderTosView::TextThreadPopup => {
-                        button_container.w_full().justify_end()
-                    }
-                    LanguageModelProviderTosView::Configuration => {
-                        button_container.w_full().justify_start()
-                    }
-                    LanguageModelProviderTosView::ThreadFreshStart => {
-                        button_container.w_full().justify_center()
-                    }
-                    LanguageModelProviderTosView::ThreadEmptyState => div().w_0(),
-                }
-            })
     }
 }
 
@@ -592,15 +477,14 @@ impl CloudLanguageModel {
                     .headers()
                     .get(SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME)
                     .and_then(|resource| resource.to_str().ok())
-                {
-                    if let Some(plan) = response
+                    && let Some(plan) = response
                         .headers()
                         .get(CURRENT_PLAN_HEADER_NAME)
                         .and_then(|plan| plan.to_str().ok())
-                        .and_then(|plan| cloud_llm_client::Plan::from_str(plan).ok())
-                    {
-                        return Err(anyhow!(ModelRequestLimitReachedError { plan }));
-                    }
+                        .and_then(|plan| cloud_llm_client::PlanV1::from_str(plan).ok())
+                        .map(Plan::V1)
+                {
+                    return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                 }
             } else if status == StatusCode::PAYMENT_REQUIRED {
                 return Err(anyhow!(PaymentRequiredError));
@@ -657,29 +541,29 @@ where
 
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body) {
-            if cloud_error.code.starts_with("upstream_http_") {
-                let status = if let Some(status) = cloud_error.upstream_status {
-                    status
-                } else if cloud_error.code.ends_with("_error") {
-                    error.status
-                } else {
-                    // If there's a status code in the code string (e.g. "upstream_http_429")
-                    // then use that; otherwise, see if the JSON contains a status code.
-                    cloud_error
-                        .code
-                        .strip_prefix("upstream_http_")
-                        .and_then(|code_str| code_str.parse::<u16>().ok())
-                        .and_then(|code| StatusCode::from_u16(code).ok())
-                        .unwrap_or(error.status)
-                };
+        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body)
+            && cloud_error.code.starts_with("upstream_http_")
+        {
+            let status = if let Some(status) = cloud_error.upstream_status {
+                status
+            } else if cloud_error.code.ends_with("_error") {
+                error.status
+            } else {
+                // If there's a status code in the code string (e.g. "upstream_http_429")
+                // then use that; otherwise, see if the JSON contains a status code.
+                cloud_error
+                    .code
+                    .strip_prefix("upstream_http_")
+                    .and_then(|code_str| code_str.parse::<u16>().ok())
+                    .and_then(|code| StatusCode::from_u16(code).ok())
+                    .unwrap_or(error.status)
+            };
 
-                return LanguageModelCompletionError::UpstreamProviderError {
-                    message: cloud_error.message,
-                    status,
-                    retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
-                };
-            }
+            return LanguageModelCompletionError::UpstreamProviderError {
+                message: cloud_error.message,
+                status,
+                retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
+            };
         }
 
         let retry_after = None;
@@ -941,6 +825,7 @@ impl LanguageModel for CloudLanguageModel {
                     request,
                     model.id(),
                     model.supports_parallel_tool_calls(),
+                    model.supports_prompt_cache_key(),
                     None,
                     None,
                 );
@@ -1103,10 +988,7 @@ struct ZedAiConfiguration {
     plan: Option<Plan>,
     subscription_period: Option<(DateTime<Utc>, DateTime<Utc>)>,
     eligible_for_trial: bool,
-    has_accepted_terms_of_service: bool,
     account_too_young: bool,
-    accept_terms_of_service_in_progress: bool,
-    accept_terms_of_service_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
@@ -1114,15 +996,17 @@ impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let young_account_banner = YoungAccountBanner;
 
-        let is_pro = self.plan == Some(Plan::ZedPro);
+        let is_pro = self.plan.is_some_and(|plan| {
+            matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))
+        });
         let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(Plan::ZedPro), Some(_)) => {
+            (Some(Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro subscription."
             }
-            (Some(Plan::ZedProTrial), Some(_)) => {
+            (Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro trial."
             }
-            (Some(Plan::ZedFree), Some(_)) => {
+            (Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree)), Some(_)) => {
                 "You have basic access to Zed's hosted models through the Free plan."
             }
             _ => {
@@ -1172,58 +1056,30 @@ impl RenderOnce for ZedAiConfiguration {
                 );
         }
 
-        v_flex()
-            .gap_2()
-            .w_full()
-            .when(!self.has_accepted_terms_of_service, |this| {
-                this.child(render_accept_terms(
-                    LanguageModelProviderTosView::Configuration,
-                    self.accept_terms_of_service_in_progress,
-                    {
-                        let callback = self.accept_terms_of_service_callback.clone();
-                        move |window, cx| (callback)(window, cx)
-                    },
-                ))
-            })
-            .map(|this| {
-                if self.has_accepted_terms_of_service && self.account_too_young {
-                    this.child(young_account_banner).child(
-                        Button::new("upgrade", "Upgrade to Pro")
-                            .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
-                            .full_width()
-                            .on_click(|_, _, cx| {
-                                cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))
-                            }),
-                    )
-                } else if self.has_accepted_terms_of_service {
-                    this.text_sm()
-                        .child(subscription_text)
-                        .child(manage_subscription_buttons)
-                } else {
-                    this
-                }
-            })
-            .when(self.has_accepted_terms_of_service, |this| this)
+        v_flex().gap_2().w_full().map(|this| {
+            if self.account_too_young {
+                this.child(young_account_banner).child(
+                    Button::new("upgrade", "Upgrade to Pro")
+                        .style(ui::ButtonStyle::Tinted(ui::TintColor::Accent))
+                        .full_width()
+                        .on_click(|_, _, cx| cx.open_url(&zed_urls::upgrade_to_zed_pro_url(cx))),
+                )
+            } else {
+                this.text_sm()
+                    .child(subscription_text)
+                    .child(manage_subscription_buttons)
+            }
+        })
     }
 }
 
 struct ConfigurationView {
     state: Entity<State>,
-    accept_terms_of_service_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
     sign_in_callback: Arc<dyn Fn(&mut Window, &mut App) + Send + Sync>,
 }
 
 impl ConfigurationView {
     fn new(state: Entity<State>) -> Self {
-        let accept_terms_of_service_callback = Arc::new({
-            let state = state.clone();
-            move |_window: &mut Window, cx: &mut App| {
-                state.update(cx, |state, cx| {
-                    state.accept_terms_of_service(cx);
-                });
-            }
-        });
-
         let sign_in_callback = Arc::new({
             let state = state.clone();
             move |_window: &mut Window, cx: &mut App| {
@@ -1235,7 +1091,6 @@ impl ConfigurationView {
 
         Self {
             state,
-            accept_terms_of_service_callback,
             sign_in_callback,
         }
     }
@@ -1251,10 +1106,7 @@ impl Render for ConfigurationView {
             plan: user_store.plan(),
             subscription_period: user_store.subscription_period(),
             eligible_for_trial: user_store.trial_started_at().is_none(),
-            has_accepted_terms_of_service: state.has_accepted_terms_of_service(cx),
             account_too_young: user_store.account_too_young(),
-            accept_terms_of_service_in_progress: state.accept_terms_of_service_task.is_some(),
-            accept_terms_of_service_callback: self.accept_terms_of_service_callback.clone(),
             sign_in_callback: self.sign_in_callback.clone(),
         }
     }
@@ -1279,7 +1131,6 @@ impl Component for ZedAiConfiguration {
             plan: Option<Plan>,
             eligible_for_trial: bool,
             account_too_young: bool,
-            has_accepted_terms_of_service: bool,
         ) -> AnyElement {
             ZedAiConfiguration {
                 is_connected,
@@ -1288,10 +1139,7 @@ impl Component for ZedAiConfiguration {
                     .is_some()
                     .then(|| (Utc::now(), Utc::now() + chrono::Duration::days(7))),
                 eligible_for_trial,
-                has_accepted_terms_of_service,
                 account_too_young,
-                accept_terms_of_service_in_progress: false,
-                accept_terms_of_service_callback: Arc::new(|_, _| {}),
                 sign_in_callback: Arc::new(|_, _| {}),
             }
             .into_any_element()
@@ -1302,33 +1150,30 @@ impl Component for ZedAiConfiguration {
                 .p_4()
                 .gap_4()
                 .children(vec![
-                    single_example(
-                        "Not connected",
-                        configuration(false, None, false, false, true),
-                    ),
+                    single_example("Not connected", configuration(false, None, false, false)),
                     single_example(
                         "Accept Terms of Service",
-                        configuration(true, None, true, false, false),
+                        configuration(true, None, true, false),
                     ),
                     single_example(
                         "No Plan - Not eligible for trial",
-                        configuration(true, None, false, false, true),
+                        configuration(true, None, false, false),
                     ),
                     single_example(
                         "No Plan - Eligible for trial",
-                        configuration(true, None, true, false, true),
+                        configuration(true, None, true, false),
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(Plan::ZedFree), true, false, true),
+                        configuration(true, Some(Plan::V1(PlanV1::ZedFree)), true, false),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(Plan::ZedProTrial), true, false, true),
+                        configuration(true, Some(Plan::V1(PlanV1::ZedProTrial)), true, false),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(Plan::ZedPro), true, false, true),
+                        configuration(true, Some(Plan::V1(PlanV1::ZedPro)), true, false),
                     ),
                 ])
                 .into_any_element(),
