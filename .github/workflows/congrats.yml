@@ -15,7 +15,7 @@ jobs:
         id: check
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.CONGRATSBOT_GITHUB_TOKEN }}
           script: |
             const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
               owner: context.repo.owner,
