@@ -720,15 +720,7 @@ fn open_markdown_link(
                 })
                 .detach_and_log_err(cx);
         }
-        Some(MentionLink::Thread(thread_id)) => workspace.update(cx, |workspace, cx| {
-            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                panel.update(cx, |panel, cx| {
-                    panel
-                        .open_thread_by_id(&thread_id, window, cx)
-                        .detach_and_log_err(cx)
-                });
-            }
-        }),
+        Some(MentionLink::Thread(_thread_id)) => {}
         Some(MentionLink::TextThread(path)) => workspace.update(cx, |workspace, cx| {
             if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
                 panel.update(cx, |panel, cx| {
@@ -3661,16 +3653,7 @@ pub(crate) fn open_context(
             cx.open_url(&fetched_url_context.url);
         }
 
-        AgentContextHandle::Thread(thread_context) => workspace.update(cx, |workspace, cx| {
-            if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
-                let thread = thread_context.thread.clone();
-                window.defer(cx, move |window, cx| {
-                    panel.update(cx, |panel, cx| {
-                        panel.open_thread(thread, window, cx);
-                    });
-                });
-            }
-        }),
+        AgentContextHandle::Thread(_thread_context) => {}
 
         AgentContextHandle::TextThread(text_thread_context) => {
             workspace.update(cx, |workspace, cx| {

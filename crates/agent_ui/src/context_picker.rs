@@ -37,7 +37,6 @@ use ui::{
 use uuid::Uuid;
 use workspace::{Workspace, notifications::NotifyResultExt};
 
-use crate::AgentPanel;
 use agent::{
     ThreadId,
     context::RULES_ICON,
@@ -664,7 +663,7 @@ pub(crate) fn recent_context_picker_entries(
     text_thread_store: Option<WeakEntity<TextThreadStore>>,
     workspace: Entity<Workspace>,
     exclude_paths: &HashSet<PathBuf>,
-    exclude_threads: &HashSet<ThreadId>,
+    _exclude_threads: &HashSet<ThreadId>,
     cx: &App,
 ) -> Vec<RecentEntry> {
     let mut recent = Vec::with_capacity(6);
@@ -690,19 +689,13 @@ pub(crate) fn recent_context_picker_entries(
             }),
     );
 
-    let active_thread_id = workspace
-        .panel::<AgentPanel>(cx)
-        .and_then(|panel| Some(panel.read(cx).active_thread(cx)?.read(cx).id()));
-
     if let Some((thread_store, text_thread_store)) = thread_store
         .and_then(|store| store.upgrade())
         .zip(text_thread_store.and_then(|store| store.upgrade()))
     {
         let mut threads = unordered_thread_entries(thread_store, text_thread_store, cx)
             .filter(|(_, thread)| match thread {
-                ThreadContextEntry::Thread { id, .. } => {
-                    Some(id) != active_thread_id && !exclude_threads.contains(id)
-                }
+                ThreadContextEntry::Thread { .. } => false,
                 ThreadContextEntry::Context { .. } => true,
             })
             .collect::<Vec<_>>();

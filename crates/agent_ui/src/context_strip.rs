@@ -161,24 +161,7 @@ impl ContextStrip {
         let workspace = self.workspace.upgrade()?;
         let panel = workspace.read(cx).panel::<AgentPanel>(cx)?.read(cx);
 
-        if let Some(active_thread) = panel.active_thread(cx) {
-            let weak_active_thread = active_thread.downgrade();
-
-            let active_thread = active_thread.read(cx);
-
-            if self
-                .context_store
-                .read(cx)
-                .includes_thread(active_thread.id())
-            {
-                return None;
-            }
-
-            Some(SuggestedContext::Thread {
-                name: active_thread.summary().or_default(),
-                thread: weak_active_thread,
-            })
-        } else if let Some(active_context_editor) = panel.active_context_editor() {
+        if let Some(active_context_editor) = panel.active_context_editor() {
             let context = active_context_editor.read(cx).context();
             let weak_context = context.downgrade();
             let context = context.read(cx);

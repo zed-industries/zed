@@ -20,8 +20,6 @@ mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
-mod thread_history;
-mod tool_compatibility;
 mod ui;
 
 use std::rc::Rc;
