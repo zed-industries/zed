@@ -662,7 +662,6 @@ struct ConfigurationView {
     api_key_editor: gpui::Entity<SingleLineInput>,
     api_url_editor: gpui::Entity<SingleLineInput>,
     state: gpui::Entity<State>,
-    loading_models_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
@@ -688,28 +687,10 @@ impl ConfigurationView {
         })
         .detach();
 
-        let loading_models_task = Some(cx.spawn_in(window, {
-            let state = state.clone();
-            async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
-                    task.await.log_err();
-                }
-                this.update(cx, |this, cx| {
-                    this.loading_models_task = None;
-                    cx.notify();
-                })
-                .log_err();
-            }
-        }));
-
         Self {
             api_key_editor,
             api_url_editor,
             state,
-            loading_models_task,
         }
     }
 
@@ -907,54 +888,36 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        if self.loading_models_task.is_some() {
-            v_flex()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Indicator::dot().color(Color::Accent))
-                        .child(Label::new("Connecting to Ollama...")),
-                )
-                .child(
-                    Label::new("Checking for available models and server status")
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
-        } else {
-            v_flex()
-                .gap_2()
-                .when(!is_authenticated, |this| {
-                    this.child(Self::render_getting_started())
-                })
-                .child(self.render_api_url_editor(cx))
-                .child(self.render_api_key_editor(cx))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .gap_2()
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .map(|this| {
-                                    if is_authenticated {
-                                        this.child(
-                                            Button::new("ollama-site", "Ollama")
-                                                .style(ButtonStyle::Subtle)
-                                                .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::XSmall)
-                                                .icon_color(Color::Muted)
-                                                .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
-                                                .into_any_element(),
-                                        )
-                                    } else {
-                                        this.child(
-                                            Button::new(
-                                                "download_ollama_button",
-                                                "Download Ollama",
-                                            )
+        v_flex()
+            .gap_2()
+            .when(!is_authenticated, |this| {
+                this.child(Self::render_getting_started())
+            })
+            .child(self.render_api_url_editor(cx))
+            .child(self.render_api_key_editor(cx))
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .map(|this| {
+                                if is_authenticated {
+                                    this.child(
+                                        Button::new("ollama-site", "Ollama")
+                                            .style(ButtonStyle::Subtle)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
+                                            .into_any_element(),
+                                    )
+                                } else {
+                                    this.child(
+                                        Button::new("download_ollama_button", "Download Ollama")
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
                                             .icon_size(IconSize::XSmall)
@@ -963,46 +926,47 @@ impl Render for ConfigurationView {
                                                 cx.open_url(OLLAMA_DOWNLOAD_URL)
                                             })
                                             .into_any_element(),
-                                        )
-                                    }
-                                })
-                                .child(
-                                    Button::new("view-models", "View All Models")
-                                        .style(ButtonStyle::Subtle)
-                                        .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
-                                ),
-                        )
-                        .map(|this| {
-                            if is_authenticated {
-                                this.child(
-                                    ButtonLike::new("connected")
-                                        .disabled(true)
-                                        .cursor_style(gpui::CursorStyle::Arrow)
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .child(Indicator::dot().color(Color::Success))
-                                                .child(Label::new("Connected"))
-                                                .into_any_element(),
-                                        ),
-                                )
-                            } else {
-                                this.child(
-                                    Button::new("retry_ollama_models", "Connect")
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon(IconName::PlayOutlined)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                    )
+                                }
+                            })
+                            .child(
+                                Button::new("view-models", "View All Models")
+                                    .style(ButtonStyle::Subtle)
+                                    .icon(IconName::ArrowUpRight)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
+                            ),
+                    )
+                    .map(|this| {
+                        if is_authenticated {
+                            this.child(
+                                ButtonLike::new("connected")
+                                    .disabled(true)
+                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(Indicator::dot().color(Color::Success))
+                                            .child(Label::new("Connected"))
+                                            .into_any_element(),
+                                    ),
+                            )
+                        } else {
+                            this.child(
+                                Button::new("retry_ollama_models", "Connect")
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon(IconName::PlayOutlined)
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| {
                                             this.retry_connection(cx)
-                                        })),
-                                )
-                            }
-                        }),
-                )
-        }
+                                        }),
+                                    ),
+                            )
+                        }
+                    }),
+            )
     }
 }
 
