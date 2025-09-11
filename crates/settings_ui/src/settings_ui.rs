@@ -17,8 +17,8 @@ use settings::{
 };
 use smallvec::SmallVec;
 use ui::{
-    ContextMenu, DropdownMenu, NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple,
-    prelude::*,
+    ContextMenu, DropdownMenu, NumericStepper, SwitchField, TableInteractionState,
+    ToggleButtonGroup, ToggleButtonSimple, prelude::*,
 };
 use workspace::{
     Workspace,
@@ -402,7 +402,7 @@ fn render_content(
 
 fn render_recursive(
     tree: &[UiEntry],
-    index: usize,
+    entry_index: usize,
     path: &mut SmallVec<[SharedString; 1]>,
     mut element: Div,
     parent_fallback_default_value: Option<&serde_json::Value>,
@@ -410,19 +410,19 @@ fn render_recursive(
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
-    let Some(child) = tree.get(index) else {
+    let Some(entry) = tree.get(entry_index) else {
         return element
             .child(Label::new(SharedString::new_static("No settings found")).color(Color::Error));
     };
 
     if render_next_title {
-        element = element.child(Label::new(child.title.clone()).size(LabelSize::Large));
+        element = element.child(Label::new(entry.title.clone()).size(LabelSize::Large));
     }
 
     // todo(settings_ui): subgroups?
     let mut pushed_path = false;
     let mut fallback_default_value = parent_fallback_default_value;
-    if let Some(child_path) = child.path.as_ref() {
+    if let Some(child_path) = entry.path.as_ref() {
         path.push(child_path.clone());
         if let Some(fallback_value) = parent_fallback_default_value.as_ref() {
             fallback_default_value =
@@ -433,14 +433,14 @@ fn render_recursive(
     let settings_value = settings_value_from_settings_and_path(
         path.clone(),
         fallback_default_value,
-        child.title.clone(),
-        child.documentation.clone(),
+        entry.title.clone(),
+        entry.documentation.clone(),
         // PERF: how to structure this better? There feels like there's a way to avoid the clone
         // and every value lookup
         SettingsStore::global(cx).raw_user_settings(),
         SettingsStore::global(cx).raw_default_settings(),
     );
-    if let Some(dynamic_render) = child.dynamic_render.as_ref() {
+    if let Some(dynamic_render) = entry.dynamic_render.as_ref() {
         let value = settings_value.read();
         let selected_index = (dynamic_render.determine_option)(value, cx);
         element = element.child(div().child(render_toggle_button_group_inner(
@@ -468,7 +468,7 @@ fn render_recursive(
                 .count();
         if dynamic_render.options[selected_index].is_some()
             && let Some(descendant_index) =
-                child.nth_descendant_index(tree, selected_descendant_index)
+                entry.nth_descendant_index(tree, selected_descendant_index)
         {
             element = render_recursive(
                 tree,
@@ -481,12 +481,24 @@ fn render_recursive(
                 cx,
             );
         }
-    } else if let Some(array) = child.array.as_ref() {
+    } else if let Some(array) = entry.array.as_ref() {
         let generated_items = (array.determine_items)(settings_value.read(), cx);
         let mut ui_items = Vec::with_capacity(generated_items.len());
         let settings_ui_item = (array.item)();
 
-        for item in generated_items {
+        let table_interaction_state =
+            window.use_keyed_state(("settings_ui_table", entry_index), cx, |_, cx| {
+                TableInteractionState::new(cx)
+            });
+
+        let mut table = ui::Table::<2>::new()
+            .column_widths([relative(0.1), relative(0.9)])
+            .header(["#", "Value"])
+            .interactable(&table_interaction_state)
+            .striped();
+        let mut row_count = 0;
+
+        for (index, item) in generated_items.iter().enumerate() {
             let settings_ui_entry = SettingsUiEntry {
                 path: None,
                 title: "",
@@ -502,7 +514,7 @@ fn render_recursive(
             build_tree_item(
                 &mut ui_items,
                 settings_ui_entry,
-                child._depth + 1,
+                entry._depth + 1,
                 prev_index,
             );
             if item_index < ui_items.len() {
@@ -513,21 +525,28 @@ fn render_recursive(
                 // push path instead of setting path on ui item so that the path isn't pushed to default_path as well
                 // when we recurse
                 path.push(item.path.clone());
-                element = render_recursive(
+                let row_element = render_recursive(
                     &ui_items,
                     item_index,
                     path,
-                    element,
+                    div(),
                     Some(&array.default_item),
-                    true,
+                    false,
                     window,
                     cx,
                 );
                 path.pop();
+                table = table.row([index.to_string().into_any_element(), row_element.into_any()]);
+                row_count += 1;
             }
         }
+        table = table.row([
+            row_count.to_string().into_any_element(),
+            "create".into_any(),
+        ]);
+        element = element.child(table);
     } else if let Some((settings_ui_item, generate_items, defaults_path)) =
-        child.generate_items.as_ref()
+        entry.generate_items.as_ref()
     {
         let generated_items = generate_items(settings_value.read(), cx);
         let mut ui_items = Vec::with_capacity(generated_items.len());
@@ -552,7 +571,7 @@ fn render_recursive(
             build_tree_item(
                 &mut ui_items,
                 settings_ui_entry,
-                child._depth + 1,
+                entry._depth + 1,
                 prev_index,
             );
             if item_index < ui_items.len() {
@@ -576,14 +595,14 @@ fn render_recursive(
                 path.pop();
             }
         }
-    } else if let Some(child_render) = child.render.as_ref() {
+    } else if let Some(child_render) = entry.render.as_ref() {
         element = element.child(div().child(render_item_single(
             settings_value,
             child_render,
             window,
             cx,
         )));
-    } else if let Some(child_index) = child.first_descendant_index() {
+    } else if let Some(child_index) = entry.first_descendant_index() {
         let mut index = Some(child_index);
         while let Some(sub_child_index) = index {
             element = render_recursive(
