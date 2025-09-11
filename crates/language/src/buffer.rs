@@ -3463,46 +3463,53 @@ impl BufferSnapshot {
         (start..end, word_kind)
     }
 
-    /// Returns the closest syntax node enclosing the given range.
-    /// Positions a tree cursor at the leaf node that contains or touches the given range.
-    /// This is shared logic used by syntax navigation methods.
-    fn position_cursor_at_range(cursor: &mut tree_sitter::TreeCursor, range: &Range<usize>) {
-        // Descend to the first leaf that touches the start of the range.
-        //
-        // If the range is non-empty and the current node ends exactly at the start,
-        // move to the next sibling to find a node that extends beyond the start.
-        //
-        // If the range is empty and the current node starts after the range position,
-        // move to the previous sibling to find the node that contains the position.
-        while cursor.goto_first_child_for_byte(range.start).is_some() {
-            if !range.is_empty() && cursor.node().end_byte() == range.start {
-                cursor.goto_next_sibling();
-            }
-            if range.is_empty() && cursor.node().start_byte() > range.start {
-                cursor.goto_previous_sibling();
-            }
-        }
-    }
-
-    /// Moves the cursor to find a node that contains the given range.
-    /// Returns true if such a node is found, false otherwise.
-    /// This is shared logic used by syntax navigation methods.
-    fn find_containing_node(
+    /// Moves the TreeCursor to the smallest descendant or ancestor syntax node enclosing the given
+    /// range. When `require_larger` is true, the node found must be larger than the query range.
+    ///
+    /// Returns true if a node was found, and false otherwise. In the `false` case the cursor will
+    /// be moved to the root of the tree.
+    fn goto_node_enclosing_range(
         cursor: &mut tree_sitter::TreeCursor,
-        range: &Range<usize>,
-        strict: bool,
+        query_range: &Range<usize>,
+        require_larger: bool,
     ) -> bool {
+        let mut ascending = false;
         loop {
-            let node_range = cursor.node().byte_range();
+            let mut range = cursor.node().byte_range();
+            if query_range.is_empty() {
+                // When the query range is empty and the current node starts after it, move to the
+                // previous sibling to find the node the containing node.
+                if range.start > query_range.start {
+                    cursor.goto_previous_sibling();
+                    range = cursor.node().byte_range();
+                }
+            } else {
+                // When the query range is non-empty and the current node ends exactly at the start,
+                // move to the next sibling to find a node that extends beyond the start.
+                if range.end == query_range.start {
+                    cursor.goto_next_sibling();
+                    range = cursor.node().byte_range();
+                }
+            }
 
-            if node_range.start <= range.start
-                && node_range.end >= range.end
-                && (!strict || node_range.len() > range.len())
-            {
+            let encloses = range.contains_inclusive(query_range)
+                && (!require_larger || range.len() > query_range.len());
+            if !encloses {
+                ascending = true;
+                if !cursor.goto_parent() {
+                    return false;
+                }
+                continue;
+            } else if ascending {
                 return true;
             }
-            if !cursor.goto_parent() {
-                return false;
+
+            // Descend into the current node.
+            if cursor
+                .goto_first_child_for_byte(query_range.start)
+                .is_none()
+            {
+                return true;
             }
         }
     }
@@ -3519,10 +3526,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
-            // Ascend to the smallest ancestor that strictly contains the range.
-            if !Self::find_containing_node(&mut cursor, &range, true) {
+            // Find the node that both contains the range and is larger than it.
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, true) {
                 continue;
             }
 
@@ -3588,10 +3593,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
             // Find the node that contains the range
-            if !Self::find_containing_node(&mut cursor, &range, false) {
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, false) {
                 continue;
             }
 
@@ -3641,10 +3644,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
             // Find the node that contains the range
-            if !Self::find_containing_node(&mut cursor, &range, false) {
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, false) {
                 continue;
             }
 
