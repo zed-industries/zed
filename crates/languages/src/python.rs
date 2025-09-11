@@ -1691,10 +1691,8 @@ impl RuffLspAdapter {
 impl RuffLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("ruff");
 
-    pub fn new(cx: &mut App) -> RuffLspAdapter {
-        RuffLspAdapter {
-            fs: <dyn Fs>::global(cx),
-        }
+    pub fn new(fs: Arc<dyn Fs>) -> RuffLspAdapter {
+        RuffLspAdapter { fs }
     }
 
     fn build_asset_name() -> Result<(String, String)> {
