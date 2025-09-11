@@ -1,9 +1,5 @@
-use smallvec::{SmallVec, smallvec};
+use smallvec::SmallVec;
 use std::iter;
-use std::sync::LazyLock;
-
-static MIN: LazyLock<Locator> = LazyLock::new(Locator::min);
-static MAX: LazyLock<Locator> = LazyLock::new(Locator::max);
 
 /// An identifier for a position in a ordered collection.
 ///
@@ -16,20 +12,22 @@ static MAX: LazyLock<Locator> = LazyLock::new(Locator::max);
 pub struct Locator(SmallVec<[u64; 4]>);
 
 impl Locator {
-    pub fn min() -> Self {
-        Self(smallvec![u64::MIN])
+    pub const fn min() -> Self {
+        // SAFETY: 1 is <= 4
+        Self(unsafe { SmallVec::from_const_with_len_unchecked([u64::MIN; 4], 1) })
     }
 
-    pub fn max() -> Self {
-        Self(smallvec![u64::MAX])
+    pub const fn max() -> Self {
+        // SAFETY: 1 is <= 4
+        Self(unsafe { SmallVec::from_const_with_len_unchecked([u64::MAX; 4], 1) })
     }
 
-    pub fn min_ref() -> &'static Self {
-        &MIN
+    pub const fn min_ref() -> &'static Self {
+        const { &Self::min() }
     }
 
-    pub fn max_ref() -> &'static Self {
-        &MAX
+    pub const fn max_ref() -> &'static Self {
+        const { &Self::max() }
     }
 
     pub fn assign(&mut self, other: &Self) {
