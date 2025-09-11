@@ -54,7 +54,6 @@ pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
-pub use ui::preview::{all_agent_previews, get_agent_preview};
 use zed_actions;
 
 actions!(

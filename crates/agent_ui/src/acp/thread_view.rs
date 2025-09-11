@@ -62,9 +62,9 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
-use crate::ui::preview::UsageCallout;
 use crate::ui::{
     AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
+    UsageCallout,
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,

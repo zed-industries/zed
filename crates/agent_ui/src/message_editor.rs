@@ -5,10 +5,7 @@ use std::sync::Arc;
 use crate::agent_diff::AgentDiffThread;
 use crate::agent_model_selector::AgentModelSelector;
 use crate::tool_compatibility::{IncompatibleToolsState, IncompatibleToolsTooltip};
-use crate::ui::{
-    BurnModeTooltip,
-    preview::{AgentPreview, UsageCallout},
-};
+use crate::ui::{BurnModeTooltip, UsageCallout};
 use agent::history_store::HistoryStore;
 use agent::{
     context::{AgentContextKey, ContextLoadResult, load_context},
@@ -57,9 +54,9 @@ use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider, crea
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 use crate::{
-    ActiveThread, AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll,
-    ModelUsageContext, NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode,
-    ToggleContextPicker, ToggleProfileSelector, register_agent_preview,
+    AgentDiffPane, ChatWithFollow, ExpandMessageEditor, Follow, KeepAll, ModelUsageContext,
+    NewThread, OpenAgentDiff, RejectAll, RemoveAllContext, ToggleBurnMode, ToggleContextPicker,
+    ToggleProfileSelector,
 };
 use agent::{
     MessageCrease, Thread, TokenUsageRatio,
@@ -70,7 +67,6 @@ use agent::{
 pub const MIN_EDITOR_LINES: usize = 4;
 pub const MAX_EDITOR_LINES: usize = 8;
 
-#[derive(RegisterComponent)]
 pub struct MessageEditor {
     thread: Entity<Thread>,
     incompatible_tools_state: Entity<IncompatibleToolsState>,
@@ -1743,70 +1739,3 @@ pub fn insert_message_creases(
         }
     }
 }
-impl Component for MessageEditor {
-    fn scope() -> ComponentScope {
-        ComponentScope::Agent
-    }
-
-    fn description() -> Option<&'static str> {
-        Some(
-            "The composer experience of the Agent Panel. This interface handles context, composing messages, switching profiles, models and more.",
-        )
-    }
-}
-
-impl AgentPreview for MessageEditor {
-    fn agent_preview(
-        workspace: WeakEntity<Workspace>,
-        active_thread: Entity<ActiveThread>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        if let Some(workspace) = workspace.upgrade() {
-            let fs = workspace.read(cx).app_state().fs.clone();
-            let project = workspace.read(cx).project().clone();
-            let weak_project = project.downgrade();
-            let context_store = cx.new(|_cx| ContextStore::new(weak_project, None));
-            let active_thread = active_thread.read(cx);
-            let thread = active_thread.thread().clone();
-            let thread_store = active_thread.thread_store().clone();
-            let text_thread_store = active_thread.text_thread_store().clone();
-
-            let default_message_editor = cx.new(|cx| {
-                MessageEditor::new(
-                    fs,
-                    workspace.downgrade(),
-                    context_store,
-                    None,
-                    thread_store.downgrade(),
-                    text_thread_store.downgrade(),
-                    None,
-                    thread,
-                    window,
-                    cx,
-                )
-            });
-
-            Some(
-                v_flex()
-                    .gap_4()
-                    .children(vec![single_example(
-                        "Default Message Editor",
-                        div()
-                            .w(px(540.))
-                            .pt_12()
-                            .bg(cx.theme().colors().panel_background)
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .child(default_message_editor)
-                            .into_any_element(),
-                    )])
-                    .into_any_element(),
-            )
-        } else {
-            None
-        }
-    }
-}
-
-register_agent_preview!(MessageEditor);
