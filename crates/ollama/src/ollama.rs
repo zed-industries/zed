@@ -3,7 +3,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 pub const OLLAMA_API_KEY_VAR: &str = "OLLAMA_API_KEY";
@@ -460,6 +460,46 @@ pub async fn generate(
     Ok(response)
 }
 
+/// Discover available models from the Ollama API with their capabilities
+pub async fn discover_available_models(
+    client: Arc<dyn HttpClient>,
+    api_url: &str,
+    api_key: Option<String>,
+) -> Result<Vec<AvailableModel>> {
+    let models = get_models(client.as_ref(), api_url, api_key.clone(), None).await?;
+
+    let tasks = models
+        .into_iter()
+        .filter(|model| !model.name.contains("-embed"))
+        .map(|model| {
+            let client = client.clone();
+            let api_key = api_key.clone();
+            let api_url = api_url.to_string();
+            async move {
+                let capabilities =
+                    show_model(client.as_ref(), &api_url, api_key, &model.name).await?;
+                Ok(AvailableModel::new(
+                    &model.name,
+                    None,
+                    None,
+                    Some(capabilities.supports_tools()),
+                    Some(capabilities.supports_images()),
+                    Some(capabilities.supports_thinking()),
+                ))
+            }
+        });
+
+    let mut available_models: Vec<_> = futures::stream::iter(tasks)
+        .buffer_unordered(5)
+        .collect::<Vec<Result<_>>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+
+    available_models.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(available_models)
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake {
     use super::*;
@@ -887,5 +927,110 @@ mod tests {
         assert!(parsed.options.is_some());
         let options = parsed.options.unwrap();
         assert_eq!(options.stop, Some(vec!["<EOT>".to_string()]));
+    }
+
+    #[test]
+    fn test_discover_available_models() {
+        use crate::fake::FakeHttpClient;
+        use std::sync::Arc;
+
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Mock /api/tags response (list models)
+        let models_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "qwen2.5-coder:3b",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "abc123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "qwen2",
+                        "families": ["qwen2"],
+                        "parameter_size": "3B",
+                        "quantization_level": "Q4_0"
+                    }
+                },
+                {
+                    "name": "codellama:7b-code",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 2000000,
+                    "digest": "def456",
+                    "details": {
+                        "format": "gguf",
+                        "family": "codellama",
+                        "families": ["codellama"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                },
+                {
+                    "name": "nomic-embed-text",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 500000,
+                    "digest": "ghi789",
+                    "details": {
+                        "format": "gguf",
+                        "family": "nomic-embed",
+                        "families": ["nomic-embed"],
+                        "parameter_size": "137M",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", models_response.to_string());
+
+        // Mock /api/show responses for model capabilities
+        let capabilities_response = serde_json::json!({
+            "capabilities": ["tools", "thinking"]
+        });
+        fake_http_client.set_response("/api/show", capabilities_response.to_string());
+
+        // Test the shared discover_available_models function
+        let models = futures::executor::block_on(discover_available_models(
+            fake_http_client,
+            "http://localhost:11434",
+            None,
+        ))
+        .unwrap();
+
+        // Should have 2 models (excluding the embedding model)
+        assert_eq!(models.len(), 2);
+
+        let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+        assert!(model_names.contains(&"codellama:7b-code"));
+        assert!(model_names.contains(&"qwen2.5-coder:3b"));
+        assert!(!model_names.contains(&"nomic-embed-text"));
+
+        // Verify models are sorted alphabetically
+        assert_eq!(models[0].name, "codellama:7b-code");
+        assert_eq!(models[1].name, "qwen2.5-coder:3b");
+
+        // Verify capabilities were detected
+        assert_eq!(models[0].supports_tools, Some(true));
+        assert_eq!(models[0].supports_thinking, Some(true));
+        assert_eq!(models[1].supports_tools, Some(true));
+        assert_eq!(models[1].supports_thinking, Some(true));
+    }
+
+    #[test]
+    fn test_discover_available_models_api_failure() {
+        use crate::fake::FakeHttpClient;
+        use std::sync::Arc;
+
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+        fake_http_client.set_error("Connection refused");
+
+        // Test that API failure is properly handled
+        let result = futures::executor::block_on(discover_available_models(
+            fake_http_client,
+            "http://localhost:11434",
+            None,
+        ));
+
+        assert!(result.is_err());
     }
 }

@@ -1,7 +1,8 @@
-use crate::{AvailableModel, GenerateOptions, GenerateRequest, generate};
+use crate::{
+    AvailableModel, GenerateOptions, GenerateRequest, discover_available_models, generate,
+};
 use anyhow::{Context as AnyhowContext, Result};
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
-use futures::StreamExt;
 use gpui::{App, AppContext, Context, Entity, EntityId, Global, Subscription, Task};
 use http_client::HttpClient;
 use language::{Anchor, Buffer, ToOffset};
@@ -101,54 +102,17 @@ impl State {
                     .collect::<std::collections::HashSet<_>>()
             })?;
 
-            // Fetch models from API
-            let api_models = match crate::get_models(
-                http_client.as_ref(),
-                &api_url,
-                api_key.clone(),
-                None,
-            )
-            .await
-            {
-                Ok(models) => models,
-                Err(_) => return Ok(()), // Silently fail if API is unavailable
-            };
+            // Fetch models from API using shared utility
+            let mut api_discovered_models =
+                match discover_available_models(http_client.clone(), &api_url, api_key.clone())
+                    .await
+                {
+                    Ok(models) => models,
+                    Err(_) => return Ok(()), // Silently fail if API is unavailable
+                };
 
-            let tasks = api_models
-                .into_iter()
-                // Filter out embedding models
-                .filter(|model| !model.name.contains("-embed"))
-                // Filter out models that are already defined in settings
-                .filter(|model| !settings_models.contains(&model.name))
-                .map(|model| {
-                    let http_client = Arc::clone(&http_client);
-                    let api_url = api_url.clone();
-                    let api_key = api_key.clone();
-                    async move {
-                        let name = model.name.as_str();
-                        let capabilities =
-                            crate::show_model(http_client.as_ref(), &api_url, api_key, name)
-                                .await?;
-                        let ollama_model = AvailableModel::new(
-                            name,
-                            None,
-                            None,
-                            Some(capabilities.supports_tools()),
-                            Some(capabilities.supports_images()),
-                            Some(capabilities.supports_thinking()),
-                        );
-                        Ok(ollama_model)
-                    }
-                });
-
-            // Rate-limit capability fetches for API-discovered models
-            let api_discovered_models: Vec<_> = futures::stream::iter(tasks)
-                .buffer_unordered(5)
-                .collect::<Vec<Result<_>>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>>>()
-                .unwrap_or_default();
+            // Filter out models that are already defined in settings
+            api_discovered_models.retain(|model| !settings_models.contains(&model.name));
 
             this.update(cx, |this, cx| {
                 // Append API-discovered models to existing settings models

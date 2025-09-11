@@ -12,7 +12,7 @@ use language_model::{
 };
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OllamaFunctionCall,
-    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
+    OllamaFunctionTool, OllamaToolCall, discover_available_models, stream_chat_completion,
 };
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
@@ -63,43 +63,7 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, None, None).await?;
-
-            let tasks = models
-                .into_iter()
-                // Since there is no metadata from the Ollama API
-                // indicating which models are embedding models,
-                // simply filter out models with "-embed" in their name
-                .filter(|model| !model.name.contains("-embed"))
-                .map(|model| {
-                    let http_client = Arc::clone(&http_client);
-                    let api_url = api_url.clone();
-                    async move {
-                        let name = model.name.as_str();
-                        let capabilities =
-                            show_model(http_client.as_ref(), &api_url, None, name).await?;
-                        let ollama_model = AvailableModel::new(
-                            name,
-                            None,
-                            None,
-                            Some(capabilities.supports_tools()),
-                            Some(capabilities.supports_images()),
-                            Some(capabilities.supports_thinking()),
-                        );
-                        Ok(ollama_model)
-                    }
-                });
-
-            // Rate-limit capability fetches
-            // since there is an arbitrary number of models available
-            let mut ollama_models: Vec<_> = futures::stream::iter(tasks)
-                .buffer_unordered(5)
-                .collect::<Vec<Result<_>>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>>>()?;
-
-            ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
+            let ollama_models = discover_available_models(http_client, &api_url, None).await?;
 
             this.update(cx, |this, cx| {
                 this.available_models = ollama_models;
