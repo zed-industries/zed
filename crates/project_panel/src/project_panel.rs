@@ -5611,6 +5611,12 @@ impl Render for ProjectPanel {
                             div()
                                 .block_mouse_except_scroll()
                                 .flex_grow()
+                                .when(
+                                    self.drag_target_entry.as_ref().is_some_and(|entry| {
+                                        matches!(entry, DragTarget::Background)
+                                    }),
+                                    |div| div.bg(cx.theme().colors().drop_target_background),
+                                )
                                 .on_drag_move::<DraggedSelection>(cx.listener(
                                     move |this, event: &DragMoveEvent<DraggedSelection>, _, cx| {
                                         let Some(last_root_id) = this.last_worktree_root_id else {
