@@ -1506,4 +1506,116 @@ mod tests {
         // because the behavior might actually be correct
         println!("Test completed - check output above for URL detection behavior");
     }
+
+    #[test] 
+    fn test_multiline_file_path_detection_issue() {
+        // Test the actual issue: file paths that wrap across multiple lines
+        // where only the first line is clickable
+        
+        // Create a terminal with narrow width to force file path wrapping
+        let term = Term::new(Config::default(), &TermSize::new(20, 10), VoidListener);
+        let mut regex_searches = RegexSearches::new();
+        
+        // Use a realistic scenario - a long file path in an error message
+        let test_input = "Error in /very/long/path/to/some/deeply/nested/project/src/components/MyComponent.tsx:42:15";
+        
+        let mut term = term;
+        for c in test_input.chars() {
+            term.input(c);
+        }
+        
+        // Print the terminal content
+        let grid = term.grid();
+        println!("Terminal content (width: {}):", term.columns());
+        for line_idx in 0..std::cmp::min(6, grid.screen_lines()) {
+            let mut line_content = String::new();
+            for col_idx in 0..grid.columns() {
+                let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
+                let cell = grid.index(point);
+                line_content.push(cell.c);
+            }
+            println!("Line {}: '{}'", line_idx, line_content.trim_end());
+        }
+        
+        // Find all file path matches using the word regex
+        let all_word_matches: Vec<_> = visible_regex_match_iter(&term, &mut regex_searches.word_regex).collect();
+        println!("Found {} file path matches:", all_word_matches.len());
+        for (i, m) in all_word_matches.iter().enumerate() {
+            let path_text = term.bounds_to_string(*m.start(), *m.end());
+            println!("  Match {}: '{}' at {:?}..={:?}", i, path_text, m.start(), m.end());
+        }
+        
+        // Find specific test points
+        let mut path_start = None;    // The '/' at the beginning of the path
+        let mut path_middle = None;   // Some character in the middle (different line)
+        let mut path_end = None;      // The line number at the end
+        
+        for line_idx in 0..std::cmp::min(6, grid.screen_lines()) {
+            for col_idx in 0..grid.columns() {
+                let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
+                let cell = grid.index(point);
+                
+                // Find the start of the path (first '/')
+                if cell.c == '/' && path_start.is_none() {
+                    path_start = Some(point);
+                }
+                
+                // Find something in the middle on a different line
+                if line_idx > 0 && cell.c.is_alphanumeric() && path_middle.is_none() {
+                    path_middle = Some(point);
+                }
+                
+                // Find the line number at the end (looking for digits after ':')
+                if cell.c.is_ascii_digit() && line_idx > 0 && path_end.is_none() {
+                    path_end = Some(point);
+                }
+            }
+        }
+        
+        println!("Test points:");
+        println!("  Path start: {:?}", path_start);
+        println!("  Path middle: {:?}", path_middle);  
+        println!("  Path end: {:?}", path_end);
+        
+        // Test file path detection at each point
+        if let Some(start_point) = path_start {
+            let start_result = find_from_grid_point(&term, start_point, &mut regex_searches);
+            println!("Path start result: {:?}", start_result.as_ref().map(|(path, _, _)| path));
+            
+            if let Some(middle_point) = path_middle {
+                let middle_result = find_from_grid_point(&term, middle_point, &mut regex_searches);
+                println!("Path middle result: {:?}", middle_result.as_ref().map(|(path, _, _)| path));
+                
+                // This is the key test for the bug
+                match (&start_result, &middle_result) {
+                    (Some((start_path, _, _)), Some((middle_path, _, _))) => {
+                        if start_path == middle_path {
+                            println!("✓ SUCCESS: Both points detected same path: {}", start_path);
+                        } else {
+                            println!("⚠ DIFFERENT paths detected:");
+                            println!("  Start: {}", start_path);
+                            println!("  Middle: {}", middle_path);
+                        }
+                    }
+                    (Some((start_path, _, _)), None) => {
+                        println!("✗ BUG CONFIRMED: Start found '{}' but middle found nothing", start_path);
+                        println!("This confirms the multi-line file path issue!");
+                        // Assert to make the test fail and document the issue
+                        assert!(false, "Multi-line file path bug: clicking on wrapped lines doesn't work");
+                    }
+                    (None, Some((middle_path, _, _))) => {
+                        println!("? Unexpected: Middle found '{}' but start found nothing", middle_path);
+                    }
+                    (None, None) => {
+                        println!("✗ No file paths detected at either point");
+                    }
+                }
+            }
+            
+            if let Some(end_point) = path_end {
+                let end_result = find_from_grid_point(&term, end_point, &mut regex_searches);
+                println!("Path end result: {:?}", end_result.as_ref().map(|(path, _, _)| path));
+            }
+        }
+    }
 }
