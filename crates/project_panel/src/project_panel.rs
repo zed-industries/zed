@@ -5601,9 +5601,12 @@ impl Render for ProjectPanel {
                                         if event.bounds.contains(&event.event.position) {
                                             let should_highlight = {
                                                 let drag_state = event.drag(cx);
-                                                if drag_state.items().count() == 1 {
-                                                    if let Some(active_parent_path) = this
-                                                        .project
+                                                if drag_state.items().count() > 1 {
+                                                    // Always highlight for multiple entries
+                                                    true
+                                                } else {
+                                                    // For single entry check if parent matches root
+                                                    this.project
                                                         .read(cx)
                                                         .path_for_entry(
                                                             drag_state.active_selection.entry_id,
@@ -5612,20 +5615,15 @@ impl Render for ProjectPanel {
                                                         .and_then(|e| {
                                                             e.path.parent().map(|p| p.to_path_buf())
                                                         })
-                                                    {
-                                                        let project = this.project.read(cx);
-                                                        project
-                                                            .path_for_entry(last_root_id, cx)
-                                                            .is_some_and(|p| {
-                                                                p.path.as_ref()
-                                                                    == active_parent_path.as_path()
-                                                            })
-                                                    } else {
-                                                        false
-                                                    }
-                                                } else {
-                                                    // If multiple entries are dragged, always highlight
-                                                    true
+                                                        .is_some_and(|parent_path| {
+                                                            this.project
+                                                                .read(cx)
+                                                                .path_for_entry(last_root_id, cx)
+                                                                .is_some_and(|p| {
+                                                                    p.path.as_ref()
+                                                                        == parent_path.as_path()
+                                                                })
+                                                        })
                                                 }
                                             };
                                             if should_highlight {
