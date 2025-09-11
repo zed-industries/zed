@@ -984,14 +984,27 @@ pub fn handle_settings_file_changes(
 }
 
 fn read_proxy_settings(cx: &mut Context<HeadlessProject>) -> Option<Url> {
-    let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
+    let settings_path = paths::settings_file();
+    let settings_content = match std::fs::read_to_string(&settings_path) {
+        Ok(content) => content,
+        Err(e) => {
+            log::debug!("Could not read settings file {:?}: {}", settings_path, e);
+            return read_proxy_from_env();
+        }
+    };
+    SettingsStore::update_global(cx, |store, cx| {
+        store.set_user_settings(&settings_content, cx).log_err();
+    });
 
-    proxy_str
-        .as_ref()
-        .and_then(|input: &String| {
-            input
-                .parse::<Url>()
-                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+    ProxySettings::get_global(cx)
+        .proxy
+        .as_deref()
+        .and_then(|s| {
+            s.parse::<Url>()
+                .map_err(|e| {
+                    log::error!("Error parsing proxy settings: {}", e);
+                    e
+                })
                 .ok()
         })
         .or_else(read_proxy_from_env)
