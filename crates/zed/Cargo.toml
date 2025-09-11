@@ -82,6 +82,7 @@ indoc.workspace = true
 edit_prediction_button.workspace = true
 inspector_ui.workspace = true
 ollama.workspace = true
+ollama_edit_predictions.workspace = true
 install_cli.workspace = true
 jj_ui.workspace = true
 journal.workspace = true

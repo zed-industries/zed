@@ -18,7 +18,7 @@ use language::{
 };
 use language_models::AllLanguageModelSettings;
 
-use ollama;
+use ollama_edit_predictions::OllamaEditPredictionState as State;
 
 use paths;
 use project::DisableAiSettings;
@@ -416,7 +416,7 @@ impl EditPredictionButton {
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
-        if let Some(service) = ollama::State::global(cx) {
+        if let Some(service) = State::global(cx) {
             cx.observe(&service, |_, _, cx| cx.notify()).detach();
         }
 
@@ -873,7 +873,7 @@ impl EditPredictionButton {
         let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, window, cx| {
             // Automatically refresh models when menu is opened
-            if let Some(service) = ollama::State::global(cx) {
+            if let Some(service) = State::global(cx) {
                 service.update(cx, |service, cx| {
                     service.refresh_models(cx);
                 });
@@ -885,7 +885,7 @@ impl EditPredictionButton {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = ollama::State::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 for model in discovered_models {
                     // Convert from ollama::Model to language_models AvailableModel
@@ -1032,7 +1032,7 @@ impl EditPredictionButton {
                 models.insert(0, selected_model);
             } else {
                 // Model not in settings - check if it's a discovered model and add it
-                if let Some(service) = ollama::State::global(cx) {
+                if let Some(service) = State::global(cx) {
                     let discovered_models = service.read(cx).available_models();
                     if let Some(discovered_model) =
                         discovered_models.iter().find(|m| m.name == model_name)
@@ -1249,7 +1249,7 @@ mod tests {
     use fs;
     use gpui::TestAppContext;
     use http_client;
-    use ollama::{State, fake::FakeHttpClient};
+    use ollama::fake::FakeHttpClient;
     use settings::SettingsStore;
     use std::sync::Arc;
 
@@ -1671,7 +1671,7 @@ mod tests {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = ollama::State::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 for model in discovered_models {
                     // Convert from ollama::Model to language_models AvailableModel
@@ -1761,7 +1761,7 @@ mod tests {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = ollama::State::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 for model in discovered_models {
                     // Convert from ollama::Model to language_models AvailableModel
@@ -1788,7 +1788,7 @@ mod tests {
 
             // Verify that the switch_ollama_model function can find the discovered model
             // by checking it exists in the service
-            if let Some(service) = ollama::State::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 let found_model = discovered_models
                     .iter()
@@ -1851,7 +1851,7 @@ mod tests {
 
         // Verify model is discovered by service
         let discovered = cx.update(|cx| {
-            if let Some(service) = ollama::State::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let models = service.read(cx).available_models();
                 models.iter().any(|m| m.name == "test-model:latest")
             } else {
@@ -1869,7 +1869,7 @@ mod tests {
         // We test this by verifying the function doesn't panic and can access the service
         cx.update(|cx| {
             // Verify the service is accessible within the function context
-            if let Some(service) = ollama::State::global(cx) {
+            if let Some(service) = State::global(cx) {
                 let discovered_models = service.read(cx).available_models();
                 let target_model = discovered_models
                     .iter()

@@ -1,11 +1,11 @@
-use crate::{
-    AvailableModel, GenerateOptions, GenerateRequest, discover_available_models, generate,
-};
 use anyhow::{Context as AnyhowContext, Result};
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use gpui::{App, AppContext, Context, Entity, EntityId, Global, Subscription, Task};
 use http_client::HttpClient;
 use language::{Anchor, Buffer, ToOffset};
+use ollama::{
+    AvailableModel, GenerateOptions, GenerateRequest, discover_available_models, generate,
+};
 use project::Project;
 use settings::SettingsStore;
 use std::{path::Path, sync::Arc, time::Duration};
@@ -131,8 +131,7 @@ struct GlobalOllamaState(Entity<State>);
 
 impl Global for GlobalOllamaState {}
 
-// TODO refactor to OllamaEditPredictionProvider
-pub struct OllamaCompletionProvider {
+pub struct OllamaEditPredictionProvider {
     model: String,
     buffer_id: Option<EntityId>,
     file_extension: Option<String>,
@@ -142,7 +141,7 @@ pub struct OllamaCompletionProvider {
     _service_subscription: Option<Subscription>,
 }
 
-impl OllamaCompletionProvider {
+impl OllamaEditPredictionProvider {
     pub fn new(model: String, api_key: Option<String>, cx: &mut Context<Self>) -> Self {
         // Update the global service with the API key if one is provided
         if let Some(service) = State::global(cx) {
@@ -226,7 +225,7 @@ impl OllamaCompletionProvider {
     }
 }
 
-impl EditPredictionProvider for OllamaCompletionProvider {
+impl EditPredictionProvider for OllamaEditPredictionProvider {
     fn name() -> &'static str {
         "ollama"
     }
@@ -268,7 +267,7 @@ impl EditPredictionProvider for OllamaCompletionProvider {
                     .unwrap_or_else(|| {
                         Arc::new(http_client::BlockedHttpClient::new()) as Arc<dyn HttpClient>
                     }),
-                crate::OLLAMA_API_URL.to_string(),
+                ollama::OLLAMA_API_URL.to_string(),
             )
         };
 
@@ -407,7 +406,7 @@ impl EditPredictionProvider for OllamaCompletionProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fake::FakeHttpClient;
+    use ollama::fake::FakeHttpClient;
 
     use gpui::{AppContext, TestAppContext};
 
@@ -436,7 +435,9 @@ mod tests {
 
         // Test CodeLlama code model gets stop tokens
         let codellama_provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("codellama:7b-code".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new("codellama:7b-code".to_string(), None, cx)
+            })
         });
 
         codellama_provider.read_with(cx, |provider, _| {
@@ -445,7 +446,7 @@ mod tests {
 
         // Test non-CodeLlama model doesn't get stop tokens
         let qwen_provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         qwen_provider.read_with(cx, |provider, _| {
@@ -458,7 +459,7 @@ mod tests {
         init_test(cx);
 
         // Create fake HTTP client
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
 
         // Mock /api/tags response (list models)
         let models_response = serde_json::json!({
@@ -535,7 +536,7 @@ mod tests {
 
         // Create completion provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         // Wait for model discovery to complete
@@ -558,7 +559,7 @@ mod tests {
         init_test(cx);
 
         // Create fake HTTP client that returns errors
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_error("Connection refused");
 
         // Create global Ollama service that will fail
@@ -577,7 +578,7 @@ mod tests {
 
         // Create completion provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         // Wait for model discovery to complete (with failure)
@@ -594,7 +595,7 @@ mod tests {
     async fn test_refresh_models(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
 
         // Initially return empty model list
         let empty_response = serde_json::json!({"models": []});
@@ -615,7 +616,7 @@ mod tests {
         });
 
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:7b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:7b".to_string(), None, cx))
         });
 
         cx.background_executor.run_until_parked();
@@ -678,7 +679,7 @@ mod tests {
         });
 
         // Create fake HTTP client and set up global service
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_generate_response("println!(\"Hello\");");
 
         // Create global Ollama service
@@ -697,7 +698,7 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         // Trigger completion refresh (no debounce for test speed)
@@ -752,7 +753,7 @@ mod tests {
         });
 
         // Create fake HTTP client and set up global service
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
 
         // Create global Ollama service
         let service = cx.update(|cx| {
@@ -770,7 +771,7 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         // Configure response that starts with what user already typed
@@ -803,7 +804,7 @@ mod tests {
         let mut editor_cx = editor::test::editor_test_context::EditorTestContext::new(cx).await;
 
         // Create fake HTTP client and set up global service
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_generate_response("vec![hello, world]");
 
         // Create global Ollama service
@@ -822,7 +823,7 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         // Set up the editor with the Ollama provider
@@ -883,7 +884,7 @@ mod tests {
         let mut editor_cx = editor::test::editor_test_context::EditorTestContext::new(cx).await;
 
         // Create fake HTTP client and set up global service
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_generate_response("bar");
 
         // Create global Ollama service
@@ -902,7 +903,7 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         // Set up the editor with the Ollama provider
@@ -957,7 +958,7 @@ mod tests {
         init_test(cx);
 
         // Create fake HTTP client that returns some API models
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
 
         // Mock /api/tags response (list models)
         let models_response = serde_json::json!({
@@ -1201,7 +1202,7 @@ mod tests {
         });
 
         // Setup provider state
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_generate_response("println!(\"Hello\");");
 
         let service = cx.update(|cx| {
@@ -1221,7 +1222,7 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         // Clear any initial requests (including model discovery)
@@ -1282,7 +1283,7 @@ mod tests {
         });
 
         // Create fake HTTP client and set up global service
-        let fake_http_client = Arc::new(crate::fake::FakeHttpClient::new());
+        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_generate_response("42");
 
         // Create global Ollama service
@@ -1304,7 +1305,7 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaCompletionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
         });
 
         // Clear any initial requests (including model discovery)

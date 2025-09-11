@@ -5018,6 +5018,7 @@ dependencies = [
  "language_models",
  "lsp",
  "ollama",
+ "ollama_edit_predictions",
  "paths",
  "project",
  "regex",
@@ -11117,17 +11118,28 @@ name = "ollama"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "log",
+ "schemars",
+ "serde",
+ "serde_json",
+ "workspace-hack",
+]
+
+[[package]]
+name = "ollama_edit_predictions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
  "client",
  "edit_prediction",
  "editor",
- "futures 0.3.31",
  "gpui",
  "http_client",
  "language",
- "log",
+ "ollama",
  "project",
- "schemars",
- "serde",
  "serde_json",
  "settings",
  "theme",
@@ -20592,6 +20604,7 @@ dependencies = [
  "node_runtime",
  "notifications",
  "ollama",
+ "ollama_edit_predictions",
  "onboarding",
  "outline",
  "outline_panel",

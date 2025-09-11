@@ -6,7 +6,8 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::AllLanguageModelSettings;
-use ollama::{OLLAMA_API_KEY_VAR, OllamaCompletionProvider, State};
+use ollama::OLLAMA_API_KEY_VAR;
+use ollama_edit_predictions::{OllamaEditPredictionProvider, OllamaEditPredictionState as State};
 use settings::{Settings as _, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -261,13 +262,14 @@ fn assign_edit_prediction_provider(
             };
 
             if let Some(model) = model {
-                let provider = cx.new(|cx| OllamaCompletionProvider::new(model, api_key, cx));
+                let provider = cx.new(|cx| OllamaEditPredictionProvider::new(model, api_key, cx));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             } else {
                 log::error!(
                     "No Ollama models available. Please configure models in settings or pull models using 'ollama pull <model-name>'"
                 );
-                editor.set_edit_prediction_provider::<OllamaCompletionProvider>(None, window, cx);
+                editor
+                    .set_edit_prediction_provider::<OllamaEditPredictionProvider>(None, window, cx);
             }
         }
     }

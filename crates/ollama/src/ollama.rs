@@ -503,8 +503,6 @@ pub async fn discover_available_models(
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake {
     use super::*;
-    use crate::ollama_completion_provider::OllamaCompletionProvider;
-    use gpui::AppContext;
     use http_client::{AsyncBody, Response, Url};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
@@ -601,22 +599,6 @@ pub mod fake {
     }
 
     pub struct Ollama;
-
-    impl Ollama {
-        pub fn fake(
-            cx: &mut gpui::TestAppContext,
-        ) -> (
-            gpui::Entity<OllamaCompletionProvider>,
-            std::sync::Arc<FakeHttpClient>,
-        ) {
-            let fake_client = std::sync::Arc::new(FakeHttpClient::new());
-
-            let provider =
-                cx.new(|cx| OllamaCompletionProvider::new("qwencoder".to_string(), None, cx));
-
-            (provider, fake_client)
-        }
-    }
 }
 
 #[cfg(test)]
