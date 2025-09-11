@@ -5626,6 +5626,22 @@ impl Render for ProjectPanel {
                                     ),
                                     |div| div.bg(cx.theme().colors().drop_target_background),
                                 )
+                                .on_drag_move::<ExternalPaths>(cx.listener(
+                                    move |this, event: &DragMoveEvent<ExternalPaths>, _, _| {
+                                        let Some(_last_root_id) = this.last_worktree_root_id else {
+                                            return;
+                                        };
+                                        if event.bounds.contains(&event.event.position) {
+                                            this.drag_target_entry = Some(DragTarget::Background);
+                                        } else {
+                                            if this.drag_target_entry.as_ref().is_some_and(|e| {
+                                                matches!(e, DragTarget::Background)
+                                            }) {
+                                                this.drag_target_entry = None;
+                                            }
+                                        }
+                                    },
+                                ))
                                 .on_drag_move::<DraggedSelection>(cx.listener(
                                     move |this, event: &DragMoveEvent<DraggedSelection>, _, cx| {
                                         let Some(last_root_id) = this.last_worktree_root_id else {
@@ -5670,6 +5686,21 @@ impl Render for ProjectPanel {
                                                 this.drag_target_entry = None;
                                             }
                                         }
+                                    },
+                                ))
+                                .on_drop(cx.listener(
+                                    move |this, external_paths: &ExternalPaths, window, cx| {
+                                        this.drag_target_entry = None;
+                                        this.hover_scroll_task.take();
+                                        if let Some(entry_id) = this.last_worktree_root_id {
+                                            this.drop_external_files(
+                                                external_paths.paths(),
+                                                entry_id,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                        cx.stop_propagation();
                                     },
                                 )),
                         )
