@@ -157,6 +157,27 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                 break;
             }
 
+            if mat.captures[1].node.kind() == TS_ARRAY_KIND
+                && key_path[depth].as_ref().starts_with('#')
+            {
+                let array_node = mat.captures[1].node;
+                let text_range = array_node.byte_range();
+                let array_str = &text[text_range];
+                let index = key_path[depth].as_ref()[1..].parse().unwrap();
+                let (mut replace_range, replace_value) =
+                    replace_top_level_array_value_in_json_text(
+                        array_str,
+                        &key_path[depth + 1..],
+                        new_value,
+                        replace_key,
+                        index,
+                        tab_size,
+                    )
+                    .expect("todo! make this fn return a Result");
+                replace_range.start += array_node.start_byte();
+                replace_range.end += array_node.start_byte();
+                return (replace_range, replace_value);
+            }
             first_key_start = None;
         }
     }
@@ -303,7 +324,7 @@ const TS_COMMENT_KIND: &str = "comment";
 
 pub fn replace_top_level_array_value_in_json_text(
     text: &str,
-    key_path: &[&str],
+    key_path: &[impl AsRef<str>],
     new_value: Option<&Value>,
     replace_key: Option<&str>,
     array_index: usize,
@@ -1040,6 +1061,35 @@ mod tests {
               "a":1,
                     "b"  :  "spaced"  ,
                 "c":   3
+            }"#
+            .unindent(),
+        );
+    }
+
+    #[test]
+    fn object_replace_array() {
+        #[track_caller]
+        fn check_object_replace(
+            input: String,
+            key_path: &[&str],
+            value: Option<Value>,
+            expected: String,
+        ) {
+            let result = replace_value_in_json_text(&input, key_path, 4, value.as_ref(), None);
+            let mut result_str = input;
+            result_str.replace_range(result.0, &result.1);
+            pretty_assertions::assert_eq!(expected, result_str);
+        }
+
+        check_object_replace(
+            r#"{
+                "a": [1, 3],
+            }"#
+            .unindent(),
+            &["a", "#1"],
+            Some(json!(2)),
+            r#"{
+                "a": [1, 2],
             }"#
             .unindent(),
         );
