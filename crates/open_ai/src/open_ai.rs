@@ -522,7 +522,7 @@ pub async fn stream_completion(
             error: OpenAiError,
         }
 
-        match from_str::<OpenAiResponse>(&body) {
+        match serde_json::from_str::<OpenAiResponse>(&body) {
             Ok(response) if !response.error.message.is_empty() => Err(anyhow!(
                 "API request to {} failed: {}",
                 api_url,
