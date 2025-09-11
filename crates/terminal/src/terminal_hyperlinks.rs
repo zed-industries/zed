@@ -89,10 +89,10 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             (format!("{file_path}:{line_number}"), false, python_match)
         })
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
-        let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
+        let (file_path, actual_match) = extend_multiline_path(term, word_match, regex_searches);
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
-            let mut word_match = word_match;
+            let mut word_match = actual_match;
             let mut file_path = file_path;
 
             if is_path_surrounded_by_common_symbols(&file_path) {
@@ -234,6 +234,35 @@ fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
 /// Retrieve the match, if the specified point is inside the content matching the regex.
 fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
     visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
+}
+
+fn extend_multiline_path<T: EventListener>(
+    term: &Term<T>,
+    word_match: Match,
+    regex_searches: &mut RegexSearches,
+) -> (String, Match) {
+    let initial_text = term.bounds_to_string(*word_match.start(), *word_match.end());
+
+    if !initial_text.contains('/') || initial_text.contains('.') {
+        return (initial_text, word_match);
+    }
+
+    let next_line = word_match.end().line + 1;
+    let all_matches: Vec<_> =
+        visible_regex_match_iter(term, &mut regex_searches.word_regex).collect();
+
+    for candidate in all_matches {
+        if candidate.start().line == next_line && candidate.start().column.0 <= 2 {
+            let candidate_text = term.bounds_to_string(*candidate.start(), *candidate.end());
+            if candidate_text.contains('.') && !candidate_text.contains('/') {
+                let combined = format!("{}{}", initial_text, candidate_text);
+                let extended_match = Match::new(*word_match.start(), *candidate.end());
+                return (combined, extended_match);
+            }
+        }
+    }
+
+    (initial_text, word_match)
 }
 
 /// Copied from alacritty/src/display/hint.rs:
@@ -1359,6 +1388,38 @@ mod tests {
                     check_hyperlink_match.format_renderable_content()
                 )
             }
+        }
+    }
+
+    #[test]
+    fn test_multiline_path_reconstruction() {
+        let term = Term::new(Config::default(), &TermSize::new(30, 5), VoidListener);
+        let mut regex_searches = RegexSearches::new();
+
+        let test_input = "Error in /project/src/very-long-file-na\nme.tsx at line 42";
+
+        let mut term = term;
+        for c in test_input.chars() {
+            if c == '\n' {
+                term.move_down_and_cr(1);
+            } else {
+                term.input(c);
+            }
+        }
+
+        let first_part = AlacPoint::new(Line(0), Column(25));
+        let second_part = AlacPoint::new(Line(1), Column(0));
+
+        let first_result = find_from_grid_point(&term, first_part, &mut regex_searches);
+        let second_result = find_from_grid_point(&term, second_part, &mut regex_searches);
+
+        if let (Some((first_path, _, _)), Some((second_path, _, _))) =
+            (&first_result, &second_result)
+        {
+            assert_eq!(
+                first_path, second_path,
+                "Both parts should return same complete path"
+            );
         }
     }
 }
