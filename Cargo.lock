@@ -1395,6 +1395,7 @@ dependencies = [
  "serde",
  "settings",
  "smol",
+ "thiserror 2.0.12",
  "util",
  "workspace-hack",
 ]
@@ -9307,6 +9308,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "sha2",
+ "shlex",
  "smol",
  "snippet_provider",
  "task",

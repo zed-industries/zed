@@ -175,16 +175,14 @@ use settings::{Settings, SettingsLocation, SettingsStore, update_settings_file};
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     borrow::Cow,
-    cell::OnceCell,
-    cell::RefCell,
+    cell::{OnceCell, RefCell},
     cmp::{self, Ordering, Reverse},
     iter::Peekable,
     mem,
     num::NonZeroU32,
-    ops::Not,
-    ops::{ControlFlow, Deref, DerefMut, Range, RangeInclusive},
+    ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -850,7 +848,7 @@ pub struct ResolvedTasks {
 #[derive(Copy, Clone, Debug, PartialEq, PartialOrd)]
 struct BufferOffset(usize);
 
-// Addons allow storing per-editor state in other crates (e.g. Vim)
+/// Addons allow storing per-editor state in other crates (e.g. Vim)
 pub trait Addon: 'static {
     fn extend_key_context(&self, _: &mut KeyContext, _: &App) {}
 
@@ -1178,6 +1176,7 @@ pub struct Editor {
     next_color_inlay_id: usize,
     colors: Option<LspColorData>,
     folding_newlines: Task<()>,
+    pub lookup_key: Option<Box<dyn Any + Send + Sync>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2257,6 +2256,7 @@ impl Editor {
             mode,
             selection_drag_state: SelectionDragState::None,
             folding_newlines: Task::ready(()),
+            lookup_key: None,
         };
 
         if is_minimap {
@@ -16398,7 +16398,7 @@ impl Editor {
 
                 anyhow::Ok(Navigated::from_bool(opened))
             } else if locations.is_empty() {
-                // If there is one definition, just open it directly
+                // If there is one url or file, open it directly
                 match first_url_or_file {
                     Some(Either::Left(url)) => {
                         acx.update(|_, cx| cx.open_url(&url))?;
@@ -16425,8 +16425,6 @@ impl Editor {
 
                 let target = locations.pop().unwrap();
                 editor.update_in(acx, |editor, window, cx| {
-                    let pane = workspace.read(cx).active_pane().clone();
-
                     let range = target.range.to_point(target.buffer.read(cx));
                     let range = editor.range_for_match(&range);
                     let range = collapse_multiline_range(range);
@@ -16436,6 +16434,7 @@ impl Editor {
                     {
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
+                        let pane = workspace.read(cx).active_pane().clone();
                         window.defer(cx, move |window, cx| {
                             let target_editor: Entity<Self> =
                                 workspace.update(cx, |workspace, cx| {
@@ -16609,13 +16608,17 @@ impl Editor {
             return;
         }
 
-        // If there are multiple definitions, open them in a multibuffer
         locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
+
         let mut locations = locations.into_iter().peekable();
         let mut ranges: Vec<Range<Anchor>> = Vec::new();
         let capability = workspace.project().read(cx).capability();
 
+        // a key to find existing multibuffer editors with the same set of locations
+        // to prevent us from opening more and more multibuffer tabs for searches and the like
+        let mut key = (title.clone(), vec![]);
         let excerpt_buffer = cx.new(|cx| {
+            let key = &mut key.1;
             let mut multibuffer = MultiBuffer::new(capability);
             while let Some(location) = locations.next() {
                 let buffer = location.buffer.read(cx);
@@ -16623,16 +16626,17 @@ impl Editor {
                 let range = location.range.to_point(buffer);
                 ranges_for_buffer.push(range.clone());
 
-                while let Some(next_location) = locations.peek() {
-                    if next_location.buffer == location.buffer {
-                        ranges_for_buffer.push(next_location.range.to_point(buffer));
-                        locations.next();
-                    } else {
-                        break;
-                    }
+                while let Some(next_location) =
+                    locations.next_if(|next_location| next_location.buffer == location.buffer)
+                {
+                    ranges_for_buffer.push(next_location.range.to_point(buffer));
                 }
 
                 ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
+                key.push((
+                    location.buffer.read(cx).remote_id(),
+                    ranges_for_buffer.clone(),
+                ));
                 let (new_ranges, _) = multibuffer.set_excerpts_for_path(
                     PathKey::for_buffer(&location.buffer, cx),
                     location.buffer.clone(),
@@ -16645,14 +16649,31 @@ impl Editor {
 
             multibuffer.with_title(title)
         });
-
-        let editor = cx.new(|cx| {
-            Editor::for_multibuffer(
-                excerpt_buffer,
-                Some(workspace.project().clone()),
-                window,
-                cx,
-            )
+        let existing = workspace.active_pane().update(cx, |pane, cx| {
+            pane.items()
+                .filter_map(|item| item.downcast::<Editor>())
+                .find(|editor| {
+                    editor
+                        .read(cx)
+                        .lookup_key
+                        .as_ref()
+                        .and_then(|it| {
+                            it.downcast_ref::<(String, Vec<(BufferId, Vec<Range<Point>>)>)>()
+                        })
+                        .is_some_and(|it| *it == key)
+                })
+        });
+        let editor = existing.unwrap_or_else(|| {
+            cx.new(|cx| {
+                let mut editor = Editor::for_multibuffer(
+                    excerpt_buffer,
+                    Some(workspace.project().clone()),
+                    window,
+                    cx,
+                );
+                editor.lookup_key = Some(Box::new(key));
+                editor
+            })
         });
         editor.update(cx, |editor, cx| {
             match multibuffer_selection_mode {
@@ -18913,14 +18934,15 @@ impl Editor {
         // so that wrapping is not recalculated and stays consistent for the editor
         // and its linked minimap.
         if !self.mode.is_minimap() {
-            let rem_size = window.rem_size();
-            self.display_map.update(cx, |map, cx| {
-                map.set_font(
-                    style.text.font(),
-                    style.text.font_size.to_pixels(rem_size),
-                    cx,
-                )
-            });
+            let font = style.text.font();
+            let font_size = style.text.font_size.to_pixels(window.rem_size());
+            let display_map = self
+                .placeholder_display_map
+                .as_ref()
+                .filter(|_| self.is_empty(cx))
+                .unwrap_or(&self.display_map);
+
+            display_map.update(cx, |map, cx| map.set_font(font, font_size, cx));
         }
         self.style = Some(style);
     }

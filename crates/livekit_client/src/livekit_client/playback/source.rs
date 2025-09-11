@@ -12,9 +12,7 @@ fn frame_to_samplesbuffer(frame: AudioFrame) -> SamplesBuffer {
     let samples = SampleTypeConverter::<_, _>::new(samples);
     let samples: Vec<f32> = samples.collect();
     SamplesBuffer::new(
-        // here be dragons
-        // NonZero::new(frame.num_channels as u16).expect("audio frame channels is nonzero"),
-        nz!(2),
+        nz!(2), // frame always has two channels
         NonZero::new(frame.sample_rate).expect("audio frame sample rate is nonzero"),
         samples,
     )
