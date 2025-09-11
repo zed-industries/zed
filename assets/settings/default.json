@@ -1835,8 +1835,8 @@
   // Repl settings
   "repl": {
     "max_number_of_columns": 128,
-    "max_number_of_lines": 32,
-  }
+    "max_number_of_lines": 32
+  },
   // Vim settings
   "vim": {
     "default_mode": "normal",
