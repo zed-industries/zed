@@ -4026,6 +4026,18 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
+## REPL
+- Description: Configuration for the REPL. Currently, this only includes the maximum number of columns and lines to keep in the REPL's scrollback buffer.
+- Setting: `repl`
+- Default:
+
+```json
+"repl": {
+  max_number_of_columns: 128,
+  max_number_of_lines: 32
+},
+```
+
 ## Theme
 
 - Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
