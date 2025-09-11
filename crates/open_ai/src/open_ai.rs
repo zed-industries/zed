@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::{Value, from_str};
+use serde_json::Value;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 
