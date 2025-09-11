@@ -45,9 +45,6 @@ use wasmtime::{
 use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
 
-const FIRST_VERSION_TO_REQUIRE_RELATIVE_PATHS_FOR_FS: SemanticVersion =
-    SemanticVersion::new(0, 7, 0);
-
 pub struct WasmHost {
     engine: Engine,
     release_channel: ReleaseChannel,
@@ -495,7 +492,6 @@ pub struct WasmState {
     ctx: wasi::WasiCtx,
     pub host: Arc<WasmHost>,
     pub(crate) capability_granter: CapabilityGranter,
-    requires_relative_paths_for_fs: bool,
 }
 
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
@@ -612,8 +608,6 @@ impl WasmHost {
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
-            let requires_relative_paths_for_fs =
-                zed_api_version >= FIRST_VERSION_TO_REQUIRE_RELATIVE_PATHS_FOR_FS;
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
@@ -625,7 +619,6 @@ impl WasmHost {
                         this.granted_capabilities.clone(),
                         manifest.clone(),
                     ),
-                    requires_relative_paths_for_fs,
                 },
             );
             // Store will yield after 1 tick, and get a new deadline of 1 tick after each yield.
@@ -686,19 +679,8 @@ impl WasmHost {
         Ok(ctx.build())
     }
 
-    pub fn writeable_path_from_extension(
-        &self,
-        id: &Arc<str>,
-        require_relative_paths: bool,
-        path: &Path,
-    ) -> Result<PathBuf> {
+    pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
         let extension_work_dir = self.work_dir.join(id.as_ref());
-        if require_relative_paths {
-            anyhow::ensure!(
-                path.is_relative(),
-                "extensions must use relative paths to access their work directory"
-            )
-        }
         let path = normalize_path(&extension_work_dir.join(path));
         anyhow::ensure!(
             path.starts_with(&extension_work_dir),
