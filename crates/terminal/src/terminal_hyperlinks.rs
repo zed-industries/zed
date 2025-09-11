@@ -89,10 +89,16 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             (format!("{file_path}:{line_number}"), false, python_match)
         })
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
-        let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
+        // First, try to reconstruct broken paths
+        let (file_path, actual_match) = if let Some((reconstructed_path, reconstructed_match)) = 
+            try_reconstruct_broken_path(term, &word_match, regex_searches) {
+            (reconstructed_path, reconstructed_match)
+        } else {
+            (term.bounds_to_string(*word_match.start(), *word_match.end()), word_match)
+        };
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
-            let mut word_match = word_match;
+            let mut word_match = actual_match;
             let mut file_path = file_path;
 
             if is_path_surrounded_by_common_symbols(&file_path) {
@@ -234,6 +240,142 @@ fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
 /// Retrieve the match, if the specified point is inside the content matching the regex.
 fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
     visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
+}
+
+/// Attempts to reconstruct file paths that have been broken across multiple lines.
+/// This handles cases where line wrapping splits a filename, creating separate regex matches
+/// instead of one complete path.
+fn try_reconstruct_broken_path<T: EventListener>(
+    term: &Term<T>,
+    initial_match: &Match,
+    regex_searches: &mut RegexSearches,
+) -> Option<(String, Match)> {
+    let initial_text = term.bounds_to_string(*initial_match.start(), *initial_match.end());
+    
+    // Try to reconstruct if this looks like it could be either a broken path start
+    // or a path continuation (like a filename fragment)
+    if !could_be_broken_path(&initial_text) && !could_be_path_fragment(&initial_text) {
+        return None;
+    }
+    
+    let mut reconstructed_path = initial_text.clone();
+    let mut current_match = initial_match.clone();
+    
+    // First, look backwards for path beginnings if this looks like a fragment
+    if could_be_path_fragment(&initial_text) {
+        let all_matches: Vec<_> = visible_regex_match_iter(term, &mut regex_searches.word_regex).collect();
+        
+        // Look for a match on the previous line that could be the start
+        let prev_line = current_match.start().line - 1;
+        for candidate_match in all_matches.iter() {
+            if candidate_match.end().line == prev_line {
+                let candidate_text = term.bounds_to_string(*candidate_match.start(), *candidate_match.end());
+                
+                if could_be_broken_path(&candidate_text) && 
+                   could_be_path_continuation(&candidate_text, &initial_text) {
+                    // This looks like the beginning - reconstruct from here
+                    reconstructed_path = format!("{}{}", candidate_text, initial_text);
+                    current_match = Match::new(*candidate_match.start(), *current_match.end());
+                    break;
+                }
+            }
+        }
+    }
+    
+    let mut found_continuation = true;
+    
+    // Look for continuations on subsequent lines
+    while found_continuation {
+        found_continuation = false;
+        
+        // Check the line after the current match ends
+        let next_line = current_match.end().line + 1;
+        
+        // Find all matches and look for one that starts at the beginning of the next line
+        let all_matches: Vec<_> = visible_regex_match_iter(term, &mut regex_searches.word_regex).collect();
+        
+        for candidate_match in all_matches {
+            // Check if this match is on the next line and starts near the beginning
+            if candidate_match.start().line == next_line && candidate_match.start().column.0 <= 2 {
+                let candidate_text = term.bounds_to_string(*candidate_match.start(), *candidate_match.end());
+                
+                // Check if this looks like a continuation of the path
+                if could_be_path_continuation(&reconstructed_path, &candidate_text) {
+                    // Merge the paths
+                    reconstructed_path.push_str(&candidate_text);
+                    
+                    // Extend the match to include the continuation
+                    current_match = Match::new(*current_match.start(), *candidate_match.end());
+                    found_continuation = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Only return the reconstructed path if we actually found continuations
+    if reconstructed_path != initial_text {
+        Some((reconstructed_path, current_match))
+    } else {
+        None
+    }
+}
+
+/// Determines if a text fragment could be the start of a broken file path
+fn could_be_broken_path(text: &str) -> bool {
+    // Must contain path separators
+    if !text.contains('/') && !text.contains('\\') {
+        return false;
+    }
+    
+    // Should not end with a complete file extension
+    let has_complete_extension = text.split('/').last()
+        .or_else(|| text.split('\\').last())
+        .map(|filename| filename.contains('.') && filename.split('.').last().unwrap_or("").len() <= 5)
+        .unwrap_or(false);
+    
+    // If it doesn't have a complete extension, it might be broken
+    !has_complete_extension
+}
+
+/// Determines if a text fragment could be the continuation of a broken file path
+fn could_be_path_continuation(existing_path: &str, candidate: &str) -> bool {
+    // The candidate should not start with a path separator (it's a continuation)
+    if candidate.starts_with('/') || candidate.starts_with('\\') {
+        return false;
+    }
+    
+    // Check if combining them would create a valid-looking filename
+    let combined = format!("{}{}", existing_path, candidate);
+    
+    // The combined result should look like a reasonable file path
+    // Check for common file extensions
+    let has_file_extension = combined.split('/').last()
+        .or_else(|| combined.split('\\').last())
+        .map(|filename| {
+            filename.contains('.') && 
+            filename.split('.').last()
+                .map(|ext| ext.len() <= 5 && ext.chars().all(|c| c.is_alphanumeric()))
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+    
+    has_file_extension
+}
+
+/// Determines if a text fragment could be a filename or path fragment
+/// (like "me.tsx" which could be the end of a broken path)
+fn could_be_path_fragment(text: &str) -> bool {
+    // Should not contain path separators (it's a fragment, not a full path)
+    if text.contains('/') || text.contains('\\') {
+        return false;
+    }
+    
+    // Should look like a filename with an extension
+    text.contains('.') && 
+    text.split('.').last()
+        .map(|ext| ext.len() <= 5 && ext.chars().all(|c| c.is_alphanumeric()))
+        .unwrap_or(false)
 }
 
 /// Copied from alacritty/src/display/hint.rs:
