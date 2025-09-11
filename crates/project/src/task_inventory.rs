@@ -1105,7 +1105,6 @@ mod tests {
     #[gpui::test]
     async fn test_task_list_sorting(cx: &mut TestAppContext) {
         init_test(cx);
-        let fs = FakeFs::new(cx.executor());
         let inventory = cx.update(|cx| Inventory::new(cx));
         let initial_tasks = resolved_task_names(&inventory, None, cx).await;
         assert!(
@@ -1286,7 +1285,6 @@ mod tests {
     #[gpui::test]
     async fn test_reloading_debug_scenarios(cx: &mut TestAppContext) {
         init_test(cx);
-        let fs = FakeFs::new(cx.executor());
         let inventory = cx.update(|cx| Inventory::new(cx));
         inventory.update(cx, |inventory, _| {
             inventory
@@ -1396,7 +1394,6 @@ mod tests {
     #[gpui::test]
     async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
         init_test(cx);
-        let fs = FakeFs::new(cx.executor());
         let inventory = cx.update(|cx| Inventory::new(cx));
         let common_name = "common_task_name";
         let worktree_1 = WorktreeId::from_usize(1);
