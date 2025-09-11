@@ -587,6 +587,10 @@ impl ExtensionStore {
     /// This can be used to make certain functionality provided by extensions
     /// available out-of-the-box.
     pub fn auto_install_extensions(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) {
+            return;
+        }
+
         let extension_settings = ExtensionSettings::get_global(cx);
 
         let extensions_to_install = extension_settings
