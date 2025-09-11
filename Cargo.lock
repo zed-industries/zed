@@ -1395,6 +1395,7 @@ dependencies = [
  "serde",
  "settings",
  "smol",
+ "thiserror 2.0.12",
  "util",
  "workspace-hack",
 ]
