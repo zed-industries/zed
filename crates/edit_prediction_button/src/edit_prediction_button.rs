@@ -872,6 +872,12 @@ impl EditPredictionButton {
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, window, cx| {
+            // Automatically refresh models when menu is opened
+            if let Some(service) = ollama::State::global(cx) {
+                service.update(cx, |service, cx| {
+                    service.refresh_models(cx);
+                });
+            }
             let settings = AllLanguageModelSettings::get_global(cx);
             let ollama_settings = &settings.ollama;
 
@@ -928,12 +934,7 @@ impl EditPredictionButton {
                     )
                 });
 
-                // Add refresh models option
-                menu.separator().entry("Refresh Models", None, {
-                    move |_window, cx| {
-                        Self::refresh_ollama_models(cx);
-                    }
-                })
+                menu
             } else {
                 menu.separator()
                     .header("No Models Configured")
@@ -941,11 +942,6 @@ impl EditPredictionButton {
                         let fs = fs.clone();
                         move |window, cx| {
                             Self::open_ollama_settings(fs.clone(), window, cx);
-                        }
-                    })
-                    .entry("Refresh Models", None, {
-                        move |_window, cx| {
-                            Self::refresh_ollama_models(cx);
                         }
                     })
             };
@@ -1058,14 +1054,6 @@ impl EditPredictionButton {
                 }
             }
         });
-    }
-
-    fn refresh_ollama_models(cx: &mut App) {
-        if let Some(service) = ollama::State::global(cx) {
-            service.update(cx, |service, cx| {
-                service.refresh_models(cx);
-            });
-        }
     }
 
     pub fn update_enabled(&mut self, editor: Entity<Editor>, cx: &mut Context<Self>) {
@@ -1256,7 +1244,9 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use client;
     use clock::FakeSystemClock;
+    use fs;
     use gpui::TestAppContext;
     use http_client;
     use ollama::{State, fake::FakeHttpClient};
@@ -1271,6 +1261,7 @@ mod tests {
             theme::init(theme::LoadThemes::JustBase, cx);
             language::init(cx);
             language_settings::init(cx);
+            project::Project::init_settings(cx);
 
             // Initialize language_models settings for tests that need them
             // Create client and user store for language_models::init
@@ -1520,31 +1511,13 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_refresh_models_button_functionality(cx: &mut TestAppContext) {
+    async fn test_automatic_refresh_when_menu_opened(cx: &mut TestAppContext) {
         init_test(cx);
 
+        // Setup fake HTTP client with initial empty response
         let fake_http_client = Arc::new(FakeHttpClient::new());
-
-        // Start with one model
-        let initial_response = serde_json::json!({
-            "models": [
-                {
-                    "name": "mistral:7b",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 1000000,
-                    "digest": "initial123",
-                    "details": {
-                        "format": "gguf",
-                        "family": "mistral",
-                        "families": ["mistral"],
-                        "parameter_size": "7B",
-                        "quantization_level": "Q4_0"
-                    }
-                }
-            ]
-        });
-
-        fake_http_client.set_response("/api/tags", initial_response.to_string());
+        let empty_response = serde_json::json!({"models": []});
+        fake_http_client.set_response("/api/tags", empty_response.to_string());
         fake_http_client.set_response(
             "/api/show",
             serde_json::json!({"capabilities": []}).to_string(),
@@ -1558,68 +1531,62 @@ mod tests {
                 cx,
             )
         });
+        cx.update(|cx| State::set_global(service.clone(), cx));
 
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
-        });
-
+        // Wait for initial fetch to complete (should have no models)
         cx.background_executor.run_until_parked();
 
-        // Verify initial model
+        // Verify no models initially
         service.read_with(cx, |service, _| {
-            assert_eq!(service.available_models().len(), 1);
-            assert_eq!(service.available_models()[0].name, "mistral:7b");
+            assert_eq!(service.available_models().len(), 0);
         });
 
-        // Update mock to simulate new model available
-        let updated_response = serde_json::json!({
+        // Now update the response to have a model
+        let models_response = serde_json::json!({
             "models": [
                 {
-                    "name": "mistral:7b",
+                    "name": "newly-discovered:7b",
                     "modified_at": "2024-01-01T00:00:00Z",
                     "size": 1000000,
-                    "digest": "initial123",
+                    "digest": "abc123",
                     "details": {
                         "format": "gguf",
-                        "family": "mistral",
-                        "families": ["mistral"],
+                        "family": "test",
+                        "families": ["test"],
                         "parameter_size": "7B",
-                        "quantization_level": "Q4_0"
-                    }
-                },
-                {
-                    "name": "gemma2:9b",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 2000000,
-                    "digest": "new456",
-                    "details": {
-                        "format": "gguf",
-                        "family": "gemma2",
-                        "families": ["gemma2"],
-                        "parameter_size": "9B",
                         "quantization_level": "Q4_0"
                     }
                 }
             ]
         });
+        fake_http_client.set_response("/api/tags", models_response.to_string());
 
-        fake_http_client.set_response("/api/tags", updated_response.to_string());
+        // Create the EditPredictionButton and directly test the menu building
+        let (_button, cx) = cx.add_window_view(|window, cx| {
+            let fs = fs::FakeFs::new(cx.background_executor().clone());
+            let clock = Arc::new(FakeSystemClock::new());
+            let http = http_client::FakeHttpClient::with_404_response();
+            let client = client::Client::new(clock, http, cx);
+            let user_store = cx.new(|cx| client::UserStore::new(client, cx));
 
-        // Simulate clicking "Refresh Models" button
-        cx.update(|cx| {
-            EditPredictionButton::refresh_ollama_models(cx);
+            let button =
+                EditPredictionButton::new(fs, user_store, PopoverMenuHandle::default(), cx);
+
+            // The critical test: Call build_ollama_context_menu directly
+            // This should automatically trigger a refresh
+            let _menu = button.build_ollama_context_menu(window, cx);
+
+            button
         });
 
+        // Wait for the automatic refresh to complete
         cx.background_executor.run_until_parked();
 
-        // Verify models were refreshed
+        // Verify that the models were refreshed as a side effect of building the menu
         service.read_with(cx, |service, _| {
             let models = service.available_models();
-            assert_eq!(models.len(), 2);
-
-            let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
-            assert!(model_names.contains(&"mistral:7b"));
-            assert!(model_names.contains(&"gemma2:9b"));
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].name, "newly-discovered:7b");
         });
     }
 
