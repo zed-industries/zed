@@ -79,6 +79,8 @@ pub fn init(languages: Arc<LanguageRegistry>, _: Arc<dyn Fs>, node: NodeRuntime,
         ("gitcommit", tree_sitter_gitcommit::LANGUAGE),
     ]);
 
+    let fs = <dyn Fs>::global(cx);
+
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
     let css_lsp_adapter = Arc::new(css::CssLspAdapter::new(node.clone()));
     let eslint_adapter = Arc::new(typescript::EsLintLspAdapter::new(node.clone()));
@@ -95,9 +97,12 @@ pub fn init(languages: Arc<LanguageRegistry>, _: Arc<dyn Fs>, node: NodeRuntime,
     let rust_context_provider = Arc::new(rust::RustContextProvider);
     let rust_lsp_adapter = Arc::new(rust::RustLspAdapter);
     let tailwind_adapter = Arc::new(tailwind::TailwindLspAdapter::new(node.clone()));
-    let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new());
-    let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(node.clone()));
-    let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone()));
+    let typescript_context = Arc::new(typescript::TypeScriptContextProvider::new(fs.clone()));
+    let typescript_lsp_adapter = Arc::new(typescript::TypeScriptLspAdapter::new(
+        node.clone(),
+        fs.clone(),
+    ));
+    let vtsls_adapter = Arc::new(vtsls::VtslsLspAdapter::new(node.clone(), fs.clone()));
     let yaml_lsp_adapter = Arc::new(yaml::YamlLspAdapter::new(node));
 
     let built_in_languages = [
