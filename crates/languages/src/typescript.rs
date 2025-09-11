@@ -27,8 +27,8 @@ use util::{ResultExt, fs::remove_matching, maybe};
 
 use crate::{PackageJson, PackageJsonData, github_download::download_server_binary};
 
-#[derive(Debug)]
 pub(crate) struct TypeScriptContextProvider {
+    fs: Arc<dyn Fs>,
     last_package_json: PackageJsonContents,
 }
 
@@ -253,8 +253,9 @@ impl PackageJsonData {
 }
 
 impl TypeScriptContextProvider {
-    pub fn new() -> Self {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
         Self {
+            fs,
             last_package_json: PackageJsonContents::default(),
         }
     }
@@ -358,7 +359,6 @@ async fn detect_package_manager(
 impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(
         &self,
-        fs: Arc<dyn Fs>,
         file: Option<Arc<dyn File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
@@ -369,8 +369,12 @@ impl ContextProvider for TypeScriptContextProvider {
             return Task::ready(None);
         };
         let file_relative_path = file.path().clone();
-        let package_json_data =
-            self.combined_package_json_data(fs.clone(), &worktree_root, &file_relative_path, cx);
+        let package_json_data = self.combined_package_json_data(
+            self.fs.clone(),
+            &worktree_root,
+            &file_relative_path,
+            cx,
+        );
 
         cx.background_spawn(async move {
             let mut task_templates = TaskTemplates(Vec::new());
@@ -514,6 +518,7 @@ fn replace_test_name_parameters(test_name: &str) -> String {
 }
 
 pub struct TypeScriptLspAdapter {
+    fs: Arc<dyn Fs>,
     node: NodeRuntime,
 }
 
@@ -523,10 +528,10 @@ impl TypeScriptLspAdapter {
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
     const PACKAGE_NAME: &str = "typescript";
-    pub fn new(node: NodeRuntime) -> Self {
-        TypeScriptLspAdapter { node }
+    pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
+        TypeScriptLspAdapter { fs, node }
     }
-    async fn tsdk_path(fs: &dyn Fs, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
+    async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
             .await
@@ -538,7 +543,8 @@ impl TypeScriptLspAdapter {
             "node_modules/typescript/lib"
         };
 
-        if fs
+        if self
+            .fs
             .is_dir(&adapter.worktree_root_path().join(tsdk_path))
             .await
         {
@@ -696,10 +702,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        fs: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(fs, adapter).await;
+        let tsdk_path = self.tsdk_path(adapter).await;
         Ok(Some(json!({
             "provideFormatter": true,
             "hostInfo": "zed",
@@ -721,7 +726,7 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
+
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -821,7 +826,6 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -1145,7 +1149,7 @@ mod tests {
         )
         .await;
 
-        let provider = TypeScriptContextProvider::new();
+        let provider = TypeScriptContextProvider::new(fs.clone());
         let package_json_data = cx
             .update(|cx| {
                 provider.combined_package_json_data(

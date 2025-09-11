@@ -27,7 +27,6 @@ use crate::language_settings::SoftWrap;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
-use fs::Fs;
 use futures::Future;
 use gpui::{App, AsyncApp, Entity, SharedString, Task};
 pub use highlight_map::HighlightMap;
@@ -511,7 +510,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -519,7 +517,6 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _cx: &mut AsyncApp,
@@ -530,7 +527,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn additional_initialization_options(
         self: Arc<Self>,
         _target_language_server_id: LanguageServerName,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -539,7 +535,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn additional_workspace_configuration(
         self: Arc<Self>,
         _target_language_server_id: LanguageServerName,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
@@ -2261,7 +2256,6 @@ impl LspAdapter for FakeLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())

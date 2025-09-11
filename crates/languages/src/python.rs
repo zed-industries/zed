@@ -119,7 +119,6 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         // Provide minimal initialization options
@@ -324,7 +323,7 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
+
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -471,7 +470,6 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
-        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
@@ -1270,7 +1268,6 @@ impl LspAdapter for PyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -1405,7 +1402,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         // Provide minimal initialization options
@@ -1576,7 +1572,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
