@@ -4184,17 +4184,18 @@ fn extract_hint_labels(editor: &Editor, cx: &App) -> Vec<String> {
         .read(cx)
         .lsp_store()
         .read(cx)
-        .inlay_hint_data;
+        .lsp_data;
 
     let mut all_cached_labels = Vec::new();
     let mut all_fetched_hints = Vec::new();
-    for hints in editor
+    for lsp_data in editor
         .buffer()
         .read(cx)
         .all_buffer_ids()
         .into_iter()
         .filter_map(|buffer_id| inlay_hint_cache.get(&buffer_id))
     {
+        let hints = &lsp_data.inlay_hints;
         all_cached_labels.extend(hints.all_cached_hints().into_iter().map(|hint| {
             let mut label = hint.text().to_string();
             if hint.padding_left {
