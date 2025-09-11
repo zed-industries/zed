@@ -14,11 +14,11 @@ To configure the Tailwind CSS language server, refer [to the extension settings]
     "tailwindcss-language-server": {
       "settings": {
         "experimental": {
-          "classRegex": ["[cls|className]\\s\\:\\=\\s\"([^\"]*)"]
-        }
-      }
-    }
-  }
+          "classRegex": ["[cls|className]\\s\\:\\=\\s\"([^\"]*)"],
+        },
+      },
+    },
+  },
 }
 ```
 
