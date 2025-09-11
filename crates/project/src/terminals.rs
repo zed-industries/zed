@@ -197,6 +197,7 @@ impl Project {
                             )?,
                         },
                         None => match activation_script.clone() {
+                            #[cfg(not(windows))]
                             activation_script if !activation_script.is_empty() => {
                                 let activation_script = activation_script.join("; ");
                                 let to_run = if let Some(command) = spawn_task.command {
@@ -213,9 +214,17 @@ impl Project {
                                     program: shell,
                                     args: vec![
                                         "-c".to_owned(),
-                                        // alacritty formats all args into a single string literaly without extra quoting before handing it off to powershell
+                                        // alacritty formats all args into a single string literally without extra quoting before handing it off to powershell
                                         // so we work around this here
                                         if cfg!(windows) {
+                                            println!(
+                                                "{}",
+                                                shlex::try_quote(&format!(
+                                                    "{activation_script}; {to_run}",
+                                                ))
+                                                .unwrap()
+                                                .into_owned()
+                                            );
                                             shlex::try_quote(&format!(
                                                 "{activation_script}; {to_run}",
                                             ))
@@ -242,7 +251,6 @@ impl Project {
                         },
                     }
                 };
-                dbg!(&shell);
                 TerminalBuilder::new(
                     local_path.map(|path| path.to_path_buf()),
                     task_state,
