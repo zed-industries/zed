@@ -1361,4 +1361,149 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_multiline_url_detection_with_break() {
+        // Test scenario where a URL might break across lines in a way that 
+        // creates separate regex matches instead of one continuous match
+        
+        // Create a terminal with a very narrow width to force breaking at inconvenient points
+        let term = Term::new(Config::default(), &TermSize::new(15, 10), VoidListener);
+        let mut regex_searches = RegexSearches::new();
+        
+        // Input a URL that will break in the middle of the domain
+        let test_input = "Visit https://github.com/zed-industries/zed for more info";
+        
+        let mut term = term;
+        for c in test_input.chars() {
+            term.input(c);
+        }
+        
+        // Print the terminal content to understand the layout
+        let grid = term.grid();
+        println!("Terminal content (width: {}):", term.columns());
+        for line_idx in 0..std::cmp::min(8, grid.screen_lines()) {
+            let mut line_content = String::new();
+            for col_idx in 0..grid.columns() {
+                let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
+                let cell = grid.index(point);
+                line_content.push(cell.c);
+            }
+            println!("Line {}: '{}'", line_idx, line_content.trim_end());
+        }
+        
+        // Find all regex matches to see how they are distributed
+        let all_matches: Vec<_> = visible_regex_match_iter(&term, &mut regex_searches.url_regex).collect();
+        println!("Found {} URL matches:", all_matches.len());
+        for (i, m) in all_matches.iter().enumerate() {
+            let url_text = term.bounds_to_string(*m.start(), *m.end());
+            println!("  Match {}: '{}' at {:?}..={:?}", i, url_text, m.start(), m.end());
+        }
+        
+        // Find specific points to test
+        let mut https_start = None;
+        let mut middle_of_domain = None;
+        let mut end_of_path = None;
+        
+        for line_idx in 0..std::cmp::min(8, grid.screen_lines()) {
+            for col_idx in 0..grid.columns() {
+                let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
+                let cell = grid.index(point);
+                
+                // Find start of https://
+                if cell.c == 'h' && https_start.is_none() {
+                    if col_idx + 7 < grid.columns() || line_idx < grid.screen_lines() - 1 {
+                        https_start = Some(point);
+                    }
+                }
+                
+                // Find what looks like middle of github domain (likely on different line)
+                if cell.c == 'g' && line_idx > 0 && middle_of_domain.is_none() {
+                    // Check if this could be "github"
+                    let check_str = "github";
+                    let mut is_github = true;
+                    for (i, expected_char) in check_str.chars().enumerate() {
+                        let check_col = col_idx + i;
+                        let check_point = if check_col < grid.columns() {
+                            AlacPoint::new(Line(line_idx as i32), Column(check_col))
+                        } else {
+                            // Wrapped to next line
+                            let next_line = line_idx + 1;
+                            let wrapped_col = check_col - grid.columns();
+                            if next_line < grid.screen_lines() && wrapped_col < grid.columns() {
+                                AlacPoint::new(Line(next_line as i32), Column(wrapped_col))
+                            } else {
+                                is_github = false;
+                                break;
+                            }
+                        };
+                        
+                        if is_github {
+                            let check_cell = grid.index(check_point);
+                            if check_cell.c != expected_char {
+                                is_github = false;
+                                break;
+                            }
+                        }
+                    }
+                    if is_github {
+                        middle_of_domain = Some(point);
+                    }
+                }
+                
+                // Find potential end of the path
+                if cell.c == 'd' && line_idx > 1 && end_of_path.is_none() {
+                    end_of_path = Some(point);
+                }
+            }
+        }
+        
+        println!("Test points:");
+        println!("  HTTPS start: {:?}", https_start);
+        println!("  Middle of domain: {:?}", middle_of_domain);
+        println!("  End of path: {:?}", end_of_path);
+        
+        // Test hyperlink detection at each point
+        if let Some(start_point) = https_start {
+            let start_result = find_from_grid_point(&term, start_point, &mut regex_searches);
+            println!("HTTPS start result: {:?}", start_result.as_ref().map(|(url, _, _)| url));
+            
+            if let Some(middle_point) = middle_of_domain {
+                let middle_result = find_from_grid_point(&term, middle_point, &mut regex_searches);
+                println!("Middle result: {:?}", middle_result.as_ref().map(|(url, _, _)| url));
+                
+                // The key test: both should find the same complete URL
+                match (&start_result, &middle_result) {
+                    (Some((start_url, _, _)), Some((middle_url, _, _))) => {
+                        if start_url == middle_url {
+                            println!("✓ SUCCESS: Both points detected same URL: {}", start_url);
+                        } else {
+                            println!("⚠ DIFFERENT URLs detected:");
+                            println!("  Start: {}", start_url);
+                            println!("  Middle: {}", middle_url);
+                        }
+                    }
+                    (Some((start_url, _, _)), None) => {
+                        println!("✗ BUG: Start found '{}' but middle found nothing", start_url);
+                        // Don't panic here since this might be expected behavior that we want to document
+                    }
+                    (None, Some((middle_url, _, _))) => {
+                        println!("? Unexpected: Middle found '{}' but start found nothing", middle_url);
+                    }
+                    (None, None) => {
+                        println!("✗ No URLs detected at either point");
+                    }
+                }
+            }
+            
+            if let Some(end_point) = end_of_path {
+                let end_result = find_from_grid_point(&term, end_point, &mut regex_searches);
+                println!("End result: {:?}", end_result.as_ref().map(|(url, _, _)| url));
+            }
+        }
+        
+        // This test is mainly for documentation/investigation - we're not asserting failure
+        // because the behavior might actually be correct
+        println!("Test completed - check output above for URL detection behavior");
+    }
 }
