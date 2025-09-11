@@ -96,7 +96,10 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             {
                 let next_text = term.bounds_to_string(*next_match.start(), *next_match.end());
                 if next_text.contains('.') && !next_text.contains('/') {
-                    (format!("{}{}", text, next_text), Match::new(*word_match.start(), *next_match.end()))
+                    (
+                        format!("{}{}", text, next_text),
+                        Match::new(*word_match.start(), *next_match.end()),
+                    )
                 } else {
                     (text, word_match)
                 }
@@ -1391,8 +1394,12 @@ mod tests {
             }
         }
 
-        let result = find_from_grid_point(&term, AlacPoint::new(Line(0), Column(15)), &mut regex_searches);
-        
+        let result = find_from_grid_point(
+            &term,
+            AlacPoint::new(Line(0), Column(15)),
+            &mut regex_searches,
+        );
+
         assert!(result.is_some());
         assert!(result.unwrap().0.contains("me.tsx"));
     }
