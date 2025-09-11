@@ -271,22 +271,17 @@ macro_rules! register_extension {
         mod wasi_ext {
             unsafe extern "C" {
                 static mut errno: i32;
-                static mut __wasilibc_cwd: *mut std::ffi::c_char;
+                pub static mut __wasilibc_cwd: *mut std::ffi::c_char;
             }
 
-            // Will initialise __wasilibc_cwd to PWD environment variable.
-            pub unsafe fn init_current_dir() {
-                let path = std::env::var("PWD").unwrap();
-                let raw_path = path.as_bytes();
-                let raw_path_len = raw_path.len();
-
-                let mut new_cwd = std::mem::ManuallyDrop::new(Vec::<u8>::with_capacity(raw_path_len + 1));
-                new_cwd.resize(raw_path_len + 1, 0);
-
-                new_cwd[0..raw_path_len].copy_from_slice(raw_path);
-                new_cwd[raw_path_len] = 0;
-
-                __wasilibc_cwd = new_cwd.as_mut_ptr().cast();
+            pub fn init_cwd() {
+                unsafe {
+                    chdir(std::ptr::null());
+                    __wasilibc_cwd = std::ffi::CString::new(std::env::var("PWD").unwrap())
+                        .unwrap()
+                        .into_raw()
+                        .cast();
+                }
             }
 
             #[unsafe(no_mangle)]
@@ -300,10 +295,7 @@ macro_rules! register_extension {
         #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
             #[cfg(target_os = "wasi")]
-            unsafe {
-                pub use wasi_ext::{init_current_dir, chdir};
-                init_current_dir();
-            }
+            wasi_ext::init_cwd();
 
             zed_extension_api::register_extension(|| {
                 Box::new(<$extension_type as zed_extension_api::Extension>::new())

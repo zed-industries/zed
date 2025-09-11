@@ -19,7 +19,22 @@ impl TestExtension {
         let current_dir = std::env::current_dir().unwrap();
         println!("current_dir: {}", current_dir.display());
 
-        std::fs::write("test.txt", b"Hello!").unwrap();
+        fs::create_dir_all(current_dir.join("dir-created-with-abs-path")).unwrap();
+        fs::create_dir_all("./dir-created-with-rel-path").unwrap();
+        fs::write("file-created-with-rel-path", b"contents 1").unwrap();
+        fs::write(
+            current_dir.join("file-created-with-abs-path"),
+            b"contents 2",
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read("file-created-with-rel-path").unwrap(),
+            b"contents 1"
+        );
+        assert_eq!(
+            fs::read("file-created-with-abs-path").unwrap(),
+            b"contents 2"
+        );
 
         let command = match platform {
             zed::Os::Linux | zed::Os::Mac => Command::new("echo"),
@@ -101,7 +116,9 @@ impl TestExtension {
                 fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
             for entry in entries {
                 let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
-                if entry.file_name().to_str() != Some(&version_dir) {
+                let filename = entry.file_name();
+                let filename = filename.to_str().unwrap();
+                if filename.starts_with("gleam-") && filename != version_dir {
                     fs::remove_dir_all(entry.path()).ok();
                 }
             }

@@ -531,7 +531,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 // `let fake_server = fake_servers.next().await.unwrap();`.
 // Reenable this test when we figure out why.
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -718,12 +717,16 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    // todo(windows)
-    // This test hangs here on Windows.
     let fake_server = fake_servers.next().await.unwrap();
-    let expected_server_path =
-        extensions_dir.join(format!("work/{test_extension_id}/gleam-v1.2.3/gleam"));
+    let work_dir = extensions_dir.join(format!("work/{test_extension_id}"));
+    let expected_server_path = work_dir.join(format!("gleam-v1.2.3/gleam"));
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
+
+    // check that IO operations in extension work correctly
+    assert!(work_dir.join("dir-created-with-rel-path").exists());
+    assert!(work_dir.join("dir-created-with-abs-path").exists());
+    assert!(work_dir.join("file-created-with-abs-path").exists());
+    assert!(work_dir.join("file-created-with-rel-path").exists());
 
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
