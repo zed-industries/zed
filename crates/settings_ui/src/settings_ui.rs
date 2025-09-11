@@ -393,7 +393,7 @@ fn render_content(
         tree.active_entry_index,
         &mut path,
         content,
-        &mut None,
+        None,
         true,
         window,
         cx,
@@ -405,7 +405,7 @@ fn render_recursive(
     index: usize,
     path: &mut SmallVec<[SharedString; 1]>,
     mut element: Div,
-    fallback_path: &mut Option<SmallVec<[SharedString; 1]>>,
+    parent_fallback_default_value: Option<&serde_json::Value>,
     render_next_title: bool,
     window: &mut Window,
     cx: &mut App,
@@ -421,16 +421,18 @@ fn render_recursive(
 
     // todo(settings_ui): subgroups?
     let mut pushed_path = false;
+    let mut fallback_default_value = parent_fallback_default_value;
     if let Some(child_path) = child.path.as_ref() {
         path.push(child_path.clone());
-        if let Some(fallback_path) = fallback_path.as_mut() {
-            fallback_path.push(child_path.clone());
+        if let Some(fallback_value) = parent_fallback_default_value.as_ref() {
+            fallback_default_value =
+                read_settings_value_from_path(fallback_value, std::slice::from_ref(&child_path));
         }
         pushed_path = true;
     }
     let settings_value = settings_value_from_settings_and_path(
         path.clone(),
-        fallback_path.as_ref().map(|path| path.as_slice()),
+        fallback_default_value,
         child.title.clone(),
         child.documentation.clone(),
         // PERF: how to structure this better? There feels like there's a way to avoid the clone
@@ -473,7 +475,7 @@ fn render_recursive(
                 descendant_index,
                 path,
                 element,
-                fallback_path,
+                fallback_default_value,
                 false,
                 window,
                 cx,
@@ -516,7 +518,7 @@ fn render_recursive(
                     item_index,
                     path,
                     element,
-                    &mut Some(defaults_path.clone()),
+                    Some(&array.default_item),
                     true,
                     window,
                     cx,
@@ -529,6 +531,11 @@ fn render_recursive(
     {
         let generated_items = generate_items(settings_value.read(), cx);
         let mut ui_items = Vec::with_capacity(generated_items.len());
+        let default_value = read_settings_value_from_path(
+            SettingsStore::global(cx).raw_default_settings(),
+            &defaults_path,
+        )
+        .cloned();
         for item in generated_items {
             let settings_ui_entry = SettingsUiEntry {
                 path: None,
@@ -561,7 +568,7 @@ fn render_recursive(
                     item_index,
                     path,
                     element,
-                    &mut Some(defaults_path.clone()),
+                    default_value.as_ref(),
                     true,
                     window,
                     cx,
@@ -584,7 +591,7 @@ fn render_recursive(
                 sub_child_index,
                 path,
                 element,
-                fallback_path,
+                fallback_default_value,
                 true,
                 window,
                 cx,
@@ -597,9 +604,6 @@ fn render_recursive(
 
     if pushed_path {
         path.pop();
-        if let Some(fallback_path) = fallback_path.as_mut() {
-            fallback_path.pop();
-        }
     }
     return element;
 }
@@ -1038,18 +1042,14 @@ fn render_toggle_button_group_inner(
 
 fn settings_value_from_settings_and_path(
     path: SmallVec<[SharedString; 1]>,
-    fallback_path: Option<&[SharedString]>,
+    fallback_value: Option<&serde_json::Value>,
     title: SharedString,
     documentation: Option<SharedString>,
     user_settings: &serde_json::Value,
     default_settings: &serde_json::Value,
 ) -> SettingsValue<serde_json::Value> {
     let default_value = read_settings_value_from_path(default_settings, &path)
-        .or_else(|| {
-            fallback_path.and_then(|fallback_path| {
-                read_settings_value_from_path(default_settings, fallback_path)
-            })
-        })
+        .or_else(|| fallback_value)
         .with_context(|| format!("No default value for item at path {:?}", path.join(".")))
         .expect("Default value set for item")
         .clone();

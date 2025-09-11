@@ -154,9 +154,10 @@ fn trait_method_call(
 ) -> TokenStream {
     // doing the <ty as settings::SettingsUi> makes the error message better:
     //  -> "#ty Doesn't implement settings::SettingsUi" instead of "no item "settings_ui_item" for #ty"
-    // and ensures safety against name conflicts
-    //
-    // todo(settings_ui): Turn `Vec<T>` into `Vec::<T>` here as well
+    // it also ensures safety against name conflicts with the method name, and works for parameterized types such as `Vec<T>`,
+    // as the syntax for calling methods directly on parameterized types is `Vec::<T>::method_name()`,
+    // but `<Vec<T> as MyTrait>::method_name()` is valid so we don't have to worry about inserting the extra
+    // colons as appropriate
     quote! {
         <#ty as #trait_name>::#method_name()
     }
