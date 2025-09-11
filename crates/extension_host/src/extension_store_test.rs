@@ -719,7 +719,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     let fake_server = fake_servers.next().await.unwrap();
     let work_dir = extensions_dir.join(format!("work/{test_extension_id}"));
-    let expected_server_path = work_dir.join(format!("gleam-v1.2.3/gleam"));
+    let expected_server_path = work_dir.join("gleam-v1.2.3/gleam");
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
 
     // check that IO operations in extension work correctly

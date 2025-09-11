@@ -276,7 +276,14 @@ macro_rules! register_extension {
 
             pub fn init_cwd() {
                 unsafe {
+                    // Ensure that our chdir function is linked, instead of the
+                    // one from wasi-libc in the chdir.o translation unit. Otherwise
+                    // we risk linking in `__wasilibc_find_relpath_alloc` which
+                    // is a weak symbol and is being used by
+                    // `__wasilibc_find_relpath`, which we do not want on
+                    // Windows.
                     chdir(std::ptr::null());
+
                     __wasilibc_cwd = std::ffi::CString::new(std::env::var("PWD").unwrap())
                         .unwrap()
                         .into_raw()
@@ -286,7 +293,7 @@ macro_rules! register_extension {
 
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn chdir(raw_path: *const std::ffi::c_char) -> i32 {
-                // We specifically forbid extensions to change CWD and so return an appropriate error code.
+                // Forbid extensions from changing CWD and so return an appropriate error code.
                 errno = 58; // NOTSUP
                 return -1;
             }
