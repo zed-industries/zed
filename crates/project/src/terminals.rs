@@ -197,7 +197,6 @@ impl Project {
                             )?,
                         },
                         None => match activation_script.clone() {
-                            #[cfg(not(target_os = "windows"))]
                             activation_script if !activation_script.is_empty() => {
                                 let activation_script = activation_script.join("; ");
                                 let to_run = if let Some(command) = spawn_task.command {
@@ -214,7 +213,17 @@ impl Project {
                                     program: shell,
                                     args: vec![
                                         "-c".to_owned(),
-                                        format!("{activation_script}; {to_run}",),
+                                        // alacritty formats all args into a single string literaly without extra quoting before handing it off to powershell
+                                        // so we work around this here
+                                        if cfg!(windows) {
+                                            shlex::try_quote(&format!(
+                                                "{activation_script}; {to_run}",
+                                            ))
+                                            .unwrap()
+                                            .into_owned()
+                                        } else {
+                                            format!("{activation_script}; {to_run}",)
+                                        },
                                     ],
                                     title_override: None,
                                 }
@@ -233,6 +242,7 @@ impl Project {
                         },
                     }
                 };
+                dbg!(&shell);
                 TerminalBuilder::new(
                     local_path.map(|path| path.to_path_buf()),
                     task_state,

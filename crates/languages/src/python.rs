@@ -918,9 +918,12 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::Cmd => "activate.bat",
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
-                    if fs.is_file(&path).await {
-                        activation_script
-                            .push(format!("{activate_keyword} \"{}\"", path.display()));
+
+                    if let Ok(quoted) =
+                        shlex::try_quote(&path.to_string_lossy()).map(Cow::into_owned)
+                        && fs.is_file(&path).await
+                    {
+                        activation_script.push(format!("{activate_keyword} {quoted}"));
                     }
                 }
             }
