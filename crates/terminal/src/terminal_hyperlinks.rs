@@ -89,10 +89,20 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             (format!("{file_path}:{line_number}"), false, python_match)
         })
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
-        let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
+        // First, try to reconstruct broken paths
+        let (file_path, actual_match) = if let Some((reconstructed_path, reconstructed_match)) =
+            reconstruct_broken_path(term, &word_match, regex_searches)
+        {
+            (reconstructed_path, reconstructed_match)
+        } else {
+            (
+                term.bounds_to_string(*word_match.start(), *word_match.end()),
+                word_match,
+            )
+        };
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
-            let mut word_match = word_match;
+            let mut word_match = actual_match;
             let mut file_path = file_path;
 
             if is_path_surrounded_by_common_symbols(&file_path) {
@@ -234,6 +244,129 @@ fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
 /// Retrieve the match, if the specified point is inside the content matching the regex.
 fn regex_match_at<T>(term: &Term<T>, point: AlacPoint, regex: &mut RegexSearch) -> Option<Match> {
     visible_regex_match_iter(term, regex).find(|rm| rm.contains(&point))
+}
+
+fn reconstruct_broken_path<T: EventListener>(
+    term: &Term<T>,
+    initial_match: &Match,
+    regex_searches: &mut RegexSearches,
+) -> Option<(String, Match)> {
+    let initial_text = term.bounds_to_string(*initial_match.start(), *initial_match.end());
+
+    if !is_broken_path(&initial_text) && !is_path_fragment(&initial_text) {
+        return None;
+    }
+
+    let mut reconstructed_path = initial_text.clone();
+    let mut current_match = initial_match.clone();
+
+    if is_path_fragment(&initial_text) {
+        let all_matches: Vec<_> =
+            visible_regex_match_iter(term, &mut regex_searches.word_regex).collect();
+
+        let prev_line = current_match.start().line - 1;
+        for candidate_match in all_matches.iter() {
+            if candidate_match.end().line == prev_line {
+                let candidate_text =
+                    term.bounds_to_string(*candidate_match.start(), *candidate_match.end());
+
+                if is_broken_path(&candidate_text)
+                    && is_continuation(&candidate_text, &initial_text)
+                {
+                    reconstructed_path = format!("{}{}", candidate_text, initial_text);
+                    current_match = Match::new(*candidate_match.start(), *current_match.end());
+                    break;
+                }
+            }
+        }
+    }
+
+    let mut found_continuation = true;
+
+    while found_continuation {
+        found_continuation = false;
+
+        let next_line = current_match.end().line + 1;
+
+        let all_matches: Vec<_> =
+            visible_regex_match_iter(term, &mut regex_searches.word_regex).collect();
+
+        for candidate_match in all_matches {
+            if candidate_match.start().line == next_line && candidate_match.start().column.0 <= 2 {
+                let candidate_text =
+                    term.bounds_to_string(*candidate_match.start(), *candidate_match.end());
+
+                if is_continuation(&reconstructed_path, &candidate_text) {
+                    reconstructed_path.push_str(&candidate_text);
+
+                    current_match = Match::new(*current_match.start(), *candidate_match.end());
+                    found_continuation = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if reconstructed_path != initial_text {
+        Some((reconstructed_path, current_match))
+    } else {
+        None
+    }
+}
+
+fn is_broken_path(text: &str) -> bool {
+    if !text.contains('/') && !text.contains('\\') {
+        return false;
+    }
+
+    let has_complete_extension = text
+        .split('/')
+        .last()
+        .or_else(|| text.split('\\').last())
+        .map(|filename| {
+            filename.contains('.') && filename.split('.').last().unwrap_or("").len() <= 5
+        })
+        .unwrap_or(false);
+
+    // If it doesn't have a complete extension, it might be broken
+    !has_complete_extension
+}
+
+fn is_continuation(existing_path: &str, candidate: &str) -> bool {
+    if candidate.starts_with('/') || candidate.starts_with('\\') {
+        return false;
+    }
+
+    let combined = format!("{}{}", existing_path, candidate);
+
+    let has_file_extension = combined
+        .split('/')
+        .last()
+        .or_else(|| combined.split('\\').last())
+        .map(|filename| {
+            filename.contains('.')
+                && filename
+                    .split('.')
+                    .last()
+                    .map(|ext| ext.len() <= 5 && ext.chars().all(|c| c.is_alphanumeric()))
+                    .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    has_file_extension
+}
+
+fn is_path_fragment(text: &str) -> bool {
+    if text.contains('/') || text.contains('\\') {
+        return false;
+    }
+
+    text.contains('.')
+        && text
+            .split('.')
+            .last()
+            .map(|ext| ext.len() <= 5 && ext.chars().all(|c| c.is_alphanumeric()))
+            .unwrap_or(false)
 }
 
 /// Copied from alacritty/src/display/hint.rs:
@@ -1364,21 +1497,21 @@ mod tests {
 
     #[test]
     fn test_multiline_url_detection_with_break() {
-        // Test scenario where a URL might break across lines in a way that 
+        // Test scenario where a URL might break across lines in a way that
         // creates separate regex matches instead of one continuous match
-        
+
         // Create a terminal with a very narrow width to force breaking at inconvenient points
         let term = Term::new(Config::default(), &TermSize::new(15, 10), VoidListener);
         let mut regex_searches = RegexSearches::new();
-        
+
         // Input a URL that will break in the middle of the domain
         let test_input = "Visit https://github.com/zed-industries/zed for more info";
-        
+
         let mut term = term;
         for c in test_input.chars() {
             term.input(c);
         }
-        
+
         // Print the terminal content to understand the layout
         let grid = term.grid();
         println!("Terminal content (width: {}):", term.columns());
@@ -1391,32 +1524,39 @@ mod tests {
             }
             println!("Line {}: '{}'", line_idx, line_content.trim_end());
         }
-        
+
         // Find all regex matches to see how they are distributed
-        let all_matches: Vec<_> = visible_regex_match_iter(&term, &mut regex_searches.url_regex).collect();
+        let all_matches: Vec<_> =
+            visible_regex_match_iter(&term, &mut regex_searches.url_regex).collect();
         println!("Found {} URL matches:", all_matches.len());
         for (i, m) in all_matches.iter().enumerate() {
             let url_text = term.bounds_to_string(*m.start(), *m.end());
-            println!("  Match {}: '{}' at {:?}..={:?}", i, url_text, m.start(), m.end());
+            println!(
+                "  Match {}: '{}' at {:?}..={:?}",
+                i,
+                url_text,
+                m.start(),
+                m.end()
+            );
         }
-        
+
         // Find specific points to test
         let mut https_start = None;
         let mut middle_of_domain = None;
         let mut end_of_path = None;
-        
+
         for line_idx in 0..std::cmp::min(8, grid.screen_lines()) {
             for col_idx in 0..grid.columns() {
                 let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
                 let cell = grid.index(point);
-                
+
                 // Find start of https://
                 if cell.c == 'h' && https_start.is_none() {
                     if col_idx + 7 < grid.columns() || line_idx < grid.screen_lines() - 1 {
                         https_start = Some(point);
                     }
                 }
-                
+
                 // Find what looks like middle of github domain (likely on different line)
                 if cell.c == 'g' && line_idx > 0 && middle_of_domain.is_none() {
                     // Check if this could be "github"
@@ -1437,7 +1577,7 @@ mod tests {
                                 break;
                             }
                         };
-                        
+
                         if is_github {
                             let check_cell = grid.index(check_point);
                             if check_cell.c != expected_char {
@@ -1450,28 +1590,34 @@ mod tests {
                         middle_of_domain = Some(point);
                     }
                 }
-                
+
                 // Find potential end of the path
                 if cell.c == 'd' && line_idx > 1 && end_of_path.is_none() {
                     end_of_path = Some(point);
                 }
             }
         }
-        
+
         println!("Test points:");
         println!("  HTTPS start: {:?}", https_start);
         println!("  Middle of domain: {:?}", middle_of_domain);
         println!("  End of path: {:?}", end_of_path);
-        
+
         // Test hyperlink detection at each point
         if let Some(start_point) = https_start {
             let start_result = find_from_grid_point(&term, start_point, &mut regex_searches);
-            println!("HTTPS start result: {:?}", start_result.as_ref().map(|(url, _, _)| url));
-            
+            println!(
+                "HTTPS start result: {:?}",
+                start_result.as_ref().map(|(url, _, _)| url)
+            );
+
             if let Some(middle_point) = middle_of_domain {
                 let middle_result = find_from_grid_point(&term, middle_point, &mut regex_searches);
-                println!("Middle result: {:?}", middle_result.as_ref().map(|(url, _, _)| url));
-                
+                println!(
+                    "Middle result: {:?}",
+                    middle_result.as_ref().map(|(url, _, _)| url)
+                );
+
                 // The key test: both should find the same complete URL
                 match (&start_result, &middle_result) {
                     (Some((start_url, _, _)), Some((middle_url, _, _))) => {
@@ -1484,46 +1630,55 @@ mod tests {
                         }
                     }
                     (Some((start_url, _, _)), None) => {
-                        println!("✗ BUG: Start found '{}' but middle found nothing", start_url);
+                        println!(
+                            "✗ BUG: Start found '{}' but middle found nothing",
+                            start_url
+                        );
                         // Don't panic here since this might be expected behavior that we want to document
                     }
                     (None, Some((middle_url, _, _))) => {
-                        println!("? Unexpected: Middle found '{}' but start found nothing", middle_url);
+                        println!(
+                            "? Unexpected: Middle found '{}' but start found nothing",
+                            middle_url
+                        );
                     }
                     (None, None) => {
                         println!("✗ No URLs detected at either point");
                     }
                 }
             }
-            
+
             if let Some(end_point) = end_of_path {
                 let end_result = find_from_grid_point(&term, end_point, &mut regex_searches);
-                println!("End result: {:?}", end_result.as_ref().map(|(url, _, _)| url));
+                println!(
+                    "End result: {:?}",
+                    end_result.as_ref().map(|(url, _, _)| url)
+                );
             }
         }
-        
+
         // This test is mainly for documentation/investigation - we're not asserting failure
         // because the behavior might actually be correct
         println!("Test completed - check output above for URL detection behavior");
     }
 
-    #[test] 
+    #[test]
     fn test_multiline_file_path_detection_issue() {
         // Test the actual issue: file paths that wrap across multiple lines
         // where only the first line is clickable
-        
+
         // Create a terminal with narrow width to force file path wrapping
         let term = Term::new(Config::default(), &TermSize::new(20, 10), VoidListener);
         let mut regex_searches = RegexSearches::new();
-        
+
         // Use a realistic scenario - a long file path in an error message
         let test_input = "Error in /very/long/path/to/some/deeply/nested/project/src/components/MyComponent.tsx:42:15";
-        
+
         let mut term = term;
         for c in test_input.chars() {
             term.input(c);
         }
-        
+
         // Print the terminal content
         let grid = term.grid();
         println!("Terminal content (width: {}):", term.columns());
@@ -1536,56 +1691,69 @@ mod tests {
             }
             println!("Line {}: '{}'", line_idx, line_content.trim_end());
         }
-        
+
         // Find all file path matches using the word regex
-        let all_word_matches: Vec<_> = visible_regex_match_iter(&term, &mut regex_searches.word_regex).collect();
+        let all_word_matches: Vec<_> =
+            visible_regex_match_iter(&term, &mut regex_searches.word_regex).collect();
         println!("Found {} file path matches:", all_word_matches.len());
         for (i, m) in all_word_matches.iter().enumerate() {
             let path_text = term.bounds_to_string(*m.start(), *m.end());
-            println!("  Match {}: '{}' at {:?}..={:?}", i, path_text, m.start(), m.end());
+            println!(
+                "  Match {}: '{}' at {:?}..={:?}",
+                i,
+                path_text,
+                m.start(),
+                m.end()
+            );
         }
-        
+
         // Find specific test points
-        let mut path_start = None;    // The '/' at the beginning of the path
-        let mut path_middle = None;   // Some character in the middle (different line)
-        let mut path_end = None;      // The line number at the end
-        
+        let mut path_start = None; // The '/' at the beginning of the path
+        let mut path_middle = None; // Some character in the middle (different line)
+        let mut path_end = None; // The line number at the end
+
         for line_idx in 0..std::cmp::min(6, grid.screen_lines()) {
             for col_idx in 0..grid.columns() {
                 let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
                 let cell = grid.index(point);
-                
+
                 // Find the start of the path (first '/')
                 if cell.c == '/' && path_start.is_none() {
                     path_start = Some(point);
                 }
-                
+
                 // Find something in the middle on a different line
                 if line_idx > 0 && cell.c.is_alphanumeric() && path_middle.is_none() {
                     path_middle = Some(point);
                 }
-                
+
                 // Find the line number at the end (looking for digits after ':')
                 if cell.c.is_ascii_digit() && line_idx > 0 && path_end.is_none() {
                     path_end = Some(point);
                 }
             }
         }
-        
+
         println!("Test points:");
         println!("  Path start: {:?}", path_start);
-        println!("  Path middle: {:?}", path_middle);  
+        println!("  Path middle: {:?}", path_middle);
         println!("  Path end: {:?}", path_end);
-        
+
         // Test file path detection at each point
         if let Some(start_point) = path_start {
             let start_result = find_from_grid_point(&term, start_point, &mut regex_searches);
-            println!("Path start result: {:?}", start_result.as_ref().map(|(path, _, _)| path));
-            
+            println!(
+                "Path start result: {:?}",
+                start_result.as_ref().map(|(path, _, _)| path)
+            );
+
             if let Some(middle_point) = path_middle {
                 let middle_result = find_from_grid_point(&term, middle_point, &mut regex_searches);
-                println!("Path middle result: {:?}", middle_result.as_ref().map(|(path, _, _)| path));
-                
+                println!(
+                    "Path middle result: {:?}",
+                    middle_result.as_ref().map(|(path, _, _)| path)
+                );
+
                 // This is the key test for the bug
                 match (&start_result, &middle_result) {
                     (Some((start_path, _, _)), Some((middle_path, _, _))) => {
@@ -1598,23 +1766,35 @@ mod tests {
                         }
                     }
                     (Some((start_path, _, _)), None) => {
-                        println!("✗ BUG CONFIRMED: Start found '{}' but middle found nothing", start_path);
+                        println!(
+                            "✗ BUG CONFIRMED: Start found '{}' but middle found nothing",
+                            start_path
+                        );
                         println!("This confirms the multi-line file path issue!");
                         // Assert to make the test fail and document the issue
-                        assert!(false, "Multi-line file path bug: clicking on wrapped lines doesn't work");
+                        assert!(
+                            false,
+                            "Multi-line file path bug: clicking on wrapped lines doesn't work"
+                        );
                     }
                     (None, Some((middle_path, _, _))) => {
-                        println!("? Unexpected: Middle found '{}' but start found nothing", middle_path);
+                        println!(
+                            "? Unexpected: Middle found '{}' but start found nothing",
+                            middle_path
+                        );
                     }
                     (None, None) => {
                         println!("✗ No file paths detected at either point");
                     }
                 }
             }
-            
+
             if let Some(end_point) = path_end {
                 let end_result = find_from_grid_point(&term, end_point, &mut regex_searches);
-                println!("Path end result: {:?}", end_result.as_ref().map(|(path, _, _)| path));
+                println!(
+                    "Path end result: {:?}",
+                    end_result.as_ref().map(|(path, _, _)| path)
+                );
             }
         }
     }
@@ -1623,14 +1803,14 @@ mod tests {
     fn test_multiline_filename_break_issue() {
         // Test the issue where file paths that break in the middle of filenames
         // are detected as separate hyperlinks instead of one complete path
-        
+
         let term = Term::new(Config::default(), &TermSize::new(50, 10), VoidListener);
         let mut regex_searches = RegexSearches::new();
-        
+
         // Create a scenario where a filename gets broken across lines
         // This simulates terminal output where line wrapping breaks a filename
         let test_input = "Error in /project/src/components/very-long-file-na\nme.tsx at line 42";
-        
+
         let mut term = term;
         // Input character by character, including the newline
         for c in test_input.chars() {
@@ -1640,7 +1820,7 @@ mod tests {
                 term.input(c);
             }
         }
-        
+
         // Print the terminal content to see the layout
         let grid = term.grid();
         println!("Terminal content (width: {}):", term.columns());
@@ -1653,24 +1833,31 @@ mod tests {
             }
             println!("Line {}: '{}'", line_idx, line_content.trim_end());
         }
-        
+
         // Find all word matches to see how they're parsed
-        let all_word_matches: Vec<_> = visible_regex_match_iter(&term, &mut regex_searches.word_regex).collect();
+        let all_word_matches: Vec<_> =
+            visible_regex_match_iter(&term, &mut regex_searches.word_regex).collect();
         println!("Found {} word matches:", all_word_matches.len());
         for (i, m) in all_word_matches.iter().enumerate() {
             let word_text = term.bounds_to_string(*m.start(), *m.end());
-            println!("  Match {}: '{}' at {:?}..={:?}", i, word_text, m.start(), m.end());
+            println!(
+                "  Match {}: '{}' at {:?}..={:?}",
+                i,
+                word_text,
+                m.start(),
+                m.end()
+            );
         }
-        
+
         // Find specific test points
-        let mut first_part_point = None;   // Click on the first part of the broken filename
-        let mut second_part_point = None;  // Click on the second part of the broken filename
-        
+        let mut first_part_point = None; // Click on the first part of the broken filename
+        let mut second_part_point = None; // Click on the second part of the broken filename
+
         for line_idx in 0..std::cmp::min(3, grid.screen_lines()) {
             for col_idx in 0..grid.columns() {
                 let point = AlacPoint::new(Line(line_idx as i32), Column(col_idx));
                 let cell = grid.index(point);
-                
+
                 // Find "file-na" on the first line (part of the broken filename)
                 if cell.c == 'f' && line_idx == 0 && first_part_point.is_none() {
                     // Check if this is "file-na" (part of very-long-file-name.tsx)
@@ -1681,7 +1868,8 @@ mod tests {
                             is_filename_start = false;
                             break;
                         }
-                        let check_point = AlacPoint::new(Line(line_idx as i32), Column(col_idx + i));
+                        let check_point =
+                            AlacPoint::new(Line(line_idx as i32), Column(col_idx + i));
                         let check_cell = grid.index(check_point);
                         if check_cell.c != expected_char {
                             is_filename_start = false;
@@ -1692,7 +1880,7 @@ mod tests {
                         first_part_point = Some(point);
                     }
                 }
-                
+
                 // Find "me.tsx" on the second line (continuation of the broken filename)
                 if cell.c == 'm' && line_idx == 1 && second_part_point.is_none() {
                     // Check if this is "me.tsx"
@@ -1703,7 +1891,8 @@ mod tests {
                             is_filename_end = false;
                             break;
                         }
-                        let check_point = AlacPoint::new(Line(line_idx as i32), Column(col_idx + i));
+                        let check_point =
+                            AlacPoint::new(Line(line_idx as i32), Column(col_idx + i));
                         let check_cell = grid.index(check_point);
                         if check_cell.c != expected_char {
                             is_filename_end = false;
@@ -1716,41 +1905,65 @@ mod tests {
                 }
             }
         }
-        
+
         println!("Test points:");
         println!("  First part point: {:?}", first_part_point);
         println!("  Second part point: {:?}", second_part_point);
-        
+
         // Test file path detection at each point
         if let Some(first_pt) = first_part_point {
             let first_result = find_from_grid_point(&term, first_pt, &mut regex_searches);
-            println!("First part result: {:?}", first_result.as_ref().map(|(path, _, _)| path));
-            
+            println!(
+                "First part result: {:?}",
+                first_result.as_ref().map(|(path, _, _)| path)
+            );
+
             if let Some(second_pt) = second_part_point {
                 let second_result = find_from_grid_point(&term, second_pt, &mut regex_searches);
-                println!("Second part result: {:?}", second_result.as_ref().map(|(path, _, _)| path));
-                
+                println!(
+                    "Second part result: {:?}",
+                    second_result.as_ref().map(|(path, _, _)| path)
+                );
+
                 // This demonstrates the issue
                 match (&first_result, &second_result) {
                     (Some((first_path, _, _)), Some((second_path, _, _))) => {
                         if first_path == second_path {
-                            println!("✓ SUCCESS: Both parts detected same complete path: {}", first_path);
+                            println!(
+                                "✓ SUCCESS: Both parts detected same complete path: {}",
+                                first_path
+                            );
                         } else {
                             println!("✗ BUG CONFIRMED: Different paths detected for same file:");
                             println!("  First part: {}", first_path);
                             println!("  Second part: {}", second_path);
                             println!("This shows the multi-line filename break issue!");
-                            assert!(false, "Multi-line filename break bug: broken filename detected as separate paths");
+                            assert!(
+                                false,
+                                "Multi-line filename break bug: broken filename detected as separate paths"
+                            );
                         }
                     }
                     (Some((first_path, _, _)), None) => {
-                        println!("✗ PARTIAL BUG: First part found '{}' but second part found nothing", first_path);
+                        println!(
+                            "✗ PARTIAL BUG: First part found '{}' but second part found nothing",
+                            first_path
+                        );
                         println!("This confirms the multi-line filename break issue!");
-                        assert!(false, "Multi-line filename break bug: only first part clickable");
+                        assert!(
+                            false,
+                            "Multi-line filename break bug: only first part clickable"
+                        );
                     }
                     (None, Some((second_path, _, _))) => {
-                        println!("✗ PARTIAL BUG: Second part found '{}' but first part found nothing", second_path);
-                        assert!(false, "Multi-line filename break bug: only second part clickable");
+                        println!(
+                            "✗ PARTIAL BUG: Second part found '{}' but first part found nothing",
+                            second_path
+                        );
+                        assert!(
+                            false,
+                            "Multi-line filename break bug: only second part clickable"
+                        );
                     }
                     (None, None) => {
                         println!("✗ No file paths detected at either point");
