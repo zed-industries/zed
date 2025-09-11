@@ -864,7 +864,7 @@ impl ConfigurationView {
                 .child(
                     h_flex()
                         .gap_2()
-                        .child(Indicator::dot().color(Color::Success))
+                        .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(v_flex().gap_1().child(Label::new(api_url))),
                 )
                 .child(
@@ -951,7 +951,7 @@ impl Render for ConfigurationView {
                                     .child(
                                         h_flex()
                                             .gap_2()
-                                            .child(Indicator::dot().color(Color::Success))
+                                            .child(Icon::new(IconName::Check).color(Color::Success))
                                             .child(Label::new("Connected"))
                                             .into_any_element(),
                                     ),
