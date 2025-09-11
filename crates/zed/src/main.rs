@@ -278,13 +278,6 @@ pub fn main() {
                 .unwrap_or_else(|| "no sha".to_owned()),
         }))
         .detach();
-    reliability::init_panic_hook(
-        app_version,
-        app_commit_sha.clone(),
-        system_id.as_ref().map(|id| id.to_string()),
-        installation_id.as_ref().map(|id| id.to_string()),
-        session_id.clone(),
-    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -542,8 +535,6 @@ pub fn main() {
         reliability::init(
             client.http_client(),
             system_id.as_ref().map(|id| id.to_string()),
-            installation_id.clone().map(|id| id.to_string()),
-            session_id.clone(),
             cx,
         );
 

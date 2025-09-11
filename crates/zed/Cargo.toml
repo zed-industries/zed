@@ -37,7 +37,6 @@ bincode.workspace = true
 breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
-chrono.workspace = true
 clap.workspace = true
 cli.workspace = true
 client.workspace = true
@@ -93,7 +92,6 @@ language_selector.workspace = true
 language_tools.workspace = true
 languages = { workspace = true, features = ["load-grammars"] }
 line_ending_selector.workspace = true
-libc.workspace = true
 log.workspace = true
 markdown.workspace = true
 markdown_preview.workspace = true
