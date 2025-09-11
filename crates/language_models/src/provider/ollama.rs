@@ -223,11 +223,14 @@ impl OllamaLanguageModelProvider {
             http_client: http_client.clone(),
             state: cx.new(|cx| {
                 let subscription = cx.observe_global::<SettingsStore>({
-                    let mut settings = AllLanguageModelSettings::get_global(cx).ollama.clone();
+                    let mut last_settings = AllLanguageModelSettings::get_global(cx).ollama.clone();
                     move |this: &mut State, cx| {
                         let new_settings = &AllLanguageModelSettings::get_global(cx).ollama;
-                        if &settings != new_settings {
-                            settings = new_settings.clone();
+                        if &last_settings != new_settings {
+                            last_settings = new_settings.clone();
+                            if last_settings.api_url != new_settings.api_url {
+                                this.available_models.clear();
+                            }
                             this.restart_fetch_models_task(cx);
                             cx.notify();
                         }
