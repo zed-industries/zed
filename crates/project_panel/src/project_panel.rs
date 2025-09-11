@@ -131,7 +131,7 @@ enum DragTarget {
         /// The entry currently under the mouse cursor during a drag operation
         entry_id: ProjectEntryId,
         /// Highlight this entry along with all of its children
-        highlight_entry_id: Option<ProjectEntryId>,
+        highlight_entry_id: ProjectEntryId,
     },
     /// Dragging on background
     Background,
@@ -4108,7 +4108,7 @@ impl ProjectPanel {
                     .and_then(|drag_target| match drag_target {
                         DragTarget::Entry {
                             highlight_entry_id, ..
-                        } => *highlight_entry_id,
+                        } => Some(*highlight_entry_id),
                         DragTarget::Background => self.last_worktree_root_id,
                     })
             {
@@ -4173,10 +4173,12 @@ impl ProjectPanel {
                             return;
                         }
 
+                        this.marked_entries.clear();
+
                         let Some((entry_id, highlight_entry_id)) = maybe!({
                             let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
                             let target_entry = target_worktree.entry_for_path(&path_for_external_paths)?;
-                            let highlight_entry_id = this.highlight_entry_for_external_drag(target_entry, target_worktree);
+                            let highlight_entry_id = this.highlight_entry_for_external_drag(target_entry, target_worktree)?;
                             Some((target_entry.id, highlight_entry_id))
                         }) else {
                             return;
@@ -4186,7 +4188,7 @@ impl ProjectPanel {
                             entry_id,
                             highlight_entry_id,
                         });
-                        this.marked_entries.clear();
+
                     },
                 ))
                 .on_drop(cx.listener(
@@ -4219,10 +4221,16 @@ impl ProjectPanel {
                         }
 
                         let drag_state = event.drag(cx);
+
+                        if drag_state.items().count() == 1 {
+                            this.marked_entries.clear();
+                            this.marked_entries.push(drag_state.active_selection);
+                        }
+
                         let Some((entry_id, highlight_entry_id)) = maybe!({
                             let target_worktree = this.project.read(cx).worktree_for_id(selection.worktree_id, cx)?.read(cx);
                             let target_entry = target_worktree.entry_for_path(&path_for_dragged_selection)?;
-                            let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, drag_state, cx);
+                            let highlight_entry_id = this.highlight_entry_for_selection_drag(target_entry, target_worktree, drag_state, cx)?;
                             Some((target_entry.id, highlight_entry_id))
                         }) else {
                             return;
@@ -4232,10 +4240,7 @@ impl ProjectPanel {
                             entry_id,
                             highlight_entry_id,
                         });
-                        if drag_state.items().count() == 1 {
-                            this.marked_entries.clear();
-                            this.marked_entries.push(drag_state.active_selection);
-                        }
+
                         this.hover_expand_task.take();
 
                         if !kind.is_dir()
