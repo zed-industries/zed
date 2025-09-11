@@ -3467,14 +3467,14 @@ impl BufferSnapshot {
     /// `require_larger` is true,
     fn goto_node_enclosing_range(
         cursor: &mut tree_sitter::TreeCursor,
-        range: &Range<usize>,
+        query_range: &Range<usize>,
         require_larger: bool,
     ) -> bool {
         let mut ascending = false;
         loop {
-            let cursor_range = cursor.node().byte_range();
-            let encloses = cursor_range.contains_inclusive(range)
-                && (!require_larger || cursor_range.len() > range.len());
+            let range = cursor.node().byte_range();
+            let encloses = range.contains_inclusive(query_range)
+                && (!require_larger || range.len() > query_range.len());
             if !encloses {
                 ascending = true;
                 if !cursor.goto_parent() {
@@ -3486,17 +3486,20 @@ impl BufferSnapshot {
             }
             // If the range is non-empty and the current node ends exactly at the start,
             // move to the next sibling to find a node that extends beyond the start.
-            if !range.is_empty() && cursor_range.end == range.start {
+            if !query_range.is_empty() && range.end == query_range.start {
                 cursor.goto_next_sibling();
             }
             // If the range is empty and the current node starts after the range position,
             // move to the previous sibling to find the node that contains the position.
-            let cursor_range = cursor.node().byte_range();
-            if range.is_empty() && cursor_range.start > range.start {
+            let range = cursor.node().byte_range();
+            if query_range.is_empty() && range.start > query_range.start {
                 cursor.goto_previous_sibling();
             }
             // Descend into the current node.
-            if cursor.goto_first_child_for_byte(range.start).is_none() {
+            if cursor
+                .goto_first_child_for_byte(query_range.start)
+                .is_none()
+            {
                 return true;
             }
         }
