@@ -680,6 +680,7 @@ impl WasmHost {
             .env("PWD", path.to_string())
             .env("RUST_BACKTRACE", "full");
 
+        ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
         ctx.preopened_dir(&path, path.to_string(), dir_perms, file_perms)?;
 
         Ok(ctx.build())

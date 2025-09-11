@@ -267,19 +267,33 @@ pub trait Extension: Send + Sync {
 #[macro_export]
 macro_rules! register_extension {
     ($extension_type:ty) => {
-        unsafe extern "C" {
-            static mut __wasilibc_cwd: *mut std::ffi::c_char;
+        #[cfg(target_os = "wasi")]
+        mod wasi_ext {
+            unsafe extern "C" {
+                static mut errno: i32;
+                static mut __wasilibc_cwd: *mut std::ffi::c_char;
+            }
+
+            #[unsafe(no_mangle)]
+            pub unsafe extern "C" fn chdir(raw_path: *const std::ffi::c_char) -> i32 {
+                let path = std::ffi::CStr::from_ptr(raw_path);
+                let path_len = path.count_bytes();
+                let mut new_cwd = std::mem::ManuallyDrop::new(Vec::<u8>::with_capacity(path_len + 1));
+                new_cwd.resize(path_len + 1, 0);
+                new_cwd[0..path_len].copy_from_slice(path.to_bytes());
+                __wasilibc_cwd = new_cwd.as_mut_ptr().cast();
+                return 0;
+                // errno = 58; // NOTSUP
+                // return -1;
+            }
         }
 
         #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
             #[cfg(target_os = "wasi")]
-            unsafe {
-                __wasilibc_cwd = std::ffi::CString::new(std::env::var("PWD").unwrap())
-                    .unwrap()
-                    .into_raw();
-            }
+            pub use wasi_ext::chdir;
 
+            std::env::set_current_dir(std::env::var("PWD").unwrap()).unwrap();
             zed_extension_api::register_extension(|| {
                 Box::new(<$extension_type as zed_extension_api::Extension>::new())
             });
