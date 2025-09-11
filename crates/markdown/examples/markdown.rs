@@ -47,7 +47,7 @@ pub fn main() {
         let node_runtime = NodeRuntime::unavailable();
         theme::init(LoadThemes::JustBase, cx);
 
-        let fs = fs::FakeFs::new(cx.background_executor());
+        let fs = fs::FakeFs::new(cx.background_executor().clone());
         let language_registry = LanguageRegistry::new(cx.background_executor().clone());
         language_registry.set_theme(cx.theme().clone());
         let language_registry = Arc::new(language_registry);
