@@ -4027,6 +4027,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 ```
 
 ## REPL
+
 - Description: Configuration for the REPL. Currently, this only includes the maximum number of columns and lines to keep in the REPL's scrollback buffer.
 - Setting: `repl`
 - Default:
