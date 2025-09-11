@@ -274,26 +274,37 @@ macro_rules! register_extension {
                 static mut __wasilibc_cwd: *mut std::ffi::c_char;
             }
 
+            // Will initialise __wasilibc_cwd to PWD environment variable.
+            pub unsafe fn init_current_dir() {
+                let path = std::env::var("PWD").unwrap();
+                let raw_path = path.as_bytes();
+                let raw_path_len = raw_path.len();
+
+                let mut new_cwd = std::mem::ManuallyDrop::new(Vec::<u8>::with_capacity(raw_path_len + 1));
+                new_cwd.resize(raw_path_len + 1, 0);
+
+                new_cwd[0..raw_path_len].copy_from_slice(raw_path);
+                new_cwd[raw_path_len] = 0;
+
+                __wasilibc_cwd = new_cwd.as_mut_ptr().cast();
+            }
+
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn chdir(raw_path: *const std::ffi::c_char) -> i32 {
-                let path = std::ffi::CStr::from_ptr(raw_path);
-                let path_len = path.count_bytes();
-                let mut new_cwd = std::mem::ManuallyDrop::new(Vec::<u8>::with_capacity(path_len + 1));
-                new_cwd.resize(path_len + 1, 0);
-                new_cwd[0..path_len].copy_from_slice(path.to_bytes());
-                __wasilibc_cwd = new_cwd.as_mut_ptr().cast();
-                return 0;
-                // errno = 58; // NOTSUP
-                // return -1;
+                // We specifically forbid extensions to change CWD and so return an appropriate error code.
+                errno = 58; // NOTSUP
+                return -1;
             }
         }
 
         #[unsafe(export_name = "init-extension")]
         pub extern "C" fn __init_extension() {
             #[cfg(target_os = "wasi")]
-            pub use wasi_ext::chdir;
+            unsafe {
+                pub use wasi_ext::{init_current_dir, chdir};
+                init_current_dir();
+            }
 
-            std::env::set_current_dir(std::env::var("PWD").unwrap()).unwrap();
             zed_extension_api::register_extension(|| {
                 Box::new(<$extension_type as zed_extension_api::Extension>::new())
             });
