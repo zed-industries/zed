@@ -5644,6 +5644,87 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "src": {
+                "main.rs": "",
+                "lib.rs": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "src": {
+                "main.rs": "",
+                "test.rs": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+
+        let worktree_a = &worktrees[0];
+        let main_rs_from_a = worktree_a.read(cx).entry_for_path("src/main.rs").unwrap();
+
+        let worktree_b = &worktrees[1];
+        let src_dir_from_b = worktree_b.read(cx).entry_for_path("src").unwrap();
+        let main_rs_from_b = worktree_b.read(cx).entry_for_path("src/main.rs").unwrap();
+
+        // Test dragging file from worktree A onto parent of file with same relative path in worktree B
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree_a.read(cx).id(),
+                entry_id: main_rs_from_a.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree_a.read(cx).id(),
+                entry_id: main_rs_from_a.id,
+            }]),
+        };
+
+        let result = panel.highlight_entry_for_selection_drag(
+            src_dir_from_b,
+            worktree_b.read(cx),
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(
+            result,
+            Some(src_dir_from_b.id),
+            "Should highlight target directory from different worktree even with same relative path"
+        );
+
+        // Test dragging file from worktree A onto file with same relative path in worktree B
+        let result = panel.highlight_entry_for_selection_drag(
+            main_rs_from_b,
+            worktree_b.read(cx),
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(
+            result,
+            Some(src_dir_from_b.id),
+            "Should highlight parent of target file from different worktree"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_hide_root(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 

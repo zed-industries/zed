@@ -3971,7 +3971,9 @@ impl ProjectPanel {
 
         // In case of single item drag, we do not highlight existing
         // directory which item belongs too
-        if drag_state.items().count() == 1 {
+        if drag_state.items().count() == 1
+            && drag_state.active_selection.worktree_id == target_worktree.id()
+        {
             let active_entry_path = self
                 .project
                 .read(cx)
