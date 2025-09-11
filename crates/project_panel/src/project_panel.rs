@@ -95,7 +95,7 @@ pub struct ProjectPanel {
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     folded_directory_drag_target: Option<FoldedDirectoryDragTarget>,
     last_worktree_root_id: Option<ProjectEntryId>,
-    drag_target_entry: Option<DragTargetEntry>,
+    drag_target_entry: Option<DragTarget>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
     // Currently selected leaf entry (see auto-folding for a definition of that) in a file tree
@@ -125,11 +125,16 @@ pub struct ProjectPanel {
     last_reported_update: Instant,
 }
 
-struct DragTargetEntry {
-    /// The entry currently under the mouse cursor during a drag operation
-    entry_id: ProjectEntryId,
-    /// Highlight this entry along with all of its children
-    highlight_entry_id: Option<ProjectEntryId>,
+enum DragTarget {
+    /// Dragging on an entry
+    Entry {
+        /// The entry currently under the mouse cursor during a drag operation
+        entry_id: ProjectEntryId,
+        /// Highlight this entry along with all of its children
+        highlight_entry_id: Option<ProjectEntryId>,
+    },
+    /// Dragging on background
+    Background,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -4097,10 +4102,15 @@ impl ProjectPanel {
 
         let folded_directory_drag_target = self.folded_directory_drag_target;
         let is_highlighted = {
-            if let Some(highlight_entry_id) = self
-                .drag_target_entry
-                .as_ref()
-                .and_then(|drag_target| drag_target.highlight_entry_id)
+            if let Some(highlight_entry_id) =
+                self.drag_target_entry
+                    .as_ref()
+                    .and_then(|drag_target| match drag_target {
+                        DragTarget::Entry {
+                            highlight_entry_id, ..
+                        } => *highlight_entry_id,
+                        DragTarget::Background => self.last_worktree_root_id,
+                    })
             {
                 // Highlight if same entry or it's children
                 if entry_id == highlight_entry_id {
@@ -4145,7 +4155,10 @@ impl ProjectPanel {
                 .on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
                         let is_current_target = this.drag_target_entry.as_ref()
-                             .map(|entry| entry.entry_id) == Some(entry_id);
+                             .and_then(|entry| match entry {
+                                 DragTarget::Entry { entry_id: target_id, .. } => Some(*target_id),
+                                 DragTarget::Background { .. } => None,
+                             }) == Some(entry_id);
 
                         if !event.bounds.contains(&event.event.position) {
                             // Entry responsible for setting drag target is also responsible to
@@ -4169,7 +4182,7 @@ impl ProjectPanel {
                             return;
                         };
 
-                        this.drag_target_entry = Some(DragTargetEntry {
+                        this.drag_target_entry = Some(DragTarget::Entry {
                             entry_id,
                             highlight_entry_id,
                         });
@@ -4187,7 +4200,10 @@ impl ProjectPanel {
                 .on_drag_move::<DraggedSelection>(cx.listener(
                     move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
                         let is_current_target = this.drag_target_entry.as_ref()
-                             .map(|entry| entry.entry_id) == Some(entry_id);
+                             .and_then(|entry| match entry {
+                                 DragTarget::Entry { entry_id: target_id, .. } => Some(*target_id),
+                                 DragTarget::Background { .. } => None,
+                             }) == Some(entry_id);
 
                         if !event.bounds.contains(&event.event.position) {
                             // Entry responsible for setting drag target is also responsible to
@@ -4212,7 +4228,7 @@ impl ProjectPanel {
                             return;
                         };
 
-                        this.drag_target_entry = Some(DragTargetEntry {
+                        this.drag_target_entry = Some(DragTarget::Entry {
                             entry_id,
                             highlight_entry_id,
                         });
@@ -4239,7 +4255,10 @@ impl ProjectPanel {
                                     .await;
                                 this.update_in(cx, |this, window, cx| {
                                     this.hover_expand_task.take();
-                                    if this.drag_target_entry.as_ref().map(|entry| entry.entry_id) == Some(entry_id)
+                                    if this.drag_target_entry.as_ref().and_then(|entry| match entry {
+                                        DragTarget::Entry { entry_id: target_id, .. } => Some(*target_id),
+                                        DragTarget::Background { .. } => None,
+                                    }) == Some(entry_id)
                                         && bounds.contains(&window.mouse_position())
                                     {
                                         this.expand_entry(worktree_id, entry_id, cx);
@@ -5621,17 +5640,13 @@ impl Render for ProjectPanel {
                                                 }
                                             };
                                             if should_highlight {
-                                                this.drag_target_entry = Some(DragTargetEntry {
-                                                    entry_id: last_root_id,
-                                                    highlight_entry_id: Some(last_root_id),
-                                                });
+                                                this.drag_target_entry =
+                                                    Some(DragTarget::Background);
                                             }
                                         } else {
-                                            if this
-                                                .drag_target_entry
-                                                .as_ref()
-                                                .is_some_and(|e| e.entry_id == last_root_id)
-                                            {
+                                            if this.drag_target_entry.as_ref().is_some_and(|e| {
+                                                matches!(e, DragTarget::Background)
+                                            }) {
                                                 this.drag_target_entry = None;
                                             }
                                         }
