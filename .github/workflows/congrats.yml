@@ -1,0 +1,12 @@
+name: Congratsbot
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  congrats:
+    if: ${{ github.repository_owner == 'zed-industries' }}
+    uses: withastro/automation/.github/workflows/congratsbot.yml@main
+    secrets:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_CONGRATS }}
