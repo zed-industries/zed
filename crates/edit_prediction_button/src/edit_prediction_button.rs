@@ -900,21 +900,6 @@ impl EditPredictionButton {
                 }
             }
 
-            // Check if ollama settings exist before building menu
-            let has_ollama_settings = Self::ollama_settings_exist(cx);
-
-            // API URL configuration - only show if Ollama settings exist in the user's config
-            let menu = if has_ollama_settings {
-                menu.entry("Configure API URL", None, {
-                    let fs = fs.clone();
-                    move |window, cx| {
-                        Self::open_ollama_settings(fs.clone(), window, cx);
-                    }
-                })
-            } else {
-                menu
-            };
-
             // Model selection section
             let menu = if !available_models.is_empty() {
                 let menu = menu.separator().header("Available Models");
@@ -1023,11 +1008,6 @@ impl EditPredictionButton {
                 })
                 .detach_and_log_err(cx);
         }
-    }
-
-    fn ollama_settings_exist(cx: &App) -> bool {
-        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-        !settings.api_url.is_empty() || !settings.available_models.is_empty()
     }
 
     fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
