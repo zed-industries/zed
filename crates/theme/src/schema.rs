@@ -881,7 +881,10 @@ impl ThemeColorsContent {
                 .panel_overlay_hover
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok())
-                .or(element_hover.map(ensure_opaque)),
+                .or(panel_background
+                    .zip(element_hover)
+                    .map(|(panel_bg, hover_bg)| panel_bg.blend(hover_bg))
+                    .map(ensure_opaque)),
             pane_focused_border: self
                 .pane_focused_border
                 .as_ref()
