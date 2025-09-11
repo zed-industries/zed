@@ -1709,7 +1709,7 @@ impl GitPanel {
                 .map(|status_entry| status_entry.repo_path.clone())
                 .collect::<Vec<_>>();
 
-            if changed_files.is_empty() {
+            if changed_files.is_empty() && !options.amend {
                 error_spawn("No changes to commit", window, cx);
                 return;
             }
@@ -3295,7 +3295,7 @@ impl GitPanel {
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
         if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
-        } else if !self.has_staged_changes() && !self.has_tracked_changes() {
+        } else if !self.has_staged_changes() && !self.has_tracked_changes() && !self.amend_pending {
             (false, "No changes to commit")
         } else if self.pending_commit.is_some() {
             (false, "Commit in progress")
@@ -3312,8 +3312,10 @@ impl GitPanel {
         if self.amend_pending {
             if self.has_staged_changes() {
                 "Amend"
-            } else {
+            } else if self.has_tracked_changes() {
                 "Amend Tracked"
+            } else {
+                "Amend"
             }
         } else if self.has_staged_changes() {
             "Commit"
