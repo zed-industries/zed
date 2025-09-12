@@ -161,7 +161,7 @@ impl Audio {
             .default_device()?
             .default_config()?
             .prefer_sample_rates([SAMPLE_RATE, SAMPLE_RATE.saturating_mul(nz!(2))])
-            .prefer_channel_counts([nz!(1), nz!(2)])
+            // .prefer_channel_counts([nz!(1), nz!(2)])
             .prefer_buffer_sizes(512..)
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
