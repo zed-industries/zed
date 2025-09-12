@@ -311,16 +311,25 @@ impl FoldedAncestors {
         self.ancestors.len()
     }
 
-    fn components(&self, file_name: &str) -> (Vec<String>, usize) {
-        let components = Path::new(file_name)
-            .components()
-            .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
-            .collect::<Vec<_>>();
-        let components_len = components.len();
-        let active_index = components_len
+    /// Note: This returns None for last item in ancestors list
+    fn active_ancestor(&self) -> Option<ProjectEntryId> {
+        if self.current_ancestor_depth == 0 {
+            return None;
+        }
+        self.ancestors.get(self.current_ancestor_depth).copied()
+    }
+
+    fn active_index(&self) -> usize {
+        self.max_ancestor_depth()
             .saturating_sub(1)
-            .saturating_sub(self.current_ancestor_depth);
-        (components, active_index)
+            .saturating_sub(self.current_ancestor_depth)
+    }
+
+    fn active_component(&self, file_name: &str) -> Option<String> {
+        Path::new(file_name)
+            .components()
+            .nth(self.active_index())
+            .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
     }
 }
 
@@ -2956,13 +2965,7 @@ impl ProjectPanel {
     fn resolve_entry(&self, id: ProjectEntryId) -> ProjectEntryId {
         self.ancestors
             .get(&id)
-            .and_then(|ancestors| {
-                if ancestors.current_ancestor_depth == 0 {
-                    return None;
-                }
-                ancestors.ancestors.get(ancestors.current_ancestor_depth)
-            })
-            .copied()
+            .and_then(|ancestors| ancestors.active_ancestor())
             .unwrap_or(id)
     }
 
@@ -4080,11 +4083,6 @@ impl ProjectPanel {
 
         let file_name = details.filename.clone();
 
-        let folded_components = self
-            .ancestors
-            .get(&entry_id)
-            .map(|folded_ancestors| folded_ancestors.components(&file_name));
-
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
             let filename = self.filename_editor.read(cx).text(cx);
@@ -4108,7 +4106,10 @@ impl ProjectPanel {
         let depth = details.depth;
         let worktree_id = details.worktree_id;
         let dragged_selection = DraggedSelection {
-            active_selection: selection,
+            active_selection: SelectedEntry {
+                worktree_id: selection.worktree_id,
+                entry_id: self.resolve_entry(selection.entry_id),
+            },
             marked_selections: Arc::from(self.marked_entries.clone()),
         };
 
@@ -4339,17 +4340,11 @@ impl ProjectPanel {
                 .on_drag(
                     dragged_selection,
                     {
-                        let folded_components = folded_components.clone();
+                        let weak = cx.weak_entity();
                         move |selection, click_offset, _window, cx| {
-                            let filename = if let Some((components, active_index)) = &folded_components {
-                                if *active_index < components.len() {
-                                    components[*active_index].clone()
-                                } else {
-                                    details.filename.clone()
-                                }
-                            } else {
-                                details.filename.clone()
-                            };
+                            let filename = weak.update(cx, |this, _| {
+                                this.ancestors.get(&entry_id).and_then(|ancestors| ancestors.active_component(&details.filename))
+                            }).ok().and_then(|active_component| active_component).unwrap_or_else(|| details.filename.clone());
                             cx.new(|_| DraggedProjectEntryView {
                                 icon: details.icon.clone(),
                                 filename,
@@ -4559,7 +4554,11 @@ impl ProjectPanel {
                         } else {
                             h_flex().h_6().map(|mut this| {
                                 if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
-                                    let (components, active_index) = folded_ancestors.components(&file_name);
+                                    let components = Path::new(&file_name)
+                                        .components()
+                                        .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
+                                        .collect::<Vec<_>>();
+                                    let active_index = folded_ancestors.active_index();
                                     let components_len = components.len();
                                         const DELIMITER: SharedString =
                                         SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
