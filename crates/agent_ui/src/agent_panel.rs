@@ -545,7 +545,6 @@ impl AgentPanel {
         let language_registry = project.read(cx).languages().clone();
         let client = workspace.client().clone();
         let workspace = workspace.weak_handle();
-        let weak_self = cx.entity().downgrade();
 
         let inline_assist_context_store =
             cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
@@ -616,7 +615,7 @@ impl AgentPanel {
             }
         };
 
-        let weak_panel = weak_self.clone();
+        let weak_panel = cx.entity().downgrade();
 
         window.defer(cx, move |window, cx| {
             let panel = weak_panel.clone();
