@@ -4321,15 +4321,36 @@ impl ProjectPanel {
                 ))
                 .on_drag(
                     dragged_selection,
-                    move |selection, click_offset, _window, cx| {
-                        cx.new(|_| DraggedProjectEntryView {
-                            icon: details.icon.clone(),
-                            filename: details.filename.clone(),
-                            click_offset,
-                            selection: selection.active_selection,
-                            selections: selection.marked_selections.clone(),
-                        })
-                    },
+                    {
+                        let weak = cx.weak_entity();
+                        let file_name = file_name.clone();
+                        move |selection, click_offset, _window, cx| {
+                            let filename = weak.update(cx, |this, _cx| {
+                                let Some(folded_ancestors) = this.ancestors.get(&entry_id) else {
+                                    return None;
+                                };
+                                let components = Path::new(&file_name)
+                                    .components()
+                                    .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
+                                    .collect::<Vec<_>>();
+                                let components_len = components.len();
+                                let active_index = components_len.saturating_sub(1).saturating_sub(folded_ancestors.current_ancestor_depth);
+                                if active_index >= components_len {
+                                    return None;
+                                }
+                                Some(components[active_index].clone())
+                            }).ok().flatten().unwrap_or(
+                               details.filename.clone()
+                            );
+                            cx.new(|_| DraggedProjectEntryView {
+                                icon: details.icon.clone(),
+                                filename,
+                                click_offset,
+                                selection: selection.active_selection,
+                                selections: selection.marked_selections.clone(),
+                            })
+                        }
+                    }
                 )
                 .on_drop(
                     cx.listener(move |this, selections: &DraggedSelection, window, cx| {
