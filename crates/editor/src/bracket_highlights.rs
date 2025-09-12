@@ -17,6 +17,7 @@ pub(crate) enum BracketRefreshReason {
 }
 
 impl Editor {
+    // todo! run with a debounce
     pub(crate) fn refresh_bracket_highlights(
         &mut self,
         refresh_reason: BracketRefreshReason,
@@ -24,6 +25,14 @@ impl Editor {
         cx: &mut Context<Editor>,
     ) {
         const COLORS: [Hsla; 4] = [gpui::red(), gpui::yellow(), gpui::green(), gpui::blue()];
+
+        // todo! use a different storage, as project is not available in certain editors?
+        let Some(buffer_store) = self
+            .project()
+            .map(|project| project.read(cx).buffer_store().clone())
+        else {
+            return;
+        };
 
         let snapshot = self.snapshot(window, cx);
         let multi_buffer_snapshot = &snapshot.buffer_snapshot;
@@ -40,21 +49,52 @@ impl Editor {
             Bias::Left,
         );
 
-        let bracket_matches = snapshot
-            .buffer_snapshot
-            .bracket_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
+        let bracket_matches = multi_buffer_snapshot
+            .range_to_buffer_ranges(multi_buffer_visible_start..multi_buffer_visible_end)
             .into_iter()
+            .filter_map(|(buffer_snapshot, buffer_range, _)| {
+                buffer_store.update(cx, |buffer_store, cx| {
+                    let tree_sitter_data =
+                        buffer_store.tree_sitter_data(buffer_snapshot.remote_id(), cx)?;
+                    let buffer_brackets = tree_sitter_data.bracket_ranges_for_range(
+                        &(buffer_snapshot.anchor_before(buffer_range.start)
+                            ..buffer_snapshot.anchor_after(buffer_range.end)),
+                    );
+
+                    // todo! is there a good way to use the excerpt_id instead?
+                    let mut excerpt =
+                        multi_buffer_snapshot.excerpt_containing(buffer_range.clone())?;
+
+                    Some(
+                        buffer_brackets
+                            .into_iter()
+                            .filter_map(|pair| {
+                                let buffer_range = pair.open_range.start..pair.close_range.end;
+                                if excerpt.contains_buffer_range(buffer_range) {
+                                    Some((
+                                        pair.depth,
+                                        excerpt.map_range_from_buffer(pair.open_range),
+                                        excerpt.map_range_from_buffer(pair.close_range),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            })
             .flatten()
             .into_group_map_by(|&(depth, ..)| depth);
 
-        for (depth, bracket_highlights) in bracket_matches.into_iter() {
+        for (depth, bracket_highlights) in bracket_matches {
             let style = HighlightStyle {
                 color: Some({
                     // todo! these colors lack contrast for this/are not actually good for that?
                     // cx.theme().accents().color_for_index(depth as u32);
                     COLORS[depth as usize % COLORS.len()]
                 }),
-                ..Default::default()
+                ..HighlightStyle::default()
             };
 
             self.highlight_text_key::<RainbowBracketHighlight>(

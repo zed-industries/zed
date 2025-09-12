@@ -5495,6 +5495,7 @@ impl MultiBufferSnapshot {
     pub fn bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
+        // todo! better type
     ) -> Option<impl Iterator<Item = (usize, Range<usize>, Range<usize>)> + '_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
