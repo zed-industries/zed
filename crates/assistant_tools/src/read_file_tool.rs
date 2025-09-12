@@ -262,11 +262,9 @@ impl Tool for ReadFileTool {
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
                 let path_buf = std::path::PathBuf::from(&file_path);
-                let buffer_content = outline::get_buffer_content_or_outline(
-                    buffer.clone(),
-                    Some(&path_buf),
-                    cx
-                ).await?;
+                let buffer_content =
+                    outline::get_buffer_content_or_outline(buffer.clone(), Some(&path_buf), cx)
+                        .await?;
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer, cx);

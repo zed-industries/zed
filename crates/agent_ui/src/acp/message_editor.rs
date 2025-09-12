@@ -457,7 +457,9 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-            let buffer_content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx).await?;
+            let buffer_content =
+                outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx)
+                    .await?;
 
             Ok(Mention::Text {
                 content: buffer_content.text,
@@ -524,9 +526,13 @@ impl MessageEditor {
 
                     cx.spawn(async move |cx| {
                         let buffer = open_task.await.log_err()?;
-                        let buffer_content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
-                            .await
-                            .ok()?;
+                        let buffer_content = outline::get_buffer_content_or_outline(
+                            buffer.clone(),
+                            Some(&full_path),
+                            &cx,
+                        )
+                        .await
+                        .ok()?;
 
                         Some((rel_path, full_path, buffer_content.text, buffer))
                     })
