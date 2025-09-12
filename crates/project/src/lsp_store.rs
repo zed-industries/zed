@@ -28,6 +28,7 @@ use crate::{
     lsp_command::{self, *},
     lsp_store::{
         self,
+        inlay_hint_cache::BufferChunk,
         log_store::{GlobalLogStore, LanguageServerKind},
     },
     manifest_tree::{
@@ -3481,7 +3482,7 @@ pub struct BufferLspData {
     code_lens: CodeLensData,
     pub inlay_hints: BufferInlayHints,
     lsp_requests: HashMap<TypeId, HashMap<LspRequestId, Task<()>>>,
-    // TODO kb deduplicate requests by range per buffer too
+    chunk_lsp_requests: HashMap<TypeId, HashMap<BufferChunk, LspRequestId>>,
 }
 
 impl BufferLspData {
@@ -3492,6 +3493,7 @@ impl BufferLspData {
             code_lens: CodeLensData::default(),
             inlay_hints: BufferInlayHints::new(buffer, cx),
             lsp_requests: HashMap::default(),
+            chunk_lsp_requests: HashMap::default(),
         }
     }
 
@@ -8204,7 +8206,7 @@ impl LspStore {
                     lsp_request_id,
                     get_references,
                     position,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8215,7 +8217,7 @@ impl LspStore {
                     lsp_request_id,
                     get_document_color,
                     None,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8227,7 +8229,7 @@ impl LspStore {
                     lsp_request_id,
                     get_hover,
                     position,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8238,7 +8240,7 @@ impl LspStore {
                     lsp_request_id,
                     get_code_actions,
                     None,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8253,7 +8255,7 @@ impl LspStore {
                     lsp_request_id,
                     get_signature_help,
                     position,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8264,7 +8266,7 @@ impl LspStore {
                     lsp_request_id,
                     get_code_lens,
                     None,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8276,7 +8278,7 @@ impl LspStore {
                     lsp_request_id,
                     get_definition,
                     position,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8291,7 +8293,7 @@ impl LspStore {
                     lsp_request_id,
                     get_declaration,
                     position,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8306,7 +8308,7 @@ impl LspStore {
                     lsp_request_id,
                     get_type_definition,
                     position,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8321,7 +8323,7 @@ impl LspStore {
                     lsp_request_id,
                     get_implementation,
                     position,
-                    cx.clone(),
+                    &mut cx,
                 )
                 .await?;
             }
@@ -8341,19 +8343,19 @@ impl LspStore {
                         .lsp_data
                         .entry(buffer_id)
                         .or_insert_with(|| BufferLspData::new(&buffer, cx));
+                    let type_id = TypeId::of::<GetDocumentDiagnostics>();
                     if <GetDocumentDiagnostics as LspCommand>::ProtoRequest::stop_previous_requests(
                     ) || buffer
                         .read(cx)
                         .version
                         .changed_since(&lsp_data.buffer_version)
                     {
-                        *lsp_data = BufferLspData::new(&buffer, cx);
+                        if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&type_id) {
+                            lsp_requests.clear();
+                        };
                     }
 
-                    let existing_queries = lsp_data
-                        .lsp_requests
-                        .entry(TypeId::of::<GetDocumentDiagnostics>())
-                        .or_default();
+                    let existing_queries = lsp_data.lsp_requests.entry(type_id).or_default();
                     existing_queries.insert(
                         lsp_request_id,
                         cx.spawn(async move |lsp_store, cx| {
@@ -8372,9 +8374,34 @@ impl LspStore {
                     );
                 })?;
             }
-            // TODO kb: `query_lsp_locally` ALMOST works except that there's no position for inlays, there's a RANGE
-            // and we have to deduplicate by those ranges somehow
-            Request::InlayHints(inlay_hints) => todo!("TODO kb"),
+            Request::InlayHints(inlay_hints) => {
+                let query_start = inlay_hints
+                    .start
+                    .clone()
+                    .and_then(deserialize_anchor)
+                    .context("invalid inlay hints range start")?;
+                let query_end = inlay_hints
+                    .end
+                    .clone()
+                    .and_then(deserialize_anchor)
+                    .context("invalid inlay hints range end")?;
+                Self::deduplicate_range_based_lsp_requests::<InlayHints>(
+                    &lsp_store,
+                    lsp_request_id,
+                    &inlay_hints,
+                    query_start..query_end,
+                    &mut cx,
+                );
+                Self::query_lsp_locally::<InlayHints>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    inlay_hints,
+                    None,
+                    &mut cx,
+                )
+                .await?
+            }
         }
         Ok(proto::Ack {})
     }
@@ -11869,13 +11896,66 @@ impl LspStore {
         Ok(())
     }
 
+    async fn deduplicate_range_based_lsp_requests<T>(
+        lsp_store: &Entity<Self>,
+        lsp_request_id: LspRequestId,
+        proto_request: &T::ProtoRequest,
+        range: Range<Anchor>,
+        cx: &mut AsyncApp,
+    ) -> Result<()>
+    where
+        T: LspCommand,
+        T::ProtoRequest: proto::LspRequestMessage,
+    {
+        let buffer_id = BufferId::new(proto_request.buffer_id())?;
+        let version = deserialize_version(proto_request.buffer_version());
+        let buffer = lsp_store.update(cx, |this, cx| {
+            this.buffer_store.read(cx).get_existing(buffer_id)
+        })??;
+        buffer
+            .update(cx, |buffer, _| buffer.wait_for_version(version))?
+            .await?;
+        lsp_store.update(cx, |lsp_store, cx| {
+            let lsp_data = lsp_store
+                .lsp_data
+                .entry(buffer_id)
+                .or_insert_with(|| BufferLspData::new(&buffer, cx));
+            let chunks_queried_for = lsp_data
+                .inlay_hints
+                .applicable_chunks(&range)
+                .collect::<Vec<_>>();
+            match chunks_queried_for.as_slice() {
+                &[chunk] => {
+                    let type_id = TypeId::of::<T>();
+                    let previous_request = lsp_data
+                        .chunk_lsp_requests
+                        .entry(type_id)
+                        .or_default()
+                        .insert(chunk, lsp_request_id);
+                    if let Some((previous_request, running_requests)) =
+                        previous_request.zip(lsp_data.lsp_requests.get_mut(&type_id))
+                    {
+                        running_requests.remove(&previous_request);
+                    }
+                }
+                _ambiguous_chunks => {
+                    // Have not found a unique chunk for the query range — be lenient and let the query to be spawned,
+                    // there, a buffer version-based check will be performed and outdated requests discarded.
+                }
+            }
+            anyhow::Ok(())
+        })??;
+
+        Ok(())
+    }
+
     async fn query_lsp_locally<T>(
         lsp_store: Entity<Self>,
         sender_id: proto::PeerId,
         lsp_request_id: LspRequestId,
         proto_request: T::ProtoRequest,
         position: Option<Anchor>,
-        mut cx: AsyncApp,
+        cx: &mut AsyncApp,
     ) -> Result<()>
     where
         T: LspCommand + Clone,
@@ -11885,18 +11965,17 @@ impl LspStore {
     {
         let buffer_id = BufferId::new(proto_request.buffer_id())?;
         let version = deserialize_version(proto_request.buffer_version());
-        let buffer = lsp_store.update(&mut cx, |this, cx| {
+        let buffer = lsp_store.update(cx, |this, cx| {
             this.buffer_store.read(cx).get_existing(buffer_id)
         })??;
         buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(version.clone())
-            })?
+            .update(cx, |buffer, _| buffer.wait_for_version(version.clone()))?
             .await?;
-        let buffer_version = buffer.read_with(&cx, |buffer, _| buffer.version())?;
+        let buffer_version = buffer.read_with(cx, |buffer, _| buffer.version())?;
         let request =
             T::from_proto(proto_request, lsp_store.clone(), buffer.clone(), cx.clone()).await?;
-        lsp_store.update(&mut cx, |lsp_store, cx| {
+        let type_id = TypeId::of::<T>();
+        lsp_store.update(cx, |lsp_store, cx| {
             let request_task =
                 lsp_store.request_multiple_lsp_locally(&buffer, position, request, cx);
             let lsp_data = lsp_store
@@ -11906,52 +11985,49 @@ impl LspStore {
             if T::ProtoRequest::stop_previous_requests()
                 || buffer_version.changed_since(&lsp_data.buffer_version)
             {
-                *lsp_data = BufferLspData::new(&buffer, cx);
+                if let Some(lsp_requests) = lsp_data.lsp_requests.get_mut(&type_id) {
+                    lsp_requests.clear();
+                }
             }
-            lsp_data
-                .lsp_requests
-                .entry(TypeId::of::<T>())
-                .or_default()
-                .insert(
-                    lsp_request_id,
-                    cx.spawn(async move |lsp_store, cx| {
-                        let response = request_task.await;
-                        lsp_store
-                            .update(cx, |lsp_store, cx| {
-                                if let Some((client, project_id)) =
-                                    lsp_store.downstream_client.clone()
-                                {
-                                    let response = response
-                                        .into_iter()
-                                        .map(|(server_id, response)| {
-                                            (
-                                                server_id.to_proto(),
-                                                T::response_to_proto(
-                                                    response,
-                                                    lsp_store,
-                                                    sender_id,
-                                                    &buffer_version,
-                                                    cx,
-                                                )
-                                                .into(),
+            lsp_data.lsp_requests.entry(type_id).or_default().insert(
+                lsp_request_id,
+                cx.spawn(async move |lsp_store, cx| {
+                    let response = request_task.await;
+                    lsp_store
+                        .update(cx, |lsp_store, cx| {
+                            if let Some((client, project_id)) = lsp_store.downstream_client.clone()
+                            {
+                                let response = response
+                                    .into_iter()
+                                    .map(|(server_id, response)| {
+                                        (
+                                            server_id.to_proto(),
+                                            T::response_to_proto(
+                                                response,
+                                                lsp_store,
+                                                sender_id,
+                                                &buffer_version,
+                                                cx,
                                             )
-                                        })
-                                        .collect::<HashMap<_, _>>();
-                                    match client.send_lsp_response::<T::ProtoRequest>(
-                                        project_id,
-                                        lsp_request_id,
-                                        response,
-                                    ) {
-                                        Ok(()) => {}
-                                        Err(e) => {
-                                            log::error!("Failed to send LSP response: {e:#}",)
-                                        }
+                                            .into(),
+                                        )
+                                    })
+                                    .collect::<HashMap<_, _>>();
+                                match client.send_lsp_response::<T::ProtoRequest>(
+                                    project_id,
+                                    lsp_request_id,
+                                    response,
+                                ) {
+                                    Ok(()) => {}
+                                    Err(e) => {
+                                        log::error!("Failed to send LSP response: {e:#}",)
                                     }
                                 }
-                            })
-                            .ok();
-                    }),
-                );
+                            }
+                        })
+                        .ok();
+                }),
+            );
         })?;
         Ok(())
     }
