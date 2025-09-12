@@ -29,7 +29,7 @@ use runtimelib::{
 };
 use std::{env::temp_dir, ops::Range, sync::Arc, time::Duration};
 use theme::ActiveTheme;
-use ui::{IconButtonShape, Tooltip, prelude::*};
+use ui::{Tooltip, prelude::*};
 use util::ResultExt as _;
 
 pub struct Session {

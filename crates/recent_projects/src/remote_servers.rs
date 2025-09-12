@@ -34,8 +34,8 @@ use std::{
     },
 };
 use ui::{
-    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Scrollbar, ScrollbarState, Section, Tooltip, prelude::*,
+    List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry, Scrollbar,
+    ScrollbarState, Section, Tooltip, prelude::*,
 };
 use util::{
     ResultExt,
