@@ -23,7 +23,6 @@ doctest = false
 alacritty_terminal.workspace = true
 anyhow.workspace = true
 collections.workspace = true
-dirs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 libc.workspace = true

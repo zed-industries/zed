@@ -11598,6 +11598,7 @@ name = "paths"
 version = "0.1.0"
 dependencies = [
  "dirs 4.0.0",
+ "ignore",
  "util",
  "workspace-hack",
 ]
@@ -16437,7 +16438,6 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "collections",
- "dirs 4.0.0",
  "futures 0.3.31",
  "gpui",
  "libc",
