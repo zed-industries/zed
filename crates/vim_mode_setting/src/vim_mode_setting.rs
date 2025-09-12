@@ -52,8 +52,8 @@ impl Settings for VimModeSetting {
             ]
             .into_iter()
             .flatten()
+            .filter_map(|mode| mode.vim_mode)
             .next()
-            .and_then(|mode| mode.vim_mode)
             .ok_or_else(Self::missing_default)?,
         ))
     }
@@ -101,8 +101,8 @@ impl Settings for HelixModeSetting {
             ]
             .into_iter()
             .flatten()
+            .filter_map(|mode| mode.helix_mode)
             .next()
-            .and_then(|mode| mode.helix_mode)
             .ok_or_else(Self::missing_default)?,
         ))
     }
