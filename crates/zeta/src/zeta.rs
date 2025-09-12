@@ -62,9 +62,13 @@ const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>";
 const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 const ZED_PREDICT_DATA_COLLECTION_CHOICE: &str = "zed_predict_data_collection_choice";
 
-const MAX_CONTEXT_TOKENS: usize = 150;
-const MAX_REWRITE_TOKENS: usize = 350;
-const MAX_EVENT_TOKENS: usize = 500;
+/// Typical number of string bytes per token for the purposes of limiting model input. This is
+/// intentionally low to err on the side of underestimating limits.
+const BYTES_PER_TOKEN_GUESS: usize = 3;
+
+const MAX_CONTEXT_BYTES: usize = 150 * BYTES_PER_TOKEN_GUESS;
+const MAX_REWRITE_BYTES: usize = 350 * BYTES_PER_TOKEN_GUESS;
+const MAX_EVENT_BYTES: usize = 500 * BYTES_PER_TOKEN_GUESS;
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
@@ -447,7 +451,7 @@ impl Zeta {
         let cursor_offset = cursor_point.to_offset(&snapshot);
         let prompt_for_events = {
             let events = events.clone();
-            move || prompt_for_events_impl(&events, MAX_EVENT_TOKENS)
+            move || prompt_for_events_impl(&events, MAX_EVENT_BYTES)
         };
         let gather_task = gather_context(
             full_path_str,
@@ -475,7 +479,7 @@ impl Zeta {
             }
 
             log::debug!(
-                "Events:\n{}\nExcerpt:\n{:?}",
+                "Events:\n{}\nExcerpt:\n{}",
                 body.input_events,
                 body.input_excerpt
             );
@@ -1106,13 +1110,15 @@ pub fn gather_context(
     cx.background_spawn({
         let snapshot = snapshot.clone();
         async move {
-            let input_excerpt = excerpt_for_cursor_position(
+            let Some(input_excerpt) = excerpt_for_cursor_position(
                 cursor_point,
                 &full_path_str,
                 &snapshot,
-                MAX_REWRITE_TOKENS,
-                MAX_CONTEXT_TOKENS,
-            );
+                MAX_REWRITE_BYTES,
+                MAX_CONTEXT_BYTES,
+            ) else {
+                return Err(anyhow!("line too large for edit prediction"));
+            };
             let (input_events, included_events_count) = prompt_for_events();
             let editable_range = input_excerpt.editable_range.to_offset(&snapshot);
 
@@ -1135,20 +1141,18 @@ pub fn gather_context(
     })
 }
 
-fn prompt_for_events_impl(events: &[Event], mut remaining_tokens: usize) -> (String, usize) {
+fn prompt_for_events_impl(events: &[Event], mut remaining_bytes: usize) -> (String, usize) {
     let mut result = String::new();
     for (ix, event) in events.iter().rev().enumerate() {
         let event_string = event.to_prompt();
-        let event_tokens = guess_token_count(event_string.len());
-        if event_tokens > remaining_tokens {
+        if event_string.len() > remaining_bytes {
             return (result, ix);
         }
-
         if !result.is_empty() {
             result.insert_str(0, "\n\n");
         }
         result.insert_str(0, &event_string);
-        remaining_tokens -= event_tokens;
+        remaining_bytes -= event_string.len();
     }
     return (result, events.len());
 }
@@ -1609,14 +1613,6 @@ impl edit_prediction::EditPredictionProvider for ZetaEditPredictionProvider {
             edit_preview: Some(completion.edit_preview.clone()),
         })
     }
-}
-
-/// Typical number of string bytes per token for the purposes of limiting model input. This is
-/// intentionally low to err on the side of underestimating limits.
-const BYTES_PER_TOKEN_GUESS: usize = 3;
-
-fn guess_token_count(bytes: usize) -> usize {
-    bytes / BYTES_PER_TOKEN_GUESS
 }
 
 #[cfg(test)]
@@ -2107,11 +2103,7 @@ mod tests {
         // make an edit that uses too many bytes, causing private_buffer edit to not be able to be
         // included
         buffer.update(cx, |buffer, cx| {
-            buffer.edit(
-                [(0..0, " ".repeat(MAX_EVENT_TOKENS * BYTES_PER_TOKEN_GUESS))],
-                None,
-                cx,
-            );
+            buffer.edit([(0..0, " ".repeat(MAX_EVENT_BYTES))], None, cx);
         });
 
         run_edit_prediction(&buffer, &project, &zeta, cx).await;

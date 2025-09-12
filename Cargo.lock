@@ -5029,6 +5029,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction_context"
+version = "0.1.0"
+dependencies = [
+ "language",
+ "log",
+ "text",
+ "tree-sitter",
+ "util",
+ "workspace-hack",
+]
+
+[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -20877,6 +20889,7 @@ dependencies = [
  "ctor",
  "db",
  "edit_prediction",
+ "edit_prediction_context",
  "editor",
  "feature_flags",
  "fs",

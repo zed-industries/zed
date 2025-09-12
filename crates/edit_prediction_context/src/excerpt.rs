@@ -18,7 +18,7 @@ use util::RangeExt;
 // - Truncation of long lines.
 
 #[derive(Debug, Clone)]
-pub struct ExcerptOptions {
+pub struct EditPredictionExcerptOptions {
     /// Limit for the number of bytes in the window around the cursor.
     pub window_max_bytes: usize,
     /// Minimum number of bytes in the window around the cursor. When syntax tree selection results
@@ -31,13 +31,13 @@ pub struct ExcerptOptions {
 }
 
 #[derive(Clone)]
-pub struct ExcerptRanges {
+pub struct EditPredictionExcerpt {
     pub range: Range<usize>,
     pub parent_signature_ranges: Vec<Range<usize>>,
     pub size: usize,
 }
 
-impl ExcerptRanges {
+impl EditPredictionExcerpt {
     /// Selects an excerpt around a buffer position, attempting to choose logical boundaries based
     /// on TreeSitter structure and approximately targeting a goal ratio of bytesbefore vs after the
     /// cursor. When `include_parent_signatures` is true, the excerpt also includes the signatures
@@ -50,7 +50,7 @@ impl ExcerptRanges {
     pub fn select_from_buffer(
         query_point: Point,
         buffer: &BufferSnapshot,
-        options: &ExcerptOptions,
+        options: &EditPredictionExcerptOptions,
     ) -> Option<Self> {
         if buffer.len() <= options.window_max_bytes {
             log::debug!(
@@ -58,7 +58,7 @@ impl ExcerptRanges {
                 buffer.len(),
                 options.window_max_bytes
             );
-            return Some(ExcerptRanges::new(0..buffer.len(), Vec::new()));
+            return Some(EditPredictionExcerpt::new(0..buffer.len(), Vec::new()));
         }
 
         let query_offset = query_point.to_offset(buffer);
@@ -154,7 +154,7 @@ struct ExcerptSelector<'a> {
     query_range: Range<usize>,
     outline_items: &'a [ExcerptOutlineItem],
     buffer: &'a BufferSnapshot,
-    options: &'a ExcerptOptions,
+    options: &'a EditPredictionExcerptOptions,
 }
 
 struct ExcerptOutlineItem {
@@ -164,7 +164,7 @@ struct ExcerptOutlineItem {
 
 impl<'a> ExcerptSelector<'a> {
     /// Finds the largest node that is smaller than the window size and contains `query_range`.
-    fn select_tree_sitter_nodes(&self) -> Option<ExcerptRanges> {
+    fn select_tree_sitter_nodes(&self) -> Option<EditPredictionExcerpt> {
         let selected_layer_root = self.select_syntax_layer()?;
         let mut cursor = selected_layer_root.walk();
 
@@ -231,8 +231,8 @@ impl<'a> ExcerptSelector<'a> {
     fn expand_to_siblings(
         &self,
         cursor: &mut TreeCursor,
-        mut excerpt: ExcerptRanges,
-    ) -> ExcerptRanges {
+        mut excerpt: EditPredictionExcerpt,
+    ) -> EditPredictionExcerpt {
         let mut forward_cursor = cursor.clone();
         let backward_cursor = cursor;
         let mut forward_done = !forward_cursor.goto_next_sibling();
@@ -309,7 +309,7 @@ impl<'a> ExcerptSelector<'a> {
         excerpt
     }
 
-    fn select_lines(&self) -> Option<ExcerptRanges> {
+    fn select_lines(&self) -> Option<EditPredictionExcerpt> {
         // early return if line containing query_offset is already too large
         let excerpt = self.make_excerpt(self.query_range.clone());
         if excerpt.size > self.options.window_max_bytes {
@@ -355,18 +355,22 @@ impl<'a> ExcerptSelector<'a> {
         return Some(excerpt);
     }
 
-    fn make_excerpt(&self, range: Range<usize>) -> ExcerptRanges {
+    fn make_excerpt(&self, range: Range<usize>) -> EditPredictionExcerpt {
         let parent_signature_ranges = self
             .outline_items
             .iter()
             .filter(|item| item.item_range.contains_inclusive(&range))
             .map(|item| item.signature_range.clone())
             .collect();
-        ExcerptRanges::new(range, parent_signature_ranges)
+        EditPredictionExcerpt::new(range, parent_signature_ranges)
     }
 
     /// Returns `true` if the `forward` excerpt is a better choice than the `backward` excerpt.
-    fn is_better_excerpt(&self, forward: &ExcerptRanges, backward: &ExcerptRanges) -> bool {
+    fn is_better_excerpt(
+        &self,
+        forward: &EditPredictionExcerpt,
+        backward: &EditPredictionExcerpt,
+    ) -> bool {
         let forward_ratio = self.excerpt_range_ratio(forward);
         let backward_ratio = self.excerpt_range_ratio(backward);
         let forward_delta = (forward_ratio - self.options.before_cursor_bytes_ratio).abs();
@@ -391,7 +395,7 @@ impl<'a> ExcerptSelector<'a> {
     }
 
     /// Returns the ratio of bytes before the cursor over bytes within the range.
-    fn excerpt_range_ratio(&self, excerpt: &ExcerptRanges) -> f32 {
+    fn excerpt_range_ratio(&self, excerpt: &EditPredictionExcerpt) -> f32 {
         let Some(bytes_before_cursor) = self.query_offset.checked_sub(excerpt.range.start) else {
             log::error!("bug: edit prediction cursor offset is not outside the excerpt");
             return 0.0;
