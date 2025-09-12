@@ -867,6 +867,12 @@ pub struct BracketMatch {
     pub depth: usize,
 }
 
+impl BracketMatch {
+    pub fn bracket_ranges(self) -> (Range<usize>, Range<usize>) {
+        (self.open_range, self.close_range)
+    }
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &Context<Self>) -> Self {

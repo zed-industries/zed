@@ -16,11 +16,12 @@ use collections::{BTreeMap, Bound, HashMap, HashSet};
 use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
-    AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, DiskState, File,
-    IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
-    OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
-    ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
+    AutoindentMode, BracketMatch, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability,
+    CharClassifier, CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntryRef, DiskState, File,
+    IndentGuideSettings, IndentSize,
+    Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16,
+    Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId,
+    TreeSitterOptions, Unclipped,
     language_settings::{LanguageSettings, language_settings},
 };
 
@@ -5495,8 +5496,15 @@ impl MultiBufferSnapshot {
     pub fn bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-        // todo! better type
-    ) -> Option<impl Iterator<Item = (usize, Range<usize>, Range<usize>)> + '_> {
+    ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
+        self.bracket_matches(range)
+            .map(|matches_iter| matches_iter.map(BracketMatch::bracket_ranges))
+    }
+
+    pub fn bracket_matches<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<impl Iterator<Item = BracketMatch> + '_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut excerpt = self.excerpt_containing(range.clone())?;
 
@@ -5506,15 +5514,13 @@ impl MultiBufferSnapshot {
                 .bracket_ranges(excerpt.map_range_to_buffer(range))
                 .filter_map(move |pair| {
                     let buffer_range = pair.open_range.start..pair.close_range.end;
-                    if excerpt.contains_buffer_range(buffer_range) {
-                        Some((
-                            pair.depth,
-                            excerpt.map_range_from_buffer(pair.open_range),
-                            excerpt.map_range_from_buffer(pair.close_range),
-                        ))
-                    } else {
-                        None
-                    }
+                    excerpt
+                        .contains_buffer_range(buffer_range)
+                        .then(|| BracketMatch {
+                            open_range: excerpt.map_range_from_buffer(pair.open_range),
+                            close_range: excerpt.map_range_from_buffer(pair.close_range),
+                            ..pair
+                        })
                 }),
         )
     }
