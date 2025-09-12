@@ -35,12 +35,71 @@ In any case, here are some of the ones available:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your `settings.json`, like so:
+You can connect them by adding their commands directly to your `settings.json`.
+
+#### Local MCP Servers
+
+For servers that run as local processes:
 
 ```json
 {
   "context_servers": {
-    "your-mcp-server": {
+    "your-local-mcp-server": {
+      "source": "custom",
+      "type": "local",
+      "command": "some-command",
+      "args": ["arg-1", "arg-2"],
+      "env": {}
+    }
+  }
+}
+```
+
+#### Remote MCP Servers
+
+For remote HTTP/SSE MCP servers, Zed automatically uses `mcp-remote` under the hood:
+
+```json
+{
+  "context_servers": {
+    "atlassian-mcp": {
+      "source": "custom",
+      "type": "http",
+      "url": "https://mcp.atlassian.com/v1/sse",
+      "headers": {
+        "Authorization": "Bearer your-token"
+      }
+    },
+    "another-remote-server": {
+      "source": "custom", 
+      "type": "http",
+      "url": "https://api.example.com/mcp",
+      "timeout": 30000
+    }
+  }
+}
+```
+
+When you configure a remote server this way, Zed automatically:
+
+1. Uses `npx mcp-remote <url>` to proxy the connection
+2. Converts any headers to environment variables (e.g., `Authorization` → `MCP_HEADER_AUTHORIZATION`)
+3. Handles the HTTP/SSE transport layer
+
+Note: Remote MCP servers require `mcp-remote` to be available. You can install it via:
+
+```bash
+npm install -g mcp-remote
+```
+
+#### Backward Compatibility
+
+Existing configurations without a `type` field are automatically treated as local servers:
+
+```json
+{
+  "context_servers": {
+    "legacy-server": {
       "source": "custom",
       "command": "some-command",
       "args": ["arg-1", "arg-2"],

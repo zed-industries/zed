@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
@@ -181,34 +178,81 @@ impl ConfigurationSource {
 }
 
 fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)>) -> String {
-    let (name, command, args, env) = match existing {
-        Some((id, cmd)) => {
-            let args = serde_json::to_string(&cmd.args).unwrap();
-            let env = serde_json::to_string(&cmd.env.unwrap_or_default()).unwrap();
-            (id.0.to_string(), cmd.path, args, env)
-        }
-        None => (
-            "some-mcp-server".to_string(),
-            PathBuf::new(),
-            "[]".to_string(),
-            "{}".to_string(),
-        ),
-    };
-
-    format!(
-        r#"{{
+    match existing {
+        Some((id, cmd)) => match cmd {
+            ContextServerCommand::Local { path, args, env, timeout } => {
+                let args_json = serde_json::to_string(&args).unwrap();
+                let env_json = serde_json::to_string(&env.unwrap_or_default()).unwrap();
+                let timeout_json = match timeout {
+                    Some(t) => format!(",\n    /// Timeout for tool calls in milliseconds\n    \"timeout\": {}", t),
+                    None => String::new(),
+                };
+                
+                format!(
+                    r#"{{
   /// The name of your MCP server
-  "{name}": {{
+  "{}": {{
+    /// Type of MCP server: "local" for command-based, "http" for remote
+    "type": "local",
     /// The command which runs the MCP server
     "command": "{}",
     /// The arguments to pass to the MCP server
-    "args": {args},
+    "args": {},
     /// The environment variables to set
-    "env": {env}
+    "env": {}{}
   }}
 }}"#,
-        command.display()
-    )
+                    id.0,
+                    path.display(),
+                    args_json,
+                    env_json,
+                    timeout_json
+                )
+            }
+            ContextServerCommand::Http { url, headers, timeout } => {
+                let headers_json = serde_json::to_string(&headers.unwrap_or_default()).unwrap();
+                let timeout_json = match timeout {
+                    Some(t) => format!(",\n    /// Timeout for tool calls in milliseconds\n    \"timeout\": {}", t),
+                    None => String::new(),
+                };
+                
+                format!(
+                    r#"{{
+  /// The name of your MCP server
+  "{}": {{
+    /// Type of MCP server: "local" for command-based, "http" for remote
+    "type": "http",
+    /// The URL of the remote MCP server
+    "url": "{}",
+    /// Optional headers to send with requests
+    "headers": {}{}
+  }}
+}}"#,
+                    id.0,
+                    url,
+                    headers_json,
+                    timeout_json
+                )
+            }
+        },
+        None => {
+            format!(
+                r#"{{
+  /// The name of your MCP server
+  "some-mcp-server": {{
+    /// Type of MCP server: "local" for command-based, "http" for remote
+    "type": "local",
+    /// The command which runs the MCP server
+    "command": "",
+    /// The arguments to pass to the MCP server
+    "args": [],
+    /// The environment variables to set
+    "env": {{}}
+  }}
+}}"#
+            )
+        }
+    }
 }
 
 fn resolve_context_server_extension(

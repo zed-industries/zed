@@ -629,7 +629,7 @@ impl Settings for ProjectSettings {
         }
         impl From<VsCodeContextServerCommand> for ContextServerCommand {
             fn from(cmd: VsCodeContextServerCommand) -> Self {
-                Self {
+                Self::Local {
                     path: cmd.command,
                     args: cmd.args.unwrap_or_default(),
                     env: cmd.env,

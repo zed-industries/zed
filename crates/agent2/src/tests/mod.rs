@@ -2473,7 +2473,7 @@ fn setup_context_server(
             name.into(),
             project::project_settings::ContextServerSettings::Custom {
                 enabled: true,
-                command: ContextServerCommand {
+                command: ContextServerCommand::Local {
                     path: "somebinary".into(),
                     args: Vec::new(),
                     env: None,

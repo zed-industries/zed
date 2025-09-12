@@ -65,7 +65,7 @@ impl registry::ContextServerDescriptor for ContextServerDescriptor {
 
             log::debug!("loaded command for context server {id}: {command:?}");
 
-            Ok(ContextServerCommand {
+            Ok(ContextServerCommand::Local {
                 path: command.command,
                 args: command.args,
                 env: Some(command.env.into_iter().collect()),

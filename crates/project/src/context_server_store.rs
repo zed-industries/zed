@@ -972,7 +972,7 @@ mod tests {
                         server_2_id.0.clone(),
                         ContextServerSettings::Custom {
                             enabled: true,
-                            command: ContextServerCommand {
+                            command: ContextServerCommand::Local {
                                 path: "somebinary".into(),
                                 args: vec!["arg".to_string()],
                                 env: None,
@@ -1013,7 +1013,7 @@ mod tests {
                         server_2_id.0.clone(),
                         ContextServerSettings::Custom {
                             enabled: true,
-                            command: ContextServerCommand {
+                            command: ContextServerCommand::Local {
                                 path: "somebinary".into(),
                                 args: vec!["anotherArg".to_string()],
                                 env: None,
@@ -1096,7 +1096,7 @@ mod tests {
                 SERVER_1_ID.into(),
                 ContextServerSettings::Custom {
                     enabled: true,
-                    command: ContextServerCommand {
+                    command: ContextServerCommand::Local {
                         path: "somebinary".into(),
                         args: vec!["arg".to_string()],
                         env: None,
@@ -1149,7 +1149,7 @@ mod tests {
                     server_1_id.0.clone(),
                     ContextServerSettings::Custom {
                         enabled: false,
-                        command: ContextServerCommand {
+                        command: ContextServerCommand::Local {
                             path: "somebinary".into(),
                             args: vec!["arg".to_string()],
                             env: None,
@@ -1178,7 +1178,7 @@ mod tests {
                     server_1_id.0.clone(),
                     ContextServerSettings::Custom {
                         enabled: true,
-                        command: ContextServerCommand {
+                        command: ContextServerCommand::Local {
                             path: "somebinary".into(),
                             args: vec!["arg".to_string()],
                             timeout: None,
@@ -1231,7 +1231,7 @@ mod tests {
     fn dummy_server_settings() -> ContextServerSettings {
         ContextServerSettings::Custom {
             enabled: true,
-            command: ContextServerCommand {
+            command: ContextServerCommand::Local {
                 path: "somebinary".into(),
                 args: vec!["arg".to_string()],
                 env: None,
@@ -1320,7 +1320,7 @@ mod tests {
             _worktree_store: Entity<WorktreeStore>,
             _cx: &AsyncApp,
         ) -> Task<Result<ContextServerCommand>> {
-            Task::ready(Ok(ContextServerCommand {
+            Task::ready(Ok(ContextServerCommand::Local {
                 path: self.path.clone(),
                 args: vec!["arg1".to_string(), "arg2".to_string()],
                 env: None,
