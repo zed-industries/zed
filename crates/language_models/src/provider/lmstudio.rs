@@ -128,7 +128,7 @@ impl State {
                         }
                     }
                     if connection_refused {
-                        Err(AuthenticateError::CredentialsNotFound)
+                        Err(AuthenticateError::ConnectionRefused)
                     } else {
                         Err(AuthenticateError::Other(err))
                     }
