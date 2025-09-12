@@ -2,8 +2,6 @@ use editor::{ToOffset, movement};
 use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
-use settings::Settings;
-use vim_mode_setting::HelixModeSetting;
 
 use crate::{
     Vim,
@@ -139,12 +137,7 @@ impl Vim {
             });
         });
 
-        // TODO: should we be doing this check? Or should we just assume that helix_paste -> HelixNormal?
-        if HelixModeSetting::get_global(cx).0 {
-            self.switch_mode(Mode::HelixNormal, true, window, cx);
-        } else {
-            self.switch_mode(Mode::Normal, true, window, cx);
-        }
+        self.switch_mode(Mode::HelixNormal, true, window, cx);
     }
 }
 
