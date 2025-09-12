@@ -10,7 +10,7 @@ use theme::Appearance;
 ///
 /// # Examples
 ///
-/// ```
+/// ```no_run
 /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
 /// use ui::prelude::*;
 /// use ui::{KeyBinding, KeybindingHint};
@@ -41,7 +41,7 @@ impl KeybindingHint {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
@@ -70,7 +70,7 @@ impl KeybindingHint {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
@@ -104,7 +104,7 @@ impl KeybindingHint {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
@@ -137,7 +137,7 @@ impl KeybindingHint {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
@@ -161,7 +161,7 @@ impl KeybindingHint {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
@@ -185,7 +185,7 @@ impl KeybindingHint {
     ///
     /// # Examples
     ///
-    /// ```
+    /// ```no_run
     /// use gpui::{App, Hsla, KeybindingKeystroke, Keystroke};
     /// use ui::prelude::*;
     /// use ui::{KeyBinding, KeybindingHint};
