@@ -11244,6 +11244,7 @@ dependencies = [
  "serde_json",
  "strum 0.27.1",
  "thiserror 2.0.12",
+ "util",
  "workspace-hack",
 ]
 
