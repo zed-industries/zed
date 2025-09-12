@@ -1906,7 +1906,7 @@ impl Workspace {
     fn navigate_history(
         &mut self,
         pane: WeakEntity<Pane>,
-        mode: NavigationMode,
+        action: NavigationAction,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
@@ -1915,7 +1915,7 @@ impl Workspace {
                 window.focus(&pane.focus_handle(cx));
                 loop {
                     // Retrieve the weak item handle from the history.
-                    let entry = pane.nav_history_mut().pop(mode, cx)?;
+                    let (entry, mode) = pane.nav_history_mut().scry(action, cx)?;
 
                     // If the item is still present in this pane, then activate it.
                     if let Some(index) = entry
@@ -1942,7 +1942,7 @@ impl Workspace {
                         break pane
                             .nav_history()
                             .path_for_item(entry.item.id())
-                            .map(|(project_path, abs_path)| (project_path, abs_path, entry));
+                            .map(|(project_path, abs_path)| (project_path, abs_path, entry, mode));
                     }
                 }
             })
@@ -1950,7 +1950,7 @@ impl Workspace {
             None
         };
 
-        if let Some((project_path, abs_path, entry)) = to_load {
+        if let Some((project_path, abs_path, entry, mode)) = to_load {
             // If the item was no longer present, then load it again from its previous path, first try the local path
             let open_by_project_path = self.load_path(project_path.clone(), window, cx);
 
@@ -2019,7 +2019,7 @@ impl Workspace {
                 if !navigated {
                     workspace
                         .update_in(cx, |workspace, window, cx| {
-                            Self::navigate_history(workspace, pane, mode, window, cx)
+                            Self::navigate_history(workspace, pane, action, window, cx)
                         })?
                         .await?;
                 }
@@ -2037,7 +2037,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        self.navigate_history(pane, NavigationMode::GoingBack, window, cx)
+        self.navigate_history(pane, NavigationAction::GoBack, window, cx)
     }
 
     pub fn go_forward(
@@ -2046,7 +2046,25 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Result<()>> {
-        self.navigate_history(pane, NavigationMode::GoingForward, window, cx)
+        self.navigate_history(pane, NavigationAction::GoForward, window, cx)
+    }
+
+    pub fn go_to_older_tag(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
+        self.navigate_history(pane, NavigationAction::GoToOlderTag, window, cx)
+    }
+
+    pub fn go_to_newer_tag(
+        &mut self,
+        pane: WeakEntity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Task<Result<()>> {
+        self.navigate_history(pane, NavigationAction::GoToNewerTag, window, cx)
     }
 
     pub fn reopen_closed_item(
@@ -2056,7 +2074,7 @@ impl Workspace {
     ) -> Task<Result<()>> {
         self.navigate_history(
             self.active_pane().downgrade(),
-            NavigationMode::ReopeningClosedItem,
+            NavigationAction::ReopenClosedItem,
             window,
             cx,
         )

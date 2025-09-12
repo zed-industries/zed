@@ -211,6 +211,10 @@ actions!(
         GoBack,
         /// Navigates forward in history.
         GoForward,
+        /// Go to the next oldest tag in the tag stack.
+        GoToOlderTag,
+        /// Go to the next newest tag in the tag stack.
+        GoToNewerTag,
         /// Joins this pane into the next pane.
         JoinIntoNext,
         /// Joins all panes into one.
@@ -415,9 +419,22 @@ pub struct NavHistory(Arc<Mutex<NavHistoryState>>);
 #[derive(Clone)]
 struct NavHistoryState {
     mode: NavigationMode,
+    // You can think of every entry in navigation history as being identified by
+    // a history number. Since we only keep the last N navigation entries in
+    // each stack, the oldest element of the backwards stack has history number
+    // `offset`.
+    //
+    // The current pane view does not explicitly live on any of the stacks, but
+    // is implicitly also a member of history. So first all of the backward
+    // stack entries are numbered, then a number is reserved for the current
+    // pane view, then the forward stack's entries. This ensures that history
+    // numbers are a good way to identify history entries even as the user
+    // browses forwards and backwards in history.
+    numbering_offset: usize,
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
+    tag_stack: VecDeque<TagStackEntry>,
     paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
     pane: WeakEntity<Pane>,
     next_timestamp: Arc<AtomicUsize>,
@@ -426,11 +443,20 @@ struct NavHistoryState {
 #[derive(Debug, Copy, Clone)]
 pub enum NavigationMode {
     Normal,
-    GoingBack,
-    GoingForward,
+    GoingBack(usize),
+    GoingForward(usize),
     ClosingItem,
     ReopeningClosedItem,
     Disabled,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum NavigationAction {
+    GoBack,
+    GoForward,
+    GoToOlderTag,
+    GoToNewerTag,
+    ReopenClosedItem,
 }
 
 impl Default for NavigationMode {
@@ -445,6 +471,21 @@ pub struct NavigationEntry {
     pub data: Option<Arc<dyn Any + Send>>,
     pub timestamp: usize,
     pub is_preview: bool,
+    pub is_deleted: bool,
+}
+
+#[derive(Clone)]
+pub struct TagStackEntry {
+    pub tag: Option<String>,
+    // Tag stack entries logically sit between two history entries
+    pub src_entry: NavigationEntry,
+    pub dst_entry: NavigationEntry,
+    // If we've navigated back in history, then explored forward a bit without a
+    // tag stack jump, we could be in a state where we've truncated the forward
+    // navigation history but *not* the forward tag stack. In such a case, one
+    // or both of these offsets may be None.
+    pub src_number: Option<usize>,
+    pub dst_number: Option<usize>,
 }
 
 #[derive(Clone)]
@@ -505,12 +546,14 @@ impl Pane {
             last_focus_handle_by_item: Default::default(),
             nav_history: NavHistory(Arc::new(Mutex::new(NavHistoryState {
                 mode: NavigationMode::Normal,
+                numbering_offset: 0,
                 backward_stack: Default::default(),
                 forward_stack: Default::default(),
                 closed_stack: Default::default(),
                 paths_by_item: Default::default(),
                 pane: handle,
                 next_timestamp,
+                tag_stack: Default::default(),
             }))),
             toolbar: cx.new(|_| Toolbar::new()),
             tab_bar_scroll_handle: ScrollHandle::new(),
@@ -824,11 +867,21 @@ impl Pane {
     }
 
     pub fn can_navigate_backward(&self) -> bool {
-        !self.nav_history.0.lock().backward_stack.is_empty()
+        self.nav_history
+            .0
+            .lock()
+            .backward_stack
+            .iter()
+            .any(|el| !el.is_deleted)
     }
 
     pub fn can_navigate_forward(&self) -> bool {
-        !self.nav_history.0.lock().forward_stack.is_empty()
+        self.nav_history
+            .0
+            .lock()
+            .forward_stack
+            .iter()
+            .any(|el| !el.is_deleted)
     }
 
     pub fn navigate_backward(&mut self, _: &GoBack, window: &mut Window, cx: &mut Context<Self>) {
@@ -849,6 +902,42 @@ impl Pane {
                 workspace.update(cx, |workspace, cx| {
                     workspace
                         .go_forward(pane, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    fn navigate_older_tag(
+        &mut self,
+        _: &GoToOlderTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .go_to_older_tag(pane, window, cx)
+                        .detach_and_log_err(cx)
+                })
+            })
+        }
+    }
+
+    fn navigate_newer_tag(
+        &mut self,
+        _: &GoToNewerTag,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self.workspace.upgrade() {
+            let pane = cx.entity().downgrade();
+            window.defer(cx, move |window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace
+                        .go_to_newer_tag(pane, window, cx)
                         .detach_and_log_err(cx)
                 })
             })
@@ -1287,11 +1376,13 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        use NavigationMode::{GoingBack, GoingForward};
         if index < self.items.len() {
             let prev_active_item_ix = mem::replace(&mut self.active_item_index, index);
             if (prev_active_item_ix != self.active_item_index
-                || matches!(self.nav_history.mode(), GoingBack | GoingForward))
+                || matches!(
+                    self.nav_history.mode(),
+                    NavigationMode::GoingBack(_) | NavigationMode::GoingForward(_)
+                ))
                 && let Some(prev_item) = self.items.get(prev_active_item_ix)
             {
                 prev_item.deactivated(window, cx);
@@ -3727,6 +3818,8 @@ impl Render for Pane {
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(cx.listener(Self::navigate_backward))
             .on_action(cx.listener(Self::navigate_forward))
+            .on_action(cx.listener(Self::navigate_older_tag))
+            .on_action(cx.listener(Self::navigate_newer_tag))
             .on_action(
                 cx.listener(|pane: &mut Pane, action: &ActivateItem, window, cx| {
                     pane.activate_item(
@@ -3964,11 +4057,7 @@ impl ItemNavHistory {
     }
 
     pub fn pop_backward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingBack, cx)
-    }
-
-    pub fn pop_forward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingForward, cx)
+        self.history.pop_backward(cx)
     }
 }
 
@@ -3985,6 +4074,9 @@ impl NavHistory {
             .chain(borrowed_history.backward_stack.iter())
             .chain(borrowed_history.closed_stack.iter())
             .for_each(|entry| {
+                if entry.is_deleted {
+                    return;
+                }
                 if let Some(project_and_abs_path) =
                     borrowed_history.paths_by_item.get(&entry.item.id())
                 {
@@ -4013,21 +4105,36 @@ impl NavHistory {
         self.0.lock().mode = NavigationMode::Normal;
     }
 
-    pub fn pop(&mut self, mode: NavigationMode, cx: &mut App) -> Option<NavigationEntry> {
+    pub fn scry(
+        &mut self,
+        action: NavigationAction,
+        cx: &mut App,
+    ) -> Option<(NavigationEntry, NavigationMode)> {
         let mut state = self.0.lock();
-        let entry = match mode {
-            NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
-                return None;
+        loop {
+            let entry = state.scry(action);
+            if entry.as_ref().map(|e| e.0.is_deleted).unwrap_or(false) {
+                continue;
             }
-            NavigationMode::GoingBack => &mut state.backward_stack,
-            NavigationMode::GoingForward => &mut state.forward_stack,
-            NavigationMode::ReopeningClosedItem => &mut state.closed_stack,
+            if entry.is_some() {
+                state.did_update(cx);
+            }
+            return entry;
         }
-        .pop_back();
-        if entry.is_some() {
-            state.did_update(cx);
+    }
+
+    pub(crate) fn pop_backward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
+        let mut state = self.0.lock();
+        loop {
+            let entry = state.backward_stack.pop_back();
+            if entry.as_ref().map(|e| e.is_deleted).unwrap_or(false) {
+                continue;
+            }
+            if entry.is_some() {
+                state.did_update(cx);
+            }
+            return entry;
         }
-        entry
     }
 
     pub fn push<D: 'static + Any + Send>(
@@ -4037,53 +4144,17 @@ impl NavHistory {
         is_preview: bool,
         cx: &mut App,
     ) {
-        let state = &mut *self.0.lock();
-        match state.mode {
+        let mut state = self.0.lock();
+        let mode = state.mode;
+        match mode {
             NavigationMode::Disabled => {}
-            NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
-                if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-                    state.backward_stack.pop_front();
-                }
-                state.backward_stack.push_back(NavigationEntry {
-                    item,
-                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send>),
-                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-                    is_preview,
-                });
-                state.forward_stack.clear();
-            }
-            NavigationMode::GoingBack => {
-                if state.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-                    state.forward_stack.pop_front();
-                }
-                state.forward_stack.push_back(NavigationEntry {
-                    item,
-                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send>),
-                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-                    is_preview,
-                });
-            }
-            NavigationMode::GoingForward => {
-                if state.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-                    state.backward_stack.pop_front();
-                }
-                state.backward_stack.push_back(NavigationEntry {
-                    item,
-                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send>),
-                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-                    is_preview,
-                });
-            }
-            NavigationMode::ClosingItem => {
-                if state.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
-                    state.closed_stack.pop_front();
-                }
-                state.closed_stack.push_back(NavigationEntry {
-                    item,
-                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send>),
-                    timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
-                    is_preview,
-                });
+            NavigationMode::Normal
+            | NavigationMode::ReopeningClosedItem
+            | NavigationMode::GoingBack(_)
+            | NavigationMode::GoingForward(_)
+            | NavigationMode::ClosingItem => {
+                let data = data.map(|item| Arc::new(item) as Arc<dyn Any + Send>);
+                state.push(mode, data, item, is_preview);
             }
         }
         state.did_update(cx);
@@ -4092,15 +4163,27 @@ impl NavHistory {
     pub fn remove_item(&mut self, item_id: EntityId) {
         let mut state = self.0.lock();
         state.paths_by_item.remove(&item_id);
-        state
-            .backward_stack
-            .retain(|entry| entry.item.id() != item_id);
-        state
-            .forward_stack
-            .retain(|entry| entry.item.id() != item_id);
+        state.tag_stack.retain(|entry| {
+            entry.src_entry.item.id() != item_id && entry.dst_entry.item.id() != item_id
+        });
         state
             .closed_stack
             .retain(|entry| entry.item.id() != item_id);
+
+        // For the backward and forward stacks, it's a lot less bookkeeping to
+        // mark entries as deleted instead of actually removing them
+        for entry in state.backward_stack.iter_mut() {
+            if entry.item.id() == item_id {
+                entry.is_deleted = true;
+                entry.data = None;
+            }
+        }
+        for entry in state.forward_stack.iter_mut() {
+            if entry.item.id() == item_id {
+                entry.is_deleted = true;
+                entry.data = None;
+            }
+        }
     }
 
     pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
@@ -4109,12 +4192,223 @@ impl NavHistory {
 }
 
 impl NavHistoryState {
+    fn push(
+        &mut self,
+        mode: NavigationMode,
+        data: Option<Arc<dyn Any + Send>>,
+        item: Arc<dyn WeakItemHandle>,
+        is_preview: bool,
+    ) {
+        match mode {
+            NavigationMode::Disabled => {}
+            NavigationMode::Normal | NavigationMode::ReopeningClosedItem => {
+                if self.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    self.backward_stack.pop_front();
+                    self.numbering_offset += 1;
+                }
+                let offset = self.current_offset();
+                self.backward_stack.push_back(NavigationEntry {
+                    item,
+                    data,
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
+                    is_deleted: false,
+                });
+                self.forward_stack.clear();
+                // Clearing the forward stack might cause some tag stack entries
+                // to no longer be members of history
+                for entry in self.tag_stack.iter_mut() {
+                    if let Some(src_number) = entry.src_number
+                        && src_number > offset
+                    {
+                        entry.src_number = None;
+                    }
+                    if let Some(dst_number) = entry.dst_number
+                        && dst_number > offset
+                    {
+                        entry.dst_number = None;
+                    }
+                }
+            }
+            NavigationMode::GoingBack(n) => {
+                let mut item = item;
+                let mut data = data;
+                let mut is_preview = is_preview;
+                for _ in 0..n {
+                    if self.forward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                        self.forward_stack.pop_front();
+                    }
+                    self.forward_stack.push_back(NavigationEntry {
+                        item,
+                        data,
+                        timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                        is_preview,
+                        is_deleted: false,
+                    });
+                    let Some(entry) = self.backward_stack.pop_back() else {
+                        return;
+                    };
+                    item = entry.item;
+                    data = entry.data;
+                    is_preview = entry.is_preview;
+                }
+            }
+            NavigationMode::GoingForward(n) => {
+                let mut item = item;
+                let mut data = data;
+                let mut is_preview = is_preview;
+                for _ in 0..n {
+                    if self.backward_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                        self.backward_stack.pop_front();
+                    }
+                    self.backward_stack.push_back(NavigationEntry {
+                        item,
+                        data,
+                        timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                        is_preview,
+                        is_deleted: false,
+                    });
+                    let Some(entry) = self.forward_stack.pop_back() else {
+                        return;
+                    };
+                    item = entry.item;
+                    data = entry.data;
+                    is_preview = entry.is_preview;
+                }
+            }
+            NavigationMode::ClosingItem => {
+                if self.closed_stack.len() >= MAX_NAVIGATION_HISTORY_LEN {
+                    self.closed_stack.pop_front();
+                }
+                self.closed_stack.push_back(NavigationEntry {
+                    item,
+                    data,
+                    timestamp: self.next_timestamp.fetch_add(1, Ordering::SeqCst),
+                    is_preview,
+                    is_deleted: false,
+                });
+            }
+        }
+    }
+    // Returns the navigation history entry you would get to if you performed
+    // the given action, plus the navigation mode you need to be in to get to
+    // that point in history.
+    //
+    // This function mostly does *not* mutate history (e.g., such that history
+    // reflects the results of performing the navigation action). That
+    // occurs in `navigate_history` in `workspace.rs` when navigations are
+    // performed with the returned mode.
+    pub fn scry(&mut self, action: NavigationAction) -> Option<(NavigationEntry, NavigationMode)> {
+        match action {
+            NavigationAction::GoBack => self
+                .backward_stack
+                .back()
+                .map(|entry| (entry.clone(), NavigationMode::GoingBack(1))),
+            NavigationAction::GoForward => self
+                .forward_stack
+                .back()
+                .map(|entry| (entry.clone(), NavigationMode::GoingForward(1))),
+            NavigationAction::GoToOlderTag => {
+                let (Some(tag), _) = self.tag_stack_pos() else {
+                    return None;
+                };
+                let entry = tag.src_entry.clone();
+                if let Some(src_number) = tag.src_number
+                    && src_number < self.current_offset()
+                {
+                    Some((
+                        entry,
+                        NavigationMode::GoingBack(self.current_offset() - src_number),
+                    ))
+                } else {
+                    // This case shouldn't happen, but it's easy enough to do
+                    // something sensical if it does
+                    Some((entry, NavigationMode::Normal))
+                }
+            }
+            NavigationAction::GoToNewerTag => {
+                let current_offset = self.current_offset();
+                let (_, Some(tag)) = self.tag_stack_pos() else {
+                    return None;
+                };
+                let entry = tag.dst_entry.clone();
+                match (tag.src_number, tag.dst_number) {
+                    (Some(_), Some(dst_number)) => Some((
+                        entry,
+                        NavigationMode::GoingForward(dst_number - current_offset),
+                    )),
+                    // In the case where one or both of the tag stack jump
+                    // endpoints is not in our forward history (e.g., someone
+                    // has gone back in history and navigated forward on a
+                    // different branch of history), we need to doctor up
+                    // forward history to make the tag stack behave as expected.
+                    //
+                    // Note: this may make the src and dst of a tag stack entry
+                    // be non-adjacent in history, because we don't nuke the
+                    // alternate branch of history prior to doctoring up forward
+                    // history. This is fine.
+                    (Some(src_number), None) => {
+                        let src_entry = tag.src_entry.clone();
+                        if src_number > current_offset {
+                            tag.dst_number = Some(src_number + 1);
+                            while self.forward_stack.len() > src_number - current_offset {
+                                self.forward_stack.pop_front();
+                            }
+                            self.forward_stack.push_front(src_entry);
+                            Some((
+                                entry,
+                                NavigationMode::GoingForward(src_number - current_offset),
+                            ))
+                        } else {
+                            tag.dst_number = Some(current_offset + 1);
+                            self.forward_stack.clear();
+                            self.forward_stack.push_back(src_entry);
+                            Some((entry, NavigationMode::GoingForward(1)))
+                        }
+                    }
+                    (None, _) => {
+                        tag.src_number = Some(current_offset + 1);
+                        tag.dst_number = Some(current_offset + 2);
+                        let src_entry = tag.src_entry.clone();
+                        let dst_entry = tag.src_entry.clone();
+                        self.forward_stack.clear();
+                        self.forward_stack.push_back(dst_entry);
+                        self.forward_stack.push_back(src_entry);
+                        Some((entry, NavigationMode::GoingForward(2)))
+                    }
+                }
+            }
+            NavigationAction::ReopenClosedItem => self
+                .closed_stack
+                .back()
+                .map(|entry| (entry.clone(), NavigationMode::ReopeningClosedItem)),
+        }
+    }
     pub fn did_update(&self, cx: &mut App) {
         if let Some(pane) = self.pane.upgrade() {
             cx.defer(move |cx| {
                 pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
+    }
+    pub fn current_offset(&self) -> usize {
+        self.numbering_offset + self.backward_stack.len()
+    }
+    pub fn tag_stack_pos(&mut self) -> (Option<&mut TagStackEntry>, Option<&mut TagStackEntry>) {
+        let mut prev: Option<&mut TagStackEntry> = None;
+        let mut next: Option<&mut TagStackEntry> = None;
+        let offset = self.current_offset();
+        for entry in self.tag_stack.iter_mut() {
+            if let Some(dst_number) = entry.dst_number
+                && dst_number <= offset
+            {
+                prev = Some(entry);
+            } else {
+                next = Some(entry);
+                break;
+            }
+        }
+        (prev, next)
     }
 }
 
