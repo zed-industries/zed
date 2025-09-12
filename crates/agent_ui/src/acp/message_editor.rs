@@ -8,6 +8,7 @@ use agent_servers::{AgentServer, AgentServerDelegate};
 use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
+use assistant_tool::outline;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
@@ -456,11 +457,14 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-            let mention = buffer.update(cx, |buffer, cx| Mention::Text {
-                content: buffer.text(),
-                tracked_buffers: vec![cx.entity()],
-            })?;
-            anyhow::Ok(mention)
+
+            // Use shared function to get content or outline based on file size
+            let content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx).await?;
+
+            Ok(Mention::Text {
+                content,
+                tracked_buffers: vec![buffer],
+            })
         })
     }
 
@@ -520,18 +524,15 @@ impl MessageEditor {
                         })
                     });
 
-                    // TODO: report load errors instead of just logging
-                    let rope_task = cx.spawn(async move |cx| {
+                    cx.spawn(async move |cx| {
                         let buffer = open_task.await.log_err()?;
-                        let rope = buffer
-                            .read_with(cx, |buffer, _cx| buffer.as_rope().clone())
-                            .log_err()?;
-                        Some((rope, buffer))
-                    });
 
-                    cx.background_spawn(async move {
-                        let (rope, buffer) = rope_task.await?;
-                        Some((rel_path, full_path, rope.to_string(), buffer))
+                        // Use shared function to get content or outline based on file size
+                        let content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
+                            .await
+                            .ok()?;
+
+                        Some((rel_path, full_path, content, buffer))
                     })
                 }))
             })?;
@@ -2583,5 +2584,106 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>()
+    }
+
+    #[gpui::test]
+    async fn test_large_file_mention_uses_outline(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create a large file that exceeds AUTO_OUTLINE_SIZE
+        const LINE: &str = "fn example_function() { /* some code */ }\n";
+        let large_content = LINE.repeat(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()));
+        let content_len = large_content.len();
+        assert!(content_len > outline::AUTO_OUTLINE_SIZE);
+
+        fs.save(
+            path!("/project/large_file.rs"),
+            &large_content.as_bytes(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        // Create a small file that doesn't exceed AUTO_OUTLINE_SIZE
+        let small_content = "fn small_function() { /* small */ }\n";
+        assert!(small_content.len() < outline::AUTO_OUTLINE_SIZE);
+
+        fs.save(
+            path!("/project/small_file.rs"),
+            &small_content.as_bytes(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
+
+        let app_state = AppState::test(cx);
+        app_state.fs.as_fake().insert_tree(
+            path!("/project"),
+            json!({
+                "large_file.rs": large_content,
+                "small_file.rs": small_content,
+            }),
+        ).await;
+
+        let project = Project::test(app_state.fs.clone(), [path!("/project")], cx).await;
+
+        cx.update(|cx| {
+            let workspace = cx.new(|cx| {
+                Workspace::new(Default::default(), project.clone(), app_state.clone(), cx)
+            });
+
+            let mut message_editor = MessageEditor::new(
+                project.clone(),
+                HistoryStore::new(project.clone(), cx),
+                workspace.downgrade(),
+                cx,
+            );
+            message_editor.set_prompt_capabilities(
+                acp::PromptCapabilities {
+                    embedded_context: true,
+                    ..Default::default()
+                },
+                cx,
+            );
+
+            // Test large file mention - now using shared get_buffer_content_or_outline function
+            let large_file_path = PathBuf::from("/project/large_file.rs");
+            let large_file_mention = message_editor.confirm_mention_for_file(large_file_path.clone(), cx);
+
+            cx.spawn(async move |cx| {
+                let mention = large_file_mention.await.unwrap();
+                match mention {
+                    Mention::Text { content, .. } => {
+                        // The shared function adds this header for large files
+                        assert!(content.contains("File outline for"));
+                        assert!(content.contains("file too large to show full content"));
+                        // Should not contain the full repeated content
+                        assert!(!content.contains(&LINE.repeat(100)));
+                    }
+                    _ => panic!("Expected Text mention for large file"),
+                }
+            }).detach();
+
+            // Test small file mention - should get full content from shared function
+            let small_file_path = PathBuf::from("/project/small_file.rs");
+            let small_file_mention = message_editor.confirm_mention_for_file(small_file_path, cx);
+
+            cx.spawn(async move |cx| {
+                let mention = small_file_mention.await.unwrap();
+                match mention {
+                    Mention::Text { content, .. } => {
+                        // Should contain the actual content
+                        assert_eq!(content, small_content);
+                        // Should not contain outline header
+                        assert!(!content.contains("File outline for"));
+                    }
+                    _ => panic!("Expected Text mention for small file"),
+                }
+            }).detach();
+        });
+
+        cx.run_until_parked();
     }
 }

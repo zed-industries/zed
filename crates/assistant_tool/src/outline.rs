@@ -1,10 +1,12 @@
 use action_log::ActionLog;
 use anyhow::{Context as _, Result};
 use gpui::{AsyncApp, Entity};
-use language::{OutlineItem, ParseStatus};
+use language::{Buffer, OutlineItem, ParseStatus};
 use project::Project;
 use regex::Regex;
 use std::fmt::Write;
+use std::path::Path;
+use std::sync::Arc;
 use text::Point;
 
 /// For files over this size, instead of reading them (or including them in context),
@@ -127,4 +129,52 @@ fn render_entries(
     }
 
     entries_rendered
+}
+
+/// Returns either the full content of a buffer or its outline, depending on size.
+/// For files larger than AUTO_OUTLINE_SIZE, returns an outline with a header.
+/// For smaller files, returns the full content.
+pub async fn get_buffer_content_or_outline(
+    buffer: Entity<Buffer>,
+    path: Option<&Path>,
+    cx: &AsyncApp,
+) -> Result<String> {
+    let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len())?;
+
+    if file_size > AUTO_OUTLINE_SIZE {
+        // For large files, use outline instead of full content
+        // Wait until the buffer has been fully parsed, so we can read its outline
+        let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
+        while *parse_status.borrow() != ParseStatus::Idle {
+            parse_status.changed().await?;
+        }
+
+        let outline_items = buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .outline(None)
+                .items
+                .into_iter()
+                .map(|item| item.to_point(&snapshot))
+                .collect::<Vec<_>>()
+        })?;
+
+        let outline_text = render_outline(outline_items, None, 0, usize::MAX).await?;
+
+        if let Some(path) = path {
+            Ok(format!(
+                "# File outline for {} (file too large to show full content)\n\n{}",
+                path.display(),
+                outline_text
+            ))
+        } else {
+            Ok(format!(
+                "# File outline (file too large to show full content)\n\n{}",
+                outline_text
+            ))
+        }
+    } else {
+        // File is small enough, return full content
+        buffer.read_with(cx, |buffer, _| Ok(buffer.text()))?
+    }
 }

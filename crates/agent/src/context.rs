@@ -191,45 +191,18 @@ impl FileContextHandle {
         let buffer = self.buffer.clone();
 
         cx.spawn(async move |cx| {
-            // For large files, use outline instead of full content
-            if rope.len() > outline::AUTO_OUTLINE_SIZE {
-                // Wait until the buffer has been fully parsed, so we can read its outline
-                if let Ok(mut parse_status) =
-                    buffer.read_with(cx, |buffer, _| buffer.parse_status())
-                {
-                    while *parse_status.borrow() != ParseStatus::Idle {
-                        parse_status.changed().await.log_err();
-                    }
+            // Get content or outline based on file size
+            let content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
+                .await
+                .unwrap_or_else(|_| rope.to_string());
 
-                    if let Ok(snapshot) = buffer.read_with(cx, |buffer, _| buffer.snapshot()) {
-                        let items = snapshot
-                            .outline(None)
-                            .items
-                            .into_iter()
-                            .map(|item| item.to_point(&snapshot));
+            let is_outline = rope.len() > outline::AUTO_OUTLINE_SIZE;
 
-                        if let Ok(outline_text) =
-                            outline::render_outline(items, None, 0, usize::MAX).await
-                        {
-                            let context = AgentContext::File(FileContext {
-                                handle: self,
-                                full_path,
-                                text: outline_text.into(),
-                                is_outline: true,
-                            });
-                            return Some((context, vec![buffer]));
-                        }
-                    }
-                }
-            }
-
-            // Fallback to full content if we couldn't build an outline
-            // (or didn't need to because the file was small enough)
             let context = AgentContext::File(FileContext {
                 handle: self,
                 full_path,
-                text: rope.to_string().into(),
-                is_outline: false,
+                text: content.into(),
+                is_outline,
             });
             Some((context, vec![buffer]))
         })
