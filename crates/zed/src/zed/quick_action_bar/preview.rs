@@ -66,7 +66,6 @@ impl QuickActionBar {
         };
 
         let button = IconButton::new(button_id, IconName::Eye)
-            .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .tooltip(move |window, cx| {
                 Tooltip::with_meta(
