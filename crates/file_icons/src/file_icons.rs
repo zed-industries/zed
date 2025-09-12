@@ -93,12 +93,17 @@ impl FileIcons {
         })
     }
 
-    pub fn get_folder_icon(expanded: bool, name: &str, cx: &App) -> Option<SharedString> {
+    pub fn get_folder_icon(expanded: bool, path: &Path, cx: &App) -> Option<SharedString> {
         fn get_folder_icon(
             icon_theme: &Arc<IconTheme>,
-            name: &str,
+            path: &Path,
             expanded: bool,
         ) -> Option<SharedString> {
+            let name = path.file_name()?.to_str()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+
             let folder_icon = icon_theme
                 .named_directory_icons
                 .get(name)
@@ -121,13 +126,38 @@ impl FileIcons {
 
         get_folder_icon(
             &ThemeSettings::get_global(cx).active_icon_theme,
-            name,
+            path,
             expanded,
         )
         .or_else(|| {
             Self::default_icon_theme(cx)
-                .and_then(|icon_theme| get_folder_icon(&icon_theme, name, expanded))
+                .and_then(|icon_theme| get_folder_icon(&icon_theme, path, expanded))
         })
+        .or_else(|| {
+            // If we can't find a specific folder icon for the folder at the given path, fall back to the generic folder
+            // icon.
+            Self::get_generic_folder_icon(expanded, cx)
+        })
+    }
+
+    fn get_generic_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
+        fn get_generic_folder_icon(
+            icon_theme: &Arc<IconTheme>,
+            expanded: bool,
+        ) -> Option<SharedString> {
+            if expanded {
+                icon_theme.directory_icons.expanded.clone()
+            } else {
+                icon_theme.directory_icons.collapsed.clone()
+            }
+        }
+
+        get_generic_folder_icon(&ThemeSettings::get_global(cx).active_icon_theme, expanded).or_else(
+            || {
+                Self::default_icon_theme(cx)
+                    .and_then(|icon_theme| get_generic_folder_icon(&icon_theme, expanded))
+            },
+        )
     }
 
     pub fn get_chevron_icon(expanded: bool, cx: &App) -> Option<SharedString> {
