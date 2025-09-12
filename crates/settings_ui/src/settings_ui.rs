@@ -12,8 +12,8 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, ScrollHandle, actions};
 use settings::{
     NumType, SettingsStore, SettingsUiEntry, SettingsUiEntryMetaData, SettingsUiItem,
-    SettingsUiItemDynamicMap, SettingsUiItemGroup, SettingsUiItemSingle, SettingsUiItemUnion,
-    SettingsValue,
+    SettingsUiItemArray, SettingsUiItemDynamicMap, SettingsUiItemGroup, SettingsUiItemSingle,
+    SettingsUiItemUnion, SettingsValue,
 };
 use smallvec::SmallVec;
 use ui::{
@@ -157,6 +157,7 @@ struct UiEntry {
         fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
         SmallVec<[SharedString; 1]>,
     )>,
+    array: Option<SettingsUiItemArray>,
 }
 
 impl UiEntry {
@@ -207,6 +208,7 @@ fn build_tree_item(
         next_sibling: None,
         dynamic_render: None,
         generate_items: None,
+        array: None,
     });
     if let Some(prev_index) = prev_index {
         tree[prev_index].next_sibling = Some(index);
@@ -259,6 +261,9 @@ fn build_tree_item(
                     .map(SharedString::new_static)
                     .collect(),
             ));
+        }
+        SettingsUiItem::Array(array) => {
+            tree[index].array = Some(array);
         }
         SettingsUiItem::None => {
             return;
@@ -388,7 +393,7 @@ fn render_content(
         tree.active_entry_index,
         &mut path,
         content,
-        &mut None,
+        None,
         true,
         window,
         cx,
@@ -397,43 +402,45 @@ fn render_content(
 
 fn render_recursive(
     tree: &[UiEntry],
-    index: usize,
+    entry_index: usize,
     path: &mut SmallVec<[SharedString; 1]>,
     mut element: Div,
-    fallback_path: &mut Option<SmallVec<[SharedString; 1]>>,
+    parent_fallback_default_value: Option<&serde_json::Value>,
     render_next_title: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
-    let Some(child) = tree.get(index) else {
+    let Some(entry) = tree.get(entry_index) else {
         return element
             .child(Label::new(SharedString::new_static("No settings found")).color(Color::Error));
     };
 
     if render_next_title {
-        element = element.child(Label::new(child.title.clone()).size(LabelSize::Large));
+        element = element.child(Label::new(entry.title.clone()).size(LabelSize::Large));
     }
 
     // todo(settings_ui): subgroups?
     let mut pushed_path = false;
-    if let Some(child_path) = child.path.as_ref() {
+    let mut fallback_default_value = parent_fallback_default_value;
+    if let Some(child_path) = entry.path.as_ref() {
         path.push(child_path.clone());
-        if let Some(fallback_path) = fallback_path.as_mut() {
-            fallback_path.push(child_path.clone());
+        if let Some(fallback_value) = parent_fallback_default_value.as_ref() {
+            fallback_default_value =
+                read_settings_value_from_path(fallback_value, std::slice::from_ref(&child_path));
         }
         pushed_path = true;
     }
     let settings_value = settings_value_from_settings_and_path(
         path.clone(),
-        fallback_path.as_ref().map(|path| path.as_slice()),
-        child.title.clone(),
-        child.documentation.clone(),
+        fallback_default_value,
+        entry.title.clone(),
+        entry.documentation.clone(),
         // PERF: how to structure this better? There feels like there's a way to avoid the clone
         // and every value lookup
         SettingsStore::global(cx).raw_user_settings(),
         SettingsStore::global(cx).raw_default_settings(),
     );
-    if let Some(dynamic_render) = child.dynamic_render.as_ref() {
+    if let Some(dynamic_render) = entry.dynamic_render.as_ref() {
         let value = settings_value.read();
         let selected_index = (dynamic_render.determine_option)(value, cx);
         element = element.child(div().child(render_toggle_button_group_inner(
@@ -461,24 +468,94 @@ fn render_recursive(
                 .count();
         if dynamic_render.options[selected_index].is_some()
             && let Some(descendant_index) =
-                child.nth_descendant_index(tree, selected_descendant_index)
+                entry.nth_descendant_index(tree, selected_descendant_index)
         {
             element = render_recursive(
                 tree,
                 descendant_index,
                 path,
                 element,
-                fallback_path,
+                fallback_default_value,
                 false,
                 window,
                 cx,
             );
         }
+    } else if let Some(array) = entry.array.as_ref() {
+        let generated_items = (array.determine_items)(settings_value.read(), cx);
+        let mut ui_items = Vec::with_capacity(generated_items.len());
+        let settings_ui_item = (array.item)();
+
+        let table_interaction_state =
+            window.use_keyed_state(("settings_ui_table", entry_index), cx, |window, cx| {
+                ui::TableInteractionState::new(window, cx)
+                    .with_show_scrollbar_config(ui::ShowScrollbarConfig::never)
+            });
+
+        let mut table = ui::Table::<2>::new()
+            .column_widths([relative(0.1), relative(0.9)])
+            .header(["#", "Value"])
+            .interactable(&table_interaction_state)
+            .striped();
+        let mut row_count = 0;
+
+        for (index, item) in generated_items.iter().enumerate() {
+            let settings_ui_entry = SettingsUiEntry {
+                path: None,
+                title: "",
+                documentation: None,
+                item: settings_ui_item.clone(),
+            };
+            let prev_index = if ui_items.is_empty() {
+                None
+            } else {
+                Some(ui_items.len() - 1)
+            };
+            let item_index = ui_items.len();
+            build_tree_item(
+                &mut ui_items,
+                settings_ui_entry,
+                entry._depth + 1,
+                prev_index,
+            );
+            if item_index < ui_items.len() {
+                ui_items[item_index].path = None;
+                ui_items[item_index].title = item.title.clone();
+                ui_items[item_index].documentation = item.documentation.clone();
+
+                // push path instead of setting path on ui item so that the path isn't pushed to default_path as well
+                // when we recurse
+                path.push(item.path.clone());
+                let row_element = render_recursive(
+                    &ui_items,
+                    item_index,
+                    path,
+                    div(),
+                    Some(&array.default_item),
+                    false,
+                    window,
+                    cx,
+                );
+                path.pop();
+                table = table.row([index.to_string().into_any_element(), row_element.into_any()]);
+                row_count += 1;
+            }
+        }
+        table = table.row([
+            row_count.to_string().into_any_element(),
+            "create".into_any(),
+        ]);
+        element = element.child(table);
     } else if let Some((settings_ui_item, generate_items, defaults_path)) =
-        child.generate_items.as_ref()
+        entry.generate_items.as_ref()
     {
         let generated_items = generate_items(settings_value.read(), cx);
         let mut ui_items = Vec::with_capacity(generated_items.len());
+        let default_value = read_settings_value_from_path(
+            SettingsStore::global(cx).raw_default_settings(),
+            &defaults_path,
+        )
+        .cloned();
         for item in generated_items {
             let settings_ui_entry = SettingsUiEntry {
                 path: None,
@@ -495,7 +572,7 @@ fn render_recursive(
             build_tree_item(
                 &mut ui_items,
                 settings_ui_entry,
-                child._depth + 1,
+                entry._depth + 1,
                 prev_index,
             );
             if item_index < ui_items.len() {
@@ -511,7 +588,7 @@ fn render_recursive(
                     item_index,
                     path,
                     element,
-                    &mut Some(defaults_path.clone()),
+                    default_value.as_ref(),
                     true,
                     window,
                     cx,
@@ -519,14 +596,14 @@ fn render_recursive(
                 path.pop();
             }
         }
-    } else if let Some(child_render) = child.render.as_ref() {
+    } else if let Some(child_render) = entry.render.as_ref() {
         element = element.child(div().child(render_item_single(
             settings_value,
             child_render,
             window,
             cx,
         )));
-    } else if let Some(child_index) = child.first_descendant_index() {
+    } else if let Some(child_index) = entry.first_descendant_index() {
         let mut index = Some(child_index);
         while let Some(sub_child_index) = index {
             element = render_recursive(
@@ -534,7 +611,7 @@ fn render_recursive(
                 sub_child_index,
                 path,
                 element,
-                fallback_path,
+                fallback_default_value,
                 true,
                 window,
                 cx,
@@ -547,9 +624,6 @@ fn render_recursive(
 
     if pushed_path {
         path.pop();
-        if let Some(fallback_path) = fallback_path.as_mut() {
-            fallback_path.pop();
-        }
     }
     return element;
 }
@@ -988,18 +1062,14 @@ fn render_toggle_button_group_inner(
 
 fn settings_value_from_settings_and_path(
     path: SmallVec<[SharedString; 1]>,
-    fallback_path: Option<&[SharedString]>,
+    fallback_value: Option<&serde_json::Value>,
     title: SharedString,
     documentation: Option<SharedString>,
     user_settings: &serde_json::Value,
     default_settings: &serde_json::Value,
 ) -> SettingsValue<serde_json::Value> {
     let default_value = read_settings_value_from_path(default_settings, &path)
-        .or_else(|| {
-            fallback_path.and_then(|fallback_path| {
-                read_settings_value_from_path(default_settings, fallback_path)
-            })
-        })
+        .or_else(|| fallback_value)
         .with_context(|| format!("No default value for item at path {:?}", path.join(".")))
         .expect("Default value set for item")
         .clone();

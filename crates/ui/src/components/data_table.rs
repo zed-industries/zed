@@ -1,21 +1,19 @@
 use std::{ops::Range, rc::Rc, time::Duration};
 
-use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
     AbsoluteLength, AppContext, Axis, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
     FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Point,
     Stateful, Task, UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
 };
 
-use itertools::intersperse_with;
-use settings::Settings as _;
-use ui::{
+use crate::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
     Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
     StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
 };
+use itertools::intersperse_with;
 
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
@@ -58,47 +56,100 @@ pub struct TableInteractionState {
     pub scroll_handle: UniformListScrollHandle,
     pub horizontal_scrollbar: ScrollbarProperties,
     pub vertical_scrollbar: ScrollbarProperties,
+    pub show_scrollbars: fn(&mut App) -> ShowScrollbarConfig,
+}
+
+pub struct ShowScrollbarConfig {
+    pub horizontal: ShowScrollbarAxisConfig,
+    pub vertical: ShowScrollbarAxisConfig,
+}
+
+impl ShowScrollbarConfig {
+    pub fn never(_: &mut App) -> Self {
+        Self {
+            horizontal: ShowScrollbarAxisConfig::never(),
+            vertical: ShowScrollbarAxisConfig::never(),
+        }
+    }
+}
+
+pub struct ShowScrollbarAxisConfig {
+    pub scrollbar: bool,
+    pub track: bool,
+    pub auto_hide: bool,
+}
+
+impl ShowScrollbarAxisConfig {
+    pub fn never() -> Self {
+        Self {
+            scrollbar: false,
+            track: false,
+            auto_hide: false,
+        }
+    }
+}
+
+fn show_scrollbars_default(_cx: &mut App) -> ShowScrollbarConfig {
+    return ShowScrollbarConfig {
+        horizontal: ShowScrollbarAxisConfig {
+            scrollbar: true,
+            track: true,
+            auto_hide: true,
+        },
+        vertical: ShowScrollbarAxisConfig {
+            scrollbar: true,
+            track: true,
+            auto_hide: true,
+        },
+    };
 }
 
 impl TableInteractionState {
-    pub fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let focus_handle = cx.focus_handle();
 
-            cx.on_focus_out(&focus_handle, window, |this: &mut Self, _, window, cx| {
-                this.hide_scrollbars(window, cx);
-            })
-            .detach();
-
-            let scroll_handle = UniformListScrollHandle::new();
-            let vertical_scrollbar = ScrollbarProperties {
-                axis: Axis::Vertical,
-                state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
-                show_scrollbar: false,
-                show_track: false,
-                auto_hide: false,
-                hide_task: None,
-            };
-
-            let horizontal_scrollbar = ScrollbarProperties {
-                axis: Axis::Horizontal,
-                state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
-                show_scrollbar: false,
-                show_track: false,
-                auto_hide: false,
-                hide_task: None,
-            };
-
-            let mut this = Self {
-                focus_handle,
-                scroll_handle,
-                horizontal_scrollbar,
-                vertical_scrollbar,
-            };
-
-            this.update_scrollbar_visibility(cx);
-            this
+        cx.on_focus_out(&focus_handle, window, |this: &mut Self, _, window, cx| {
+            this.hide_scrollbars(window, cx);
         })
+        .detach();
+
+        let scroll_handle = UniformListScrollHandle::new();
+        let vertical_scrollbar = ScrollbarProperties {
+            axis: Axis::Vertical,
+            state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
+            show_scrollbar: false,
+            show_track: false,
+            auto_hide: false,
+            hide_task: None,
+        };
+
+        let horizontal_scrollbar = ScrollbarProperties {
+            axis: Axis::Horizontal,
+            state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
+            show_scrollbar: false,
+            show_track: false,
+            auto_hide: false,
+            hide_task: None,
+        };
+
+        let mut this = Self {
+            focus_handle,
+            scroll_handle,
+            horizontal_scrollbar,
+            vertical_scrollbar,
+            show_scrollbars: show_scrollbars_default,
+        };
+
+        this.update_scrollbar_visibility(cx);
+        this
+    }
+
+    pub fn with_show_scrollbar_config(
+        mut self,
+        show_scrollbars: fn(&mut App) -> ShowScrollbarConfig,
+    ) -> Self {
+        self.show_scrollbars = show_scrollbars;
+        self
     }
 
     pub fn get_scrollbar_offset(&self, axis: Axis) -> Point<Pixels> {
@@ -124,18 +175,9 @@ impl TableInteractionState {
     }
 
     fn update_scrollbar_visibility(&mut self, cx: &mut Context<Self>) {
-        let show_setting = EditorSettings::get_global(cx).scrollbar.show;
+        let show = (self.show_scrollbars)(cx);
 
         let scroll_handle = self.scroll_handle.0.borrow();
-
-        let autohide = |show: ShowScrollbar, cx: &mut Context<Self>| match show {
-            ShowScrollbar::Auto => true,
-            ShowScrollbar::System => cx
-                .try_global::<ScrollbarAutoHide>()
-                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
-            ShowScrollbar::Always => false,
-            ShowScrollbar::Never => false,
-        };
 
         let longest_item_width = scroll_handle.last_item_size.and_then(|size| {
             (size.contents.width > size.item.width).then_some(size.contents.width)
@@ -148,35 +190,23 @@ impl TableInteractionState {
             true
         };
 
-        let show_scrollbar = match show_setting {
-            ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
-            ShowScrollbar::Never => false,
-        };
-        let show_vertical = show_scrollbar;
-
-        let show_horizontal = item_wider_than_container && show_scrollbar;
-
-        let show_horizontal_track =
-            show_horizontal && matches!(show_setting, ShowScrollbar::Always);
-
-        // TODO: we probably should hide the scroll track when the list doesn't need to scroll
-        let show_vertical_track = show_vertical && matches!(show_setting, ShowScrollbar::Always);
-
         self.vertical_scrollbar = ScrollbarProperties {
             axis: self.vertical_scrollbar.axis,
             state: self.vertical_scrollbar.state.clone(),
-            show_scrollbar: show_vertical,
-            show_track: show_vertical_track,
-            auto_hide: autohide(show_setting, cx),
+            show_scrollbar: show.vertical.scrollbar,
+            show_track: show.vertical.track && show.vertical.scrollbar,
+            auto_hide: show.vertical.auto_hide,
             hide_task: None,
         };
 
         self.horizontal_scrollbar = ScrollbarProperties {
             axis: self.horizontal_scrollbar.axis,
             state: self.horizontal_scrollbar.state.clone(),
-            show_scrollbar: show_horizontal,
-            show_track: show_horizontal_track,
-            auto_hide: autohide(show_setting, cx),
+            show_scrollbar: show.horizontal.scrollbar && item_wider_than_container,
+            show_track: show.horizontal.track
+                && show.horizontal.scrollbar
+                && item_wider_than_container,
+            auto_hide: show.horizontal.auto_hide,
             hide_task: None,
         };
 
@@ -201,9 +231,9 @@ impl TableInteractionState {
     fn render_resize_handles<const COLS: usize>(
         &self,
         column_widths: &[Length; COLS],
-        resizable_columns: &[ResizeBehavior; COLS],
+        resizable_columns: &[TableColumnResizeBehavior; COLS],
         initial_sizes: [DefiniteLength; COLS],
-        columns: Option<Entity<ColumnWidths<COLS>>>,
+        columns: Option<Entity<TableColumnWidths<COLS>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -235,7 +265,7 @@ impl TableInteractionState {
 
                 if resizable_columns
                     .next()
-                    .is_some_and(ResizeBehavior::is_resizable)
+                    .is_some_and(TableColumnResizeBehavior::is_resizable)
                 {
                     let hovered = window.use_state(cx, |_window, _cx| false);
 
@@ -460,34 +490,34 @@ impl TableInteractionState {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum ResizeBehavior {
+pub enum TableColumnResizeBehavior {
     None,
     Resizable,
     MinSize(f32),
 }
 
-impl ResizeBehavior {
+impl TableColumnResizeBehavior {
     pub fn is_resizable(&self) -> bool {
-        *self != ResizeBehavior::None
+        *self != TableColumnResizeBehavior::None
     }
 
     pub fn min_size(&self) -> Option<f32> {
         match self {
-            ResizeBehavior::None => None,
-            ResizeBehavior::Resizable => Some(0.05),
-            ResizeBehavior::MinSize(min_size) => Some(*min_size),
+            TableColumnResizeBehavior::None => None,
+            TableColumnResizeBehavior::Resizable => Some(0.05),
+            TableColumnResizeBehavior::MinSize(min_size) => Some(*min_size),
         }
     }
 }
 
-pub struct ColumnWidths<const COLS: usize> {
+pub struct TableColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
     visible_widths: [DefiniteLength; COLS],
     cached_bounds_width: Pixels,
     initialized: bool,
 }
 
-impl<const COLS: usize> ColumnWidths<COLS> {
+impl<const COLS: usize> TableColumnWidths<COLS> {
     pub fn new(_: &mut App) -> Self {
         Self {
             widths: [DefiniteLength::default(); COLS],
@@ -511,7 +541,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         &mut self,
         double_click_position: usize,
         initial_sizes: &[DefiniteLength; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableColumnResizeBehavior; COLS],
         window: &mut Window,
     ) {
         let bounds_width = self.cached_bounds_width;
@@ -536,7 +566,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         col_idx: usize,
         mut widths: [f32; COLS],
         initial_sizes: [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableColumnResizeBehavior; COLS],
     ) -> [f32; COLS] {
         // RESET:
         // Part 1:
@@ -622,7 +652,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableColumnResizeBehavior; COLS],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -667,7 +697,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         diff: f32,
         col_idx: usize,
         widths: &mut [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableColumnResizeBehavior; COLS],
     ) {
         // if diff > 0.0 then go right
         if diff > 0.0 {
@@ -681,7 +711,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         diff: f32,
         col_idx: usize,
         widths: &mut [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableColumnResizeBehavior; COLS],
         direction: i8,
     ) -> f32 {
         let mut diff_remaining = diff;
@@ -737,8 +767,8 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
 pub struct TableWidths<const COLS: usize> {
     initial: [DefiniteLength; COLS],
-    current: Option<Entity<ColumnWidths<COLS>>>,
-    resizable: [ResizeBehavior; COLS],
+    current: Option<Entity<TableColumnWidths<COLS>>>,
+    resizable: [TableColumnResizeBehavior; COLS],
 }
 
 impl<const COLS: usize> TableWidths<COLS> {
@@ -748,7 +778,7 @@ impl<const COLS: usize> TableWidths<COLS> {
         TableWidths {
             initial: widths,
             current: None,
-            resizable: [ResizeBehavior::None; COLS],
+            resizable: [TableColumnResizeBehavior::None; COLS],
         }
     }
 
@@ -854,8 +884,8 @@ impl<const COLS: usize> Table<COLS> {
 
     pub fn resizable_columns(
         mut self,
-        resizable: [ResizeBehavior; COLS],
-        column_widths: &Entity<ColumnWidths<COLS>>,
+        resizable: [TableColumnResizeBehavior; COLS],
+        column_widths: &Entity<TableColumnWidths<COLS>>,
         cx: &mut App,
     ) -> Self {
         if let Some(table_widths) = self.col_widths.as_mut() {
@@ -958,8 +988,8 @@ pub fn render_header<const COLS: usize>(
     headers: [impl IntoElement; COLS],
     table_context: TableRenderContext<COLS>,
     columns_widths: Option<(
-        WeakEntity<ColumnWidths<COLS>>,
-        [ResizeBehavior; COLS],
+        WeakEntity<TableColumnWidths<COLS>>,
+        [TableColumnResizeBehavior; COLS],
         [DefiniteLength; COLS],
     )>,
     entity_id: Option<EntityId>,
@@ -1460,14 +1490,15 @@ mod test {
     fn parse_resize_behavior<const COLS: usize>(
         input: &str,
         total_size: f32,
-    ) -> [ResizeBehavior; COLS] {
-        let mut resize_behavior = [ResizeBehavior::None; COLS];
+    ) -> [TableColumnResizeBehavior; COLS] {
+        let mut resize_behavior = [TableColumnResizeBehavior::None; COLS];
         let mut max_index = 0;
         for (index, col) in input.split('|').enumerate() {
             if col.starts_with('X') || col.is_empty() {
-                resize_behavior[index] = ResizeBehavior::None;
+                resize_behavior[index] = TableColumnResizeBehavior::None;
             } else if col.starts_with('*') {
-                resize_behavior[index] = ResizeBehavior::MinSize(col.len() as f32 / total_size);
+                resize_behavior[index] =
+                    TableColumnResizeBehavior::MinSize(col.len() as f32 / total_size);
             } else {
                 panic!("invalid test input: unrecognized resize behavior: {}", col);
             }
@@ -1528,7 +1559,7 @@ mod test {
                 "invalid test input: total width not the same"
             );
             let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
-            let result = ColumnWidths::reset_to_initial_size(
+            let result = TableColumnWidths::reset_to_initial_size(
                 column_index,
                 widths,
                 initial_sizes,
@@ -1706,7 +1737,7 @@ mod test {
 
             let distance = distance as f32 / total_1;
 
-            let result = ColumnWidths::drag_column_handle(
+            let result = TableColumnWidths::drag_column_handle(
                 distance,
                 column_index,
                 &mut widths,

@@ -136,7 +136,14 @@ pub struct SettingsUiItemDynamicMap {
 
 #[derive(Clone)]
 pub struct SettingsUiItemGroup {
-    pub items: Vec<SettingsUiEntry>,
+    pub items: Box<[SettingsUiEntry]>,
+}
+
+#[derive(Clone)]
+pub struct SettingsUiItemArray {
+    pub item: fn() -> SettingsUiItem,
+    pub determine_items: fn(&serde_json::Value, &App) -> Vec<SettingsUiEntryMetaData>,
+    pub default_item: serde_json::Value,
 }
 
 #[derive(Clone)]
@@ -145,7 +152,7 @@ pub enum SettingsUiItem {
     Single(SettingsUiItemSingle),
     Union(SettingsUiItemUnion),
     DynamicMap(SettingsUiItemDynamicMap),
-    // Array(SettingsUiItemArray), // code-actions: array of objects, array of string
+    Array(SettingsUiItemArray), // code-actions: array of objects, array of string
     None,
 }
 
@@ -167,9 +174,25 @@ impl SettingsUi for String {
     }
 }
 
-impl SettingsUi for SettingsUiItem {
+impl<T: SettingsUi + Default + serde::Serialize> SettingsUi for Vec<T> {
     fn settings_ui_item() -> SettingsUiItem {
-        SettingsUiItem::Single(SettingsUiItemSingle::TextField)
+        SettingsUiItem::Array(SettingsUiItemArray {
+            item: T::settings_ui_item,
+            default_item: serde_json::to_value(T::default()).unwrap(),
+            determine_items: |value, _cx| {
+                let items: &[serde_json::Value] =
+                    value.as_array().map(Vec::as_slice).unwrap_or(&[]);
+                let mut metadata = Vec::with_capacity(items.len());
+                for index in 0..items.len() {
+                    metadata.push(SettingsUiEntryMetaData {
+                        title: index.to_string().into(),
+                        path: format!("#{}", index).into(),
+                        documentation: None,
+                    });
+                }
+                return metadata;
+            },
+        })
     }
 }
 

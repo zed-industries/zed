@@ -129,8 +129,8 @@ fn map_ui_item_to_entry(
     ty: TokenStream,
 ) -> TokenStream {
     // todo(settings_ui): does quote! just work with options?
-    let path = path.map_or_else(|| quote! {None}, |path| quote! {Some(#path)});
-    let doc_str = doc_str.map_or_else(|| quote! {None}, |doc_str| quote! {Some(#doc_str)});
+    let path = token_stream_from_option(path);
+    let doc_str = token_stream_from_option(doc_str);
     let item = ui_item_from_type(ty);
     quote! {
         settings::SettingsUiEntry {
@@ -154,11 +154,21 @@ fn trait_method_call(
 ) -> TokenStream {
     // doing the <ty as settings::SettingsUi> makes the error message better:
     //  -> "#ty Doesn't implement settings::SettingsUi" instead of "no item "settings_ui_item" for #ty"
-    // and ensures safety against name conflicts
-    //
-    // todo(settings_ui): Turn `Vec<T>` into `Vec::<T>` here as well
+    // it also ensures safety against name conflicts with the method name, and works for parameterized types such as `Vec<T>`,
+    // as the syntax for calling methods directly on parameterized types is `Vec::<T>::method_name()`,
+    // but `<Vec<T> as MyTrait>::method_name()` is valid so we don't have to worry about inserting the extra
+    // colons as appropriate
     quote! {
         <#ty as #trait_name>::#method_name()
+    }
+}
+
+// the default impl for `Option<T: ToTokens>` in quote!{} is to include T if it is Some, and include nothing if it is None
+// This function actually results in a `Some(T)` if the option is Some, and a `None` if the option is None
+fn token_stream_from_option<T: ToTokens>(option: Option<T>) -> TokenStream {
+    match option {
+        Some(value) => quote! { Some(#value) },
+        None => quote! { None },
     }
 }
 
@@ -217,12 +227,13 @@ fn generate_ui_item_body(group_name: Option<&String>, input: &syn::DeriveInput) 
                 }
                 let name = &variant.ident;
                 let item = item_group_from_fields(&variant.fields, &serde_attrs);
-                // todo(settings_ui): documentation
+                let documentation =
+                    token_stream_from_option(parse_documentation_from_attrs(&variant.attrs));
                 return quote! {
                     Some(settings::SettingsUiEntry {
                         path: None,
                         title: stringify!(#name),
-                        documentation: None,
+                        documentation: #documentation,
                         item: #item,
                     })
                 };
@@ -236,7 +247,8 @@ fn generate_ui_item_body(group_name: Option<&String>, input: &syn::DeriveInput) 
                 } else {
                     let fields = variant.fields.iter().enumerate().map(|(index, field)| {
                         let field_name = field.ident.as_ref().map_or_else(|| syn::Index::from(index).into_token_stream(), |ident| ident.to_token_stream());
-                        let field_type_is_option = option_inner_type(field.ty.to_token_stream()).is_some();
+                        let field_type = &field.ty;
+                        let field_type_is_option = option_inner_type(field_type.to_token_stream()).is_some();
                         let field_default = if field_type_is_option {
                             quote! {
                                 None
@@ -290,9 +302,7 @@ fn generate_ui_item_body(group_name: Option<&String>, input: &syn::DeriveInput) 
                     determine_option: #determine_option_fn,
                 })
             };
-            // panic!("Unhandled");
         }
-        // todo(settings_ui) discriminated unions
         (_, Data::Enum(_)) => quote! {
             settings::SettingsUiItem::None
         },
@@ -303,8 +313,8 @@ fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOption
     let group_items = fields
         .iter()
         .filter(|field| {
-            !field.attrs.iter().any(|attr| {
-                let mut has_skip = false;
+            let mut has_skip = false;
+            for attr in &field.attrs {
                 if attr.path().is_ident("settings_ui") {
                     let _ = attr.parse_nested_meta(|meta| {
                         if meta.path.is_ident("skip") {
@@ -313,9 +323,9 @@ fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOption
                         Ok(())
                     });
                 }
+            }
 
-                has_skip
-            })
+            !has_skip
         })
         .map(|field| {
             let field_serde_attrs = parse_serde_attributes(&field.attrs);
@@ -329,6 +339,7 @@ fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOption
             (
                 title,
                 doc_str,
+                // todo(settings_ui): Have apply_rename_to_field take flatten into account
                 name.filter(|_| !field_serde_attrs.flatten).map(|name| {
                     parent_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)
                 }),
@@ -341,7 +352,7 @@ fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOption
         });
 
     quote! {
-        settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#group_items),*] })
+        settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: Box::new([#(#group_items),*]) })
     }
 }
 
@@ -567,11 +578,8 @@ pub fn derive_settings_key(input: proc_macro::TokenStream) -> proc_macro::TokenS
         panic!("Missing #[settings_key] attribute");
     };
 
-    let key = key.map_or_else(|| quote! {None}, |key| quote! {Some(#key)});
-    let fallback_key = fallback_key.map_or_else(
-        || quote! {None},
-        |fallback_key| quote! {Some(#fallback_key)},
-    );
+    let key = token_stream_from_option(key);
+    let fallback_key = token_stream_from_option(fallback_key);
 
     let expanded = quote! {
         impl #impl_generics settings::SettingsKey for #name #ty_generics #where_clause {

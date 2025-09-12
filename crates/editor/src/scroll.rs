@@ -780,3 +780,44 @@ impl Editor {
         }
     }
 }
+
+// todo! is this the best place for this?
+pub fn ui_scrollbar_config(cx: &mut App) -> ui::ShowScrollbarConfig {
+    use crate::ShowScrollbar;
+    let show_setting = EditorSettings::get_global(cx).scrollbar.show;
+
+    let mut show = ui::ShowScrollbarConfig {
+        vertical: ui::ShowScrollbarAxisConfig {
+            scrollbar: false,
+            track: false,
+            auto_hide: false,
+        },
+        horizontal: ui::ShowScrollbarAxisConfig {
+            scrollbar: false,
+            track: false,
+            auto_hide: false,
+        },
+    };
+
+    let autohide = match show_setting {
+        ShowScrollbar::Auto => true,
+        ShowScrollbar::System => cx
+            .try_global::<crate::scroll::ScrollbarAutoHide>()
+            .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
+        ShowScrollbar::Always => false,
+        ShowScrollbar::Never => false,
+    };
+    let show_scrollbar = match show_setting {
+        ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
+        ShowScrollbar::Never => false,
+    };
+    let show_track = show_scrollbar && matches!(show_setting, ShowScrollbar::Always);
+
+    for axis in [&mut show.vertical, &mut show.horizontal] {
+        axis.auto_hide = autohide;
+        axis.track = show_track;
+        axis.scrollbar = show_scrollbar;
+    }
+
+    return show;
+}
