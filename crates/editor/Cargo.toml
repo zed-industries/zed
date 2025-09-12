@@ -117,6 +117,7 @@ tree-sitter-yaml.workspace = true
 tree-sitter-bash.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
+vim_mode_setting.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

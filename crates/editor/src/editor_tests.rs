@@ -54,6 +54,7 @@ use util::{
     test::{TextRangeMarker, marked_text_ranges, marked_text_ranges_by, sample_text},
     uri,
 };
+use vim_mode_setting::VimModeSetting;
 use workspace::{
     CloseActiveItem, CloseAllItems, CloseOtherItems, MoveItemToPaneInDirection, NavigationEntry,
     OpenOptions, ViewId,
@@ -1798,6 +1799,43 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
         assert_eq!(
             vec![DisplayPoint::new(DisplayRow(2), 5)..DisplayPoint::new(DisplayRow(2), 5),],
             editor.selections.display_ranges(cx)
+        );
+    });
+}
+
+#[gpui::test]
+fn test_end_of_line_vim_enabled(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("foo bar baz", cx);
+        build_editor(buffer, window, cx)
+    });
+
+    // Before proceeding we'll ensure that:
+    //
+    // 1. Vim mode is enabled in the user's settings
+    // 2. The `clip_at_line_ends` value is set to `true`, mimicking the value that would be set in Vim's NORMAL mode.
+    cx.update(|cx| vim_mode_setting::init(cx));
+    cx.update_global(|store: &mut SettingsStore, cx| {
+        store.update_user_settings::<VimModeSetting>(cx, |s| s.vim_mode = Some(true));
+    });
+
+    _ = editor.update(cx, |editor, _window, cx| {
+        editor.set_clip_at_line_ends(true, cx);
+    });
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.select_to_end_of_line(
+            &SelectToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            window,
+            cx,
+        );
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 11)]
         );
     });
 }
