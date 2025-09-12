@@ -242,21 +242,12 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             (removal_start..removal_end, String::new())
         }
     } else {
-        // We have key paths, construct the sub objects
-        let new_key = key_path[depth].as_ref();
-
-        // We don't have the key, construct the nested objects
-        let mut new_value =
-            serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
-        for key in key_path[(depth + 1)..].iter().rev() {
-            if parse_index_key(key.as_ref()).is_some() {
-                new_value = serde_json::json!([new_value]);
-            } else {
-                new_value = serde_json::json!({ key.as_ref().to_string(): new_value });
-            }
-        }
-
         if let Some(first_key_start) = first_key_start {
+            // We have key paths, construct the sub objects
+            let new_key = key_path[depth].as_ref();
+            // We don't have the key, construct the nested objects
+            let new_value = construct_json_value(&key_path[(depth + 1)..], new_value);
+
             let mut row = 0;
             let mut column = 0;
             for (ix, char) in text.char_indices() {
@@ -284,7 +275,8 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                 (first_key_start..first_key_start, content)
             }
         } else {
-            new_value = serde_json::json!({ new_key.to_string(): new_value });
+            // We don't have the key, construct the nested objects
+            let new_value = construct_json_value(&key_path[depth..], new_value);
             let indent_prefix_len = 4 * depth;
             let mut new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
             if depth == 0 {
@@ -316,6 +308,22 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
     }
 }
 
+fn construct_json_value(
+    key_path: &[impl AsRef<str>],
+    new_value: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut new_value =
+        serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
+    for key in key_path.iter().rev() {
+        if parse_index_key(key.as_ref()).is_some() {
+            new_value = serde_json::json!([new_value]);
+        } else {
+            new_value = serde_json::json!({ key.as_ref().to_string(): new_value });
+        }
+    }
+    return new_value;
+}
+
 fn parse_index_key(index_key: &str) -> Option<usize> {
     index_key.strip_prefix('#')?.parse().ok()
 }
@@ -340,8 +348,7 @@ fn handle_possible_array_value(
     let array_str = if value_is_array {
         &text[value_node.byte_range()]
     } else {
-        // replacing value with an array
-        "[]"
+        ""
     };
 
     let (mut replace_range, mut replace_value) = match replace_top_level_array_value_in_json_text(
@@ -360,24 +367,19 @@ fn handle_possible_array_value(
         replace_range.start += value_node.start_byte();
         replace_range.end += value_node.start_byte();
     } else {
-        // if we gave the replace function a dummy empty array string "[]",
-        // it will have the replace range be the inside of the array
-        // so we add the brackets to either side, and set the replace range to
-        // be the entire value
+        // replace the full value if it wasn't an array
         replace_range = value_node.byte_range();
-        replace_value.insert(0, '[');
-        replace_value.push(']');
     }
-    let needs_indent = replace_value.ends_with('\n')
-        || replace_value
-            .chars()
-            .zip(replace_value.chars().skip(1))
-            .any(|(c, next_c)| c == '\n' && !next_c.is_ascii_whitespace());
     let non_whitespace_char_count = replace_value.len()
         - replace_value
             .chars()
             .filter(char::is_ascii_whitespace)
             .count();
+    let needs_indent = replace_value.ends_with('\n')
+        || (replace_value
+            .chars()
+            .zip(replace_value.chars().skip(1))
+            .any(|(c, next_c)| c == '\n' && !next_c.is_ascii_whitespace()));
     let contains_comment = (replace_value.contains("//") && replace_value.contains('\n'))
         || (replace_value.contains("/*") && replace_value.contains("*/"));
     if needs_indent {
@@ -412,6 +414,11 @@ pub fn replace_top_level_array_value_in_json_text(
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
         .unwrap();
+    if text.trim().is_empty() {
+        let json_value = construct_json_value(key_path, new_value);
+        let json_value = serde_json::json!([json_value]);
+        return Ok((0..text.len(), to_pretty_json(&json_value, tab_size, 0)));
+    }
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = syntax_tree.walk();
@@ -529,6 +536,10 @@ pub fn append_top_level_array_value_in_json_text(
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
         .unwrap();
+    if text.trim().is_empty() {
+        let json_value = serde_json::json!([new_value]);
+        return Ok((0..text.len(), to_pretty_json(&json_value, tab_size, 0)));
+    }
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = syntax_tree.walk();
@@ -1766,7 +1777,9 @@ mod tests {
             &["array", "#3"],
             Some(json!(4)),
             r#"{
-                "array": [4]
+                "array": [
+                    4
+                ]
             }"#
             .unindent(),
         );
@@ -2198,6 +2211,32 @@ mod tests {
             ]"#
             .unindent(),
         );
+
+        check_array_replace(
+            r#""#,
+            2,
+            &[],
+            Some(json!(42)),
+            r#"[
+                42
+            ]"#
+            .unindent(),
+        );
+
+        check_array_replace(
+            r#""#,
+            2,
+            &["foo", "bar"],
+            Some(json!(42)),
+            r#"[
+                {
+                    "foo": {
+                        "bar": 42
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
     }
 
     #[test]
@@ -2464,5 +2503,14 @@ mod tests {
             ]"#
             .unindent(),
         );
+
+        check_array_append(
+            r#""#,
+            json!(42),
+            r#"[
+                42
+            ]"#
+            .unindent(),
+        )
     }
 }
