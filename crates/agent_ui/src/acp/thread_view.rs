@@ -24,10 +24,9 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
-    pulsating_between,
+    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*, pulsating_between,
 };
 use language::Buffer;
 
@@ -47,7 +46,7 @@ use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
-    PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
+    PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -281,7 +280,6 @@ pub struct AcpThreadView {
     thread_error: Option<ThreadError>,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
-    scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
@@ -405,8 +403,7 @@ impl AcpThreadView {
 
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            list_state: list_state.clone(),
-            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
+            list_state: list_state,
             thread_retry_status: None,
             thread_error: None,
             thread_feedback: Default::default(),
@@ -4764,39 +4761,6 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .id("acp-thread-scrollbar")
-            .occlude()
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
-    }
-
     fn render_token_limit_callout(
         &self,
         line_height: Pixels,
@@ -5370,23 +5334,27 @@ impl Render for AcpThreadView {
                     configuration_view,
                     pending_auth_method,
                     ..
-                } => self.render_auth_required_state(
-                    connection,
-                    description.as_ref(),
-                    configuration_view.as_ref(),
-                    pending_auth_method.as_ref(),
-                    window,
-                    cx,
-                ),
+                } => self
+                    .render_auth_required_state(
+                        connection,
+                        description.as_ref(),
+                        configuration_view.as_ref(),
+                        pending_auth_method.as_ref(),
+                        window,
+                        cx,
+                    )
+                    .into_any(),
                 ThreadState::Loading { .. } => v_flex()
                     .flex_1()
-                    .child(self.render_recent_history(window, cx)),
+                    .child(self.render_recent_history(window, cx))
+                    .into_any(),
                 ThreadState::LoadError(e) => v_flex()
                     .flex_1()
                     .size_full()
                     .items_center()
                     .justify_end()
-                    .child(self.render_load_error(e, window, cx)),
+                    .child(self.render_load_error(e, window, cx))
+                    .into_any(),
                 ThreadState::Ready { .. } => v_flex().flex_1().map(|this| {
                     if has_messages {
                         this.child(
@@ -5406,9 +5374,11 @@ impl Render for AcpThreadView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .child(self.render_vertical_scrollbar(cx))
+                        .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                        .into_any()
                     } else {
                         this.child(self.render_recent_history(window, cx))
+                            .into_any()
                     }
                 }),
             })

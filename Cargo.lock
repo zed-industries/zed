@@ -12214,7 +12214,6 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
 ]
@@ -17632,6 +17631,7 @@ dependencies = [
  "icons",
  "itertools 0.14.0",
  "menu",
+ "schemars",
  "serde",
  "settings",
  "smallvec",

@@ -1,8 +1,9 @@
-use editor::ShowScrollbar;
+use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use workspace::dock::DockPosition;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -88,6 +89,22 @@ pub struct GitPanelSettings {
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
+}
+
+impl ScrollbarVisibility for GitPanelSettings {
+    fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
+        // TODO: This PR should have defined Editor's `scrollbar.axis`
+        // as an Option<ScrollbarAxis>, not a ScrollbarAxes as it would allow you to
+        // `.unwrap_or(EditorSettings::get_global(cx).scrollbar.show)`.
+        //
+        // Once this is fixed we can extend the GitPanelSettings with a `scrollbar.axis`
+        // so we can show each axis based on the settings.
+        //
+        // We should fix this. PR: https://github.com/zed-industries/zed/pull/19495
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
 }
 
 impl Settings for GitPanelSettings {
