@@ -19,7 +19,7 @@ pub use crate::{
 };
 use anyhow::{Context as _, Result};
 pub use clock::ReplicaId;
-use clock::{AGENT_REPLICA_ID, Lamport};
+use clock::{AGENT_REPLICA_ID, Global, Lamport};
 use collections::HashMap;
 use fs::MTime;
 use futures::channel::oneshot;
@@ -29,7 +29,7 @@ use gpui::{
 };
 
 use lsp::{LanguageServerId, NumberOrString};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::WorktreeId;
@@ -126,6 +126,81 @@ pub struct Buffer {
     has_unsaved_edits: Cell<(clock::Global, bool)>,
     change_bits: Vec<rc::Weak<Cell<bool>>>,
     _subscriptions: Vec<gpui::Subscription>,
+    tree_sitter_data: Arc<RwLock<TreeSitterData>>,
+}
+
+pub struct TreeSitterData {
+    data_for_version: Global,
+    chunks: Vec<BufferChunk>,
+    brackets_by_chunks: Vec<Option<Vec<BracketMatch>>>,
+}
+
+const MAX_ROWS_IN_A_CHUNK: u32 = 50;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BufferChunk {
+    id: usize,
+    pub start: BufferRow,
+    pub end: BufferRow,
+}
+
+impl TreeSitterData {
+    fn from_buffer_range(buffer_point_range: Range<Point>, version: Global) -> Self {
+        let buffer_row_range = buffer_point_range.start.row..=buffer_point_range.end.row;
+        let chunks = buffer_row_range
+            .clone()
+            .step_by(MAX_ROWS_IN_A_CHUNK as usize)
+            .enumerate()
+            .map(|(id, chunk_start)| {
+                let chunk_end =
+                    std::cmp::min(chunk_start + MAX_ROWS_IN_A_CHUNK, *buffer_row_range.end());
+                BufferChunk {
+                    id,
+                    start: chunk_start,
+                    end: chunk_end,
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Self {
+            data_for_version: version,
+            brackets_by_chunks: vec![None; chunks.len()],
+            chunks,
+        }
+    }
+
+    // todo! better name? we have 2 already
+    fn bracket_ranges_for_range(
+        &mut self,
+        point_range: &Range<Point>,
+        produce_new_matches: impl Fn(&mut Self, Range<u32>) -> Vec<BracketMatch>,
+    ) -> Vec<BracketMatch> {
+        let row_range = point_range.start.row..=point_range.end.row;
+        let applicable_chunks = self
+            .chunks
+            .iter()
+            .filter(move |chunk_range| {
+                row_range.contains(&chunk_range.start) || row_range.contains(&chunk_range.end)
+            })
+            .copied()
+            .collect::<Vec<_>>();
+
+        let mut all_bracket_matches = Vec::new();
+        for chunk in applicable_chunks {
+            let chunk_brackets = &mut self.brackets_by_chunks[chunk.id];
+            let bracket_matches = match chunk_brackets {
+                Some(cached_brackets) => cached_brackets.clone(),
+                None => {
+                    let new_matches = produce_new_matches(self, chunk.start..chunk.end);
+                    *chunk_brackets = Some(new_matches.clone());
+                    new_matches
+                }
+            };
+            all_bracket_matches.extend(bracket_matches);
+        }
+
+        all_bracket_matches
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -149,6 +224,7 @@ pub struct BufferSnapshot {
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     language: Option<Arc<Language>>,
     non_text_state_update_count: usize,
+    tree_sitter_data: Arc<RwLock<TreeSitterData>>,
 }
 
 /// The kind and amount of indentation in a particular line. For now,
@@ -968,8 +1044,13 @@ impl Buffer {
         let saved_mtime = file.as_ref().and_then(|file| file.disk_state().mtime());
         let snapshot = buffer.snapshot();
         let syntax_map = Mutex::new(SyntaxMap::new(&snapshot));
+        let tree_sitter_data = TreeSitterData::from_buffer_range(
+            (0..buffer.len()).to_point(&buffer),
+            buffer.version(),
+        );
         Self {
             saved_mtime,
+            tree_sitter_data: Arc::new(RwLock::new(tree_sitter_data)),
             saved_version: buffer.version(),
             preview_version: buffer.version(),
             reload_task: None,
@@ -1018,12 +1099,17 @@ impl Buffer {
                 let language_registry = language_registry.clone();
                 syntax.reparse(&text, language_registry, language);
             }
+            let tree_sitter_data = TreeSitterData::from_buffer_range(
+                (0..text.len()).to_point(&text),
+                text.version().clone(),
+            );
             BufferSnapshot {
                 text,
                 syntax,
                 file: None,
                 diagnostics: Default::default(),
                 remote_selections: Default::default(),
+                tree_sitter_data: Arc::new(RwLock::new(tree_sitter_data)),
                 language,
                 non_text_state_update_count: 0,
             }
@@ -1036,9 +1122,14 @@ impl Buffer {
         let text =
             TextBuffer::new_normalized(0, buffer_id, Default::default(), Rope::new()).snapshot();
         let syntax = SyntaxMap::new(&text).snapshot();
+        let tree_sitter_data = TreeSitterData::from_buffer_range(
+            (0..text.len()).to_point(&text),
+            text.version().clone(),
+        );
         BufferSnapshot {
             text,
             syntax,
+            tree_sitter_data: Arc::new(RwLock::new(tree_sitter_data)),
             file: None,
             diagnostics: Default::default(),
             remote_selections: Default::default(),
@@ -1061,9 +1152,14 @@ impl Buffer {
         if let Some(language) = language.clone() {
             syntax.reparse(&text, language_registry, language);
         }
+        let tree_sitter_data = TreeSitterData::from_buffer_range(
+            (0..text.len()).to_point(&text),
+            text.version().clone(),
+        );
         BufferSnapshot {
             text,
             syntax,
+            tree_sitter_data: Arc::new(RwLock::new(tree_sitter_data)),
             file: None,
             diagnostics: Default::default(),
             remote_selections: Default::default(),
@@ -1083,6 +1179,7 @@ impl Buffer {
         BufferSnapshot {
             text,
             syntax,
+            tree_sitter_data: self.tree_sitter_data.clone(),
             file: self.file.clone(),
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
@@ -4052,58 +4149,82 @@ impl BufferSnapshot {
     // store that in the editor
     // during editor/element's layout, take the applicable range within the stored data
     // paint that
+    fn fetch_bracket_ranges(
+        &self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = BracketMatch> + use<'_> {
+        // todo! access buffer's bracket cache first!
+        let mut tree_sitter_data = self.tree_sitter_data.write();
+        if self
+            .version
+            .changed_since(&tree_sitter_data.data_for_version)
+        {
+            *tree_sitter_data = TreeSitterData::from_buffer_range(
+                (0..self.len()).to_point(self),
+                self.version().clone(),
+            );
+        }
+
+        tree_sitter_data.bracket_ranges_for_range(
+            range.to_point(self),
+            |tree_sitter_data, chunk_range| {
+                let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+                    grammar.brackets_config.as_ref().map(|c| &c.query)
+                });
+                let configs = matches
+                    .grammars()
+                    .iter()
+                    .map(|grammar| grammar.brackets_config.as_ref().unwrap())
+                    .collect::<Vec<_>>();
+
+                // todo!
+                let mut depth = 0;
+
+                iter::from_fn(move || {
+                    while let Some(mat) = matches.peek() {
+                        let mut open = None;
+                        let mut close = None;
+                        let config = configs[mat.grammar_index];
+                        let pattern = &config.patterns[mat.pattern_index];
+                        for capture in mat.captures {
+                            if capture.index == config.open_capture_ix {
+                                open = Some(capture.node.byte_range());
+                            } else if capture.index == config.close_capture_ix {
+                                close = Some(capture.node.byte_range());
+                            }
+                        }
+
+                        matches.advance();
+
+                        let Some((open_range, close_range)) = open.zip(close) else {
+                            continue;
+                        };
+
+                        let bracket_range = open_range.start..=close_range.end;
+                        if !bracket_range.overlaps(&range) {
+                            continue;
+                        }
+
+                        depth += 1;
+
+                        return Some(BracketMatch {
+                            open_range,
+                            close_range,
+                            newline_only: pattern.newline_only,
+                            depth,
+                        });
+                    }
+                    None
+                })
+            },
+        )
+    }
+
     pub fn all_bracket_ranges(
         &self,
         range: Range<usize>,
     ) -> impl Iterator<Item = BracketMatch> + use<'_> {
-        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-            grammar.brackets_config.as_ref().map(|c| &c.query)
-        });
-        let configs = matches
-            .grammars()
-            .iter()
-            .map(|grammar| grammar.brackets_config.as_ref().unwrap())
-            .collect::<Vec<_>>();
-
-        // todo!
-        let mut depth = 0;
-
-        iter::from_fn(move || {
-            while let Some(mat) = matches.peek() {
-                let mut open = None;
-                let mut close = None;
-                let config = configs[mat.grammar_index];
-                let pattern = &config.patterns[mat.pattern_index];
-                for capture in mat.captures {
-                    if capture.index == config.open_capture_ix {
-                        open = Some(capture.node.byte_range());
-                    } else if capture.index == config.close_capture_ix {
-                        close = Some(capture.node.byte_range());
-                    }
-                }
-
-                matches.advance();
-
-                let Some((open_range, close_range)) = open.zip(close) else {
-                    continue;
-                };
-
-                let bracket_range = open_range.start..=close_range.end;
-                if !bracket_range.overlaps(&range) {
-                    continue;
-                }
-
-                depth += 1;
-
-                return Some(BracketMatch {
-                    open_range,
-                    close_range,
-                    newline_only: pattern.newline_only,
-                    depth,
-                });
-            }
-            None
-        })
+        self.fetch_bracket_ranges(range)
     }
 
     /// Returns bracket range pairs overlapping or adjacent to `range`
@@ -4747,6 +4868,7 @@ impl Clone for BufferSnapshot {
             remote_selections: self.remote_selections.clone(),
             diagnostics: self.diagnostics.clone(),
             language: self.language.clone(),
+            tree_sitter_data: self.tree_sitter_data.clone(),
             non_text_state_update_count: self.non_text_state_update_count,
         }
     }

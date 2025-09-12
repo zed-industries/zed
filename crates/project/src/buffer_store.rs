@@ -6,7 +6,6 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow};
 use client::Client;
-use clock::Global;
 use collections::{HashMap, HashSet, hash_map};
 use fs::Fs;
 use futures::{Future, FutureExt as _, StreamExt, channel::oneshot, future::Shared};
@@ -14,8 +13,7 @@ use gpui::{
     App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity,
 };
 use language::{
-    BracketMatch, Buffer, BufferEvent, BufferRow, BufferSnapshot, Capability, DiskState, File as _,
-    Language, Operation,
+    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
     proto::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
         split_operations,
@@ -26,8 +24,8 @@ use rpc::{
     proto::{self},
 };
 use smol::channel::Receiver;
-use std::{io, ops::Range, path::Path, pin::pin, sync::Arc, time::Instant};
-use text::{BufferId, OffsetRangeExt as _, Point};
+use std::{io, path::Path, pin::pin, sync::Arc, time::Instant};
+use text::BufferId;
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
@@ -42,89 +40,6 @@ pub struct BufferStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     shared_buffers: HashMap<proto::PeerId, HashMap<BufferId, SharedBuffer>>,
     non_searchable_buffers: HashSet<BufferId>,
-    buffer_tree_sitter_data: HashMap<BufferId, TreeSitterData>,
-}
-
-pub struct TreeSitterData {
-    buffer_version: Global,
-    snapshot: BufferSnapshot,
-    chunks: Vec<BufferChunk>,
-    brackets_by_chunks: Vec<Option<Vec<BracketMatch>>>,
-}
-
-const MAX_ROWS_IN_A_CHUNK: u32 = 50;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BufferChunk {
-    id: usize,
-    pub start: BufferRow,
-    pub end: BufferRow,
-}
-
-impl TreeSitterData {
-    pub fn new(buffer: &Entity<Buffer>, cx: &App) -> Self {
-        let buffer = buffer.read(cx);
-        let snapshot = buffer.snapshot();
-        let buffer_point_range = (0..buffer.len()).to_point(&snapshot);
-        let buffer_row_range = buffer_point_range.start.row..=buffer_point_range.end.row;
-        let chunks = buffer_row_range
-            .clone()
-            .step_by(MAX_ROWS_IN_A_CHUNK as usize)
-            .enumerate()
-            .map(|(id, chunk_start)| {
-                let chunk_end =
-                    std::cmp::min(chunk_start + MAX_ROWS_IN_A_CHUNK, *buffer_row_range.end());
-                BufferChunk {
-                    id,
-                    start: chunk_start,
-                    end: chunk_end,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Self {
-            buffer_version: buffer.version(),
-            brackets_by_chunks: vec![None; chunks.len()],
-            snapshot,
-            chunks,
-        }
-    }
-
-    // todo! better name? we have 2 already
-    pub fn bracket_ranges_for_range(&mut self, range: &Range<text::Anchor>) -> Vec<BracketMatch> {
-        let point_range = range.to_point(&self.snapshot);
-        let row_range = point_range.start.row..=point_range.end.row;
-        let applicable_chunks = self
-            .chunks
-            .iter()
-            .filter(move |chunk_range| {
-                row_range.contains(&chunk_range.start) || row_range.contains(&chunk_range.end)
-            })
-            .copied()
-            .collect::<Vec<_>>();
-
-        let mut all_bracket_matches = Vec::new();
-        for chunk in applicable_chunks {
-            let chunk_brackets = &mut self.brackets_by_chunks[chunk.id];
-            let bracket_matches = match chunk_brackets {
-                Some(cached_brackets) => cached_brackets.clone(),
-                None => {
-                    let new_matches = self
-                        .snapshot
-                        .bracket_ranges(
-                            Point::new(chunk.start, 0)
-                                ..Point::new(chunk.end, self.snapshot.line_len(chunk.end)),
-                        )
-                        .collect::<Vec<_>>();
-                    *chunk_brackets = Some(new_matches.clone());
-                    new_matches
-                }
-            };
-            all_bracket_matches.extend(bracket_matches);
-        }
-
-        all_bracket_matches
-    }
 }
 
 #[derive(Hash, Eq, PartialEq, Clone)]
@@ -568,7 +483,6 @@ impl LocalBufferStore {
         } else {
             this.opened_buffers.remove(&buffer_id);
             this.non_searchable_buffers.remove(&buffer_id);
-            this.buffer_tree_sitter_data.remove(&buffer_id);
             None
         };
 
@@ -839,7 +753,6 @@ impl BufferStore {
             shared_buffers: Default::default(),
             loading_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
-            buffer_tree_sitter_data: Default::default(),
             worktree_store,
         }
     }
@@ -865,7 +778,6 @@ impl BufferStore {
             loading_buffers: Default::default(),
             shared_buffers: Default::default(),
             non_searchable_buffers: Default::default(),
-            buffer_tree_sitter_data: Default::default(),
             worktree_store,
         }
     }
@@ -1803,25 +1715,6 @@ impl BufferStore {
                 .push(language::proto::serialize_transaction(&transaction));
         }
         serialized_transaction
-    }
-
-    pub fn tree_sitter_data(
-        &mut self,
-        buffer_id: BufferId,
-        cx: &App,
-    ) -> Option<&mut TreeSitterData> {
-        let buffer = self.get_existing(buffer_id).ok()?;
-        let buffer_version = buffer.read(cx).version();
-        let tree_sitter_data = match self.buffer_tree_sitter_data.entry(buffer_id) {
-            hash_map::Entry::Occupied(mut o) => {
-                if buffer_version.changed_since(&o.get().buffer_version) {
-                    o.insert(TreeSitterData::new(&buffer, cx));
-                }
-                o.into_mut()
-            }
-            hash_map::Entry::Vacant(v) => v.insert(TreeSitterData::new(&buffer, cx)),
-        };
-        Some(tree_sitter_data)
     }
 }
 
