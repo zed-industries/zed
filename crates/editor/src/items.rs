@@ -1463,6 +1463,7 @@ impl Editor {
 }
 
 pub(crate) enum BufferSearchHighlights {}
+const ACTIVE_SEARCH_MATCH_KEY: usize = 0;
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
@@ -1481,6 +1482,13 @@ impl SearchableItem for Editor {
         {
             cx.emit(SearchEvent::MatchesInvalidated);
         }
+
+        self.highlight_background_key::<BufferSearchHighlights>(
+            ACTIVE_SEARCH_MATCH_KEY,
+            &[],
+            |theme| theme.colors().element_selection_background,
+            cx,
+        );
     }
 
     fn update_matches(
@@ -1499,6 +1507,33 @@ impl SearchableItem for Editor {
             |theme| theme.colors().search_match_background,
             cx,
         );
+
+        let active_ix = active_match_index(
+            Direction::Next,
+            matches,
+            &self.selections.newest_anchor().head(),
+            &self.buffer().read(cx).snapshot(cx),
+        );
+        match active_ix {
+            Some(ix) => {
+                let range = &matches[ix];
+                self.highlight_background_key::<BufferSearchHighlights>(
+                    ACTIVE_SEARCH_MATCH_KEY,
+                    std::slice::from_ref(range),
+                    |theme| theme.colors().element_selection_background,
+                    cx,
+                );
+            }
+            None => {
+                self.highlight_background_key::<BufferSearchHighlights>(
+                    ACTIVE_SEARCH_MATCH_KEY,
+                    &[],
+                    |theme| theme.colors().element_selection_background,
+                    cx,
+                );
+            }
+        }
+
         if updated {
             cx.emit(SearchEvent::MatchesInvalidated);
         }
@@ -1596,7 +1631,13 @@ impl SearchableItem for Editor {
         let range = self.range_for_match(&matches[index]);
         self.change_selections(Default::default(), window, cx, |s| {
             s.select_ranges([range]);
-        })
+        });
+        self.highlight_background_key::<BufferSearchHighlights>(
+            ACTIVE_SEARCH_MATCH_KEY,
+            std::slice::from_ref(&matches[index]),
+            |theme| theme.colors().element_selection_background,
+            cx,
+        );
     }
 
     fn select_matches(
