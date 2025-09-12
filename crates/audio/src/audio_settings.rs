@@ -24,6 +24,16 @@ pub struct AudioSettings {
     /// too loud quieter. This only affects how things sound for you.
     #[serde(rename = "experimental.control_output_volume", default)]
     pub control_output_volume: bool,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Use the new denoising neural network to remove background noises like
+    /// typing, airconditioning and passing cars from your microphone input.
+    /// When your in a noisy environment this will make your speech easier to
+    /// understand for the other call members.
+    ///
+    /// Note: does not work well on music.
+    #[serde(rename = "experimental.denoise", default)]
+    pub denoise: bool,
 }
 
 /// Configuration of audio in Zed.
@@ -47,6 +57,16 @@ pub struct AudioSettingsContent {
     /// too loud quieter. This only affects how things sound for you.
     #[serde(rename = "experimental.control_output_volume", default)]
     pub control_output_volume: bool,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Use the new denoising neural network to remove background noises like
+    /// typing, airconditioning and passing cars from your microphone input.
+    /// When your in a noisy environment this will make your speech easier to
+    /// understand for the other call members.
+    ///
+    /// Note: does not work well on music.
+    #[serde(rename = "experimental.denoise", default)]
+    pub denoise: bool,
 }
 
 impl Settings for AudioSettings {
@@ -63,6 +83,7 @@ impl Settings for AudioSettings {
 pub(crate) struct LiveSettings {
     pub(crate) control_input_volume: AtomicBool,
     pub(crate) control_output_volume: AtomicBool,
+    pub(crate) denoise: AtomicBool,
 }
 
 impl LiveSettings {
@@ -76,6 +97,9 @@ impl LiveSettings {
                 AudioSettings::get_global(cx).control_output_volume,
                 Ordering::Relaxed,
             );
+            LIVE_SETTINGS
+                .control_output_volume
+                .store(AudioSettings::get_global(cx).denoise, Ordering::Relaxed);
         })
         .detach();
 
@@ -86,6 +110,9 @@ impl LiveSettings {
         LIVE_SETTINGS
             .control_output_volume
             .store(init_settings.control_output_volume, Ordering::Relaxed);
+        LIVE_SETTINGS
+            .control_output_volume
+            .store(init_settings.denoise, Ordering::Relaxed);
     }
 }
 
@@ -96,4 +123,5 @@ impl LiveSettings {
 pub(crate) static LIVE_SETTINGS: LiveSettings = LiveSettings {
     control_input_volume: AtomicBool::new(true),
     control_output_volume: AtomicBool::new(true),
+    denoise: AtomicBool::new(true),
 };

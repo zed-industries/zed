@@ -7,7 +7,8 @@ use std::{
 };
 
 use crossbeam::queue::ArrayQueue;
-use rodio::{ChannelCount, Sample, SampleRate, Source};
+use denoise::{Denoiser, DenoiserError};
+use rodio::{ChannelCount, Sample, SampleRate, Source, source::UniformSourceIterator};
 
 #[derive(Debug, thiserror::Error)]
 #[error("Replay duration is too short must be >= 100ms")]
@@ -25,6 +26,12 @@ pub trait RodioExt: Source + Sized {
         duration: Duration,
     ) -> Result<(Replay, Replayable<Self>), ReplayDurationTooShort>;
     fn take_samples(self, n: usize) -> TakeSamples<Self>;
+    fn denoise(self) -> Result<Denoiser<Self>, DenoiserError>;
+    fn constant_params(
+        self,
+        channel_count: ChannelCount,
+        sample_rate: SampleRate,
+    ) -> UniformSourceIterator<Self>;
 }
 
 impl<S: Source> RodioExt for S {
@@ -100,6 +107,18 @@ impl<S: Source> RodioExt for S {
             inner: self,
             left_to_take: n,
         }
+    }
+    fn denoise(self) -> Result<Denoiser<Self>, DenoiserError> {
+        let res = Denoiser::try_new(self);
+        log::info!("result of new: {res:?}");
+        res
+    }
+    fn constant_params(
+        self,
+        channel_count: ChannelCount,
+        sample_rate: SampleRate,
+    ) -> UniformSourceIterator<Self> {
+        UniformSourceIterator::new(self, channel_count, sample_rate)
     }
 }
 

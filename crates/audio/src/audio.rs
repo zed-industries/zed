@@ -9,7 +9,7 @@ mod non_windows_and_freebsd_deps {
     pub(super) use log::info;
     pub(super) use parking_lot::Mutex;
     pub(super) use rodio::cpal::Sample;
-    pub(super) use rodio::source::{LimitSettings, UniformSourceIterator};
+    pub(super) use rodio::source::LimitSettings;
     pub(super) use std::sync::Arc;
 }
 
@@ -166,7 +166,8 @@ impl Audio {
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
 
-        let (replay, stream) = UniformSourceIterator::new(stream, CHANNEL_COUNT, SAMPLE_RATE)
+        let (replay, stream) = stream
+            .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
             .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
                 let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
@@ -187,6 +188,13 @@ impl Audio {
                     }
                 }
             })
+            .constant_params(nz!(1), nz!(16_000))
+            .denoise()
+            .context("Could not set up denoiser")?
+            .periodic_access(Duration::from_millis(100), move |denoise| {
+                denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
+            })
+            .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
             .automatic_gain_control(1.0, 4.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
