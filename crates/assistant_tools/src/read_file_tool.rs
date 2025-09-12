@@ -260,7 +260,7 @@ impl Tool for ReadFileTool {
 
                 Ok(result)
             } else {
-                // No line ranges specified
+                // No line ranges specified, so check file size to see if it's too big.
                 let path_buf = std::path::PathBuf::from(&file_path);
                 let buffer_content = outline::get_buffer_content_or_outline(
                     buffer.clone(),
@@ -272,7 +272,6 @@ impl Tool for ReadFileTool {
                     log.buffer_read(buffer, cx);
                 })?;
 
-                // Check if we returned an outline or full content
                 if buffer_content.is_outline {
                     Ok(formatdoc! {"
                         This file was too big to read all at once.

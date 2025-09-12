@@ -191,7 +191,6 @@ impl FileContextHandle {
         let buffer = self.buffer.clone();
 
         cx.spawn(async move |cx| {
-            // Get content or outline based on file size
             let buffer_content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
                 .await
                 .unwrap_or_else(|_| outline::BufferContent {

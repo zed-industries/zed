@@ -457,8 +457,6 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-
-            // Use shared function to get content or outline based on file size
             let buffer_content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx).await?;
 
             Ok(Mention::Text {
@@ -526,8 +524,6 @@ impl MessageEditor {
 
                     cx.spawn(async move |cx| {
                         let buffer = open_task.await.log_err()?;
-
-                        // Use shared function to get content or outline based on file size
                         let buffer_content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
                             .await
                             .ok()?;

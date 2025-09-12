@@ -224,7 +224,7 @@ impl AgentTool for ReadFileTool {
 
                 Ok(result.into())
             } else {
-                // No line ranges specified, so use shared function to get content or outline
+                // No line ranges specified, so check file size to see if it's too big.
                 let buffer_content = outline::get_buffer_content_or_outline(
                     buffer.clone(),
                     Some(&abs_path),
@@ -235,7 +235,6 @@ impl AgentTool for ReadFileTool {
                     log.buffer_read(buffer.clone(), cx);
                 })?;
 
-                // Check if we returned an outline or full content
                 if buffer_content.is_outline {
                     Ok(formatdoc! {"
                         This file was too big to read all at once.
