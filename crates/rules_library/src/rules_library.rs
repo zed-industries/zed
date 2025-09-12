@@ -22,8 +22,8 @@ use std::time::Duration;
 use theme::ThemeSettings;
 use title_bar::platform_title_bar::PlatformTitleBar;
 use ui::{
-    Context, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render,
-    SharedString, Styled, Tooltip, Window, div, prelude::*,
+    Context, KeyBinding, ListItem, ListItemSpacing, ParentElement, Render, SharedString, Styled,
+    Tooltip, Window, div, prelude::*,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{Workspace, client_side_decorations};

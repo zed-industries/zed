@@ -25,9 +25,9 @@ use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{CompletionDisplayOptions, Project};
 use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAssets};
 use ui::{
-    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
-    Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, Indicator, Modal, ModalFooter,
+    ModalHeader, ParentElement as _, Render, Section, SharedString, Styled as _, Tooltip, Window,
+    prelude::*, right_click_menu,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;

@@ -15,7 +15,7 @@ use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use time_format::format_local_timestamp;
-use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
+use ui::{Avatar, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 #[derive(Clone, Debug)]
