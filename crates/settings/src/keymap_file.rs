@@ -332,33 +332,68 @@ impl KeymapFile {
         cx: &App,
     ) -> std::result::Result<KeyBinding, String> {
         let (build_result, action_input_string) = match &action.0 {
+            // TODO(voz): The way I'm handling action sequences is a bit hacky.
             Value::Array(items) => {
-                if items.len() != 2 {
+                // Check if this is an action sequence by looking for specific patterns:
+                // 1. All items are strings (action names), OR
+                // 2. All items are objects with "action" field, OR
+                // 3. Mixed strings and objects with "action" field
+                let is_action_sequence = if items.len() == 2 {
+                    // Special case: two-element arrays are action sequences only if:
+                    // - Both are strings, OR
+                    // - Both are objects with "action" field, OR
+                    // - First is string and second is object with "action" field
+                    match (&items[0], &items[1]) {
+                        (Value::String(_), Value::String(_)) => true,
+                        (Value::Object(obj1), Value::Object(obj2)) => {
+                            obj1.contains_key("action") && obj2.contains_key("action")
+                        }
+                        (Value::String(_), Value::Object(obj)) => obj.contains_key("action"),
+                        _ => false,
+                    }
+                } else {
+                    // For arrays with 3+ elements, check if all items are action-like
+                    items.len() >= 2
+                        && items.iter().all(|item| match item {
+                            Value::String(_) => true,
+                            Value::Object(obj) => obj.contains_key("action"),
+                            _ => false,
+                        })
+                };
+
+                if is_action_sequence {
+                    (
+                        cx.build_action("ActionSequence", Some(action.0.clone())),
+                        None,
+                    )
+                } else if items.len() == 2 {
+                    // Single action with arguments (backward compatible)
+                    let Value::String(ref name) = items[0] else {
+                        return Err(format!(
+                            "expected two-element array of `[name, input]`, \
+                            but the first element is not a string in {}.",
+                            MarkdownInlineCode(&action.0.to_string())
+                        ));
+                    };
+                    let action_input = items[1].clone();
+                    let action_input_string = action_input.to_string();
+                    (
+                        cx.build_action(name, Some(action_input)),
+                        Some(action_input_string),
+                    )
+                } else {
                     return Err(format!(
-                        "expected two-element array of `[name, input]`. \
+                        "expected two-element array of `[name, input]` or action sequence. \
                         Instead found {}.",
                         MarkdownInlineCode(&action.0.to_string())
                     ));
                 }
-                let serde_json::Value::String(ref name) = items[0] else {
-                    return Err(format!(
-                        "expected two-element array of `[name, input]`, \
-                        but the first element is not a string in {}.",
-                        MarkdownInlineCode(&action.0.to_string())
-                    ));
-                };
-                let action_input = items[1].clone();
-                let action_input_string = action_input.to_string();
-                (
-                    cx.build_action(name, Some(action_input)),
-                    Some(action_input_string),
-                )
             }
             Value::String(name) => (cx.build_action(name, None), None),
             Value::Null => (Ok(NoAction.boxed_clone()), None),
             _ => {
                 return Err(format!(
-                    "expected two-element array of `[name, input]`. \
+                    "expected two-element array of `[name, input]` or action sequence. \
                     Instead found {}.",
                     MarkdownInlineCode(&action.0.to_string())
                 ));
