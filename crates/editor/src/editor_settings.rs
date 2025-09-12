@@ -1,6 +1,7 @@
 use core::num;
 use std::num::NonZeroU32;
 
+use anyhow::Result;
 use gpui::App;
 use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
@@ -380,6 +381,42 @@ pub struct SearchSettings {
     pub include_ignored: bool,
     #[serde(default)]
     pub regex: bool,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+pub struct SearchSettingsContent {
+    /// Whether or not to show the the project search button in the status bar.
+    ///
+    /// Default: true
+    pub show: Option<bool>,
+    /// Whether or not to search for whole words only.
+    ///
+    /// Default: false
+    pub whole_word: Option<bool>,
+    /// Whether or not to use case-sensitive search.
+    ///
+    /// Default: false
+    pub case_sensitive: Option<bool>,
+    /// Whether or not to include ignored files in the search.
+    ///
+    /// Default: false
+    pub include_ignored: Option<bool>,
+    /// Whether or not to use regex for the search query.
+    ///
+    /// Default: false
+    pub regex: Option<bool>,
+}
+
+impl Settings for SearchSettings {
+    const KEY: Option<&'static str> = Some("search");
+
+    type FileContent = SearchSettingsContent;
+
+    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
+        sources.json_merge()
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 /// What to do when go to definition yields no results.
