@@ -363,6 +363,13 @@ actions!(
         /// Accepts a partial edit prediction.
         #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptPartialEditPrediction,
+        /// Adds a cursor above the current selection.
+        AddSelectionAbove,
+        /// Adds a cursor below the current selection.
+        AddSelectionBelow,
+        /// Removes all but the one selection that was created last.
+        /// For helix, `Newest` can eventually be `Primary`.
+        KeepNewestSelection,
         /// Applies all diff hunks in the editor.
         ApplyAllDiffHunks,
         /// Applies the diff hunk at the current position.
