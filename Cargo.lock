@@ -14941,6 +14941,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
+ "settings",
  "syn 2.0.101",
  "workspace-hack",
 ]
@@ -17660,8 +17661,10 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
+ "component",
  "quote",
  "syn 2.0.101",
+ "ui",
  "workspace-hack",
 ]
 

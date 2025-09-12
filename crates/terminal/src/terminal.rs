@@ -2160,11 +2160,12 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
 }
 
 /// Generates the RGB channels in [0, 5] for a given index into the 6x6x6 ANSI color cube.
+///
 /// See: [8 bit ANSI color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
 ///
 /// Wikipedia gives a formula for calculating the index for a given color:
 ///
-/// ```
+/// ```text
 /// index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
 /// ```
 ///
