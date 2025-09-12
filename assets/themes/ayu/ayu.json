@@ -316,6 +316,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "punctuation.markup": {
+            "color": "#a6a5a0ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "punctuation.special": {
             "color": "#d2a6ffff",
             "font_style": null,
@@ -702,6 +707,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "punctuation.markup": {
+            "color": "#73777bff",
+            "font_style": null,
+            "font_weight": null
+          },
           "punctuation.special": {
             "color": "#a37accff",
             "font_style": null,
@@ -1084,6 +1094,11 @@
             "font_weight": null
           },
           "punctuation.list_marker": {
+            "color": "#b4b3aeff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
             "color": "#b4b3aeff",
             "font_style": null,
             "font_weight": null

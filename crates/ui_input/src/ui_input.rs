@@ -55,7 +55,7 @@ impl SingleLineInput {
 
         let editor = cx.new(|cx| {
             let mut input = Editor::single_line(window, cx);
-            input.set_placeholder_text(placeholder_text.clone(), cx);
+            input.set_placeholder_text(&placeholder_text, window, cx);
             input
         });
 
@@ -168,7 +168,7 @@ impl Render for SingleLineInput {
                     .py_1p5()
                     .flex_grow()
                     .text_color(style.text_color)
-                    .rounded_sm()
+                    .rounded_md()
                     .bg(style.background_color)
                     .border_1()
                     .border_color(style.border_color)

@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
-use util::{ResultExt, TryFutureExt};
+use util::TryFutureExt;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -209,7 +209,7 @@ impl Telemetry {
             let os_version = os_version();
             state.lock().os_version = Some(os_version);
             async move {
-                if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
+                if let Some(tempfile) = File::create(Self::log_file_path()).ok() {
                     state.lock().log_file = Some(tempfile);
                 }
             }

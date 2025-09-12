@@ -594,6 +594,15 @@ impl<'a> Cursor<'a> {
     }
 }
 
+pub struct ChunkBitmaps<'a> {
+    /// A slice of text up to 128 bytes in size
+    pub text: &'a str,
+    /// Bitmap of character locations in text. LSB ordered
+    pub chars: u128,
+    /// Bitmap of tab locations in text. LSB ordered
+    pub tabs: u128,
+}
+
 #[derive(Clone)]
 pub struct Chunks<'a> {
     chunks: sum_tree::Cursor<'a, Chunk, usize>,
@@ -757,6 +766,36 @@ impl<'a> Chunks<'a> {
         self.offset < initial_offset && self.offset == 0
     }
 
+    /// Returns bitmaps that represent character positions and tab positions
+    pub fn peak_with_bitmaps(&self) -> Option<ChunkBitmaps<'a>> {
+        if !self.offset_is_valid() {
+            return None;
+        }
+
+        let chunk = self.chunks.item()?;
+        let chunk_start = *self.chunks.start();
+        let slice_range = if self.reversed {
+            let slice_start = cmp::max(chunk_start, self.range.start) - chunk_start;
+            let slice_end = self.offset - chunk_start;
+            slice_start..slice_end
+        } else {
+            let slice_start = self.offset - chunk_start;
+            let slice_end = cmp::min(self.chunks.end(), self.range.end) - chunk_start;
+            slice_start..slice_end
+        };
+
+        let bitmask = (1u128 << slice_range.end as u128).saturating_sub(1);
+
+        let chars = (chunk.chars() & bitmask) >> slice_range.start;
+        let tabs = (chunk.tabs & bitmask) >> slice_range.start;
+
+        Some(ChunkBitmaps {
+            text: &chunk.text[slice_range],
+            chars,
+            tabs,
+        })
+    }
+
     pub fn peek(&self) -> Option<&'a str> {
         if !self.offset_is_valid() {
             return None;
@@ -775,6 +814,36 @@ impl<'a> Chunks<'a> {
         };
 
         Some(&chunk.text[slice_range])
+    }
+
+    pub fn peek_tabs(&self) -> Option<ChunkBitmaps<'a>> {
+        if !self.offset_is_valid() {
+            return None;
+        }
+
+        let chunk = self.chunks.item()?;
+        let chunk_start = *self.chunks.start();
+        let slice_range = if self.reversed {
+            let slice_start = cmp::max(chunk_start, self.range.start) - chunk_start;
+            let slice_end = self.offset - chunk_start;
+            slice_start..slice_end
+        } else {
+            let slice_start = self.offset - chunk_start;
+            let slice_end = cmp::min(self.chunks.end(), self.range.end) - chunk_start;
+            slice_start..slice_end
+        };
+        let chunk_start_offset = slice_range.start;
+        let slice_text = &chunk.text[slice_range];
+
+        // Shift the tabs to align with our slice window
+        let shifted_tabs = chunk.tabs >> chunk_start_offset;
+        let shifted_chars = chunk.chars() >> chunk_start_offset;
+
+        Some(ChunkBitmaps {
+            text: slice_text,
+            chars: shifted_chars,
+            tabs: shifted_tabs,
+        })
     }
 
     pub fn lines(self) -> Lines<'a> {
@@ -819,6 +888,30 @@ impl<'a> Chunks<'a> {
         }
 
         true
+    }
+}
+
+pub struct ChunkWithBitmaps<'a>(pub Chunks<'a>);
+
+impl<'a> Iterator for ChunkWithBitmaps<'a> {
+    /// text, chars bitmap, tabs bitmap
+    type Item = ChunkBitmaps<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let chunk_bitmaps = self.0.peak_with_bitmaps()?;
+        if self.0.reversed {
+            self.0.offset -= chunk_bitmaps.text.len();
+            if self.0.offset <= *self.0.chunks.start() {
+                self.0.chunks.prev();
+            }
+        } else {
+            self.0.offset += chunk_bitmaps.text.len();
+            if self.0.offset >= self.0.chunks.end() {
+                self.0.chunks.next();
+            }
+        }
+
+        Some(chunk_bitmaps)
     }
 }
 

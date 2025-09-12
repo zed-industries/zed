@@ -1,4 +1,4 @@
-use crash_handler::CrashHandler;
+use crash_handler::{CrashEventResult, CrashHandler};
 use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
@@ -10,7 +10,7 @@ use std::{
     env,
     fs::{self, File},
     io,
-    panic::Location,
+    panic::{self, PanicHookInfo},
     path::{Path, PathBuf},
     process::{self, Command},
     sync::{
@@ -33,7 +33,16 @@ static PANIC_THREAD_ID: AtomicU32 = AtomicU32::new(0);
 
 pub async fn init(crash_init: InitCrashHandler) {
     if *RELEASE_CHANNEL == ReleaseChannel::Dev && env::var("ZED_GENERATE_MINIDUMPS").is_err() {
+        let old_hook = panic::take_hook();
+        panic::set_hook(Box::new(move |info| {
+            unsafe { env::set_var("RUST_BACKTRACE", "1") };
+            old_hook(info);
+            // prevent the macOS crash dialog from popping up
+            std::process::exit(1);
+        }));
         return;
+    } else {
+        panic::set_hook(Box::new(panic_hook));
     }
 
     let exe = env::current_exe().expect("unable to find ourselves");
@@ -71,7 +80,7 @@ pub async fn init(crash_init: InitCrashHandler) {
         .unwrap();
 
     let client = Arc::new(client);
-    let handler = crash_handler::CrashHandler::attach(unsafe {
+    let handler = CrashHandler::attach(unsafe {
         let client = client.clone();
         crash_handler::make_crash_event(move |crash_context: &crash_handler::CrashContext| {
             // only request a minidump once
@@ -87,7 +96,7 @@ pub async fn init(crash_init: InitCrashHandler) {
             } else {
                 true
             };
-            crash_handler::CrashEventResult::Handled(res)
+            CrashEventResult::Handled(res)
         })
     })
     .expect("failed to attach signal handler");
@@ -172,9 +181,16 @@ impl minidumper::ServerHandler for CrashServer {
 
     fn on_minidump_created(&self, result: Result<MinidumpBinary, minidumper::Error>) -> LoopAction {
         let minidump_error = match result {
-            Ok(mut md_bin) => {
+            Ok(MinidumpBinary { mut file, path, .. }) => {
                 use io::Write;
-                let _ = md_bin.file.flush();
+                file.flush().ok();
+                // TODO: clean this up once https://github.com/EmbarkStudios/crash-handling/issues/101 is addressed
+                drop(file);
+                let original_file = File::open(&path).unwrap();
+                let compressed_path = path.with_extension("zstd");
+                let compressed_file = File::create(&compressed_path).unwrap();
+                zstd::stream::copy_encode(original_file, compressed_file, 0).ok();
+                fs::rename(&compressed_path, path).unwrap();
                 None
             }
             Err(e) => Some(format!("{e:?}")),
@@ -250,8 +266,16 @@ impl minidumper::ServerHandler for CrashServer {
     }
 }
 
-pub fn handle_panic(message: String, span: Option<&Location>) {
-    let span = span
+pub fn panic_hook(info: &PanicHookInfo) {
+    let message = info
+        .payload()
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| info.payload().downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "Box<Any>".to_string());
+
+    let span = info
+        .location()
         .map(|loc| format!("{}:{}", loc.file(), loc.line()))
         .unwrap_or_default();
 
@@ -274,11 +298,15 @@ pub fn handle_panic(message: String, span: Option<&Location>) {
                 Ordering::SeqCst,
             );
 
-            #[cfg(target_os = "linux")]
-            CrashHandler.simulate_signal(crash_handler::Signal::Trap as u32);
-            #[cfg(not(target_os = "linux"))]
-            CrashHandler.simulate_exception(None);
-            break;
+            cfg_if::cfg_if! {
+                if #[cfg(target_os = "windows")] {
+                    // https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--0-499-
+                    CrashHandler.simulate_exception(Some(234)); // (MORE_DATA_AVAILABLE)
+                    break;
+                } else {
+                    std::process::abort();
+                }
+            }
         }
         thread::sleep(retry_frequency);
     }

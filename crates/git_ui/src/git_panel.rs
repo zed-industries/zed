@@ -24,11 +24,12 @@ use git::repository::{
     PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
     UpstreamTrackingStatus, get_git_committer,
 };
+use git::stash::GitStash;
 use git::status::StageStatus;
 use git::{Amend, Signoff, ToggleStaged, repository::RepoPath, status::FileStatus};
 use git::{
-    ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashPop, TrashUntrackedFiles,
-    UnstageAll,
+    ExpandCommitEditor, RestoreTrackedFiles, StageAll, StashAll, StashApply, StashPop,
+    TrashUntrackedFiles, UnstageAll,
 };
 use gpui::{
     Action, AsyncApp, AsyncWindowContext, Axis, ClickEvent, Corner, DismissEvent, Entity,
@@ -40,8 +41,7 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    ConfiguredModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use menu::{Confirm, SecondaryConfirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use multi_buffer::ExcerptInfo;
@@ -91,6 +91,8 @@ actions!(
         FocusChanges,
         /// Toggles automatic co-author suggestions.
         ToggleFillCoAuthors,
+        /// Toggles sorting entries by path vs status.
+        ToggleSortByPath,
     ]
 );
 
@@ -119,6 +121,8 @@ struct GitMenuState {
     has_staged_changes: bool,
     has_unstaged_changes: bool,
     has_new_changes: bool,
+    sort_by_path: bool,
+    has_stash_items: bool,
 }
 
 fn git_panel_context_menu(
@@ -146,7 +150,8 @@ fn git_panel_context_menu(
                 "Stash All",
                 StashAll.boxed_clone(),
             )
-            .action("Stash Pop", StashPop.boxed_clone())
+            .action_disabled_when(!state.has_stash_items, "Stash Pop", StashPop.boxed_clone())
+            .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
             .separator()
             .action("Open Diff", project_diff::Diff.boxed_clone())
             .separator()
@@ -159,6 +164,16 @@ fn git_panel_context_menu(
                 !state.has_new_changes,
                 "Trash Untracked Files",
                 TrashUntrackedFiles.boxed_clone(),
+            )
+            .separator()
+            .entry(
+                if state.sort_by_path {
+                    "Sort by Status"
+                } else {
+                    "Sort by Path"
+                },
+                Some(Box::new(ToggleSortByPath)),
+                move |window, cx| window.dispatch_action(Box::new(ToggleSortByPath), cx),
             )
     })
 }
@@ -351,6 +366,7 @@ pub struct GitPanel {
     pending: Vec<PendingOperation>,
     pending_commit: Option<Task<()>>,
     amend_pending: bool,
+    original_commit_message: Option<String>,
     signoff_enabled: bool,
     pending_serialization: Task<()>,
     pub(crate) project: Entity<Project>,
@@ -369,6 +385,7 @@ pub struct GitPanel {
     local_committer: Option<GitCommitter>,
     local_committer_task: Option<Task<()>>,
     bulk_staging: Option<BulkStaging>,
+    stash_entries: GitStash,
     _settings_subscription: Subscription,
 }
 
@@ -388,9 +405,6 @@ pub(crate) fn commit_message_editor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    project.update(cx, |this, cx| {
-        this.mark_buffer_as_non_searchable(commit_message_buffer.read(cx).remote_id(), cx);
-    });
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
     let mut commit_editor = Editor::new(
@@ -410,7 +424,7 @@ pub(crate) fn commit_message_editor(
     commit_editor.set_show_wrap_guides(false, cx);
     commit_editor.set_show_indent_guides(false, cx);
     let placeholder = placeholder.unwrap_or("Enter commit message".into());
-    commit_editor.set_placeholder_text(placeholder, cx);
+    commit_editor.set_placeholder_text(&placeholder, window, cx);
     commit_editor
 }
 
@@ -435,10 +449,10 @@ impl GitPanel {
             .detach();
 
             let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            cx.observe_global::<SettingsStore>(move |this, cx| {
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
                 let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
                 if is_sort_by_path != was_sort_by_path {
-                    this.update_visible_entries(cx);
+                    this.update_visible_entries(window, cx);
                 }
                 was_sort_by_path = is_sort_by_path
             })
@@ -535,6 +549,7 @@ impl GitPanel {
                 pending: Vec::new(),
                 pending_commit: None,
                 amend_pending: false,
+                original_commit_message: None,
                 signoff_enabled: false,
                 pending_serialization: Task::ready(()),
                 single_staged_entry: None,
@@ -558,6 +573,7 @@ impl GitPanel {
                 horizontal_scrollbar,
                 vertical_scrollbar,
                 bulk_staging: None,
+                stash_entries: Default::default(),
                 _settings_subscription,
             };
 
@@ -1042,7 +1058,7 @@ impl GitPanel {
             let filename = path.path.file_name()?.to_string_lossy();
 
             if !entry.status.is_created() {
-                self.perform_checkout(vec![entry.clone()], cx);
+                self.perform_checkout(vec![entry.clone()], window, cx);
             } else {
                 let prompt = prompt(&format!("Trash {}?", filename), None, window, cx);
                 cx.spawn_in(window, async move |_, cx| {
@@ -1071,7 +1087,12 @@ impl GitPanel {
         });
     }
 
-    fn perform_checkout(&mut self, entries: Vec<GitStatusEntry>, cx: &mut Context<Self>) {
+    fn perform_checkout(
+        &mut self,
+        entries: Vec<GitStatusEntry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace = self.workspace.clone();
         let Some(active_repository) = self.active_repository.clone() else {
             return;
@@ -1084,7 +1105,7 @@ impl GitPanel {
             entries: entries.clone(),
             finished: false,
         });
-        self.update_visible_entries(cx);
+        self.update_visible_entries(window, cx);
         let task = cx.spawn(async move |_, cx| {
             let tasks: Vec<_> = workspace.update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
@@ -1131,16 +1152,16 @@ impl GitPanel {
             Ok(())
         });
 
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
 
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 for pending in this.pending.iter_mut() {
                     if pending.op_id == op_id {
                         pending.finished = true;
                         if result.is_err() {
                             pending.target_status = TargetStatus::Unchanged;
-                            this.update_visible_entries(cx);
+                            this.update_visible_entries(window, cx);
                         }
                         break;
                     }
@@ -1196,10 +1217,10 @@ impl GitPanel {
             window,
             cx,
         );
-        cx.spawn(async move |this, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
-                this.update(cx, |this, cx| {
-                    this.perform_checkout(entries, cx);
+                this.update_in(cx, |this, window, cx| {
+                    this.perform_checkout(entries, window, cx);
                 })
                 .ok();
             }
@@ -1422,12 +1443,35 @@ impl GitPanel {
         cx.spawn({
             async move |this, cx| {
                 let stash_task = active_repository
-                    .update(cx, |repo, cx| repo.stash_pop(cx))?
+                    .update(cx, |repo, cx| repo.stash_pop(None, cx))?
                     .await;
                 this.update(cx, |this, cx| {
                     stash_task
                         .map_err(|e| {
                             this.show_error_toast("stash pop", e, cx);
+                        })
+                        .ok();
+                    cx.notify();
+                })
+            }
+        })
+        .detach();
+    }
+
+    pub fn stash_apply(&mut self, _: &StashApply, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(active_repository) = self.active_repository.clone() else {
+            return;
+        };
+
+        cx.spawn({
+            async move |this, cx| {
+                let stash_task = active_repository
+                    .update(cx, |repo, cx| repo.stash_apply(None, cx))?
+                    .await;
+                this.update(cx, |this, cx| {
+                    stash_task
+                        .map_err(|e| {
+                            this.show_error_toast("stash apply", e, cx);
                         })
                         .ok();
                     cx.notify();
@@ -1693,7 +1737,7 @@ impl GitPanel {
                 .map(|status_entry| status_entry.repo_path.clone())
                 .collect::<Vec<_>>();
 
-            if changed_files.is_empty() {
+            if changed_files.is_empty() && !options.amend {
                 error_spawn("No changes to commit", window, cx);
                 return;
             }
@@ -1716,6 +1760,7 @@ impl GitPanel {
                     Ok(()) => {
                         this.commit_editor
                             .update(cx, |editor, cx| editor.clear(window, cx));
+                        this.original_commit_message = None;
                     }
                     Err(e) => this.show_error_toast("commit", e, cx),
                 }
@@ -1726,7 +1771,7 @@ impl GitPanel {
         self.pending_commit = Some(task);
     }
 
-    fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
@@ -1860,13 +1905,17 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit() || DisableAiSettings::get_global(cx).disable_ai {
+        if !self.can_commit()
+            || DisableAiSettings::get_global(cx).disable_ai
+            || !agent_settings::AgentSettings::get_global(cx).enabled
+        {
             return;
         }
 
-        let model = match current_language_model(cx) {
-            Some(value) => value,
-            None => return,
+        let Some(ConfiguredModel { provider, model }) =
+            LanguageModelRegistry::read_global(cx).commit_message_model()
+        else {
+            return;
         };
 
         let Some(repo) = self.active_repository.as_ref() else {
@@ -1890,6 +1939,16 @@ impl GitPanel {
                 let _defer = cx.on_drop(&this, |this, _cx| {
                     this.generate_commit_message_task.take();
                 });
+
+                if let Some(task) = cx.update(|cx| {
+                    if !provider.is_authenticated(cx) {
+                        Some(provider.authenticate(cx))
+                    } else {
+                        None
+                    }
+                })? {
+                    task.await.log_err();
+                };
 
                 let mut diff_text = match diff.await {
                     Ok(result) => match result {
@@ -2534,6 +2593,24 @@ impl GitPanel {
         cx.notify();
     }
 
+    fn toggle_sort_by_path(
+        &mut self,
+        _: &ToggleSortByPath,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current_setting = GitPanelSettings::get_global(cx).sort_by_path;
+        if let Some(workspace) = self.workspace.upgrade() {
+            let workspace = workspace.read(cx);
+            let fs = workspace.app_state().fs.clone();
+            cx.update_global::<SettingsStore, _>(|store, _cx| {
+                store.update_settings_file::<GitPanelSettings>(fs, move |settings, _cx| {
+                    settings.sort_by_path = Some(!current_setting);
+                });
+            });
+        }
+    }
+
     fn fill_co_authors(&mut self, message: &mut String, cx: &mut Context<Self>) {
         const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
@@ -2598,7 +2675,7 @@ impl GitPanel {
                         if clear_pending {
                             git_panel.clear_pending();
                         }
-                        git_panel.update_visible_entries(cx);
+                        git_panel.update_visible_entries(window, cx);
                         git_panel.update_scrollbar_properties(window, cx);
                     })
                     .ok();
@@ -2651,7 +2728,7 @@ impl GitPanel {
         self.pending.retain(|v| !v.finished)
     }
 
-    fn update_visible_entries(&mut self, cx: &mut Context<Self>) {
+    fn update_visible_entries(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let bulk_staging = self.bulk_staging.take();
         let last_staged_path_prev_index = bulk_staging
             .as_ref()
@@ -2684,6 +2761,8 @@ impl GitPanel {
         };
 
         let repo = repo.read(cx);
+
+        self.stash_entries = repo.cached_stash();
 
         for entry in repo.cached_status() {
             let is_conflict = repo.had_conflict_on_last_merge_head_change(&entry.repo_path);
@@ -2826,7 +2905,7 @@ impl GitPanel {
         let placeholder_text = suggested_commit_message.unwrap_or("Enter commit message".into());
 
         self.commit_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text(Arc::from(placeholder_text), cx)
+            editor.set_placeholder_text(&placeholder_text, window, cx)
         });
 
         cx.notify();
@@ -3053,6 +3132,7 @@ impl GitPanel {
         let has_staged_changes = self.has_staged_changes();
         let has_unstaged_changes = self.has_unstaged_changes();
         let has_new_changes = self.new_count > 0;
+        let has_stash_items = self.stash_entries.entries.len() > 0;
 
         PopoverMenu::new(id.into())
             .trigger(
@@ -3068,6 +3148,8 @@ impl GitPanel {
                         has_staged_changes,
                         has_unstaged_changes,
                         has_new_changes,
+                        sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
+                        has_stash_items,
                     },
                     window,
                     cx,
@@ -3080,9 +3162,18 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        current_language_model(cx).is_some().then(|| {
-            if self.generate_commit_message_task.is_some() {
-                return h_flex()
+        if !agent_settings::AgentSettings::get_global(cx).enabled
+            || DisableAiSettings::get_global(cx).disable_ai
+            || LanguageModelRegistry::read_global(cx)
+                .commit_message_model()
+                .is_none()
+        {
+            return None;
+        }
+
+        if self.generate_commit_message_task.is_some() {
+            return Some(
+                h_flex()
                     .gap_1()
                     .child(
                         Icon::new(IconName::ArrowCircle)
@@ -3095,11 +3186,13 @@ impl GitPanel {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .into_any_element();
-            }
+                    .into_any_element(),
+            );
+        }
 
-            let can_commit = self.can_commit();
-            let editor_focus_handle = self.commit_editor.focus_handle(cx);
+        let can_commit = self.can_commit();
+        let editor_focus_handle = self.commit_editor.focus_handle(cx);
+        Some(
             IconButton::new("generate-commit-message", IconName::AiEdit)
                 .shape(ui::IconButtonShape::Square)
                 .icon_color(Color::Muted)
@@ -3120,8 +3213,8 @@ impl GitPanel {
                 .on_click(cx.listener(move |this, _event, _window, cx| {
                     this.generate_commit_message(cx);
                 }))
-                .into_any_element()
-        })
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -3234,7 +3327,7 @@ impl GitPanel {
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
         if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
-        } else if !self.has_staged_changes() && !self.has_tracked_changes() {
+        } else if !self.has_staged_changes() && !self.has_tracked_changes() && !self.amend_pending {
             (false, "No changes to commit")
         } else if self.pending_commit.is_some() {
             (false, "Commit in progress")
@@ -3251,8 +3344,10 @@ impl GitPanel {
         if self.amend_pending {
             if self.has_staged_changes() {
                 "Amend"
-            } else {
+            } else if self.has_tracked_changes() {
                 "Amend Tracked"
+            } else {
+                "Amend"
             }
         } else if self.has_staged_changes() {
             "Commit"
@@ -4109,6 +4204,8 @@ impl GitPanel {
                 has_staged_changes: self.has_staged_changes(),
                 has_unstaged_changes: self.has_unstaged_changes(),
                 has_new_changes: self.new_count > 0,
+                sort_by_path: GitPanelSettings::get_global(cx).sort_by_path,
+                has_stash_items: self.stash_entries.entries.len() > 0,
             },
             window,
             cx,
@@ -4348,6 +4445,22 @@ impl GitPanel {
     }
 
     pub fn set_amend_pending(&mut self, value: bool, cx: &mut Context<Self>) {
+        if value && !self.amend_pending {
+            let current_message = self.commit_message_buffer(cx).read(cx).text();
+            self.original_commit_message = if current_message.trim().is_empty() {
+                None
+            } else {
+                Some(current_message)
+            };
+        } else if !value && self.amend_pending {
+            let message = self.original_commit_message.take().unwrap_or_default();
+            self.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, message)], None, cx);
+            });
+        }
+
         self.amend_pending = value;
         self.serialize(cx);
         cx.notify();
@@ -4453,20 +4566,6 @@ impl GitPanel {
     }
 }
 
-fn current_language_model(cx: &Context<'_, GitPanel>) -> Option<Arc<dyn LanguageModel>> {
-    let is_enabled = agent_settings::AgentSettings::get_global(cx).enabled
-        && !DisableAiSettings::get_global(cx).disable_ai;
-
-    is_enabled
-        .then(|| {
-            let ConfiguredModel { provider, model } =
-                LanguageModelRegistry::read_global(cx).commit_message_model()?;
-
-            provider.is_authenticated(cx).then(|| model)
-        })
-        .flatten()
-}
-
 impl Render for GitPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
@@ -4520,6 +4619,7 @@ impl Render for GitPanel {
             .when(has_write_access && has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::toggle_fill_co_authors))
             })
+            .on_action(cx.listener(Self::toggle_sort_by_path))
             .on_hover(cx.listener(move |this, hovered, window, cx| {
                 if *hovered {
                     this.horizontal_scrollbar.show(cx);
@@ -4957,6 +5057,7 @@ impl Component for PanelRepoFooter {
                     sha: "abc123".into(),
                     subject: "Modify stuff".into(),
                     commit_timestamp: 1710932954,
+                    author_name: "John Doe".into(),
                     has_parent: true,
                 }),
             }
@@ -4974,6 +5075,7 @@ impl Component for PanelRepoFooter {
                     sha: "abc123".into(),
                     subject: "Modify stuff".into(),
                     commit_timestamp: 1710932954,
+                    author_name: "John Doe".into(),
                     has_parent: true,
                 }),
             }
@@ -5492,5 +5594,74 @@ mod tests {
                 Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_amend_commit_message_handling(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "project": {
+                    ".git": {},
+                    "src": {
+                        "main.rs": "fn main() {}"
+                    }
+                }
+            }),
+        )
+        .await;
+
+        fs.set_status_for_repo(
+            Path::new(path!("/root/project/.git")),
+            &[(Path::new("src/main.rs"), StatusCode::Modified.worktree())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/project"))], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        let panel = workspace.update(cx, GitPanel::new).unwrap();
+
+        // Test: User has commit message, enables amend (saves message), then disables (restores message)
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, "Initial commit message")], None, cx);
+            });
+
+            panel.set_amend_pending(true, cx);
+            assert!(panel.original_commit_message.is_some());
+
+            panel.set_amend_pending(false, cx);
+            let current_message = panel.commit_message_buffer(cx).read(cx).text();
+            assert_eq!(current_message, "Initial commit message");
+            assert!(panel.original_commit_message.is_none());
+        });
+
+        // Test: User has empty commit message, enables amend, then disables (clears message)
+        panel.update(cx, |panel, cx| {
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, "")], None, cx);
+            });
+
+            panel.set_amend_pending(true, cx);
+            assert!(panel.original_commit_message.is_none());
+
+            panel.commit_message_buffer(cx).update(cx, |buffer, cx| {
+                let start = buffer.anchor_before(0);
+                let end = buffer.anchor_after(buffer.len());
+                buffer.edit([(start..end, "Previous commit message")], None, cx);
+            });
+
+            panel.set_amend_pending(false, cx);
+            let current_message = panel.commit_message_buffer(cx).read(cx).text();
+            assert_eq!(current_message, "");
+        });
     }
 }

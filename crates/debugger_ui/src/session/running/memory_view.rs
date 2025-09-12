@@ -428,14 +428,14 @@ impl MemoryView {
         if !self.is_writing_memory {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);
-                this.set_placeholder_text("Write to Selected Memory Range", cx);
+                this.set_placeholder_text("Write to Selected Memory Range", window, cx);
             });
             self.is_writing_memory = true;
             self.query_editor.focus_handle(cx).focus(window);
         } else {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);
-                this.set_placeholder_text("Go to Memory Address / Expression", cx);
+                this.set_placeholder_text("Go to Memory Address / Expression", window, cx);
             });
             self.is_writing_memory = false;
         }

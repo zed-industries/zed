@@ -72,6 +72,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     toolchain_store::ToolchainStoreEvent,
 };
@@ -79,7 +80,7 @@ use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::Conne
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, update_settings_file};
+use settings::{Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -3928,8 +3929,15 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split(direction) => {
-                self.split_and_clone(pane.clone(), *direction, window, cx);
+            pane::Event::Split {
+                direction,
+                clone_active_item,
+            } => {
+                if *clone_active_item {
+                    self.split_and_clone(pane.clone(), *direction, window, cx);
+                } else {
+                    self.split_and_move(pane.clone(), *direction, window, cx);
+                }
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
@@ -4041,6 +4049,24 @@ impl Workspace {
             .unwrap();
         cx.notify();
         new_pane
+    }
+
+    pub fn split_and_move(
+        &mut self,
+        pane: Entity<Pane>,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx)) else {
+            return;
+        };
+        let new_pane = self.add_pane(window, cx);
+        new_pane.update(cx, |pane, cx| {
+            pane.add_item(item, true, true, None, window, cx)
+        });
+        self.center.split(&pane, &new_pane, direction).unwrap();
+        cx.notify();
     }
 
     pub fn split_and_clone(
@@ -4376,7 +4402,19 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
+        for (i, worktree) in project.worktrees(cx).enumerate() {
+            let name = {
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path: Path::new(""),
+                };
+
+                let settings = WorktreeSettings::get(Some(settings_location), cx);
+                match &settings.project_name {
+                    Some(name) => name.as_str(),
+                    None => worktree.read(cx).root_name(),
+                }
+            };
             if i > 0 {
                 title.push_str(", ");
             }

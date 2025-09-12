@@ -44,7 +44,7 @@ If you want to use a binary in a custom location, you can specify a `path` and o
 ```json
 {
   "lsp": {
-    "cangd": {
+    "clangd": {
       "binary": {
         "path": "/path/to/clangd",
         "arguments": []

@@ -2506,7 +2506,7 @@ async fn test_propagate_saves_and_fs_changes(
     });
 
     let new_buffer_a = project_a
-        .update(cx_a, |p, cx| p.create_buffer(cx))
+        .update(cx_a, |p, cx| p.create_buffer(false, cx))
         .await
         .unwrap();
 
