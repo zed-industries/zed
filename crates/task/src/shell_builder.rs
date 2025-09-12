@@ -193,6 +193,14 @@ impl ShellKind {
                 .collect(),
         }
     }
+
+    pub fn command_prefix(&self) -> Option<char> {
+        match self {
+            ShellKind::Powershell => Some('&'),
+            ShellKind::Nushell => Some('^'),
+            _ => None,
+        }
+    }
 }
 
 /// ShellBuilder is used to turn a user-requested task into a
