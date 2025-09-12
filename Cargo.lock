@@ -17521,8 +17521,10 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
+ "component",
  "quote",
  "syn 2.0.101",
+ "ui",
  "workspace-hack",
 ]
 
