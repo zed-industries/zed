@@ -3602,16 +3602,16 @@ impl Render for Pane {
             .on_action(
                 cx.listener(|pane, _: &SplitDown, _, cx| pane.split(SplitDirection::Down, cx)),
             )
-            .on_action(cx.listener(|pane, action: &SplitAndMoveUp, _, cx| {
+            .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
                 pane.split_and_move(SplitDirection::Up, cx)
             }))
-            .on_action(cx.listener(|pane, action: &SplitAndMoveDown, _, cx| {
+            .on_action(cx.listener(|pane, _: &SplitAndMoveDown, _, cx| {
                 pane.split_and_move(SplitDirection::Down, cx)
             }))
-            .on_action(cx.listener(|pane, action: &SplitAndMoveLeft, _, cx| {
+            .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, _, cx| {
                 pane.split_and_move(SplitDirection::Left, cx)
             }))
-            .on_action(cx.listener(|pane, action: &SplitAndMoveRight, _, cx| {
+            .on_action(cx.listener(|pane, _: &SplitAndMoveRight, _, cx| {
                 pane.split_and_move(SplitDirection::Right, cx)
             }))
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
