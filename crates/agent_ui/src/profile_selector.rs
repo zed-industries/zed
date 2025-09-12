@@ -1,7 +1,7 @@
 use crate::{ManageProfiles, ToggleProfileSelector};
-use agent::agent_profile::AvailableProfiles;
 use agent_settings::{
-    AgentDockPosition, AgentProfile, AgentProfileId, AgentSettings, builtin_profiles,
+    AgentDockPosition, AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles,
+    builtin_profiles,
 };
 use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, prelude::*};

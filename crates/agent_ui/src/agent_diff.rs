@@ -1,7 +1,6 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
 use action_log::ActionLog;
-use agent::ThreadSummary;
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -65,9 +64,9 @@ impl AgentDiffThread {
         }
     }
 
-    fn summary(&self, cx: &App) -> ThreadSummary {
+    fn title(&self, cx: &App) -> SharedString {
         match self {
-            AgentDiffThread::AcpThread(thread) => ThreadSummary::Ready(thread.read(cx).title()),
+            AgentDiffThread::AcpThread(thread) => thread.read(cx).title(),
         }
     }
 
@@ -287,7 +286,7 @@ impl AgentDiffPane {
     }
 
     fn update_title(&mut self, cx: &mut Context<Self>) {
-        let new_title = self.thread.summary(cx).unwrap_or("Agent Changes");
+        let new_title = self.thread.title(cx);
         if new_title != self.title {
             self.title = new_title;
             cx.emit(EditorEvent::TitleChanged);
@@ -537,8 +536,8 @@ impl Item for AgentDiffPane {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        let summary = self.thread.summary(cx).unwrap_or("Agent Changes");
-        Label::new(format!("Review: {}", summary))
+        let title = self.thread.title(cx);
+        Label::new(format!("Review: {}", title))
             .color(if params.selected {
                 Color::Default
             } else {
