@@ -109,13 +109,11 @@ pub fn select_excerpt(
         buffer
             .outline_items_containing(query_range.clone(), false, None)
             .into_iter()
-            .map(|item| {
-                // todo!
-                let signature_range = 0..0;
-                ExcerptOutlineItem {
+            .flat_map(|item| {
+                Some(ExcerptOutlineItem {
                     item_range: item.range.to_offset(&buffer),
-                    signature_range,
-                }
+                    signature_range: item.signature_range?.to_offset(&buffer),
+                })
             })
             .collect()
     } else {
