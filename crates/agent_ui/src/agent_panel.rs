@@ -21,7 +21,6 @@ use crate::{
     ToggleNavigationMenu, ToggleNewThreadMenu, ToggleOptionsMenu,
     acp::AcpThreadView,
     agent_configuration::{AgentConfiguration, AssistantConfigurationEvent},
-    agent_diff::AgentDiff,
     slash_command::SlashCommandCompletionProvider,
     text_thread_editor::{AgentPanelDelegate, TextThreadEditor, make_lsp_adapter_delegate},
     ui::{AgentOnboardingModal, EndTrialUpsell},
@@ -540,7 +539,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
         let user_store = workspace.app_state().user_store.clone();
         let project = workspace.project();
@@ -552,16 +550,8 @@ impl AgentPanel {
         let inline_assist_context_store =
             cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
 
-        let thread_id = thread.read(cx).id().clone();
-
-        let history_store = cx.new(|cx| {
-            HistoryStore::new(
-                thread_store.clone(),
-                context_store.clone(),
-                [HistoryEntryId::Thread(thread_id)],
-                cx,
-            )
-        });
+        let history_store =
+            cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), [], cx));
 
         let acp_history_store = cx.new(|cx| agent2::HistoryStore::new(context_store.clone(), cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(acp_history_store.clone(), window, cx));
@@ -626,8 +616,6 @@ impl AgentPanel {
                 )
             }
         };
-
-        AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
         let weak_panel = weak_self.clone();
 
