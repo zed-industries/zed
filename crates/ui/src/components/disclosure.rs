@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use gpui::{ClickEvent, CursorStyle, SharedString};
 
-use crate::{Color, IconButton, IconButtonShape, IconName, IconSize, prelude::*};
+use crate::{Color, IconButton, IconName, IconSize, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct Disclosure {
@@ -91,7 +91,6 @@ impl RenderOnce for Disclosure {
                 false => self.closed_icon,
             },
         )
-        .shape(IconButtonShape::Square)
         .icon_color(Color::Muted)
         .icon_size(IconSize::Small)
         .disabled(self.disabled)

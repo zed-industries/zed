@@ -3,8 +3,8 @@ use std::cmp::Ordering;
 use gpui::Render;
 use story::Story;
 
-use crate::{IconButtonShape, TabPosition, prelude::*};
 use crate::{Indicator, Tab};
+use crate::{TabPosition, prelude::*};
 
 pub struct TabStory;
 
@@ -29,7 +29,6 @@ impl Render for TabStory {
                         .end_slot(
                             IconButton::new("close_button", IconName::Close)
                                 .visible_on_hover("")
-                                .shape(IconButtonShape::Square)
                                 .icon_color(Color::Muted)
                                 .size(ButtonSize::None)
                                 .icon_size(IconSize::XSmall),

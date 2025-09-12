@@ -36,7 +36,7 @@ use std::{
     pin::pin,
     sync::Arc,
 };
-use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
+use ui::{KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
@@ -2034,7 +2034,6 @@ impl Render for ProjectSearchBar {
             .min_w_64()
             .child(
                 IconButton::new("project-search-filter-button", IconName::Filter)
-                    .shape(IconButtonShape::Square)
                     .tooltip(|window, cx| {
                         Tooltip::for_action("Toggle Filters", &ToggleFilters, window, cx)
                     })
@@ -2134,7 +2133,6 @@ impl Render for ProjectSearchBar {
                 .min_w_64()
                 .child(
                     IconButton::new("project-search-opened-only", IconName::FolderSearch)
-                        .shape(IconButtonShape::Square)
                         .toggle_state(self.is_opened_only_enabled(cx))
                         .tooltip(Tooltip::text("Only Search Open Files"))
                         .on_click(cx.listener(|this, _, window, cx| {

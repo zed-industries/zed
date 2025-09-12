@@ -54,9 +54,8 @@ use workspace::{
     searchable::{SearchEvent, SearchableItem},
     ui::{
         ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder, HighlightedLabel,
-        Icon, IconButton, IconButtonShape, IconName, IconSize, Label, LabelCommon, ListItem,
-        Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable, Tooltip, h_flex,
-        v_flex,
+        Icon, IconButton, IconName, IconSize, Label, LabelCommon, ListItem, Scrollbar,
+        ScrollbarState, StyledExt, StyledTypography, Toggleable, Tooltip, h_flex, v_flex,
     },
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
@@ -4888,7 +4887,6 @@ impl OutlinePanel {
                         } else {
                             "Pin Active Outline"
                         }))
-                        .shape(IconButtonShape::Square)
                         .on_click(cx.listener(
                             |outline_panel, _, window, cx| {
                                 outline_panel.toggle_active_editor_pin(

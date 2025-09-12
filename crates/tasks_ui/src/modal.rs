@@ -13,9 +13,8 @@ use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMa
 use project::{TaskSourceKind, task_store::TaskStore};
 use task::{DebugScenario, ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
 use ui::{
-    ActiveTheme, Clickable, FluentBuilder as _, IconButtonShape, IconWithIndicator, Indicator,
-    IntoElement, KeyBinding, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div,
-    prelude::*,
+    ActiveTheme, Clickable, FluentBuilder as _, IconWithIndicator, Indicator, IntoElement,
+    KeyBinding, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip, div, prelude::*,
 };
 
 use util::{ResultExt, truncate_and_trailoff};
@@ -556,7 +555,6 @@ impl PickerDelegate for TasksModalDelegate {
                         let task_index = hit.candidate_id;
                         let delete_button = div().child(
                             IconButton::new("delete", IconName::Close)
-                                .shape(IconButtonShape::Square)
                                 .icon_color(Color::Muted)
                                 .size(ButtonSize::None)
                                 .icon_size(IconSize::XSmall)

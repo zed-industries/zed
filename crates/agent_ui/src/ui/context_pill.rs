@@ -10,7 +10,7 @@ use language_model::LanguageModelImage;
 use project::Project;
 use prompt_store::PromptStore;
 use rope::Point;
-use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
+use ui::{Tooltip, prelude::*, tooltip_container};
 
 use agent::context::{
     AgentContextHandle, ContextId, ContextKind, DirectoryContextHandle, FetchedUrlContext,
@@ -198,7 +198,6 @@ impl RenderOnce for ContextPill {
                                 context.handle.element_id("remove".into()),
                                 IconName::Close,
                             )
-                            .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
                             .tooltip(Tooltip::text("Remove Context"))
                             .on_click({

@@ -195,8 +195,8 @@ use theme::{
     observe_buffer_font_size_adjustment,
 };
 use ui::{
-    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
-    IconSize, Indicator, Key, Tooltip, h_flex, prelude::*,
+    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconName, IconSize, Indicator,
+    Key, Tooltip, h_flex, prelude::*,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
@@ -24375,7 +24375,6 @@ fn render_diff_hunk_controls(
             |el| {
                 el.child(
                     IconButton::new(("next-hunk", row as u64), IconName::ArrowDown)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         // .disabled(!has_multiple_hunks)
                         .tooltip({
@@ -24411,7 +24410,6 @@ fn render_diff_hunk_controls(
                 )
                 .child(
                     IconButton::new(("prev-hunk", row as u64), IconName::ArrowUp)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         // .disabled(!has_multiple_hunks)
                         .tooltip({

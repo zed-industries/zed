@@ -311,7 +311,6 @@ impl Component for IconButton {
                             single_example(
                                 "Square",
                                 IconButton::new("square", IconName::Check)
-                                    .shape(IconButtonShape::Square)
                                     .style(ButtonStyle::Filled)
                                     .layer(ElevationIndex::Background)
                                     .into_any_element(),
