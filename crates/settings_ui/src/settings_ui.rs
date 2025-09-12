@@ -908,22 +908,26 @@ fn render_text_field(
 ) -> AnyElement {
     let value = downcast_any_item::<String>(value);
     let path = value.path.clone();
+    let current_text = value.read().clone();
     let editor = window.use_state(cx, {
         let path = path.clone();
         move |window, cx| {
             let mut editor = Editor::single_line(window, cx);
+            editor.set_text(current_text, window, cx);
 
             cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
                 let user_settings = SettingsStore::global(cx).raw_user_settings();
-                if let Some(value) = read_settings_value_from_path(&user_settings, &path).cloned()
-                    && let Some(value) = value.as_str()
+                if let Some(value) = read_settings_value_from_path(&user_settings, &path)
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
                 {
                     editor.set_text(value, window, cx);
+                } else {
+                    editor.clear(window, cx);
                 }
             })
             .detach();
 
-            editor.set_text(value.read().clone(), window, cx);
             editor
         }
     });
