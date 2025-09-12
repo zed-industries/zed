@@ -298,6 +298,7 @@ impl LspInstaller for JsonLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<String> {
         self.node
@@ -488,6 +489,7 @@ impl LspInstaller for NodeVersionAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
         let release = latest_github_release(

@@ -565,6 +565,7 @@ impl LspInstaller for TypeScriptLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<TypeScriptVersions> {
         Ok(TypeScriptVersions {
@@ -822,6 +823,7 @@ impl LspInstaller for EsLintLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _delegate: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
         let url = build_asset_url(

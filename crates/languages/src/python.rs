@@ -193,6 +193,7 @@ impl LspInstaller for TyLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<Self::BinaryVersion> {
         let release =
@@ -516,6 +517,7 @@ impl LspInstaller for PyrightLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<String> {
         self.node
@@ -1495,6 +1497,7 @@ impl LspInstaller for PyLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<()> {
         Ok(())
@@ -1815,6 +1818,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<()> {
         Ok(())
@@ -1980,6 +1984,7 @@ impl LspInstaller for RuffLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
         let release =

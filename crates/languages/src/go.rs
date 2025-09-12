@@ -56,6 +56,7 @@ impl LspInstaller for GoLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: bool,
         cx: &mut AsyncApp,
     ) -> Result<Option<String>> {
         static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);

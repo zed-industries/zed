@@ -5,9 +5,8 @@ use gpui::{App, AsyncApp};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
-use project::{lsp_store::clangd_ext, project_settings::ProjectSettings};
+use project::lsp_store::clangd_ext;
 use serde_json::json;
-use settings::Settings as _;
 use smol::fs;
 use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
@@ -26,19 +25,12 @@ impl LspInstaller for CLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &mut AsyncApp,
+        pre_release: bool,
+        _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
-        let release = latest_github_release(
-            "clangd/clangd",
-            true,
-            ProjectSettings::try_read_global(cx, |s| {
-                s.lsp.get(&Self::SERVER_NAME)?.fetch.as_ref()?.pre_release
-            })
-            .flatten()
-            .unwrap_or(false),
-            delegate.http_client(),
-        )
-        .await?;
+        let release =
+            latest_github_release("clangd/clangd", true, pre_release, delegate.http_client())
+                .await?;
         let os_suffix = match consts::OS {
             "macos" => "mac",
             "linux" => "linux",

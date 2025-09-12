@@ -160,7 +160,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
         delegate: Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _: LanguageServerBinaryOptions,
-        _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
+        _: &'a mut Option<(bool, LanguageServerBinary)>,
         _: &'a mut AsyncApp,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
         async move {
@@ -204,6 +204,7 @@ impl DynLspInstaller for ExtensionLspAdapter {
         &self,
         _: &Arc<dyn LspAdapterDelegate>,
         _: PathBuf,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
         unreachable!("get_language_server_command is overridden")

@@ -534,6 +534,11 @@ impl LocalLspStore {
                 .and_then(|b| b.ignore_system_version)
                 .unwrap_or_default(),
             allow_binary_download,
+            pre_release: settings
+                .fetch
+                .as_ref()
+                .and_then(|f| f.pre_release)
+                .unwrap_or(false),
         };
 
         cx.spawn(async move |cx| {
@@ -12601,6 +12606,7 @@ impl LspInstaller for SshLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<()> {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")

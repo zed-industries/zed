@@ -402,16 +402,13 @@ impl LspInstaller for RustLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &mut AsyncApp,
+        pre_release: bool,
+        _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
         let release = latest_github_release(
             "rust-lang/rust-analyzer",
             true,
-            ProjectSettings::try_read_global(cx, |s| {
-                s.lsp.get(&SERVER_NAME)?.fetch.as_ref()?.pre_release
-            })
-            .flatten()
-            .unwrap_or(false),
+            pre_release,
             delegate.http_client(),
         )
         .await?;

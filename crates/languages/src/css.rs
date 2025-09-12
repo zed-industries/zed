@@ -39,6 +39,7 @@ impl LspInstaller for CssLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: bool,
         _: &mut AsyncApp,
     ) -> Result<String> {
         self.node
