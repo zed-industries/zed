@@ -310,6 +310,18 @@ impl FoldedAncestors {
     fn max_ancestor_depth(&self) -> usize {
         self.ancestors.len()
     }
+
+    fn components(&self, file_name: &str) -> (Vec<String>, usize) {
+        let components = Path::new(file_name)
+            .components()
+            .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        let components_len = components.len();
+        let active_index = components_len
+            .saturating_sub(1)
+            .saturating_sub(self.current_ancestor_depth);
+        (components, active_index)
+    }
 }
 
 pub fn init_settings(cx: &mut App) {
@@ -4068,6 +4080,11 @@ impl ProjectPanel {
 
         let file_name = details.filename.clone();
 
+        let folded_components = self
+            .ancestors
+            .get(&entry_id)
+            .map(|folded_ancestors| folded_ancestors.components(&file_name));
+
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
             let filename = self.filename_editor.read(cx).text(cx);
@@ -4322,26 +4339,17 @@ impl ProjectPanel {
                 .on_drag(
                     dragged_selection,
                     {
-                        let weak = cx.weak_entity();
-                        let file_name = file_name.clone();
+                        let folded_components = folded_components.clone();
                         move |selection, click_offset, _window, cx| {
-                            let filename = weak.update(cx, |this, _cx| {
-                                let Some(folded_ancestors) = this.ancestors.get(&entry_id) else {
-                                    return None;
-                                };
-                                let components = Path::new(&file_name)
-                                    .components()
-                                    .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
-                                    .collect::<Vec<_>>();
-                                let components_len = components.len();
-                                let active_index = components_len.saturating_sub(1).saturating_sub(folded_ancestors.current_ancestor_depth);
-                                if active_index >= components_len {
-                                    return None;
+                            let filename = if let Some((components, active_index)) = &folded_components {
+                                if *active_index < components.len() {
+                                    components[*active_index].clone()
+                                } else {
+                                    details.filename.clone()
                                 }
-                                Some(components[active_index].clone())
-                            }).ok().flatten().unwrap_or(
-                               details.filename.clone()
-                            );
+                            } else {
+                                details.filename.clone()
+                            };
                             cx.new(|_| DraggedProjectEntryView {
                                 icon: details.icon.clone(),
                                 filename,
@@ -4551,21 +4559,11 @@ impl ProjectPanel {
                         } else {
                             h_flex().h_6().map(|mut this| {
                                 if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
-                                    let components = Path::new(&file_name)
-                                        .components()
-                                        .map(|comp| {
-                                            comp.as_os_str().to_string_lossy().into_owned()
-                                        })
-                                        .collect::<Vec<_>>();
-
+                                    let (components, active_index) = folded_ancestors.components(&file_name);
                                     let components_len = components.len();
-                                    // TODO this can underflow
-                                    let active_index = components_len
-                                        - 1
-                                        - folded_ancestors.current_ancestor_depth;
                                         const DELIMITER: SharedString =
                                         SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
-                                    for (index, component) in components.into_iter().enumerate() {
+                                    for (index, component) in components.iter().enumerate() {
                                         if index != 0 {
                                                 let delimiter_target_index = index - 1;
                                                 let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - delimiter_target_index).cloned();
