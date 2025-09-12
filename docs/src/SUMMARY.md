@@ -15,6 +15,7 @@
 
 - [Configuring Zed](./configuring-zed.md)
 - [Configuring Languages](./configuring-languages.md)
+  - [Toolchains](./toolchains.md)
 - [Key bindings](./key-bindings.md)
   - [All Actions](./all-actions.md)
 - [Snippets](./snippets.md)
