@@ -393,7 +393,8 @@ struct SerializedProjectPanel {
 
 struct DraggedProjectEntryView {
     selection: SelectedEntry,
-    details: EntryDetails,
+    icon: Option<SharedString>,
+    filename: String,
     click_offset: Point<Pixels>,
     selections: Arc<[SelectedEntry]>,
 }
@@ -4322,7 +4323,8 @@ impl ProjectPanel {
                     dragged_selection,
                     move |selection, click_offset, _window, cx| {
                         cx.new(|_| DraggedProjectEntryView {
-                            details: details.clone(),
+                            icon: details.icon.clone(),
+                            filename: details.filename.clone(),
                             click_offset,
                             selection: selection.active_selection,
                             selections: selection.marked_selections.clone(),
@@ -5849,12 +5851,12 @@ impl Render for DraggedProjectEntryView {
                         if self.selections.len() > 1 && self.selections.contains(&self.selection) {
                             this.child(Label::new(format!("{} entries", self.selections.len())))
                         } else {
-                            this.child(if let Some(icon) = &self.details.icon {
+                            this.child(if let Some(icon) = &self.icon {
                                 div().child(Icon::from_path(icon.clone()))
                             } else {
                                 div()
                             })
-                            .child(Label::new(self.details.filename.clone()))
+                            .child(Label::new(self.filename.clone()))
                         }
                     }),
             )
