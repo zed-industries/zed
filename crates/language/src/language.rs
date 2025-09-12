@@ -27,9 +27,8 @@ use crate::language_settings::SoftWrap;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
-use fs::Fs;
 use futures::Future;
-use gpui::{App, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{
@@ -46,7 +45,6 @@ use settings::WorktreeId;
 use smol::future::FutureExt as _;
 use std::num::NonZeroU32;
 use std::{
-    any::Any,
     ffi::OsStr,
     fmt::Debug,
     hash::Hash,
@@ -69,6 +67,7 @@ pub use text_diff::{
 use theme::SyntaxTheme;
 pub use toolchain::{
     LanguageToolchainStore, LocalLanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister,
+    ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
 use util::serde::default_true;
@@ -156,6 +155,8 @@ pub struct Location {
     pub range: Range<Anchor>,
 }
 
+type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
+
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
@@ -166,7 +167,7 @@ pub struct CachedLspAdapter {
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
-    cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    cached_binary: ServerBinaryCache,
 }
 
 impl Debug for CachedLspAdapter {
@@ -216,10 +217,16 @@ impl CachedLspAdapter {
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
-        let cached_binary = self.cached_binary.lock().await;
+        let mut cached_binary = self.cached_binary.lock().await;
         self.adapter
             .clone()
-            .get_language_server_command(delegate, toolchains, binary_options, cached_binary, cx)
+            .get_language_server_command(
+                delegate,
+                toolchains,
+                binary_options,
+                &mut cached_binary,
+                cx,
+            )
             .await
     }
 
@@ -306,127 +313,8 @@ pub trait LspAdapterDelegate: Send + Sync {
 }
 
 #[async_trait(?Send)]
-pub trait LspAdapter: 'static + Send + Sync {
+pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     fn name(&self) -> LanguageServerName;
-
-    fn get_language_server_command<'a>(
-        self: Arc<Self>,
-        delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Option<Toolchain>,
-        binary_options: LanguageServerBinaryOptions,
-        mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        cx: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
-        async move {
-            // First we check whether the adapter can give us a user-installed binary.
-            // If so, we do *not* want to cache that, because each worktree might give us a different
-            // binary:
-            //
-            //      worktree 1: user-installed at `.bin/gopls`
-            //      worktree 2: user-installed at `~/bin/gopls`
-            //      worktree 3: no gopls found in PATH -> fallback to Zed installation
-            //
-            // We only want to cache when we fall back to the global one,
-            // because we don't want to download and overwrite our global one
-            // for each worktree we might have open.
-            if binary_options.allow_path_lookup
-                && let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
-                    log::debug!(
-                        "found user-installed language server for {}. path: {:?}, arguments: {:?}",
-                        self.name().0,
-                        binary.path,
-                        binary.arguments
-                    );
-                    return Ok(binary);
-                }
-
-            anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
-
-            if let Some(cached_binary) = cached_binary.as_ref() {
-                return Ok(cached_binary.clone());
-            }
-
-            let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await else {
-                anyhow::bail!("no language server download dir defined")
-            };
-
-            let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
-
-            if let Err(error) = binary.as_ref() {
-                if let Some(prev_downloaded_binary) = self
-                    .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
-                    .await
-                {
-                    log::info!(
-                        "failed to fetch newest version of language server {:?}. error: {:?}, falling back to using {:?}",
-                        self.name(),
-                        error,
-                        prev_downloaded_binary.path
-                    );
-                    binary = Ok(prev_downloaded_binary);
-                } else {
-                    delegate.update_status(
-                        self.name(),
-                        BinaryStatus::Failed {
-                            error: format!("{error:?}"),
-                        },
-                    );
-                }
-            }
-
-            if let Ok(binary) = &binary {
-                *cached_binary = Some(binary.clone());
-            }
-
-            binary
-        }
-        .boxed_local()
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        None
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>>;
-
-    fn will_fetch_server(
-        &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncApp,
-    ) -> Option<Task<Result<()>>> {
-        None
-    }
-
-    async fn check_if_version_installed(
-        &self,
-        _version: &(dyn 'static + Send + Any),
-        _container_dir: &PathBuf,
-        _delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        None
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        latest_version: Box<dyn 'static + Send + Any>,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary>;
-
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary>;
 
     fn process_diagnostics(
         &self,
@@ -510,7 +398,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -518,7 +405,6 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _cx: &mut AsyncApp,
@@ -529,7 +415,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn additional_initialization_options(
         self: Arc<Self>,
         _target_language_server_id: LanguageServerName,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -538,7 +423,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn additional_workspace_configuration(
         self: Arc<Self>,
         _target_language_server_id: LanguageServerName,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
@@ -589,42 +473,201 @@ pub trait LspAdapter: 'static + Send + Sync {
             "Not implemented for this adapter. This method should only be called on the default JSON language server adapter"
         );
     }
+
+    /// True for the extension adapter and false otherwise.
+    fn is_extension(&self) -> bool {
+        false
+    }
 }
 
-async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
-    adapter: &L,
-    delegate: &Arc<dyn LspAdapterDelegate>,
-    container_dir: PathBuf,
-    cx: &mut AsyncApp,
-) -> Result<LanguageServerBinary> {
-    if let Some(task) = adapter.will_fetch_server(delegate, cx) {
-        task.await?;
+pub trait LspInstaller {
+    type BinaryVersion;
+    fn check_if_user_installed(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> impl Future<Output = Option<LanguageServerBinary>> {
+        async { None }
     }
 
-    let name = adapter.name();
-    log::debug!("fetching latest version of language server {:?}", name.0);
-    delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
+    fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        pre_release: bool,
+        cx: &mut AsyncApp,
+    ) -> impl Future<Output = Result<Self::BinaryVersion>>;
 
-    let latest_version = adapter
-        .fetch_latest_server_version(delegate.as_ref(), cx)
-        .await?;
+    fn check_if_version_installed(
+        &self,
+        _version: &Self::BinaryVersion,
+        _container_dir: &PathBuf,
+        _delegate: &dyn LspAdapterDelegate,
+    ) -> impl Future<Output = Option<LanguageServerBinary>> {
+        async { None }
+    }
 
-    if let Some(binary) = adapter
-        .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
-        .await
-    {
-        log::debug!("language server {:?} is already installed", name.0);
-        delegate.update_status(name.clone(), BinaryStatus::None);
-        Ok(binary)
-    } else {
-        log::info!("downloading language server {:?}", name.0);
-        delegate.update_status(adapter.name(), BinaryStatus::Downloading);
-        let binary = adapter
-            .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
-            .await;
+    fn fetch_server_binary(
+        &self,
+        latest_version: Self::BinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> impl Future<Output = Result<LanguageServerBinary>>;
 
-        delegate.update_status(name.clone(), BinaryStatus::None);
-        binary
+    fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> impl Future<Output = Option<LanguageServerBinary>>;
+}
+
+#[async_trait(?Send)]
+pub trait DynLspInstaller {
+    async fn try_fetch_server_binary(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        container_dir: PathBuf,
+        pre_release: bool,
+        cx: &mut AsyncApp,
+    ) -> Result<LanguageServerBinary>;
+    fn get_language_server_command<'a>(
+        self: Arc<Self>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        toolchains: Option<Toolchain>,
+        binary_options: LanguageServerBinaryOptions,
+        cached_binary: &'a mut Option<(bool, LanguageServerBinary)>,
+        cx: &'a mut AsyncApp,
+    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>>;
+}
+
+#[async_trait(?Send)]
+impl<LI, BinaryVersion> DynLspInstaller for LI
+where
+    LI: LspInstaller<BinaryVersion = BinaryVersion> + LspAdapter,
+{
+    async fn try_fetch_server_binary(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        container_dir: PathBuf,
+        pre_release: bool,
+        cx: &mut AsyncApp,
+    ) -> Result<LanguageServerBinary> {
+        let name = self.name();
+
+        log::debug!("fetching latest version of language server {:?}", name.0);
+        delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
+
+        let latest_version = self
+            .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
+            .await?;
+
+        if let Some(binary) = self
+            .check_if_version_installed(&latest_version, &container_dir, delegate.as_ref())
+            .await
+        {
+            log::debug!("language server {:?} is already installed", name.0);
+            delegate.update_status(name.clone(), BinaryStatus::None);
+            Ok(binary)
+        } else {
+            log::debug!("downloading language server {:?}", name.0);
+            delegate.update_status(name.clone(), BinaryStatus::Downloading);
+            let binary = self
+                .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+                .await;
+
+            delegate.update_status(name.clone(), BinaryStatus::None);
+            binary
+        }
+    }
+    fn get_language_server_command<'a>(
+        self: Arc<Self>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        toolchain: Option<Toolchain>,
+        binary_options: LanguageServerBinaryOptions,
+        cached_binary: &'a mut Option<(bool, LanguageServerBinary)>,
+        cx: &'a mut AsyncApp,
+    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
+        async move {
+            // First we check whether the adapter can give us a user-installed binary.
+            // If so, we do *not* want to cache that, because each worktree might give us a different
+            // binary:
+            //
+            //      worktree 1: user-installed at `.bin/gopls`
+            //      worktree 2: user-installed at `~/bin/gopls`
+            //      worktree 3: no gopls found in PATH -> fallback to Zed installation
+            //
+            // We only want to cache when we fall back to the global one,
+            // because we don't want to download and overwrite our global one
+            // for each worktree we might have open.
+            if binary_options.allow_path_lookup
+                && let Some(binary) = self
+                    .check_if_user_installed(delegate.as_ref(), toolchain, cx)
+                    .await
+            {
+                log::info!(
+                    "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                    self.name().0,
+                    binary.path,
+                    binary.arguments
+                );
+                return Ok(binary);
+            }
+
+            anyhow::ensure!(
+                binary_options.allow_binary_download,
+                "downloading language servers disabled"
+            );
+
+            if let Some((pre_release, cached_binary)) = cached_binary
+                && *pre_release == binary_options.pre_release
+            {
+                return Ok(cached_binary.clone());
+            }
+
+            let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
+            else {
+                anyhow::bail!("no language server download dir defined")
+            };
+
+            let mut binary = self
+                .try_fetch_server_binary(
+                    &delegate,
+                    container_dir.to_path_buf(),
+                    binary_options.pre_release,
+                    cx,
+                )
+                .await;
+
+            if let Err(error) = binary.as_ref() {
+                if let Some(prev_downloaded_binary) = self
+                    .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                    .await
+                {
+                    log::info!(
+                        "failed to fetch newest version of language server {:?}. \
+                        error: {:?}, falling back to using {:?}",
+                        self.name(),
+                        error,
+                        prev_downloaded_binary.path
+                    );
+                    binary = Ok(prev_downloaded_binary);
+                } else {
+                    delegate.update_status(
+                        self.name(),
+                        BinaryStatus::Failed {
+                            error: format!("{error:?}"),
+                        },
+                    );
+                }
+            }
+
+            if let Ok(binary) = &binary {
+                *cached_binary = Some((binary_options.pre_release, binary.clone()));
+            }
+
+            binary
+        }
+        .boxed_local()
     }
 }
 
@@ -2194,10 +2237,16 @@ impl Default for FakeLspAdapter {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[async_trait(?Send)]
-impl LspAdapter for FakeLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        LanguageServerName(self.name.into())
+impl LspInstaller for FakeLspAdapter {
+    type BinaryVersion = ();
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<Self::BinaryVersion> {
+        unreachable!()
     }
 
     async fn check_if_user_installed(
@@ -2209,28 +2258,9 @@ impl LspAdapter for FakeLspAdapter {
         Some(self.language_server_binary.clone())
     }
 
-    fn get_language_server_command<'a>(
-        self: Arc<Self>,
-        _: Arc<dyn LspAdapterDelegate>,
-        _: Option<Toolchain>,
-        _: LanguageServerBinaryOptions,
-        _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
-        async move { Ok(self.language_server_binary.clone()) }.boxed_local()
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        unreachable!();
-    }
-
     async fn fetch_server_binary(
         &self,
-        _: Box<dyn 'static + Send + Any>,
+        _: (),
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
@@ -2244,6 +2274,14 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<LanguageServerBinary> {
         unreachable!();
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[async_trait(?Send)]
+impl LspAdapter for FakeLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName(self.name.into())
+    }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()
@@ -2255,7 +2293,6 @@ impl LspAdapter for FakeLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
@@ -2268,6 +2305,10 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<CodeLabel> {
         let label_for_completion = self.label_for_completion.as_ref()?;
         label_for_completion(item, language)
+    }
+
+    fn is_extension(&self) -> bool {
+        false
     }
 }
 

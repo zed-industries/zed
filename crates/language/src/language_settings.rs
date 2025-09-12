@@ -8,7 +8,7 @@ use ec4rs::{
     property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{App, Modifiers};
+use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
 use schemars::{JsonSchema, json_schema};
 use serde::{
@@ -123,6 +123,8 @@ pub struct LanguageSettings {
     pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
+    /// Visible characters used to render whitespace when show_whitespaces is enabled.
+    pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
@@ -317,7 +319,6 @@ pub struct AllLanguageSettingsContent {
     pub defaults: LanguageSettingsContent,
     /// The settings for individual languages.
     #[serde(default)]
-    #[settings_ui(skip)]
     pub languages: LanguageToSettingsMap,
     /// Settings for associating file extensions and filenames
     /// with languages.
@@ -330,6 +331,37 @@ pub struct AllLanguageSettingsContent {
 /// names in the keys.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageToSettingsMap(pub HashMap<LanguageName, LanguageSettingsContent>);
+
+impl SettingsUi for LanguageToSettingsMap {
+    fn settings_ui_item() -> settings::SettingsUiItem {
+        settings::SettingsUiItem::DynamicMap(settings::SettingsUiItemDynamicMap {
+            item: LanguageSettingsContent::settings_ui_item,
+            defaults_path: &[],
+            determine_items: |settings_value, cx| {
+                use settings::SettingsUiEntryMetaData;
+
+                // todo(settings_ui): We should be using a global LanguageRegistry, but it's not implemented yet
+                _ = cx;
+
+                let Some(settings_language_map) = settings_value.as_object() else {
+                    return Vec::new();
+                };
+                let mut languages = Vec::with_capacity(settings_language_map.len());
+
+                for language_name in settings_language_map.keys().map(gpui::SharedString::from) {
+                    languages.push(SettingsUiEntryMetaData {
+                        title: language_name.clone(),
+                        path: language_name,
+                        // todo(settings_ui): Implement documentation for each language
+                        // ideally based on the language's official docs from extension or builtin info
+                        documentation: None,
+                    });
+                }
+                return languages;
+            },
+        })
+    }
+}
 
 inventory::submit! {
     ParameterizedJsonSchema {
@@ -431,11 +463,13 @@ fn default_3() -> usize {
 
 /// The settings for a particular language.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[settings_ui(group = "Default")]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
     /// Default: 4
     #[serde(default)]
+    #[settings_ui(skip)]
     pub tab_size: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
@@ -466,6 +500,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     #[serde(default)]
+    #[settings_ui(skip)]
     pub wrap_guides: Option<Vec<usize>>,
     /// Indent guide related settings.
     #[serde(default)]
@@ -491,6 +526,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: auto
     #[serde(default)]
+    #[settings_ui(skip)]
     pub formatter: Option<SelectedFormatter>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
@@ -516,6 +552,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     #[serde(default)]
+    #[settings_ui(skip)]
     pub language_servers: Option<Vec<String>>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
@@ -538,10 +575,16 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: []
     #[serde(default)]
+    #[settings_ui(skip)]
     pub edit_predictions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
+    /// Visible characters used to render whitespace when show_whitespaces is enabled.
+    ///
+    /// Default: "•" for spaces, "→" for tabs.
+    #[serde(default)]
+    pub whitespace_map: Option<WhitespaceMap>,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     ///
     /// Default: true
@@ -577,6 +620,7 @@ pub struct LanguageSettingsContent {
     /// These are not run if formatting is off.
     ///
     /// Default: {} (or {"source.organizeImports": true} for Go).
+    #[settings_ui(skip)]
     pub code_actions_on_format: Option<HashMap<String, bool>>,
     /// Whether to perform linked edits of associated ranges, if the language server supports it.
     /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
@@ -610,11 +654,14 @@ pub struct LanguageSettingsContent {
     /// Preferred debuggers for this language.
     ///
     /// Default: []
+    #[settings_ui(skip)]
     pub debuggers: Option<Vec<String>>,
 }
 
 /// The behavior of `editor::Rewrap`.
-#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RewrapBehavior {
     /// Only rewrap within comments.
@@ -696,7 +743,7 @@ pub enum SoftWrap {
 }
 
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SettingsUi)]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
@@ -795,7 +842,7 @@ impl<'de> Deserialize<'de> for FormatOnSave {
 }
 
 /// Controls how whitespace should be displayedin the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
     /// Draw whitespace only for the selected text.
@@ -815,8 +862,30 @@ pub enum ShowWhitespaceSetting {
     Trailing,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
+pub struct WhitespaceMap {
+    #[serde(default)]
+    pub space: Option<String>,
+    #[serde(default)]
+    pub tab: Option<String>,
+}
+
+impl WhitespaceMap {
+    pub fn space(&self) -> SharedString {
+        self.space
+            .as_ref()
+            .map_or_else(|| SharedString::from("•"), |s| SharedString::from(s))
+    }
+
+    pub fn tab(&self) -> SharedString {
+        self.tab
+            .as_ref()
+            .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
+    }
+}
+
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, SettingsUi)]
 pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.
@@ -912,11 +981,17 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
 }
 
 /// Controls which formatters should be used when formatting code.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(untagged)]
 pub enum FormatterList {
     Single(Formatter),
-    Vec(Vec<Formatter>),
+    Vec(#[settings_ui(skip)] Vec<Formatter>),
+}
+
+impl Default for FormatterList {
+    fn default() -> Self {
+        Self::Single(Formatter::default())
+    }
 }
 
 impl AsRef<[Formatter]> for FormatterList {
@@ -929,22 +1004,28 @@ impl AsRef<[Formatter]> for FormatterList {
 }
 
 /// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
     /// Format code using the current language server.
-    LanguageServer { name: Option<String> },
+    LanguageServer {
+        #[settings_ui(skip)]
+        name: Option<String>,
+    },
     /// Format code using Zed's Prettier integration.
+    #[default]
     Prettier,
     /// Format code using an external command.
     External {
         /// The external program to run.
+        #[settings_ui(skip)]
         command: Arc<str>,
         /// The arguments to pass to the program.
+        #[settings_ui(skip)]
         arguments: Option<Arc<[String]>>,
     },
     /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    CodeActions(#[settings_ui(skip)] HashMap<String, bool>),
 }
 
 /// The settings for indent guides.
@@ -1012,7 +1093,7 @@ pub enum IndentGuideBackgroundColoring {
 }
 
 /// The settings for inlay hints.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
 pub struct InlayHintSettings {
     /// Global switch to toggle hints on and off.
     ///
@@ -1079,7 +1160,7 @@ fn scroll_debounce_ms() -> u64 {
 }
 
 /// The task settings for a particular language.
-#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema, SettingsUi)]
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
     #[serde(default)]
@@ -1603,6 +1684,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.edit_predictions_disabled_in.clone(),
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
+    merge(&mut settings.whitespace_map, src.whitespace_map.clone());
     merge(
         &mut settings.extend_comment_on_newline,
         src.extend_comment_on_newline,
@@ -1622,7 +1704,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct PrettierSettings {
     /// Enables or disables formatting with Prettier for a given language.
     #[serde(default)]
@@ -1635,15 +1717,17 @@ pub struct PrettierSettings {
     /// Forces Prettier integration to use specific plugins when formatting files with the language.
     /// The default Prettier will be installed with these plugins.
     #[serde(default)]
+    #[settings_ui(skip)]
     pub plugins: HashSet<String>,
 
     /// Default Prettier options, in the format as in package.json section for Prettier.
     /// If project installs Prettier via its package.json, these options will be ignored.
     #[serde(flatten)]
+    #[settings_ui(skip)]
     pub options: HashMap<String, serde_json::Value>,
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct JsxTagAutoCloseSettings {
     /// Enables or disables auto-closing of JSX tags.
     #[serde(default)]

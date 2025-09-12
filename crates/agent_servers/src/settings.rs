@@ -1,3 +1,4 @@
+use agent_client_protocol as acp;
 use std::path::PathBuf;
 
 use crate::AgentServerCommand;
@@ -16,7 +17,7 @@ pub fn init(cx: &mut App) {
 #[settings_key(key = "agent_servers")]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
-    pub claude: Option<CustomAgentServerSettings>,
+    pub claude: Option<BuiltinAgentServerSettings>,
 
     /// Custom agent servers configured by the user
     #[serde(flatten)]
@@ -46,6 +47,13 @@ pub struct BuiltinAgentServerSettings {
     ///
     /// Default: true
     pub ignore_system_version: Option<bool>,
+    /// The default mode for new threads.
+    ///
+    /// Note: Not all agents support modes.
+    ///
+    /// Default: None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<acp::SessionModeId>,
 }
 
 impl BuiltinAgentServerSettings {
@@ -73,6 +81,13 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
 pub struct CustomAgentServerSettings {
     #[serde(flatten)]
     pub command: AgentServerCommand,
+    /// The default mode for new threads.
+    ///
+    /// Note: Not all agents support modes.
+    ///
+    /// Default: None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<acp::SessionModeId>,
 }
 
 impl settings::Settings for AllAgentServersSettings {

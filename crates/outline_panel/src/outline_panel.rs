@@ -737,7 +737,7 @@ impl OutlinePanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Filter...", cx);
+                editor.set_placeholder_text("Filter...", window, cx);
                 editor
             });
             let filter_update_subscription = cx.subscribe_in(
@@ -3350,13 +3350,11 @@ impl OutlinePanel {
                         let buffer_language = buffer_snapshot.language().cloned();
                         let fetched_outlines = cx
                             .background_spawn(async move {
-                                let mut outlines = buffer_snapshot
-                                    .outline_items_containing(
-                                        excerpt_range.context,
-                                        false,
-                                        Some(&syntax_theme),
-                                    )
-                                    .unwrap_or_default();
+                                let mut outlines = buffer_snapshot.outline_items_containing(
+                                    excerpt_range.context,
+                                    false,
+                                    Some(&syntax_theme),
+                                );
                                 outlines.retain(|outline| {
                                     buffer_language.is_none()
                                         || buffer_language.as_ref()

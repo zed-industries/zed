@@ -146,7 +146,7 @@ impl PickerDelegate for RulesContextPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let thread = &self.matches[ix];
+        let thread = &self.matches.get(ix)?;
 
         Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
             render_thread_context_entry(thread, self.context_store.clone(), cx),

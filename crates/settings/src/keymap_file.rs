@@ -463,8 +463,11 @@ impl KeymapFile {
             add_deprecation(schema, format!("Deprecated, use {new_name}"));
         }
 
-        fn add_description(schema: &mut schemars::Schema, description: String) {
-            schema.insert("description".to_string(), Value::String(description));
+        fn add_description(schema: &mut schemars::Schema, description: &str) {
+            schema.insert(
+                "description".to_string(),
+                Value::String(description.to_string()),
+            );
         }
 
         let empty_object = json_schema!({
@@ -476,32 +479,25 @@ impl KeymapFile {
         //
         // In the case of the array validations, it would even provide an error saying that the name
         // must match the name of the first alternative.
-        let mut plain_action = json_schema!({
+        let mut empty_action_name = json_schema!({
             "type": "string",
             "const": ""
         });
         let no_action_message = "No action named this.";
-        add_description(&mut plain_action, no_action_message.to_owned());
-        add_deprecation(&mut plain_action, no_action_message.to_owned());
-
-        let mut matches_action_name = json_schema!({
-            "const": ""
-        });
-        let no_action_message_input = "No action named this that takes input.";
-        add_description(&mut matches_action_name, no_action_message_input.to_owned());
-        add_deprecation(&mut matches_action_name, no_action_message_input.to_owned());
-
-        let action_with_input = json_schema!({
+        add_description(&mut empty_action_name, no_action_message);
+        add_deprecation(&mut empty_action_name, no_action_message.to_string());
+        let empty_action_name_with_input = json_schema!({
             "type": "array",
             "items": [
-                matches_action_name,
+                empty_action_name,
                 true
             ],
             "minItems": 2,
             "maxItems": 2
         });
-        let mut keymap_action_alternatives = vec![plain_action, action_with_input];
+        let mut keymap_action_alternatives = vec![empty_action_name, empty_action_name_with_input];
 
+        let mut empty_schema_action_names = vec![];
         for (name, action_schema) in action_schemas.into_iter() {
             let description = action_schema.as_ref().and_then(|schema| {
                 schema
@@ -527,8 +523,8 @@ impl KeymapFile {
             } else if let Some(new_name) = deprecation {
                 add_deprecation_preferred_name(&mut plain_action, new_name);
             }
-            if let Some(desc) = description.clone() {
-                add_description(&mut plain_action, desc);
+            if let Some(description) = &description {
+                add_description(&mut plain_action, description);
             }
             keymap_action_alternatives.push(plain_action);
 
@@ -542,8 +538,8 @@ impl KeymapFile {
                 let mut matches_action_name = json_schema!({
                     "const": name
                 });
-                if let Some(desc) = description.clone() {
-                    add_description(&mut matches_action_name, desc);
+                if let Some(description) = &description {
+                    add_description(&mut matches_action_name, description);
                 }
                 if let Some(message) = deprecation_messages.get(name) {
                     add_deprecation(&mut matches_action_name, message.to_string());
@@ -557,7 +553,29 @@ impl KeymapFile {
                     "maxItems": 2
                 });
                 keymap_action_alternatives.push(action_with_input);
+            } else {
+                empty_schema_action_names.push(name);
             }
+        }
+
+        if !empty_schema_action_names.is_empty() {
+            let action_names = json_schema!({ "enum": empty_schema_action_names });
+            let no_properties_allowed = json_schema!({
+                "type": "object",
+                "additionalProperties": false
+            });
+            let mut actions_with_empty_input = json_schema!({
+                "type": "array",
+                "items": [action_names, no_properties_allowed],
+                "minItems": 2,
+                "maxItems": 2
+            });
+            add_deprecation(
+                &mut actions_with_empty_input,
+                "This action does not take input - just the action name string should be used."
+                    .to_string(),
+            );
+            keymap_action_alternatives.push(actions_with_empty_input);
         }
 
         // Placing null first causes json-language-server to default assuming actions should be
@@ -1103,6 +1121,24 @@ mod tests {
         check_keymap_update(
             "[]",
             KeybindUpdateOperation::add(KeybindUpdateTarget {
+                keystrokes: &parse_keystrokes("\\ a"),
+                action_name: "zed::SomeAction",
+                context: None,
+                action_arguments: None,
+            }),
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            "[]",
+            KeybindUpdateOperation::add(KeybindUpdateTarget {
                 keystrokes: &parse_keystrokes("ctrl-a"),
                 action_name: "zed::SomeAction",
                 context: None,
@@ -1306,6 +1342,79 @@ mod tests {
             r#"[
                 {
                     "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ b"),
+                    action_name: "zed::SomeOtherAction",
+                    context: None,
+                    action_arguments: Some(r#"{"foo": "bar"}"#),
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "\\ b": [
+                            "zed::SomeOtherAction",
+                            {
+                                "foo": "bar"
+                            }
+                        ]
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Replace {
+                target: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                source: KeybindUpdateTarget {
+                    keystrokes: &parse_keystrokes("\\ a"),
+                    action_name: "zed::SomeAction",
+                    context: None,
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "bindings": {
+                        "\\ a": "zed::SomeAction"
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "bindings": {
                         "ctrl-a": "zed::SomeAction"
                     }
                 }
@@ -1478,6 +1587,37 @@ mod tests {
                 target: KeybindUpdateTarget {
                     context: Some("SomeContext"),
                     keystrokes: &parse_keystrokes("a"),
+                    action_name: "foo::bar",
+                    action_arguments: None,
+                },
+                target_keybind_source: KeybindSource::User,
+            },
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+        );
+
+        check_keymap_update(
+            r#"[
+                {
+                    "context": "SomeContext",
+                    "bindings": {
+                        "\\ a": "foo::bar",
+                        "c": "foo::baz",
+                    }
+                },
+            ]"#
+            .unindent(),
+            KeybindUpdateOperation::Remove {
+                target: KeybindUpdateTarget {
+                    context: Some("SomeContext"),
+                    keystrokes: &parse_keystrokes("\\ a"),
                     action_name: "foo::bar",
                     action_arguments: None,
                 },

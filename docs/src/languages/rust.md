@@ -112,7 +112,7 @@ This `"path"` has to be an absolute path.
 
 ## Alternate Targets
 
-If want rust-analyzer to provide diagnostics for a target other than you current platform (e.g. for windows when running on macOS) you can use the following Zed lsp settings:
+If you want rust-analyzer to provide diagnostics for a target other than your current platform (e.g. for windows when running on macOS) you can use the following Zed lsp settings:
 
 ```json
 {
@@ -128,7 +128,7 @@ If want rust-analyzer to provide diagnostics for a target other than you current
 }
 ```
 
-If you are using `rustup` and you can find a list of available target triples (`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, etc) by running:
+If you are using `rustup`, you can find a list of available target triples (`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, etc) by running:
 
 ```sh
 rustup target list --installed
@@ -239,7 +239,7 @@ you can list them in `linkedProjects` in the local project settings:
 
 ### Snippets
 
-There's a way get custom completion items from rust-analyzer, that will transform the code according to the snippet body:
+There's a way to get custom completion items from rust-analyzer, that will transform the code according to the snippet body:
 
 ```json
 {

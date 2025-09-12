@@ -1,10 +1,12 @@
 use anyhow::{Context as _, Result};
 
+use audio::{AudioSettings, CHANNEL_COUNT, SAMPLE_RATE};
 use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
-    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
+    AsyncApp, BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    Task,
 };
 use libwebrtc::native::{apm, audio_mixer, audio_resampler};
 use livekit::track;
@@ -17,8 +19,11 @@ use livekit::webrtc::{
     video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource},
     video_stream::native::NativeVideoStream,
 };
+use log::info;
 use parking_lot::Mutex;
 use rodio::Source;
+use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::cell::RefCell;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -36,27 +41,28 @@ pub(crate) struct AudioStack {
     next_ssrc: AtomicI32,
 }
 
-// NOTE: We use WebRTC's mixer which only supports
-// 16kHz, 32kHz and 48kHz. As 48 is the most common "next step up"
-// for audio output devices like speakers/bluetooth, we just hard-code
-// this; and downsample when we need to.
-const SAMPLE_RATE: u32 = 48000;
-const NUM_CHANNELS: u32 = 2;
-
 pub(crate) fn play_remote_audio_track(
     track: &livekit::track::RemoteAudioTrack,
     cx: &mut gpui::App,
 ) -> Result<AudioStream> {
     let stop_handle = Arc::new(AtomicBool::new(false));
     let stop_handle_clone = stop_handle.clone();
-    let stream = source::LiveKitStream::new(cx.background_executor(), track)
+    let stream = source::LiveKitStream::new(cx.background_executor(), track);
+
+    let stream = stream
         .stoppable()
         .periodic_access(Duration::from_millis(50), move |s| {
             if stop_handle.load(Ordering::Relaxed) {
                 s.stop();
             }
         });
-    audio::Audio::play_source(stream, cx).context("Could not play audio")?;
+
+    let speaker: Speaker = serde_urlencoded::from_str(&track.name()).unwrap_or_else(|_| Speaker {
+        name: track.name(),
+        is_staff: false,
+    });
+    audio::Audio::play_voip_stream(stream, speaker.name, speaker.is_staff, cx)
+        .context("Could not play audio")?;
 
     let on_drop = util::defer(move || {
         stop_handle_clone.store(true, Ordering::Relaxed);
@@ -90,8 +96,8 @@ impl AudioStack {
         let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
-            sample_rate: SAMPLE_RATE,
-            num_channels: NUM_CHANNELS,
+            sample_rate: SAMPLE_RATE.get(),
+            num_channels: CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
@@ -131,7 +137,7 @@ impl AudioStack {
             let apm = self.apm.clone();
             let mixer = self.mixer.clone();
             async move {
-                Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
+                Self::play_output(apm, mixer, SAMPLE_RATE.get(), CHANNEL_COUNT.get().into())
                     .await
                     .log_err();
             }
@@ -142,17 +148,26 @@ impl AudioStack {
 
     pub(crate) fn capture_local_microphone_track(
         &self,
+        user_name: String,
+        is_staff: bool,
+        cx: &AsyncApp,
     ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
         let source = NativeAudioSource::new(
             // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
             AudioSourceOptions::default(),
-            SAMPLE_RATE,
-            NUM_CHANNELS,
+            SAMPLE_RATE.get(),
+            CHANNEL_COUNT.get().into(),
             10,
         );
 
+        let track_name = serde_urlencoded::to_string(Speaker {
+            name: user_name,
+            is_staff,
+        })
+        .context("Could not encode user information in track name")?;
+
         let track = track::LocalAudioTrack::create_audio_track(
-            "microphone",
+            &track_name,
             RtcAudioSource::Native(source.clone()),
         );
 
@@ -166,9 +181,26 @@ impl AudioStack {
                 }
             }
         });
-        let capture_task = self.executor.spawn(async move {
-            Self::capture_input(apm, frame_tx, SAMPLE_RATE, NUM_CHANNELS).await
-        });
+        let rodio_pipeline =
+            AudioSettings::try_read_global(cx, |setting| setting.rodio_audio).unwrap_or_default();
+        let capture_task = if rodio_pipeline {
+            info!("Using experimental.rodio_audio audio pipeline");
+            let voip_parts = audio::VoipParts::new(cx)?;
+            // Audio needs to run real-time and should never be paused. That is why we are using a
+            // normal std::thread and not a background task
+            thread::spawn(move || {
+                // microphone is non send on mac
+                let microphone = audio::Audio::open_microphone(voip_parts)?;
+                send_to_livekit(frame_tx, microphone);
+                Ok::<(), anyhow::Error>(())
+            });
+            Task::ready(Ok(()))
+        } else {
+            self.executor.spawn(async move {
+                Self::capture_input(apm, frame_tx, SAMPLE_RATE.get(), CHANNEL_COUNT.get().into())
+                    .await
+            })
+        };
 
         let on_drop = util::defer(|| {
             drop(transmit_task);
@@ -342,6 +374,36 @@ impl AudioStack {
 
             device_change_listener.next().await;
             drop(end_on_drop_tx)
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Speaker {
+    name: String,
+    is_staff: bool,
+}
+
+fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphone: impl Source) {
+    use cpal::Sample;
+    loop {
+        let sampled: Vec<_> = microphone
+            .by_ref()
+            .take(audio::BUFFER_SIZE)
+            .map(|s| s.to_sample())
+            .collect();
+
+        if frame_tx
+            .unbounded_send(AudioFrame {
+                sample_rate: SAMPLE_RATE.get(),
+                num_channels: CHANNEL_COUNT.get() as u32,
+                samples_per_channel: sampled.len() as u32 / CHANNEL_COUNT.get() as u32,
+                data: Cow::Owned(sampled),
+            })
+            .is_err()
+        {
+            // must rx has dropped or is not consuming
+            break;
         }
     }
 }

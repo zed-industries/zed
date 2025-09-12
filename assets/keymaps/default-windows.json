@@ -25,7 +25,6 @@
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
-      "open": "workspace::Open",
       "ctrl-o": "workspace::Open",
       "ctrl-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
       "ctrl-shift-=": ["zed::IncreaseBufferFontSize", { "persist": false }],
@@ -68,18 +67,13 @@
       "ctrl-k q": "editor::Rewrap",
       "ctrl-backspace": ["editor::DeleteToPreviousWordStart", { "ignore_newlines": false, "ignore_brackets": false }],
       "ctrl-delete": ["editor::DeleteToNextWordEnd", { "ignore_newlines": false, "ignore_brackets": false }],
-      "cut": "editor::Cut",
       "shift-delete": "editor::Cut",
       "ctrl-x": "editor::Cut",
-      "copy": "editor::Copy",
       "ctrl-insert": "editor::Copy",
       "ctrl-c": "editor::Copy",
-      "paste": "editor::Paste",
       "shift-insert": "editor::Paste",
       "ctrl-v": "editor::Paste",
-      "undo": "editor::Undo",
       "ctrl-z": "editor::Undo",
-      "redo": "editor::Redo",
       "ctrl-y": "editor::Redo",
       "ctrl-shift-z": "editor::Redo",
       "up": "editor::MoveUp",
@@ -138,7 +132,6 @@
       "ctrl-shift-enter": "editor::NewlineAbove",
       "ctrl-k ctrl-z": "editor::ToggleSoftWrap",
       "ctrl-k z": "editor::ToggleSoftWrap",
-      "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": "buffer_search::DeployReplace",
       "ctrl-shift-.": "assistant::QuoteSelection",
@@ -177,7 +170,6 @@
     "context": "Markdown",
     "use_key_equivalents": true,
     "bindings": {
-      "copy": "markdown::Copy",
       "ctrl-c": "markdown::Copy"
     }
   },
@@ -225,7 +217,6 @@
     "bindings": {
       "ctrl-enter": "assistant::Assist",
       "ctrl-s": "workspace::Save",
-      "save": "workspace::Save",
       "ctrl-shift-,": "assistant::InsertIntoEditor",
       "shift-enter": "assistant::Split",
       "ctrl-r": "assistant::CycleMessageRole",
@@ -258,7 +249,10 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-enter": "agent::ContinueThread",
       "super-ctrl-b": "agent::ToggleBurnMode",
-      "alt-enter": "agent::ContinueWithBurnMode"
+      "alt-enter": "agent::ContinueWithBurnMode",
+      "ctrl-y": "agent::AllowOnce",
+      "ctrl-alt-y": "agent::AllowAlways",
+      "ctrl-d": "agent::RejectOnce"
     }
   },
   {
@@ -272,7 +266,6 @@
     "context": "AgentPanel > Markdown",
     "use_key_equivalents": true,
     "bindings": {
-      "copy": "markdown::CopyAsMarkdown",
       "ctrl-c": "markdown::CopyAsMarkdown"
     }
   },
@@ -347,13 +340,20 @@
     }
   },
   {
+    "context": "AcpThread > ModeSelector",
+    "bindings": {
+      "ctrl-enter": "menu::Confirm"
+    }
+  },
+  {
     "context": "AcpThread > Editor",
     "use_key_equivalents": true,
     "bindings": {
       "enter": "agent::Chat",
       "ctrl-shift-r": "agent::OpenAgentDiff",
       "ctrl-shift-y": "agent::KeepAll",
-      "ctrl-shift-n": "agent::RejectAll"
+      "ctrl-shift-n": "agent::RejectAll",
+      "shift-tab": "agent::CycleModeSelector"
     }
   },
   {
@@ -367,7 +367,6 @@
     "context": "PromptLibrary",
     "use_key_equivalents": true,
     "bindings": {
-      "new": "rules_library::NewRule",
       "ctrl-n": "rules_library::NewRule",
       "ctrl-shift-s": "rules_library::ToggleDefaultRule"
     }
@@ -381,7 +380,6 @@
       "enter": "search::SelectNextMatch",
       "shift-enter": "search::SelectPreviousMatch",
       "alt-enter": "search::SelectAllMatches",
-      "find": "search::FocusSearch",
       "ctrl-f": "search::FocusSearch",
       "ctrl-h": "search::ToggleReplace",
       "ctrl-l": "search::ToggleSelection"
@@ -408,7 +406,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "shift-find": "search::FocusSearch",
       "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-r": "search::ToggleRegex" // vscode
@@ -472,14 +469,12 @@
       "forward": "pane::GoForward",
       "f3": "search::SelectNextMatch",
       "shift-f3": "search::SelectPreviousMatch",
-      "shift-find": "project_search::ToggleFocus",
       "ctrl-shift-f": "project_search::ToggleFocus",
       "shift-alt-h": "search::ToggleReplace",
       "alt-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
-      "alt-find": "project_search::ToggleFilters",
       "alt-f": "project_search::ToggleFilters",
       "alt-r": "search::ToggleRegex",
       // "ctrl-shift-alt-x": "search::ToggleRegex",
@@ -500,8 +495,8 @@
       "alt-down": "editor::MoveLineDown",
       "shift-alt-up": "editor::DuplicateLineUp",
       "shift-alt-down": "editor::DuplicateLineDown",
-      "shift-alt-right": "editor::SelectLargerSyntaxNode", // Expand Selection
-      "shift-alt-left": "editor::SelectSmallerSyntaxNode", // Shrink Selection
+      "shift-alt-right": "editor::SelectLargerSyntaxNode", // Expand selection
+      "shift-alt-left": "editor::SelectSmallerSyntaxNode", // Shrink selection
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch  / find_under_expand
@@ -579,27 +574,21 @@
     "context": "Workspace",
     "use_key_equivalents": true,
     "bindings": {
-      "alt-open": ["projects::OpenRecent", { "create_new_window": false }],
       // Change the default action on `menu::Confirm` by setting the parameter
       // "ctrl-alt-o": ["projects::OpenRecent", { "create_new_window": true }],
       "ctrl-r": ["projects::OpenRecent", { "create_new_window": false }],
-      "shift-alt-open": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       // Change to open path modal for existing remote connection by setting the parameter
       // "ctrl-shift-alt-o": "["projects::OpenRemote", { "from_existing_connection": true }]",
       "ctrl-shift-alt-o": ["projects::OpenRemote", { "from_existing_connection": false, "create_new_window": false }],
       "shift-alt-b": "branches::OpenRecent",
       "shift-alt-enter": "toast::RunAction",
       "ctrl-shift-`": "workspace::NewTerminal",
-      "save": "workspace::Save",
       "ctrl-s": "workspace::Save",
       "ctrl-k ctrl-shift-s": "workspace::SaveWithoutFormat",
-      "shift-save": "workspace::SaveAs",
       "ctrl-shift-s": "workspace::SaveAs",
-      "new": "workspace::NewFile",
       "ctrl-n": "workspace::NewFile",
-      "shift-new": "workspace::NewWindow",
       "ctrl-shift-n": "workspace::NewWindow",
-      "ctrl-`": "terminal_panel::ToggleFocus",
+      "ctrl-`": "terminal_panel::Toggle",
       "f10": ["app_menu::OpenApplicationMenu", "Zed"],
       "alt-1": ["workspace::ActivatePane", 0],
       "alt-2": ["workspace::ActivatePane", 1],
@@ -621,7 +610,6 @@
       "shift-alt-0": "workspace::ResetOpenDocksSize",
       "ctrl-shift-alt--": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
       "ctrl-shift-alt-=": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
-      "shift-find": "pane::DeploySearch",
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
@@ -641,9 +629,9 @@
       "ctrl-shift-g": "git_panel::ToggleFocus",
       "ctrl-shift-d": "debug_panel::ToggleFocus",
       "ctrl-shift-/": "agent::ToggleFocus",
-      "alt-save": "workspace::SaveAll",
       "ctrl-k s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
+      "ctrl-m ctrl-m": "toolchain::AddToolchain",
       "escape": "workspace::Unfollow",
       "ctrl-k ctrl-left": "workspace::ActivatePaneLeft",
       "ctrl-k ctrl-right": "workspace::ActivatePaneRight",
@@ -654,7 +642,9 @@
       "ctrl-k shift-up": "workspace::SwapPaneUp",
       "ctrl-k shift-down": "workspace::SwapPaneDown",
       "ctrl-shift-x": "zed::Extensions",
-      "ctrl-shift-r": "task::Rerun",
+      // All task parameters are captured and unchanged between reruns by default.
+      // Use the `"reevaluate_context"` parameter to control this.
+      "ctrl-shift-r": ["task::Rerun", { "reevaluate_context": false }],
       "alt-t": "task::Rerun",
       "shift-alt-t": "task::Spawn",
       "shift-alt-r": ["task::Spawn", { "reveal_target": "center" }],
@@ -848,9 +838,7 @@
     "bindings": {
       "left": "outline_panel::CollapseSelectedEntry",
       "right": "outline_panel::ExpandSelectedEntry",
-      "alt-copy": "outline_panel::CopyPath",
       "shift-alt-c": "outline_panel::CopyPath",
-      "shift-alt-copy": "workspace::CopyRelativePath",
       "ctrl-shift-alt-c": "workspace::CopyRelativePath",
       "ctrl-alt-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::OpenSelectedEntry",
@@ -866,21 +854,14 @@
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
       "right": "project_panel::ExpandSelectedEntry",
-      "new": "project_panel::NewFile",
       "ctrl-n": "project_panel::NewFile",
-      "alt-new": "project_panel::NewDirectory",
       "alt-n": "project_panel::NewDirectory",
-      "cut": "project_panel::Cut",
       "ctrl-x": "project_panel::Cut",
-      "copy": "project_panel::Copy",
       "ctrl-insert": "project_panel::Copy",
       "ctrl-c": "project_panel::Copy",
-      "paste": "project_panel::Paste",
       "shift-insert": "project_panel::Paste",
       "ctrl-v": "project_panel::Paste",
-      "alt-copy": "project_panel::CopyPath",
       "shift-alt-c": "project_panel::CopyPath",
-      "shift-alt-copy": "workspace::CopyRelativePath",
       "ctrl-k ctrl-shift-c": "workspace::CopyRelativePath",
       "enter": "project_panel::Rename",
       "f2": "project_panel::Rename",
@@ -892,7 +873,6 @@
       "ctrl-alt-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "alt-d": "project_panel::CompareMarkedFiles",
-      "shift-find": "project_panel::NewSearchInDirectory",
       "ctrl-k ctrl-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrevious",
@@ -1076,6 +1056,13 @@
     }
   },
   {
+    "context": "ToolchainSelector",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-a": "toolchain::AddToolchain"
+    }
+  },
+  {
     "context": "FileFinder || (FileFinder > Picker > Editor)",
     "use_key_equivalents": true,
     "bindings": {
@@ -1110,10 +1097,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "copy": "terminal::Copy",
       "ctrl-insert": "terminal::Copy",
       "ctrl-shift-c": "terminal::Copy",
-      "paste": "terminal::Paste",
       "shift-insert": "terminal::Paste",
       "ctrl-shift-v": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
@@ -1129,7 +1114,6 @@
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-backspace": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
-      "find": "buffer_search::Deploy",
       "ctrl-shift-f": "buffer_search::Deploy",
       "ctrl-shift-l": "terminal::Clear",
       "ctrl-shift-w": "pane::CloseActiveItem",
@@ -1210,7 +1194,6 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-f": "search::FocusSearch",
-      "alt-find": "keymap_editor::ToggleKeystrokeSearch",
       "alt-f": "keymap_editor::ToggleKeystrokeSearch",
       "alt-c": "keymap_editor::ToggleConflictFilter",
       "enter": "keymap_editor::EditBinding",
