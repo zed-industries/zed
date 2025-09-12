@@ -104,24 +104,13 @@ impl FileIcons {
                 return None;
             }
 
-            let folder_icon = icon_theme
-                .named_directory_icons
-                .get(name)
-                .and_then(|folder| {
-                    if expanded {
-                        folder.expanded.clone()
-                    } else {
-                        folder.collapsed.clone()
-                    }
-                })
-                .and_then(|key| icon_theme.file_icons.get(key.as_str()))
-                .map(|icon_definition| icon_definition.path.clone());
+            let directory_icons = icon_theme.named_directory_icons.get(name)?;
 
-            if let Some(folder_icon) = folder_icon {
-                return Some(folder_icon);
+            if expanded {
+                directory_icons.expanded.clone()
+            } else {
+                directory_icons.collapsed.clone()
             }
-
-            icon_theme.directory_icons.expanded.clone()
         }
 
         get_folder_icon(

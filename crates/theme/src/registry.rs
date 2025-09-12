@@ -304,8 +304,8 @@ impl ThemeRegistry {
                     (
                         key,
                         DirectoryIcons {
-                            collapsed: value.collapsed,
-                            expanded: value.expanded,
+                            collapsed: value.collapsed.map(resolve_icon_path),
+                            expanded: value.expanded.map(resolve_icon_path),
                         },
                     )
                 },
