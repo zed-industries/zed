@@ -469,7 +469,6 @@ impl Render for SystemWindowTabs {
                     .border_color(cx.theme().colors().border)
                     .child(
                         IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .on_click(|_event, window, cx| {
                                 window.dispatch_action(

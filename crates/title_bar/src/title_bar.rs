@@ -769,7 +769,7 @@ impl TitleBar {
                     .into()
                 })
                 .trigger_with_tooltip(
-                    IconButton::new("user-menu", IconName::ChevronDown).icon_size(IconSize::Small),
+                    IconButton::new("user-menu", IconName::ChevronDown),
                     Tooltip::text("Toggle User Menu"),
                 )
         }

@@ -92,7 +92,6 @@ impl RenderOnce for Disclosure {
             },
         )
         .icon_color(Color::Muted)
-        .icon_size(IconSize::Small)
         .disabled(self.disabled)
         .toggle_state(self.selected)
         .when_some(self.visible_on_hover.clone(), |this, group_name| {
