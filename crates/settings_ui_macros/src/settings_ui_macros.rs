@@ -50,6 +50,10 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
                     meta.input.parse::<Token![=]>()?;
                     let lit: LitStr = meta.input.parse()?;
                     path_name = Some(lit.value());
+                } else if meta.path.is_ident("render") {
+                    // Just consume the tokens even if we don't use them here
+                    meta.input.parse::<Token![=]>()?;
+                    let _lit: LitStr = meta.input.parse()?;
                 }
                 Ok(())
             })
@@ -170,6 +174,7 @@ fn generate_ui_item_body(group_name: Option<&String>, input: &syn::DeriveInput) 
         }
         (None, Data::Enum(data_enum)) => {
             let serde_attrs = parse_serde_attributes(&input.attrs);
+            let render_as = parse_render_as(&input.attrs);
             let length = data_enum.variants.len();
 
             let mut variants = Vec::with_capacity(length);
@@ -187,13 +192,19 @@ fn generate_ui_item_body(group_name: Option<&String>, input: &syn::DeriveInput) 
 
             let is_not_union = data_enum.variants.iter().all(|v| v.fields.is_empty());
             if is_not_union {
-                return if length > 6 {
-                    quote! {
-                        settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
+                return match render_as {
+                    RenderAs::ToggleGroup if length > 6 => {
+                        panic!("Can't set toggle group with more than six entries");
                     }
-                } else {
-                    quote! {
-                        settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
+                    RenderAs::ToggleGroup => {
+                        quote! {
+                            settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
+                        }
+                    }
+                    RenderAs::Default => {
+                        quote! {
+                            settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
+                        }
                     }
                 };
             }
@@ -367,6 +378,38 @@ impl SerdeOptions {
         }
         return self.rename_all.apply(name);
     }
+}
+
+enum RenderAs {
+    ToggleGroup,
+    Default,
+}
+
+fn parse_render_as(attrs: &[syn::Attribute]) -> RenderAs {
+    let mut render_as = RenderAs::Default;
+
+    for attr in attrs {
+        if !attr.path().is_ident("settings_ui") {
+            continue;
+        }
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("render") {
+                meta.input.parse::<Token![=]>()?;
+                let lit = meta.input.parse::<LitStr>()?.value();
+
+                if lit == "toggle_group" {
+                    render_as = RenderAs::ToggleGroup;
+                } else {
+                    return Err(meta.error(format!("invalid `render` attribute: {}", lit)));
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    render_as
 }
 
 fn parse_serde_attributes(attrs: &[syn::Attribute]) -> SerdeOptions {

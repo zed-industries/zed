@@ -59,9 +59,9 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, ManifestDelegate, ManifestName,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPoint, ToPointUtf16, Toolchain, Transaction,
-    Unclipped,
+    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
+    ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
+    Transaction, Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -96,7 +96,7 @@ use sha2::{Digest, Sha256};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
-    any::{Any, TypeId},
+    any::TypeId,
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
@@ -112,7 +112,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Dimensions;
-use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -361,7 +361,7 @@ impl LocalLspStore {
             let adapter = adapter.clone();
             let lsp_store = self.weak.clone();
             let pending_workspace_folders = pending_workspace_folders.clone();
-            let fs = self.fs.clone();
+
             let pull_diagnostics = ProjectSettings::get_global(cx)
                 .diagnostics
                 .lsp_pull_diagnostics
@@ -372,7 +372,6 @@ impl LocalLspStore {
 
                     let workspace_config = Self::workspace_configuration_for_adapter(
                         adapter.adapter.clone(),
-                        fs.as_ref(),
                         &delegate,
                         toolchain,
                         cx,
@@ -381,7 +380,6 @@ impl LocalLspStore {
 
                     let mut initialization_options = Self::initialization_options_for_adapter(
                         adapter.adapter.clone(),
-                        fs.as_ref(),
                         &delegate,
                     )
                     .await?;
@@ -403,7 +401,6 @@ impl LocalLspStore {
 
                     Self::setup_lsp_messages(
                         lsp_store.clone(),
-                        fs,
                         &language_server,
                         delegate.clone(),
                         adapter.clone(),
@@ -537,6 +534,11 @@ impl LocalLspStore {
                 .and_then(|b| b.ignore_system_version)
                 .unwrap_or_default(),
             allow_binary_download,
+            pre_release: settings
+                .fetch
+                .as_ref()
+                .and_then(|f| f.pre_release)
+                .unwrap_or(false),
         };
 
         cx.spawn(async move |cx| {
@@ -568,7 +570,7 @@ impl LocalLspStore {
 
     fn setup_lsp_messages(
         this: WeakEntity<LspStore>,
-        fs: Arc<dyn Fs>,
+
         language_server: &LanguageServer,
         delegate: Arc<dyn LspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
@@ -623,12 +625,11 @@ impl LocalLspStore {
                 let adapter = adapter.adapter.clone();
                 let delegate = delegate.clone();
                 let this = this.clone();
-                let fs = fs.clone();
+
                 move |params, cx| {
                     let adapter = adapter.clone();
                     let delegate = delegate.clone();
                     let this = this.clone();
-                    let fs = fs.clone();
                     let mut cx = cx.clone();
                     async move {
                         let toolchain_for_id = this
@@ -642,7 +643,6 @@ impl LocalLspStore {
                             .context("Expected the LSP store to be in a local mode")?;
                         let workspace_config = Self::workspace_configuration_for_adapter(
                             adapter.clone(),
-                            fs.as_ref(),
                             &delegate,
                             toolchain_for_id,
                             &mut cx,
@@ -3370,11 +3370,10 @@ impl LocalLspStore {
 
     async fn initialization_options_for_adapter(
         adapter: Arc<dyn LspAdapter>,
-        fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         let Some(mut initialization_config) =
-            adapter.clone().initialization_options(fs, delegate).await?
+            adapter.clone().initialization_options(delegate).await?
         else {
             return Ok(None);
         };
@@ -3385,7 +3384,7 @@ impl LocalLspStore {
             }
             if let Ok(Some(target_config)) = other_adapter
                 .clone()
-                .additional_initialization_options(adapter.name(), fs, delegate)
+                .additional_initialization_options(adapter.name(), delegate)
                 .await
             {
                 merge_json_value_into(target_config.clone(), &mut initialization_config);
@@ -3395,20 +3394,15 @@ impl LocalLspStore {
         Ok(Some(initialization_config))
     }
 
-    fn toolchain_store(&self) -> &Entity<LocalToolchainStore> {
-        &self.toolchain_store
-    }
-
     async fn workspace_configuration_for_adapter(
         adapter: Arc<dyn LspAdapter>,
-        fs: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<serde_json::Value> {
         let mut workspace_config = adapter
             .clone()
-            .workspace_configuration(fs, delegate, toolchain, cx)
+            .workspace_configuration(delegate, toolchain, cx)
             .await?;
 
         for other_adapter in delegate.registered_lsp_adapters() {
@@ -3417,7 +3411,7 @@ impl LocalLspStore {
             }
             if let Ok(Some(target_config)) = other_adapter
                 .clone()
-                .additional_workspace_configuration(adapter.name(), fs, delegate, cx)
+                .additional_workspace_configuration(adapter.name(), delegate, cx)
                 .await
             {
                 merge_json_value_into(target_config.clone(), &mut workspace_config);
@@ -3705,10 +3699,7 @@ impl LspStore {
 
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
-            (
-                Self::maintain_workspace_config(fs.clone(), receiver, cx),
-                sender,
-            )
+            (Self::maintain_workspace_config(receiver, cx), sender)
         };
 
         Self {
@@ -3795,7 +3786,6 @@ impl LspStore {
         languages: Arc<LanguageRegistry>,
         upstream_client: AnyProtoClient,
         project_id: u64,
-        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
@@ -3805,7 +3795,7 @@ impl LspStore {
         subscribe_to_binary_statuses(&languages, cx).detach();
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
-            (Self::maintain_workspace_config(fs, receiver, cx), sender)
+            (Self::maintain_workspace_config(receiver, cx), sender)
         };
         Self {
             mode: LspStoreMode::Remote(RemoteLspStore {
@@ -4045,19 +4035,11 @@ impl LspStore {
                 return;
             };
 
-            let Ok(Some((fs, _))) = this.read_with(cx, |this, _| {
-                let local = this.as_local()?;
-                let toolchain_store = local.toolchain_store().clone();
-                Some((local.fs.clone(), toolchain_store))
-            }) else {
-                return;
-            };
             for (adapter, server, delegate) in servers {
                 adapter.clear_zed_json_schema_cache().await;
 
                 let Some(json_workspace_config) = LocalLspStore::workspace_configuration_for_adapter(
                         adapter,
-                        fs.as_ref(),
                         &delegate,
                         None,
                         cx,
@@ -7358,11 +7340,7 @@ impl LspStore {
         None
     }
 
-    async fn refresh_workspace_configurations(
-        lsp_store: &WeakEntity<Self>,
-        fs: Arc<dyn Fs>,
-        cx: &mut AsyncApp,
-    ) {
+    async fn refresh_workspace_configurations(lsp_store: &WeakEntity<Self>, cx: &mut AsyncApp) {
         maybe!(async move {
             let mut refreshed_servers = HashSet::default();
             let servers = lsp_store
@@ -7398,8 +7376,6 @@ impl LspStore {
                                 LanguageServerState::Running {
                                     adapter, server, ..
                                 } => {
-                                    let fs = fs.clone();
-
                                     let adapter = adapter.clone();
                                     let server = server.clone();
                                     refreshed_servers.insert(server.name());
@@ -7408,7 +7384,6 @@ impl LspStore {
                                         let settings =
                                             LocalLspStore::workspace_configuration_for_adapter(
                                                 adapter.adapter.clone(),
-                                                fs.as_ref(),
                                                 &delegate,
                                                 toolchain,
                                                 cx,
@@ -7445,7 +7420,6 @@ impl LspStore {
     }
 
     fn maintain_workspace_config(
-        fs: Arc<dyn Fs>,
         external_refresh_requests: watch::Receiver<()>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
@@ -7471,7 +7445,7 @@ impl LspStore {
                 })
                 .ok();
 
-                Self::refresh_workspace_configurations(&this, fs.clone(), cx).await;
+                Self::refresh_workspace_configurations(&this, cx).await;
             }
 
             drop(settings_observation);
@@ -12610,28 +12584,8 @@ impl SshLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for SshLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        self.name.clone()
-    }
-
-    async fn initialization_options(
-        self: Arc<Self>,
-        _: &dyn Fs,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Result<Option<serde_json::Value>> {
-        let Some(options) = &self.initialization_options else {
-            return Ok(None);
-        };
-        let result = serde_json::from_str(options)?;
-        Ok(result)
-    }
-
-    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        self.code_action_kinds.clone()
-    }
-
+impl LspInstaller for SshLspAdapter {
+    type BinaryVersion = ();
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -12652,18 +12606,41 @@ impl LspAdapter for SshLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<()> {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }
 
     async fn fetch_server_binary(
         &self,
-        _: Box<dyn 'static + Send + Any>,
+        _: (),
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         anyhow::bail!("SshLspAdapter does not support fetch_server_binary")
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for SshLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        self.name.clone()
+    }
+
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(options) = &self.initialization_options else {
+            return Ok(None);
+        };
+        let result = serde_json::from_str(options)?;
+        Ok(result)
+    }
+
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        self.code_action_kinds.clone()
     }
 }
 

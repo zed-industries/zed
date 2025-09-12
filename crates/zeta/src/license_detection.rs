@@ -202,22 +202,48 @@ fn check_pattern(pattern: &[PatternPart], input: &str) -> bool {
             match_any_chars.end += part.match_any_chars.end;
             continue;
         }
-        let search_range_start = input_ix.saturating_sub(match_any_chars.end + part.text.len());
-        let search_range_end = input_ix.saturating_sub(match_any_chars.start);
-        let found_ix = &input[search_range_start..search_range_end].rfind(&part.text);
+
+        let search_range_end = n_chars_before_offset(match_any_chars.start, input_ix, input);
+        let search_range_start = n_chars_before_offset(
+            match_any_chars.len() + part.text.len(),
+            search_range_end,
+            input,
+        );
+        let found_ix = input[search_range_start..search_range_end].rfind(&part.text);
+
         if let Some(found_ix) = found_ix {
             input_ix = search_range_start + found_ix;
             match_any_chars = part.match_any_chars.clone();
         } else if !part.optional {
             log::trace!(
-                "Failed to match pattern `...{}` against input `...{}`",
-                &part.text[part.text.len().saturating_sub(128)..],
-                &input[input_ix.saturating_sub(128)..]
+                "Failed to match pattern\n`...{}`\nagainst input\n`...{}`",
+                &part.text[n_chars_before_offset(128, part.text.len(), &part.text)..],
+                &input[n_chars_before_offset(128, search_range_end, input)..search_range_end],
             );
             return false;
         }
     }
-    match_any_chars.contains(&input_ix)
+    is_char_count_within_range(&input[..input_ix], match_any_chars)
+}
+
+fn n_chars_before_offset(char_count: usize, offset: usize, string: &str) -> usize {
+    if char_count == 0 {
+        return offset;
+    }
+    string[..offset]
+        .char_indices()
+        .nth_back(char_count.saturating_sub(1))
+        .map_or(0, |(byte_ix, _)| byte_ix)
+}
+
+fn is_char_count_within_range(string: &str, char_count_range: Range<usize>) -> bool {
+    if string.len() >= char_count_range.start * 4 && string.len() < char_count_range.end {
+        return true;
+    }
+    if string.len() < char_count_range.start || string.len() >= char_count_range.end * 4 {
+        return false;
+    }
+    char_count_range.contains(&string.chars().count())
 }
 
 /// Canonicalizes license text by removing all non-alphanumeric characters, lowercasing, and turning
@@ -360,6 +386,7 @@ impl LicenseDetectionWatcher {
 mod tests {
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use rand::Rng as _;
     use serde_json::json;
     use settings::{Settings as _, SettingsStore};
     use worktree::WorktreeSettings;
@@ -576,6 +603,45 @@ mod tests {
             include_str!("../license_examples/zlib-ex0.txt"),
             OpenSourceLicense::Zlib,
         );
+    }
+
+    #[test]
+    fn random_strings_negative_detection() {
+        for _i in 0..20 {
+            let random_string = rand::rng()
+                .sample_iter::<char, _>(rand::distr::StandardUniform)
+                .take(512)
+                .collect::<String>();
+            assert_eq!(detect_license(&random_string), None);
+        }
+    }
+
+    #[test]
+    fn test_n_chars_before_offset() {
+        assert_eq!(n_chars_before_offset(2, 4, "hello"), 2);
+
+        let input = "ㄒ乇丂ㄒ";
+        assert_eq!(n_chars_before_offset(2, input.len(), input), "ㄒ乇".len());
+    }
+
+    #[test]
+    fn test_is_char_count_within_range() {
+        // TODO: make this into a proper property test.
+        for _i in 0..20 {
+            let mut rng = rand::rng();
+            let random_char_count = rng.random_range(0..64);
+            let random_string = rand::rng()
+                .sample_iter::<char, _>(rand::distr::StandardUniform)
+                .take(random_char_count)
+                .collect::<String>();
+            let min_chars = rng.random_range(0..10);
+            let max_chars = rng.random_range(min_chars..32);
+            let char_count_range = min_chars..max_chars;
+            assert_eq!(
+                is_char_count_within_range(&random_string, char_count_range.clone()),
+                char_count_range.contains(&random_char_count),
+            );
+        }
     }
 
     #[test]

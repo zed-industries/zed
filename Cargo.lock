@@ -2853,9 +2853,9 @@ dependencies = [
 
 [[package]]
 name = "cfg-if"
-version = "1.0.0"
+version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+checksum = "2fd1289c04a9ea8cb22300a459a72a385d7c73d3259e2ed7dcb2af674838cfa9"
 
 [[package]]
 name = "cfg_aliases"
@@ -4040,6 +4040,7 @@ name = "crashes"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "cfg-if",
  "crash-handler",
  "log",
  "mach2 0.5.0",
@@ -9114,6 +9115,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "language",
+ "log",
  "lsp",
  "project",
  "serde",
@@ -9336,6 +9338,7 @@ dependencies = [
  "tree-sitter-typescript",
  "tree-sitter-yaml",
  "unindent",
+ "url",
  "util",
  "workspace",
  "workspace-hack",
@@ -9951,6 +9954,7 @@ dependencies = [
  "assets",
  "base64 0.22.1",
  "env_logger 0.11.8",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "language",
@@ -11268,6 +11272,7 @@ dependencies = [
  "serde_json",
  "strum 0.27.1",
  "thiserror 2.0.12",
+ "util",
  "workspace-hack",
 ]
 
@@ -11622,6 +11627,7 @@ name = "paths"
 version = "0.1.0"
 dependencies = [
  "dirs 4.0.0",
+ "ignore",
  "util",
  "workspace-hack",
 ]
@@ -13530,9 +13536,7 @@ dependencies = [
  "askpass",
  "assistant_tool",
  "assistant_tools",
- "backtrace",
  "cargo_toml",
- "chrono",
  "clap",
  "client",
  "clock",
@@ -13577,7 +13581,6 @@ dependencies = [
  "shellexpand 2.1.2",
  "smol",
  "sysinfo",
- "telemetry_events",
  "thiserror 2.0.12",
  "toml 0.8.20",
  "unindent",
@@ -16464,7 +16467,6 @@ dependencies = [
  "alacritty_terminal",
  "anyhow",
  "collections",
- "dirs 4.0.0",
  "futures 0.3.31",
  "gpui",
  "libc",
@@ -20540,7 +20542,6 @@ dependencies = [
  "breadcrumbs",
  "call",
  "channel",
- "chrono",
  "clap",
  "cli",
  "client",
@@ -20591,7 +20592,6 @@ dependencies = [
  "language_selector",
  "language_tools",
  "languages",
- "libc",
  "line_ending_selector",
  "log",
  "markdown",
@@ -20708,7 +20708,7 @@ dependencies = [
 
 [[package]]
 name = "zed_extension_api"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -20755,7 +20755,7 @@ dependencies = [
 name = "zed_test_extension"
 version = "0.1.0"
 dependencies = [
- "zed_extension_api 0.6.0",
+ "zed_extension_api 0.7.0",
 ]
 
 [[package]]

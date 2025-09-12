@@ -4589,6 +4589,7 @@ mod tests {
 
     #[gpui::test]
     async fn test_bundled_languages(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone());
         env_logger::builder().is_test(true).try_init().ok();
         let settings = cx.update(SettingsStore::test);
         cx.set_global(settings);
@@ -4596,7 +4597,7 @@ mod tests {
         let languages = Arc::new(languages);
         let node_runtime = node_runtime::NodeRuntime::unavailable();
         cx.update(|cx| {
-            languages::init(languages.clone(), node_runtime, cx);
+            languages::init(languages.clone(), fs, node_runtime, cx);
         });
         for name in languages.language_names() {
             languages

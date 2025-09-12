@@ -474,6 +474,7 @@ blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
+cfg-if = "1.0.3"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"

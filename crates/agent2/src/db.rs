@@ -428,7 +428,9 @@ mod tests {
     use http_client::FakeHttpClient;
     use language_model::Role;
     use project::Project;
+    use serde_json::json;
     use settings::SettingsStore;
+    use util::test::TempTree;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -449,6 +451,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_retrieving_old_thread(cx: &mut TestAppContext) {
+        let tree = TempTree::new(json!({}));
+        util::paths::set_home_dir(tree.path().into());
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
