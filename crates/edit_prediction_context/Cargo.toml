@@ -1,5 +1,5 @@
 [package]
-name = "edit_prediction"
+name = "edit_prediction_context"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
@@ -9,11 +9,12 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/edit_prediction.rs"
+path = "src/edit_prediction_context.rs"
 
 [dependencies]
-client.workspace = true
-gpui.workspace = true
 language.workspace = true
-project.workspace = true
 workspace-hack.workspace = true
+tree-sitter.workspace = true
+text.workspace = true
+log.workspace = true
+util.workspace = true

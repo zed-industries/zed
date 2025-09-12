@@ -21,6 +21,9 @@ use util::RangeExt;
 pub struct ExcerptOptions {
     /// Limit for the number of bytes in the window around the cursor.
     pub window_max_bytes: usize,
+    /// Minimum number of bytes in the window around the cursor. When syntax tree selection results
+    /// in an excerpt smaller than this, it will fall back on line-based selection.
+    pub window_min_bytes: usize,
     /// Target ratio of bytes before the cursor vs after the cursor
     pub before_cursor_bytes_ratio: f32,
     /// Whether to include parent signatures
@@ -35,7 +38,79 @@ pub struct ExcerptRanges {
 }
 
 impl ExcerptRanges {
-    pub fn new(range: Range<usize>, parent_signature_ranges: Vec<Range<usize>>) -> Self {
+    /// Selects an excerpt around a buffer position, attempting to choose logical boundaries based
+    /// on TreeSitter structure and approximately targeting a goal ratio of bytesbefore vs after the
+    /// cursor. When `include_parent_signatures` is true, the excerpt also includes the signatures
+    /// of parent outline items.
+    ///
+    /// First tries to use AST node boundaries to select the excerpt, and falls back on line-based
+    /// expansion.
+    ///
+    /// Returns `None` if the line around the cursor doesn't fit.
+    pub fn select_from_buffer(
+        query_point: Point,
+        buffer: &BufferSnapshot,
+        options: &ExcerptOptions,
+    ) -> Option<Self> {
+        if buffer.len() <= options.window_max_bytes {
+            log::debug!(
+                "using entire file for excerpt since source length ({}) <= window max bytes ({})",
+                buffer.len(),
+                options.window_max_bytes
+            );
+            return Some(ExcerptRanges::new(0..buffer.len(), Vec::new()));
+        }
+
+        let query_offset = query_point.to_offset(buffer);
+        let query_range = Point::new(query_point.row, 0).to_offset(buffer)
+            ..Point::new(query_point.row + 1, 0).to_offset(buffer);
+        if query_range.len() >= options.window_max_bytes {
+            return None;
+        }
+
+        // TODO: Don't compute text / annotation_range / skip converting to and from anchors.
+        let outline_items = if options.include_parent_signatures {
+            buffer
+                .outline_items_containing(query_range.clone(), false, None)
+                .into_iter()
+                .flat_map(|item| {
+                    Some(ExcerptOutlineItem {
+                        item_range: item.range.to_offset(&buffer),
+                        signature_range: item.signature_range?.to_offset(&buffer),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let excerpt_selector = ExcerptSelector {
+            query_offset,
+            query_range,
+            outline_items: &outline_items,
+            buffer,
+            options,
+        };
+
+        if let Some(excerpt_ranges) = excerpt_selector.select_tree_sitter_nodes() {
+            if excerpt_ranges.size >= options.window_min_bytes {
+                return Some(excerpt_ranges);
+            }
+            log::debug!(
+                "tree-sitter excerpt was {} bytes, smaller than min of {}, falling back on line-based selection",
+                excerpt_ranges.size,
+                options.window_min_bytes
+            );
+        } else {
+            log::debug!(
+                "couldn't find excerpt via tree-sitter, falling back on line-based selection"
+            );
+        }
+
+        excerpt_selector.select_lines()
+    }
+
+    fn new(range: Range<usize>, parent_signature_ranges: Vec<Range<usize>>) -> Self {
         let size = range.len()
             + parent_signature_ranges
                 .iter()
@@ -48,7 +123,7 @@ impl ExcerptRanges {
         }
     }
 
-    pub fn with_expanded_range(&self, new_range: Range<usize>) -> Self {
+    fn with_expanded_range(&self, new_range: Range<usize>) -> Self {
         if !new_range.contains_inclusive(&self.range) {
             // this is an issue because parent_signature_ranges may be incorrect
             log::error!("bug: with_expanded_range called with disjoint range");
@@ -72,73 +147,6 @@ impl ExcerptRanges {
     fn parent_signatures_size(&self) -> usize {
         self.size - self.range.len()
     }
-}
-
-/// Selects a bounded excerpt around the cursor, attempting to choose logical
-/// boundaries based on TreeSitter structure and approximately targeting a goal
-/// ratio of bytesbefore vs after the cursor. When `include_parent_signatures`
-/// is true, the excerpt also includes the signatures of parent outline items.
-///
-/// First tries to use AST node boundaries to select the excerpt, and falls back
-/// on line-based expansion.
-///
-/// Returns `None` if the line around the cursor doesn't fit.
-pub fn select_excerpt(
-    position: Point,
-    buffer: &BufferSnapshot,
-    options: &ExcerptOptions,
-) -> Option<ExcerptRanges> {
-    if buffer.len() <= options.window_max_bytes {
-        log::debug!(
-            "using entire file for excerpt since source length ({}) <= window max bytes ({})",
-            buffer.len(),
-            options.window_max_bytes
-        );
-        return Some(ExcerptRanges::new(0..buffer.len(), Vec::new()));
-    }
-
-    let query_offset = position.to_offset(buffer);
-    let query_range = Point::new(position.row, 0).to_offset(buffer)
-        ..Point::new(position.row + 1, 0).to_offset(buffer);
-    if query_range.len() >= options.window_max_bytes {
-        return None;
-    }
-
-    // TODO: Don't compute text / annotation_range / skip converting to and from anchors.
-    let outline_items = if options.include_parent_signatures {
-        buffer
-            .outline_items_containing(query_range.clone(), false, None)
-            .into_iter()
-            .flat_map(|item| {
-                Some(ExcerptOutlineItem {
-                    item_range: item.range.to_offset(&buffer),
-                    signature_range: item.signature_range?.to_offset(&buffer),
-                })
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let excerpt_selector = ExcerptSelector {
-        query_offset,
-        query_range,
-        outline_items: &outline_items,
-        buffer,
-        options,
-    };
-
-    // TODO: If neighboring nodes are all large, this can be quite a small selection, should
-    // have a fallback in that case. One option is line-based, but a better option would be to
-    // descend into neighboring nodes.
-    //
-    // todo! fall back on line-based for now
-    if let Some(excerpt_ranges) = excerpt_selector.select_tree_sitter_nodes() {
-        return Some(excerpt_ranges);
-    }
-
-    log::debug!("falling back on line-based selection");
-    excerpt_selector.select_lines()
 }
 
 struct ExcerptSelector<'a> {

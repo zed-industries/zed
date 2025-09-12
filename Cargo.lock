@@ -4992,11 +4992,7 @@ dependencies = [
  "client",
  "gpui",
  "language",
- "log",
  "project",
- "text",
- "tree-sitter",
- "util",
  "workspace-hack",
 ]
 

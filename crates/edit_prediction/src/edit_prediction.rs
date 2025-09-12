@@ -1,5 +1,3 @@
-pub mod excerpt;
-
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
