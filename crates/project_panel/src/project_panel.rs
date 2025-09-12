@@ -4643,16 +4643,19 @@ impl ProjectPanel {
                                                     }))
                                                 })
                                             })
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if index != active_index
-                                                    && let Some(folds) =
-                                                        this.ancestors.get_mut(&entry_id)
-                                                    {
-                                                        folds.current_ancestor_depth =
-                                                            components_len - 1 - index;
-                                                        cx.notify();
-                                                    }
-                                            }))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    if index != active_index
+                                                        && let Some(folds) =
+                                                            this.ancestors.get_mut(&entry_id)
+                                                        {
+                                                            folds.current_ancestor_depth =
+                                                                components_len - 1 - index;
+                                                            cx.notify();
+                                                        }
+                                                }),
+                                            )
                                             .child(
                                                 Label::new(component)
                                                     .single_line()
