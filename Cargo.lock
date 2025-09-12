@@ -12214,7 +12214,6 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
- "util",
  "workspace",
  "workspace-hack",
 ]
@@ -14941,6 +14940,7 @@ dependencies = [
  "heck 0.5.0",
  "proc-macro2",
  "quote",
+ "settings",
  "syn 2.0.101",
  "workspace-hack",
 ]
@@ -17631,6 +17631,7 @@ dependencies = [
  "icons",
  "itertools 0.14.0",
  "menu",
+ "schemars",
  "serde",
  "settings",
  "smallvec",
@@ -17660,8 +17661,10 @@ dependencies = [
 name = "ui_macros"
 version = "0.1.0"
 dependencies = [
+ "component",
  "quote",
  "syn 2.0.101",
+ "ui",
  "workspace-hack",
 ]
 
