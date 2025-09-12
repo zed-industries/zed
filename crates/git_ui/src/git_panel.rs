@@ -1049,25 +1049,27 @@ impl GitPanel {
             }
 
             let project = self.project.clone();
-            let repo_path = entry.repo_path.clone();
+            let repo_path = entry.repo_path;
+            let abs_path = entry.abs_path;
+            let repository = self.active_repository.clone();
 
-            cx.spawn(async move |_handle, cx| {
-                let file_path_str = repo_path.0.to_string_lossy().to_string();
+            cx.spawn(async move |_, cx| {
+                let file_path_str = repo_path.0.to_string_lossy();
 
-                let worktree = project.read_with(cx, |project, cx| {
-                    project.worktrees(cx).next()
-                })?;
+                let (worktree, _relative_path) = project.read_with(cx, |project, cx| {
+                    project.find_worktree(&abs_path, cx)
+                })?.ok_or_else(|| anyhow::anyhow!("No worktree found for file: {}", abs_path.display()))?;
 
-                let Some(worktree) = worktree else {
-                    return Err(anyhow::anyhow!("No worktrees available"));
-                };
+                let repository_root = repository
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("No active repository"))?
+                    .read_with(cx, |repository, _| {
+                        repository.snapshot().work_directory_abs_path.clone()
+                    })?;
 
-                let gitignore_path = Arc::new(Path::new(".gitignore"));
-
-                let (abs_gitignore_path, fs) = worktree.read_with(cx, |worktree, _| {
-                    let abs_path = worktree.abs_path().join(".gitignore");
-                    let fs = worktree.as_local().map(|local| local.fs().clone());
-                    (abs_path, fs)
+                let abs_gitignore_path = repository_root.join(".gitignore");
+                let fs = worktree.read_with(cx, |worktree, _| {
+                    worktree.as_local().map(|local| local.fs().clone())
                 })?;
 
                 let Some(fs) = fs else {
@@ -1076,8 +1078,8 @@ impl GitPanel {
 
                 let existing_content = fs.load(&abs_gitignore_path).await.unwrap_or_else(|_| String::new());
 
-                if existing_content.lines().any(|line| line.trim() == file_path_str.trim()) {
-                    return Ok(()); // File already ignored
+                if existing_content.lines().any(|line| line.trim() == file_path_str) {
+                    return Ok(());
                 }
 
                 let new_content = if existing_content.is_empty() {
@@ -1089,11 +1091,7 @@ impl GitPanel {
                 };
 
                 let rope = language::Rope::from(new_content.as_str());
-                let _ = worktree.update(cx, |worktree, cx| {
-                    worktree.write_file(gitignore_path.as_ref(), rope, language::LineEnding::Unix, cx)
-                        .detach_and_log_err(cx);
-                    anyhow::Ok(())
-                })?;
+                fs.save(&abs_gitignore_path, &rope, language::LineEnding::Unix).await?;
 
                 anyhow::Ok(())
             })
