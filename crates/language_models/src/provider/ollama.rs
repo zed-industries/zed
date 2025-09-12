@@ -78,7 +78,7 @@ pub struct State {
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        !self.available_models.is_empty() || self.api_key.is_some()
+        !self.available_models.is_empty()
     }
 
     fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
