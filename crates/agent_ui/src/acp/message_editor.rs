@@ -36,7 +36,7 @@ use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::Settings;
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     ffi::OsStr,
     fmt::Write,
     ops::{Range, RangeInclusive},
@@ -64,7 +64,7 @@ pub struct MessageEditor {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     agent_name: SharedString,
     _subscriptions: Vec<Subscription>,
@@ -89,7 +89,7 @@ impl MessageEditor {
         project: Entity<Project>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
         agent_name: SharedString,
         placeholder: &str,
@@ -428,7 +428,7 @@ impl MessageEditor {
             .unwrap_or_default();
 
         if Img::extensions().contains(&extension) && !extension.contains("svg") {
-            if !self.prompt_capabilities.get().image {
+            if !self.prompt_capabilities.borrow().image {
                 return Task::ready(Err(anyhow!("This model does not support images yet")));
             }
             let task = self
@@ -789,7 +789,7 @@ impl MessageEditor {
 
         let contents = self
             .mention_set
-            .contents(&self.prompt_capabilities.get(), cx);
+            .contents(&self.prompt_capabilities.borrow(), cx);
         let editor = self.editor.clone();
 
         cx.spawn(async move |_, cx| {
@@ -834,8 +834,10 @@ impl MessageEditor {
                                             mime_type: None,
                                             text: content.clone(),
                                             uri: uri.to_uri().to_string(),
+                                            meta: None,
                                         },
                                     ),
+                                    meta: None,
                                 })
                             }
                             Mention::Image(mention_image) => {
@@ -855,6 +857,7 @@ impl MessageEditor {
                                     data: mention_image.data.to_string(),
                                     mime_type: mention_image.format.mime_type().into(),
                                     uri,
+                                    meta: None,
                                 })
                             }
                             Mention::UriOnly => {
@@ -866,6 +869,7 @@ impl MessageEditor {
                                     mime_type: None,
                                     size: None,
                                     title: None,
+                                    meta: None,
                                 })
                             }
                         };
@@ -920,7 +924,7 @@ impl MessageEditor {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.prompt_capabilities.get().image {
+        if !self.prompt_capabilities.borrow().image {
             return;
         }
 
@@ -1188,6 +1192,7 @@ impl MessageEditor {
                     data,
                     mime_type,
                     annotations: _,
+                    meta: _,
                 }) => {
                     let mention_uri = if let Some(uri) = uri {
                         MentionUri::parse(&uri)
@@ -1571,13 +1576,7 @@ impl Addon for MessageEditorAddon {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        cell::{Cell, RefCell},
-        ops::Range,
-        path::Path,
-        rc::Rc,
-        sync::Arc,
-    };
+    use std::{cell::RefCell, ops::Range, path::Path, rc::Rc, sync::Arc};
 
     use acp_thread::MentionUri;
     use agent_client_protocol as acp;
@@ -1724,7 +1723,7 @@ mod tests {
         let project = Project::test(fs.clone(), ["/test".as_ref()], cx).await;
         let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         // Start with no available commands - simulating Claude which doesn't support slash commands
         let available_commands = Rc::new(RefCell::new(vec![]));
 
@@ -1773,6 +1772,7 @@ mod tests {
             name: "help".to_string(),
             description: "Get help".to_string(),
             input: None,
+            meta: None,
         }]);
 
         // Test that unsupported slash commands trigger an error when we have a list of available commands
@@ -1887,12 +1887,13 @@ mod tests {
 
         let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![
             acp::AvailableCommand {
                 name: "quick-math".to_string(),
                 description: "2 + 2 = 4 - 1 = 3".to_string(),
                 input: None,
+                meta: None,
             },
             acp::AvailableCommand {
                 name: "say-hello".to_string(),
@@ -1900,6 +1901,7 @@ mod tests {
                 input: Some(acp::AvailableCommandInput::Unstructured {
                     hint: "<name>".to_string(),
                 }),
+                meta: None,
             },
         ]));
 
@@ -2134,7 +2136,7 @@ mod tests {
 
         let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
         let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
 
         let (message_editor, editor) = workspace.update_in(&mut cx, |workspace, window, cx| {
             let workspace_handle = cx.weak_entity();
@@ -2189,10 +2191,11 @@ mod tests {
             editor.set_text("", window, cx);
         });
 
-        prompt_capabilities.set(acp::PromptCapabilities {
+        prompt_capabilities.replace(acp::PromptCapabilities {
             image: true,
             audio: true,
             embedded_context: true,
+            meta: None,
         });
 
         cx.simulate_input("Lorem ");
@@ -2264,6 +2267,7 @@ mod tests {
             image: true,
             audio: true,
             embedded_context: true,
+            meta: None,
         };
 
         let contents = message_editor
@@ -2640,8 +2644,9 @@ mod tests {
                     cx,
                 );
                 // Enable embedded context so files are actually included
-                editor.prompt_capabilities.set(acp::PromptCapabilities {
+                editor.prompt_capabilities.replace(acp::PromptCapabilities {
                     embedded_context: true,
+                    meta: None,
                     ..Default::default()
                 });
                 editor
