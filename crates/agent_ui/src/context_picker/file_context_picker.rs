@@ -330,7 +330,7 @@ pub fn render_file_context_entry(
     });
 
     let file_icon = if is_directory {
-        FileIcons::get_folder_icon(false, cx)
+        FileIcons::get_folder_icon(false, path, cx)
     } else {
         FileIcons::get_icon(path, cx)
     }

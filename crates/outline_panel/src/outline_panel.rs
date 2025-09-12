@@ -2319,7 +2319,7 @@ impl OutlinePanel {
                     is_active,
                 );
                 let icon = if settings.folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, cx)
+                    FileIcons::get_folder_icon(is_expanded, &directory.entry.path, cx)
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
@@ -2416,7 +2416,7 @@ impl OutlinePanel {
                 .unwrap_or_default();
             let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
             let icon = if settings.folder_icons {
-                FileIcons::get_folder_icon(is_expanded, cx)
+                FileIcons::get_folder_icon(is_expanded, &Path::new(&name), cx)
             } else {
                 FileIcons::get_chevron_icon(is_expanded, cx)
             }

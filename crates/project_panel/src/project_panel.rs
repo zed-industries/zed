@@ -4778,7 +4778,7 @@ impl ProjectPanel {
             }
             _ => {
                 if show_folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, cx)
+                    FileIcons::get_folder_icon(is_expanded, &entry.path, cx)
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
