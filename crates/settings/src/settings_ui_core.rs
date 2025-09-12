@@ -121,6 +121,7 @@ pub struct SettingsUiItemUnion {
 #[derive(Clone)]
 pub struct SettingsEnumVariants {}
 
+#[derive(Debug)]
 pub struct SettingsUiEntryMetaData {
     pub title: SharedString,
     pub path: SharedString,
@@ -185,7 +186,7 @@ impl<T: SettingsUi + Default + serde::Serialize> SettingsUi for Vec<T> {
                 let mut metadata = Vec::with_capacity(items.len());
                 for index in 0..items.len() {
                     metadata.push(SettingsUiEntryMetaData {
-                        title: index.to_string().into(),
+                        title: serde_json::to_string(&items[index]).unwrap().into(),
                         path: format!("#{}", index).into(),
                         documentation: None,
                     });

@@ -498,6 +498,8 @@ fn render_recursive(
             .striped();
         let mut row_count = 0;
 
+        // todo(settings_ui): Try to make the static item on these items built into the tree
+        // because we already propagate the path down so they don't all have to be recreated
         for (index, item) in generated_items.iter().enumerate() {
             let settings_ui_entry = SettingsUiEntry {
                 path: None,
@@ -522,9 +524,10 @@ fn render_recursive(
                 ui_items[item_index].title = item.title.clone();
                 ui_items[item_index].documentation = item.documentation.clone();
 
-                // push path instead of setting path on ui item so that the path isn't pushed to default_path as well
-                // when we recurse
+                // push path instead of setting path on ui item so that the path isn't
+                // pushed to default_default_value as well when we recurse
                 path.push(item.path.clone());
+                dbg!(path.join("."));
                 let row_element = render_recursive(
                     &ui_items,
                     item_index,
@@ -544,7 +547,7 @@ fn render_recursive(
             row_count.to_string().into_any_element(),
             "create".into_any(),
         ]);
-        element = element.child(table);
+        element = element.child(div().child(table).debug());
     } else if let Some((settings_ui_item, generate_items, defaults_path)) =
         entry.generate_items.as_ref()
     {
@@ -909,26 +912,47 @@ fn render_text_field(
     let value = downcast_any_item::<String>(value);
     let path = value.path.clone();
     let current_text = value.read().clone();
-    let editor = window.use_state(cx, {
+
+    let dirty = window.use_keyed_state((element_id_from_path(&path), "dirty"), cx, |_, _| false);
+
+    let editor = window.use_keyed_state((element_id_from_path(&path), "editor"), cx, {
         let path = path.clone();
+        let dirty = dirty.clone();
         move |window, cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_text(current_text, window, cx);
+            // editor.set_text(current_text, window, cx);
 
-            cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
-                let user_settings = SettingsStore::global(cx).raw_user_settings();
-                if let Some(value) = read_settings_value_from_path(&user_settings, &path)
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string)
-                {
-                    editor.set_text(value, window, cx);
-                } else {
-                    editor.clear(window, cx);
+            let dirty = dirty.downgrade();
+            cx.subscribe_self(move |_, event: &editor::EditorEvent, cx| match event {
+                editor::EditorEvent::BufferEdited => {
+                    let Some(dirty) = dirty.upgrade() else { return };
+                    dirty.write(cx, true);
                 }
+                _ => {}
             })
             .detach();
+            // cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| {
+            //     let user_settings = SettingsStore::global(cx).raw_user_settings();
+            //     if let Some(value) = read_settings_value_from_path(&user_settings, &path)
+            //         .and_then(serde_json::Value::as_str)
+            //         .map(str::to_string)
+            //     {
+            //         editor.set_text(value, window, cx);
+            //     }
+            //     // else {
+            //     //     editor.clear(window, cx);
+            //     // }
+            // })
+            // .detach();
 
             editor
+        }
+    });
+
+    // todo! WAAY to slow
+    editor.update(cx, |editor, cx| {
+        if &editor.text(cx) != &current_text && !*dirty.read(cx) {
+            editor.set_text(current_text, window, cx);
         }
     });
 
