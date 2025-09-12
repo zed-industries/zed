@@ -2649,9 +2649,14 @@ mod tests {
         });
 
         // Test large file mention
-        let large_file_path = PathBuf::from("/project/large_file.rs");
+        // Get the absolute path using the project's worktree
+        let large_file_abs_path = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree_root = worktree.read(cx).abs_path();
+            worktree_root.join("large_file.rs")
+        });
         let large_file_task = message_editor.update(cx, |editor, cx| {
-            editor.confirm_mention_for_file(large_file_path, cx)
+            editor.confirm_mention_for_file(large_file_abs_path, cx)
         });
 
         let large_file_mention = large_file_task.await.unwrap();
@@ -2667,9 +2672,14 @@ mod tests {
         }
 
         // Test small file mention
-        let small_file_path = PathBuf::from("/project/small_file.rs");
+        // Get the absolute path using the project's worktree
+        let small_file_abs_path = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree_root = worktree.read(cx).abs_path();
+            worktree_root.join("small_file.rs")
+        });
         let small_file_task = message_editor.update(cx, |editor, cx| {
-            editor.confirm_mention_for_file(small_file_path, cx)
+            editor.confirm_mention_for_file(small_file_abs_path, cx)
         });
 
         let small_file_mention = small_file_task.await.unwrap();
