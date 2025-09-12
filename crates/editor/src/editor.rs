@@ -22099,6 +22099,7 @@ fn insert_extra_newline_tree_sitter(buffer: &MultiBufferSnapshot, range: Range<u
 
         for pair in buffer
             .all_bracket_ranges(range.clone())
+            .into_iter()
             .filter(move |pair| {
                 pair.open_range.start <= range.start && pair.close_range.end >= range.end
             })

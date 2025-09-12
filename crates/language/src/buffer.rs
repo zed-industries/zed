@@ -168,39 +168,6 @@ impl TreeSitterData {
             chunks,
         }
     }
-
-    // todo! better name? we have 2 already
-    fn bracket_ranges_for_range(
-        &mut self,
-        point_range: &Range<Point>,
-        produce_new_matches: impl Fn(&mut Self, Range<u32>) -> Vec<BracketMatch>,
-    ) -> Vec<BracketMatch> {
-        let row_range = point_range.start.row..=point_range.end.row;
-        let applicable_chunks = self
-            .chunks
-            .iter()
-            .filter(move |chunk_range| {
-                row_range.contains(&chunk_range.start) || row_range.contains(&chunk_range.end)
-            })
-            .copied()
-            .collect::<Vec<_>>();
-
-        let mut all_bracket_matches = Vec::new();
-        for chunk in applicable_chunks {
-            let chunk_brackets = &mut self.brackets_by_chunks[chunk.id];
-            let bracket_matches = match chunk_brackets {
-                Some(cached_brackets) => cached_brackets.clone(),
-                None => {
-                    let new_matches = produce_new_matches(self, chunk.start..chunk.end);
-                    *chunk_brackets = Some(new_matches.clone());
-                    new_matches
-                }
-            };
-            all_bracket_matches.extend(bracket_matches);
-        }
-
-        all_bracket_matches
-    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -4145,15 +4112,8 @@ impl BufferSnapshot {
         self.syntax.matches(range, self, query)
     }
 
-    // async query this (with debounce) on each singleton edit (same as inlays), per whole buffer??
-    // store that in the editor
-    // during editor/element's layout, take the applicable range within the stored data
-    // paint that
-    fn fetch_bracket_ranges(
-        &self,
-        range: Range<usize>,
-    ) -> impl Iterator<Item = BracketMatch> + use<'_> {
-        // todo! access buffer's bracket cache first!
+    /// TODO kb docs: this is an unordered collection of matches
+    fn fetch_bracket_ranges(&self, range: Range<usize>) -> Vec<BracketMatch> {
         let mut tree_sitter_data = self.tree_sitter_data.write();
         if self
             .version
@@ -4165,65 +4125,83 @@ impl BufferSnapshot {
             );
         }
 
-        tree_sitter_data.bracket_ranges_for_range(
-            range.to_point(self),
-            |tree_sitter_data, chunk_range| {
-                let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
-                    grammar.brackets_config.as_ref().map(|c| &c.query)
-                });
-                let configs = matches
-                    .grammars()
-                    .iter()
-                    .map(|grammar| grammar.brackets_config.as_ref().unwrap())
-                    .collect::<Vec<_>>();
+        let point_range = range.to_point(self);
+        let row_range = point_range.start.row..=point_range.end.row;
+        let applicable_chunks = tree_sitter_data
+            .chunks
+            .iter()
+            .filter(move |chunk_range| {
+                row_range.contains(&chunk_range.start) || row_range.contains(&chunk_range.end)
+            })
+            .copied()
+            .collect::<Vec<_>>();
 
-                // todo!
-                let mut depth = 0;
+        let mut all_bracket_matches = Vec::new();
+        for chunk in applicable_chunks {
+            let chunk_brackets = &mut tree_sitter_data.brackets_by_chunks[chunk.id];
+            let bracket_matches = match chunk_brackets {
+                Some(cached_brackets) => cached_brackets.clone(),
+                None => {
+                    let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+                        grammar.brackets_config.as_ref().map(|c| &c.query)
+                    });
+                    let configs = matches
+                        .grammars()
+                        .iter()
+                        .map(|grammar| grammar.brackets_config.as_ref().unwrap())
+                        .collect::<Vec<_>>();
 
-                iter::from_fn(move || {
-                    while let Some(mat) = matches.peek() {
-                        let mut open = None;
-                        let mut close = None;
-                        let config = configs[mat.grammar_index];
-                        let pattern = &config.patterns[mat.pattern_index];
-                        for capture in mat.captures {
-                            if capture.index == config.open_capture_ix {
-                                open = Some(capture.node.byte_range());
-                            } else if capture.index == config.close_capture_ix {
-                                close = Some(capture.node.byte_range());
+                    // todo!
+                    let mut depth = 0;
+                    let range = range.clone();
+                    let new_matches = iter::from_fn(move || {
+                        while let Some(mat) = matches.peek() {
+                            let mut open = None;
+                            let mut close = None;
+                            let config = configs[mat.grammar_index];
+                            let pattern = &config.patterns[mat.pattern_index];
+                            for capture in mat.captures {
+                                if capture.index == config.open_capture_ix {
+                                    open = Some(capture.node.byte_range());
+                                } else if capture.index == config.close_capture_ix {
+                                    close = Some(capture.node.byte_range());
+                                }
                             }
+
+                            matches.advance();
+
+                            let Some((open_range, close_range)) = open.zip(close) else {
+                                continue;
+                            };
+
+                            let bracket_range = open_range.start..=close_range.end;
+                            if !bracket_range.overlaps(&range) {
+                                continue;
+                            }
+
+                            depth += 1;
+
+                            return Some(BracketMatch {
+                                open_range,
+                                close_range,
+                                newline_only: pattern.newline_only,
+                                depth,
+                            });
                         }
+                        None
+                    })
+                    .collect::<Vec<_>>();
+                    *chunk_brackets = Some(new_matches.clone());
+                    new_matches
+                }
+            };
+            all_bracket_matches.extend(bracket_matches);
+        }
 
-                        matches.advance();
-
-                        let Some((open_range, close_range)) = open.zip(close) else {
-                            continue;
-                        };
-
-                        let bracket_range = open_range.start..=close_range.end;
-                        if !bracket_range.overlaps(&range) {
-                            continue;
-                        }
-
-                        depth += 1;
-
-                        return Some(BracketMatch {
-                            open_range,
-                            close_range,
-                            newline_only: pattern.newline_only,
-                            depth,
-                        });
-                    }
-                    None
-                })
-            },
-        )
+        all_bracket_matches
     }
 
-    pub fn all_bracket_ranges(
-        &self,
-        range: Range<usize>,
-    ) -> impl Iterator<Item = BracketMatch> + use<'_> {
+    pub fn all_bracket_ranges(&self, range: Range<usize>) -> Vec<BracketMatch> {
         self.fetch_bracket_ranges(range)
     }
 
@@ -4235,6 +4213,7 @@ impl BufferSnapshot {
         // Find bracket pairs that *inclusively* contain the given range.
         let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
         self.all_bracket_ranges(range)
+            .into_iter()
             .filter(|pair| !pair.newline_only)
     }
 
