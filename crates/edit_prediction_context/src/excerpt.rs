@@ -20,11 +20,11 @@ use util::RangeExt;
 #[derive(Debug, Clone)]
 pub struct EditPredictionExcerptOptions {
     /// Limit for the number of bytes in the window around the cursor.
-    pub window_max_bytes: usize,
+    pub max_bytes: usize,
     /// Minimum number of bytes in the window around the cursor. When syntax tree selection results
     /// in an excerpt smaller than this, it will fall back on line-based selection.
-    pub window_min_bytes: usize,
-    /// Target ratio of bytes before the cursor vs after the cursor
+    pub min_bytes: usize,
+    /// Target ratio of bytes before the cursor divided by total bytes in the window.
     pub before_cursor_bytes_ratio: f32,
     /// Whether to include parent signatures
     pub include_parent_signatures: bool,
@@ -52,11 +52,11 @@ impl EditPredictionExcerpt {
         buffer: &BufferSnapshot,
         options: &EditPredictionExcerptOptions,
     ) -> Option<Self> {
-        if buffer.len() <= options.window_max_bytes {
+        if buffer.len() <= options.max_bytes {
             log::debug!(
                 "using entire file for excerpt since source length ({}) <= window max bytes ({})",
                 buffer.len(),
-                options.window_max_bytes
+                options.max_bytes
             );
             return Some(EditPredictionExcerpt::new(0..buffer.len(), Vec::new()));
         }
@@ -64,7 +64,7 @@ impl EditPredictionExcerpt {
         let query_offset = query_point.to_offset(buffer);
         let query_range = Point::new(query_point.row, 0).to_offset(buffer)
             ..Point::new(query_point.row + 1, 0).to_offset(buffer);
-        if query_range.len() >= options.window_max_bytes {
+        if query_range.len() >= options.max_bytes {
             return None;
         }
 
@@ -93,13 +93,13 @@ impl EditPredictionExcerpt {
         };
 
         if let Some(excerpt_ranges) = excerpt_selector.select_tree_sitter_nodes() {
-            if excerpt_ranges.size >= options.window_min_bytes {
+            if excerpt_ranges.size >= options.min_bytes {
                 return Some(excerpt_ranges);
             }
             log::debug!(
                 "tree-sitter excerpt was {} bytes, smaller than min of {}, falling back on line-based selection",
                 excerpt_ranges.size,
-                options.window_min_bytes
+                options.min_bytes
             );
         } else {
             log::debug!(
@@ -173,7 +173,7 @@ impl<'a> ExcerptSelector<'a> {
                 ..node_line_end(cursor.node()).to_offset(&self.buffer);
             if excerpt_range.contains_inclusive(&self.query_range) {
                 let excerpt = self.make_excerpt(excerpt_range);
-                if excerpt.size <= self.options.window_max_bytes {
+                if excerpt.size <= self.options.max_bytes {
                     return Some(self.expand_to_siblings(&mut cursor, excerpt));
                 }
             } else {
@@ -205,7 +205,7 @@ impl<'a> ExcerptSelector<'a> {
                 continue;
             }
 
-            if layer_range.len() > self.options.window_max_bytes {
+            if layer_range.len() > self.options.max_bytes {
                 match &smallest_exceeding_max_len {
                     None => smallest_exceeding_max_len = Some(layer.node()),
                     Some(existing) => {
@@ -247,7 +247,7 @@ impl<'a> ExcerptSelector<'a> {
                 let new_end = node_line_end(forward_cursor.node()).to_offset(&self.buffer);
                 if new_end > excerpt.range.end {
                     let new_excerpt = excerpt.with_expanded_range(excerpt.range.start..new_end);
-                    if new_excerpt.size <= self.options.window_max_bytes {
+                    if new_excerpt.size <= self.options.max_bytes {
                         forward = Some(new_excerpt);
                         break;
                     } else {
@@ -264,7 +264,7 @@ impl<'a> ExcerptSelector<'a> {
                 let new_start = node_line_start(forward_cursor.node()).to_offset(&self.buffer);
                 if new_start < excerpt.range.start {
                     let new_excerpt = excerpt.with_expanded_range(new_start..excerpt.range.end);
-                    if new_excerpt.size <= self.options.window_max_bytes {
+                    if new_excerpt.size <= self.options.max_bytes {
                         backward = Some(new_excerpt);
                         break;
                     } else {
@@ -312,7 +312,7 @@ impl<'a> ExcerptSelector<'a> {
     fn select_lines(&self) -> Option<EditPredictionExcerpt> {
         // early return if line containing query_offset is already too large
         let excerpt = self.make_excerpt(self.query_range.clone());
-        if excerpt.size > self.options.window_max_bytes {
+        if excerpt.size > self.options.max_bytes {
             log::debug!(
                 "excerpt for cursor line is {} bytes, which exceeds the window",
                 excerpt.size
@@ -320,10 +320,7 @@ impl<'a> ExcerptSelector<'a> {
             return None;
         }
         let signatures_size = excerpt.parent_signatures_size();
-        let bytes_remaining = self
-            .options
-            .window_max_bytes
-            .saturating_sub(signatures_size);
+        let bytes_remaining = self.options.max_bytes.saturating_sub(signatures_size);
 
         let before_bytes =
             (self.options.before_cursor_bytes_ratio * bytes_remaining as f32) as usize;
@@ -344,12 +341,12 @@ impl<'a> ExcerptSelector<'a> {
         // this could be expanded further since recalculated `signature_size` may be smaller, but
         // skipping that for now for simplicity
         let excerpt = self.make_excerpt(start_offset..end_offset);
-        if excerpt.size > self.options.window_max_bytes {
+        if excerpt.size > self.options.max_bytes {
             log::error!(
                 "bug: line-based excerpt selection has size {}, \
                 which is {} bytes larger than the max size",
                 excerpt.size,
-                excerpt.size - self.options.window_max_bytes
+                excerpt.size - self.options.max_bytes
             );
         }
         return Some(excerpt);
