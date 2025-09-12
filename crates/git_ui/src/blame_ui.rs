@@ -346,7 +346,6 @@ impl BlameRenderer for GitBlameRenderer {
                                                                 "copy-sha-button",
                                                                 IconName::Copy,
                                                             )
-                                                            .shape(IconButtonShape::Square)
                                                             .icon_size(IconSize::Small)
                                                             .icon_color(Color::Muted)
                                                             .on_click(move |_, _, cx| {

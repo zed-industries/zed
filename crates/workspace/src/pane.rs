@@ -2631,10 +2631,9 @@ impl Pane {
                     end_slot_action = &TogglePinTab;
                     end_slot_tooltip_text = "Unpin Tab";
                     IconButton::new("unpin tab", IconName::Pin)
-                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, window, cx| {
                             pane.unpin_tab_at(ix, window, cx);
                         }))
@@ -2651,7 +2650,6 @@ impl Pane {
                         }
                         ShowCloseButton::Hidden => return this,
                     }
-                    .shape(IconButtonShape::Square)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
                     .icon_size(IconSize::XSmall)

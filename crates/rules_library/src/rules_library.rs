@@ -295,7 +295,6 @@ impl PickerDelegate for RulePickerDelegate {
                     .toggle_state(true)
                     .icon_color(Color::Accent)
                     .icon_size(IconSize::Small)
-                    .shape(IconButtonShape::Square)
                     .tooltip(Tooltip::text("Remove from Default Rules"))
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(RulePickerEvent::ToggledDefault { prompt_id })
@@ -322,7 +321,6 @@ impl PickerDelegate for RulePickerDelegate {
                         IconButton::new("delete-rule", IconName::Trash)
                             .icon_color(Color::Muted)
                             .icon_size(IconSize::Small)
-                            .shape(IconButtonShape::Square)
                             .tooltip(Tooltip::text("Delete Rule"))
                             .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(RulePickerEvent::Deleted { prompt_id })
@@ -335,7 +333,6 @@ impl PickerDelegate for RulePickerDelegate {
                             .selected_icon(IconName::StarFilled)
                             .icon_color(if default { Color::Accent } else { Color::Muted })
                             .icon_size(IconSize::Small)
-                            .shape(IconButtonShape::Square)
                             .map(|this| {
                                 if default {
                                     this.tooltip(Tooltip::text("Remove from Default Rules"))
@@ -1015,7 +1012,6 @@ impl RulesLibrary {
                     .child(
                         IconButton::new("new-rule", IconName::Plus)
                             .style(ButtonStyle::Transparent)
-                            .shape(IconButtonShape::Square)
                             .tooltip(move |window, cx| {
                                 Tooltip::for_action("New Rule", &NewRule, window, cx)
                             })
