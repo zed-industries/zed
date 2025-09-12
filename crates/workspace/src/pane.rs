@@ -402,6 +402,7 @@ pub struct ActivationHistoryEntry {
     pub timestamp: usize,
 }
 
+#[derive(Clone)]
 pub struct ItemNavHistory {
     history: NavHistory,
     item: Arc<dyn WeakItemHandle>,
@@ -411,6 +412,7 @@ pub struct ItemNavHistory {
 #[derive(Clone)]
 pub struct NavHistory(Arc<Mutex<NavHistoryState>>);
 
+#[derive(Clone)]
 struct NavHistoryState {
     mode: NavigationMode,
     backward_stack: VecDeque<NavigationEntry>,
@@ -437,9 +439,10 @@ impl Default for NavigationMode {
     }
 }
 
+#[derive(Clone)]
 pub struct NavigationEntry {
     pub item: Arc<dyn WeakItemHandle>,
-    pub data: Option<Box<dyn Any + Send>>,
+    pub data: Option<Arc<dyn Any + Send>>,
     pub timestamp: usize,
     pub is_preview: bool,
 }
@@ -3939,7 +3942,7 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut App) {
+    pub fn push<D: 'static + Any + Send>(&mut self, data: Option<D>, cx: &mut App) {
         if self
             .item
             .upgrade()
@@ -4017,7 +4020,7 @@ impl NavHistory {
         entry
     }
 
-    pub fn push<D: 'static + Send + Any>(
+    pub fn push<D: 'static + Any + Send>(
         &mut self,
         data: Option<D>,
         item: Arc<dyn WeakItemHandle>,
@@ -4033,7 +4036,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4045,7 +4048,7 @@ impl NavHistory {
                 }
                 state.forward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4056,7 +4059,7 @@ impl NavHistory {
                 }
                 state.backward_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });
@@ -4067,7 +4070,7 @@ impl NavHistory {
                 }
                 state.closed_stack.push_back(NavigationEntry {
                     item,
-                    data: data.map(|data| Box::new(data) as Box<dyn Any + Send>),
+                    data: data.map(|data| Arc::new(data) as Arc<dyn Any + Send>),
                     timestamp: state.next_timestamp.fetch_add(1, Ordering::SeqCst),
                     is_preview,
                 });

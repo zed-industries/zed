@@ -28,7 +28,7 @@ use project::{
 use rpc::proto::{self, update_view};
 use settings::Settings;
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     borrow::Cow,
     cmp::{self, Ordering},
     iter,
@@ -590,11 +590,11 @@ impl Item for Editor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn std::any::Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if let Ok(data) = data.downcast::<NavigationData>() {
+        if let Some(data) = data.downcast_ref::<NavigationData>() {
             let newest_selection = self.selections.newest::<Point>(cx);
             let buffer = self.buffer.read(cx).read(cx);
             let offset = if buffer.can_resolve(&data.cursor_anchor) {
