@@ -5,14 +5,14 @@ use std::{
 };
 
 use collections::{HashMap, HashSet};
-use gpui::{App, Entity, Task};
+use gpui::{App, Task};
 use itertools::Itertools as _;
 use language::{
     BufferRow, Language,
     language_settings::{InlayHintKind, InlayHintSettings, language_settings},
 };
 use lsp::LanguageServerId;
-use multi_buffer::{Anchor, ExcerptId, MultiBuffer, MultiBufferSnapshot};
+use multi_buffer::{Anchor, ExcerptId, MultiBufferSnapshot};
 use project::lsp_store::RowChunkCachedHints;
 use text::{BufferId, OffsetRangeExt as _};
 use ui::{Context, Window};
@@ -86,9 +86,9 @@ impl LspInlayHintData {
     }
 
     pub fn clear(&mut self) {
+        self.inlays_for_version = None;
         self.inlay_tasks.clear();
         self.inlay_chunks_received.clear();
-        // TODO kb splice!? We have to splice inlays inside the editor!
     }
 
     /// Checks inlay hint settings for enabled hint kinds and general enabled state.
@@ -96,10 +96,8 @@ impl LspInlayHintData {
     /// Does not update inlay hint cache state on disabling or inlay hint kinds change: only reenabling forces new LSP queries.
     pub fn update_settings(
         &mut self,
-        multi_buffer: &Entity<MultiBuffer>,
         new_hint_settings: InlayHintSettings,
         visible_hints: Vec<Inlay>,
-        cx: &mut App,
     ) -> ControlFlow<Option<InlaySplice>> {
         let old_enabled = self.enabled;
         // If the setting for inlay hints has changed, update `enabled`. This condition avoids inlay
@@ -125,7 +123,8 @@ impl LspInlayHintData {
                 if new_allowed_hint_kinds == self.allowed_hint_kinds {
                     ControlFlow::Break(None)
                 } else {
-                    todo!("TODO kb")
+                    self.allowed_hint_kinds = new_allowed_hint_kinds;
+                    ControlFlow::Continue(())
                 }
             }
             (true, false) => {
@@ -363,12 +362,7 @@ impl Editor {
                     }
                 }
                 InlayHintRefreshReason::SettingsChange(new_settings) => {
-                    match inlay_hints.update_settings(
-                        &self.buffer,
-                        new_settings,
-                        visible_inlay_hints,
-                        cx,
-                    ) {
+                    match inlay_hints.update_settings(new_settings, visible_inlay_hints) {
                         ControlFlow::Break(Some(InlaySplice {
                             to_remove,
                             to_insert,
@@ -419,7 +413,10 @@ impl Editor {
                 return;
             };
             let hints_range = buffer_point_range.start.row..buffer_point_range.end.row;
-            // TODO kb check if the range is covered already by the fetched chunks
+            // TODO kb check if the range is covered already by the fetched chunks, for non-invalidate cases
+            // TODO kb where to use `required_languages` + all the timeouts? In the `SemanticsProvider` trait's method??
+            //
+            // TODO kb we can have new allowed hint kids applied, with old spliced away and duplicates in the new inlay hints
             // TODO kb also, avoid splices that remove and re-add same inlays
             let a = &inlay_hints.inlay_chunks_received;
 

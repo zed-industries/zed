@@ -1,7 +1,7 @@
 /// TODO kb docs, inlays-vs-inlay hints.
 pub mod inlay_hints;
 
-use gpui::{App, Context, HighlightStyle, Hsla, Rgba, Task};
+use gpui::{Context, HighlightStyle, Hsla, Rgba, Task};
 use multi_buffer::Anchor;
 use std::any::TypeId;
 use std::sync::OnceLock;
@@ -164,7 +164,7 @@ impl Editor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn inline_value_inlays(&self, cx: &App) -> Vec<Inlay> {
+    pub fn inline_value_inlays(&self, cx: &gpui::App) -> Vec<Inlay> {
         self.display_map
             .read(cx)
             .current_inlays()
@@ -174,7 +174,7 @@ impl Editor {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn all_inlays(&self, cx: &App) -> Vec<Inlay> {
+    pub fn all_inlays(&self, cx: &gpui::App) -> Vec<Inlay> {
         self.display_map
             .read(cx)
             .current_inlays()
