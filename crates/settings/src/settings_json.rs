@@ -158,40 +158,20 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                 break;
             }
 
-            if mat.captures[1].node.kind() == TS_ARRAY_KIND
-                && key_path[depth].as_ref().starts_with('#')
-            {
-                let array_node = mat.captures[1].node;
-
-                let text_range = array_node.byte_range();
-                let array_str = &text[text_range];
-                let index = key_path[depth].as_ref()[1..].parse().unwrap();
-
-                let (mut replace_range, mut replace_value) =
-                    replace_top_level_array_value_in_json_text(
-                        array_str,
-                        &key_path[depth + 1..],
-                        new_value,
-                        replace_key,
-                        index,
-                        tab_size,
-                    )
-                    .expect("todo! make this fn return a Result");
-                replace_range.start += array_node.start_byte();
-                replace_range.end += array_node.start_byte();
-                let needs_indent = replace_value.ends_with('\n')
-                    || replace_value
-                        .chars()
-                        .zip(replace_value.chars().skip(1))
-                        .any(|(c, next_c)| c == '\n' && !next_c.is_ascii_whitespace());
-                if needs_indent {
-                    let indent_width = mat.captures[0].node.start_position().column;
-                    let increased_indent =
-                        format!("\n{space:width$}", space = ' ', width = indent_width);
-                    replace_value = replace_value.replace('\n', &increased_indent);
-                }
-                return (replace_range, replace_value);
+            if let Some(array_replacement) = handle_possible_array_value(
+                &mat.captures[0].node,
+                &mat.captures[1].node,
+                text,
+                &key_path[depth..],
+                new_value,
+                replace_key,
+                tab_size,
+            ) {
+                let array_replacement =
+                    array_replacement.expect("todo! make this fn return result");
+                return array_replacement;
             }
+
             first_key_start = None;
         }
     }
@@ -269,7 +249,11 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
         let mut new_value =
             serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
         for key in key_path[(depth + 1)..].iter().rev() {
-            new_value = serde_json::json!({ key.as_ref().to_string(): new_value });
+            if parse_index_key(key.as_ref()).is_some() {
+                new_value = serde_json::json!([new_value]);
+            } else {
+                new_value = serde_json::json!({ key.as_ref().to_string(): new_value });
+            }
         }
 
         if let Some(first_key_start) = first_key_start {
@@ -330,6 +314,86 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             (existing_value_range, new_val)
         }
     }
+}
+
+fn parse_index_key(index_key: &str) -> Option<usize> {
+    index_key.strip_prefix('#')?.parse().ok()
+}
+
+fn handle_possible_array_value(
+    key_node: &tree_sitter::Node,
+    value_node: &tree_sitter::Node,
+    text: &str,
+    remaining_key_path: &[impl AsRef<str>],
+    new_value: Option<&Value>,
+    replace_key: Option<&str>,
+    tab_size: usize,
+) -> Option<Result<(Range<usize>, String)>> {
+    if remaining_key_path.is_empty() {
+        return None;
+    }
+    let key_path = remaining_key_path;
+    let index = parse_index_key(key_path[0].as_ref())?;
+
+    let value_is_array = value_node.kind() == TS_ARRAY_KIND;
+
+    let array_str = if value_is_array {
+        &text[value_node.byte_range()]
+    } else {
+        // replacing value with an array
+        "[]"
+    };
+
+    let (mut replace_range, mut replace_value) = match replace_top_level_array_value_in_json_text(
+        array_str,
+        &key_path[1..],
+        new_value,
+        replace_key,
+        index,
+        tab_size,
+    ) {
+        Ok(value) => value,
+        Err(err) => return Some(Err(err.context("Failed to replace array value"))),
+    };
+
+    if value_is_array {
+        replace_range.start += value_node.start_byte();
+        replace_range.end += value_node.start_byte();
+    } else {
+        // if we gave the replace function a dummy empty array string "[]",
+        // it will have the replace range be the inside of the array
+        // so we add the brackets to either side, and set the replace range to
+        // be the entire value
+        replace_range = value_node.byte_range();
+        replace_value.insert(0, '[');
+        replace_value.push(']');
+    }
+    let needs_indent = replace_value.ends_with('\n')
+        || replace_value
+            .chars()
+            .zip(replace_value.chars().skip(1))
+            .any(|(c, next_c)| c == '\n' && !next_c.is_ascii_whitespace());
+    let non_whitespace_char_count = replace_value.len()
+        - replace_value
+            .chars()
+            .filter(char::is_ascii_whitespace)
+            .count();
+    let contains_comment = (replace_value.contains("//") && replace_value.contains('\n'))
+        || (replace_value.contains("/*") && replace_value.contains("*/"));
+    if needs_indent {
+        let indent_width = key_node.start_position().column;
+        let increased_indent = format!("\n{space:width$}", space = ' ', width = indent_width);
+        replace_value = replace_value.replace('\n', &increased_indent);
+    } else if non_whitespace_char_count < 32 && !contains_comment {
+        // remove indentation
+        while let Some(idx) = replace_value.find("\n ") {
+            replace_value.remove(idx);
+        }
+        while let Some(idx) = replace_value.find("  ") {
+            replace_value.remove(idx);
+        }
+    }
+    return Some(Ok((replace_range, replace_value)));
 }
 
 const TS_DOCUMENT_KIND: &str = "document";
@@ -423,27 +487,19 @@ pub fn replace_top_level_array_value_in_json_text(
         }
         Ok((remove_range, String::new()))
     } else {
-        let (mut replace_range, mut replace_value) = if cursor.node().kind() == TS_ARRAY_KIND
-            && key_path
-                .first()
-                .map(AsRef::as_ref)
-                .unwrap_or_default()
-                .starts_with('#')
-        {
-            let index = key_path[0].as_ref()[1..].parse().unwrap();
-
-            replace_top_level_array_value_in_json_text(
-                value_str,
-                &key_path[1..],
-                new_value,
-                replace_key,
-                index,
-                tab_size,
-            )
-            .expect("todo! make this fn return a Result")
-        } else {
-            replace_value_in_json_text(value_str, key_path, tab_size, new_value, replace_key)
-        };
+        if let Some(array_replacement) = handle_possible_array_value(
+            &cursor.node(),
+            &cursor.node(),
+            text,
+            key_path,
+            new_value,
+            replace_key,
+            tab_size,
+        ) {
+            return array_replacement;
+        }
+        let (mut replace_range, mut replace_value) =
+            replace_value_in_json_text(value_str, key_path, tab_size, new_value, replace_key);
 
         replace_range.start += offset;
         replace_range.end += offset;
@@ -1256,10 +1312,7 @@ mod tests {
             r#"{
                 "users": [
                     {"name": "alice"},
-                    {
-                        "name": "robert",
-                        "age": 30
-                    },
+                    { "name": "robert", "age": 30 },
                     {"name": "charlie"}
                 ]
             }"#
@@ -1700,6 +1753,83 @@ mod tests {
                     2,
                         30,
                 4]
+            }"#
+            .unindent(),
+        );
+
+        // Creates array if has numbered key
+        check_object_replace_array(
+            r#"{
+                "array": {"foo": "bar"}
+            }"#
+            .unindent(),
+            &["array", "#3"],
+            Some(json!(4)),
+            r#"{
+                "array": [4]
+            }"#
+            .unindent(),
+        );
+
+        // Replace non-array element within array with array
+        check_object_replace_array(
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [3, 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+            &["matrix", "#1", "#0"],
+            Some(json!(["foo", "bar"])),
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [[ "foo", "bar" ], 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+        );
+        // Replace non-array element within array with array
+        check_object_replace_array(
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [3, 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+            &["matrix", "#1", "#0", "#3"],
+            Some(json!(["foo", "bar"])),
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [[ [ "foo", "bar" ] ], 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Create array in key that doesn't exist
+        check_object_replace_array(
+            r#"{
+                "foo": {}
+            }"#
+            .unindent(),
+            &["foo", "bar", "#0"],
+            Some(json!({"is_object": true})),
+            r#"{
+                "foo": {
+                    "bar": [
+                        {
+                            "is_object": true
+                        }
+                    ]
+                }
             }"#
             .unindent(),
         );
