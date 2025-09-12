@@ -25,7 +25,7 @@ use crate::{
 };
 
 const JSON_RPC_VERSION: &str = "2.0";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 // Standard JSON-RPC error codes
 pub const PARSE_ERROR: i32 = -32700;
@@ -60,6 +60,7 @@ pub(crate) struct Client {
     executor: BackgroundExecutor,
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
+    request_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -67,11 +68,7 @@ pub(crate) struct Client {
 pub(crate) struct ContextServerId(pub Arc<str>);
 
 fn is_null_value<T: Serialize>(value: &T) -> bool {
-    if let Ok(Value::Null) = serde_json::to_value(value) {
-        true
-    } else {
-        false
-    }
+    matches!(serde_json::to_value(value), Ok(Value::Null))
 }
 
 #[derive(Serialize, Deserialize)]
@@ -147,6 +144,7 @@ pub struct ModelContextServerBinary {
     pub executable: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+    pub timeout: Option<u64>,
 }
 
 impl Client {
@@ -161,7 +159,7 @@ impl Client {
         working_directory: &Option<PathBuf>,
         cx: AsyncApp,
     ) -> Result<Self> {
-        log::info!(
+        log::debug!(
             "starting context server (executable={:?}, args={:?})",
             binary.executable,
             &binary.args
@@ -173,8 +171,9 @@ impl Client {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(String::new);
 
+        let timeout = binary.timeout.map(Duration::from_millis);
         let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
-        Self::new(server_id, server_name.into(), transport, cx)
+        Self::new(server_id, server_name.into(), transport, timeout, cx)
     }
 
     /// Creates a new Client instance for a context server.
@@ -182,6 +181,7 @@ impl Client {
         server_id: ContextServerId,
         server_name: Arc<str>,
         transport: Arc<dyn Transport>,
+        request_timeout: Option<Duration>,
         cx: AsyncApp,
     ) -> Result<Self> {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
@@ -241,6 +241,7 @@ impl Client {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             transport,
+            request_timeout,
         })
     }
 
@@ -271,10 +272,10 @@ impl Client {
                     );
                 }
             } else if let Ok(response) = serde_json::from_str::<AnyResponse>(&message) {
-                if let Some(handlers) = response_handlers.lock().as_mut() {
-                    if let Some(handler) = handlers.remove(&response.id) {
-                        handler(Ok(message.to_string()));
-                    }
+                if let Some(handlers) = response_handlers.lock().as_mut()
+                    && let Some(handler) = handlers.remove(&response.id)
+                {
+                    handler(Ok(message.to_string()));
                 }
             } else if let Ok(notification) = serde_json::from_str::<AnyNotification>(&message) {
                 let mut notification_handlers = notification_handlers.lock();
@@ -295,7 +296,7 @@ impl Client {
     /// Continuously reads and logs any error messages from the server.
     async fn handle_err(transport: Arc<dyn Transport>) -> anyhow::Result<()> {
         while let Some(err) = transport.receive_err().next().await {
-            log::warn!("context server stderr: {}", err.trim());
+            log::debug!("context server stderr: {}", err.trim());
         }
 
         Ok(())
@@ -331,8 +332,13 @@ impl Client {
         method: &str,
         params: impl Serialize,
     ) -> Result<T> {
-        self.request_with(method, params, None, Some(REQUEST_TIMEOUT))
-            .await
+        self.request_with(
+            method,
+            params,
+            None,
+            self.request_timeout.or(Some(DEFAULT_REQUEST_TIMEOUT)),
+        )
+        .await
     }
 
     pub async fn request_with<T: DeserializeOwned>(

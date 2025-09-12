@@ -150,3 +150,8 @@ enum LocalSettingsKind {
     Editorconfig = 2;
     Debug = 3;
 }
+
+message UpdateUserSettings {
+    uint64 project_id = 1;
+    string contents = 2;
+}

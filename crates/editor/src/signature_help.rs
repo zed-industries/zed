@@ -169,7 +169,7 @@ impl Editor {
         else {
             return;
         };
-        let Some(lsp_store) = self.project.as_ref().map(|p| p.read(cx).lsp_store()) else {
+        let Some(lsp_store) = self.project().map(|p| p.read(cx).lsp_store()) else {
             return;
         };
         let task = lsp_store.update(cx, |lsp_store, cx| {
@@ -182,7 +182,9 @@ impl Editor {
                 let signature_help = task.await;
                 editor
                     .update(cx, |editor, cx| {
-                        let Some(mut signature_help) = signature_help.into_iter().next() else {
+                        let Some(mut signature_help) =
+                            signature_help.unwrap_or_default().into_iter().next()
+                        else {
                             editor
                                 .signature_help_state
                                 .hide(SignatureHelpHiddenBy::AutoClose);
@@ -196,7 +198,7 @@ impl Editor {
                                     .highlight_text(&text, 0..signature.label.len())
                                     .into_iter()
                                     .flat_map(|(range, highlight_id)| {
-                                        Some((range, highlight_id.style(&cx.theme().syntax())?))
+                                        Some((range, highlight_id.style(cx.theme().syntax())?))
                                     });
                                 signature.highlights =
                                     combine_highlights(signature.highlights.clone(), highlights)

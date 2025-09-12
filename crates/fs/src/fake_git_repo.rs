@@ -345,7 +345,7 @@ impl GitRepository for FakeGitRepository {
 
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, move |state| {
-            state.branches.insert(name.to_owned());
+            state.branches.insert(name);
             Ok(())
         })
     }
@@ -590,9 +590,9 @@ mod tests {
         assert_eq!(
             fs.files_with_contents(Path::new("")),
             [
-                (Path::new("/bar/baz").into(), b"qux".into()),
-                (Path::new("/foo/a").into(), b"lorem".into()),
-                (Path::new("/foo/b").into(), b"ipsum".into())
+                (Path::new(path!("/bar/baz")).into(), b"qux".into()),
+                (Path::new(path!("/foo/a")).into(), b"lorem".into()),
+                (Path::new(path!("/foo/b")).into(), b"ipsum".into())
             ]
         );
     }

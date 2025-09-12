@@ -16,18 +16,18 @@ pub use typed_envelope::*;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
-pub const SSH_PROJECT_ID: u64 = 0;
+pub const REMOTE_SERVER_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const REMOTE_SERVER_PROJECT_ID: u64 = 0;
 
 messages!(
-    (AcceptTermsOfService, Foreground),
-    (AcceptTermsOfServiceResponse, Foreground),
     (Ack, Foreground),
     (AckBufferOperation, Background),
     (AckChannelMessage, Background),
     (ActivateToolchain, Foreground),
     (ActiveToolchain, Foreground),
     (ActiveToolchainResponse, Foreground),
+    (ResolveToolchain, Background),
+    (ResolveToolchainResponse, Background),
     (AddNotification, Foreground),
     (AddProjectCollaborator, Foreground),
     (AddWorktree, Foreground),
@@ -104,9 +104,9 @@ messages!(
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
+    (GetProcesses, Background),
+    (GetProcessesResponse, Background),
     (GetPermalinkToLineResponse, Foreground),
-    (GetPrivateUserInfo, Foreground),
-    (GetPrivateUserInfoResponse, Foreground),
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
     (GetReferences, Background),
@@ -119,8 +119,6 @@ messages!(
     (GetTypeDefinitionResponse, Background),
     (GetImplementation, Background),
     (GetImplementationResponse, Background),
-    (GetLlmToken, Background),
-    (GetLlmTokenResponse, Background),
     (OpenUnstagedDiff, Foreground),
     (OpenUnstagedDiffResponse, Foreground),
     (OpenUncommittedDiff, Foreground),
@@ -175,8 +173,8 @@ messages!(
     (MarkNotificationRead, Foreground),
     (MoveChannel, Foreground),
     (ReorderChannel, Foreground),
-    (MultiLspQuery, Background),
-    (MultiLspQueryResponse, Background),
+    (LspQuery, Background),
+    (LspQueryResponse, Background),
     (OnTypeFormatting, Background),
     (OnTypeFormattingResponse, Background),
     (OpenBufferById, Background),
@@ -196,7 +194,6 @@ messages!(
     (PrepareRenameResponse, Background),
     (ProjectEntryResponse, Foreground),
     (RefreshInlayHints, Foreground),
-    (RefreshLlmToken, Background),
     (RegisterBufferWithLanguageServers, Background),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -280,9 +277,9 @@ messages!(
     (UpdateProject, Foreground),
     (UpdateProjectCollaborator, Foreground),
     (UpdateUserChannels, Foreground),
-    (UpdateUserPlan, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
+    (UpdateUserSettings, Background),
     (UpdateRepository, Foreground),
     (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
@@ -317,11 +314,16 @@ messages!(
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
     (GitClone, Background),
-    (GitCloneResponse, Background)
+    (GitCloneResponse, Background),
+    (ToggleLspLogs, Background),
+    (GetAgentServerCommand, Background),
+    (AgentServerCommand, Background),
+    (ExternalAgentsUpdated, Background),
+    (ExternalAgentLoadingStatusUpdated, Background),
+    (NewExternalAgentVersionAvailable, Background),
 );
 
 request_messages!(
-    (AcceptTermsOfService, AcceptTermsOfServiceResponse),
     (ApplyCodeAction, ApplyCodeActionResponse),
     (
         ApplyCompletionAdditionalEdits,
@@ -354,9 +356,7 @@ request_messages!(
     (GetDocumentHighlights, GetDocumentHighlightsResponse),
     (GetDocumentSymbols, GetDocumentSymbolsResponse),
     (GetHover, GetHoverResponse),
-    (GetLlmToken, GetLlmTokenResponse),
     (GetNotifications, GetNotificationsResponse),
-    (GetPrivateUserInfo, GetPrivateUserInfoResponse),
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
     (GetSignatureHelp, GetSignatureHelpResponse),
@@ -437,7 +437,8 @@ request_messages!(
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
-    (MultiLspQuery, MultiLspQueryResponse),
+    (LspQuery, Ack),
+    (LspQueryResponse, Ack),
     (RestartLanguageServers, Ack),
     (StopLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
@@ -460,6 +461,7 @@ request_messages!(
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
+    (ResolveToolchain, ResolveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
     (GetCrashFiles, GetCrashFilesResponse),
     (CancelLanguageServerWork, Ack),
@@ -486,7 +488,24 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
-    (GitClone, GitCloneResponse)
+    (GitClone, GitCloneResponse),
+    (ToggleLspLogs, Ack),
+    (GetProcesses, GetProcessesResponse),
+    (GetAgentServerCommand, AgentServerCommand)
+);
+
+lsp_messages!(
+    (GetReferences, GetReferencesResponse, true),
+    (GetDocumentColor, GetDocumentColorResponse, true),
+    (GetHover, GetHoverResponse, true),
+    (GetCodeActions, GetCodeActionsResponse, true),
+    (GetSignatureHelp, GetSignatureHelpResponse, true),
+    (GetCodeLens, GetCodeLensResponse, true),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse, true),
+    (GetDefinition, GetDefinitionResponse, true),
+    (GetDeclaration, GetDeclarationResponse, true),
+    (GetTypeDefinition, GetTypeDefinitionResponse, true),
+    (GetImplementation, GetImplementationResponse, true),
 );
 
 entity_messages!(
@@ -531,7 +550,8 @@ entity_messages!(
     LeaveProject,
     LinkedEditingRange,
     LoadCommitDiff,
-    MultiLspQuery,
+    LspQuery,
+    LspQueryResponse,
     RestartLanguageServers,
     StopLanguageServers,
     OnTypeFormatting,
@@ -569,6 +589,7 @@ entity_messages!(
     UpdateRepository,
     RemoveRepository,
     UpdateWorktreeSettings,
+    UpdateUserSettings,
     LspExtExpandMacro,
     LspExtOpenDocs,
     LspExtRunnables,
@@ -593,13 +614,16 @@ entity_messages!(
     ListToolchains,
     ActivateToolchain,
     ActiveToolchain,
+    ResolveToolchain,
     GetPathMetadata,
+    GetProcesses,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GitShow,
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
+    ToggleLspLogs,
 
     Push,
     Fetch,
@@ -619,7 +643,11 @@ entity_messages!(
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
-    GitClone
+    GitClone,
+    GetAgentServerCommand,
+    ExternalAgentsUpdated,
+    ExternalAgentLoadingStatusUpdated,
+    NewExternalAgentVersionAvailable,
 );
 
 entity_messages!(
@@ -788,21 +816,23 @@ pub fn split_repository_update(
     }])
 }
 
-impl MultiLspQuery {
-    pub fn request_str(&self) -> &str {
+impl LspQuery {
+    pub fn query_name_and_write_permissions(&self) -> (&str, bool) {
         match self.request {
-            Some(multi_lsp_query::Request::GetHover(_)) => "GetHover",
-            Some(multi_lsp_query::Request::GetCodeActions(_)) => "GetCodeActions",
-            Some(multi_lsp_query::Request::GetSignatureHelp(_)) => "GetSignatureHelp",
-            Some(multi_lsp_query::Request::GetCodeLens(_)) => "GetCodeLens",
-            Some(multi_lsp_query::Request::GetDocumentDiagnostics(_)) => "GetDocumentDiagnostics",
-            Some(multi_lsp_query::Request::GetDocumentColor(_)) => "GetDocumentColor",
-            Some(multi_lsp_query::Request::GetDefinition(_)) => "GetDefinition",
-            Some(multi_lsp_query::Request::GetDeclaration(_)) => "GetDeclaration",
-            Some(multi_lsp_query::Request::GetTypeDefinition(_)) => "GetTypeDefinition",
-            Some(multi_lsp_query::Request::GetImplementation(_)) => "GetImplementation",
-            Some(multi_lsp_query::Request::GetReferences(_)) => "GetReferences",
-            None => "<unknown>",
+            Some(lsp_query::Request::GetHover(_)) => ("GetHover", false),
+            Some(lsp_query::Request::GetCodeActions(_)) => ("GetCodeActions", true),
+            Some(lsp_query::Request::GetSignatureHelp(_)) => ("GetSignatureHelp", false),
+            Some(lsp_query::Request::GetCodeLens(_)) => ("GetCodeLens", true),
+            Some(lsp_query::Request::GetDocumentDiagnostics(_)) => {
+                ("GetDocumentDiagnostics", false)
+            }
+            Some(lsp_query::Request::GetDefinition(_)) => ("GetDefinition", false),
+            Some(lsp_query::Request::GetDeclaration(_)) => ("GetDeclaration", false),
+            Some(lsp_query::Request::GetTypeDefinition(_)) => ("GetTypeDefinition", false),
+            Some(lsp_query::Request::GetImplementation(_)) => ("GetImplementation", false),
+            Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
+            Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
+            None => ("<unknown>", true),
         }
     }
 }

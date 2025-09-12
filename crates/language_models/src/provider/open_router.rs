@@ -15,7 +15,8 @@ use language_model::{
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
+    Model, ModelMode as OpenRouterModelMode, Provider, ResponseStreamEvent, list_models,
+    stream_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,7 @@ pub struct AvailableModel {
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub mode: Option<ModelMode>,
+    pub provider: Option<Provider>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -92,7 +94,7 @@ pub struct State {
     api_key_from_env: bool,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
-    fetch_models_task: Option<Task<Result<()>>>,
+    fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
     settings: OpenRouterSettings,
     _subscription: Subscription,
 }
@@ -112,7 +114,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(&api_url, &cx)
+                .delete_credentials(&api_url, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -131,7 +133,7 @@ impl State {
             .clone();
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), &cx)
+                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -152,20 +154,21 @@ impl State {
             .open_router
             .api_url
             .clone();
+
         cx.spawn(async move |this, cx| {
             let (api_key, from_env) = if let Ok(api_key) = std::env::var(OPENROUTER_API_KEY_VAR) {
                 (api_key, true)
             } else {
                 let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, &cx)
+                    .read_credentials(&api_url, cx)
                     .await?
                     .ok_or(AuthenticateError::CredentialsNotFound)?;
                 (
-                    String::from_utf8(api_key)
-                        .context(format!("invalid {} API key", PROVIDER_NAME))?,
+                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
                     false,
                 )
             };
+
             this.update(cx, |this, cx| {
                 this.api_key = Some(api_key);
                 this.api_key_from_env = from_env;
@@ -177,18 +180,35 @@ impl State {
         })
     }
 
-    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn fetch_models(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), LanguageModelCompletionError>> {
         let settings = &AllLanguageModelSettings::get_global(cx).open_router;
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
-
+        let Some(api_key) = self.api_key.clone() else {
+            return Task::ready(Err(LanguageModelCompletionError::NoApiKey {
+                provider: PROVIDER_NAME,
+            }));
+        };
         cx.spawn(async move |this, cx| {
-            let models = list_models(http_client.as_ref(), &api_url).await?;
+            let models = list_models(http_client.as_ref(), &api_url, &api_key)
+                .await
+                .map_err(|e| {
+                    LanguageModelCompletionError::Other(anyhow::anyhow!(
+                        "OpenRouter error: {:?}",
+                        e
+                    ))
+                })?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
                 cx.notify();
             })
+            .map_err(|e| LanguageModelCompletionError::Other(e))?;
+
+            Ok(())
         })
     }
 
@@ -278,6 +298,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
                 mode: model.mode.clone().unwrap_or_default().into(),
+                provider: model.provider.clone(),
             });
         }
 
@@ -306,7 +327,12 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -329,27 +355,37 @@ impl OpenRouterLanguageModel {
         &self,
         request: open_router::Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
-    {
+    ) -> BoxFuture<
+        'static,
+        Result<
+            futures::stream::BoxStream<
+                'static,
+                Result<ResponseStreamEvent, open_router::OpenRouterError>,
+            >,
+            LanguageModelCompletionError,
+        >,
+    > {
         let http_client = self.http_client.clone();
         let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
             let settings = &AllLanguageModelSettings::get_global(cx).open_router;
             (state.api_key.clone(), settings.api_url.clone())
         }) else {
-            return futures::future::ready(Err(anyhow!(
-                "App state dropped: Unable to read API key or API URL from the application state"
-            )))
+            return futures::future::ready(Err(LanguageModelCompletionError::Other(anyhow!(
+                "App state dropped"
+            ))))
             .boxed();
         };
 
-        let future = self.request_limiter.stream(async move {
-            let api_key = api_key.ok_or_else(|| anyhow!("Missing OpenRouter API Key"))?;
+        async move {
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                });
+            };
             let request = stream_completion(http_client.as_ref(), &api_url, &api_key, request);
-            let response = request.await?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
+            request.await.map_err(Into::into)
+        }
+        .boxed()
     }
 }
 
@@ -376,7 +412,7 @@ impl LanguageModel for OpenRouterLanguageModel {
 
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         let model_id = self.model.id().trim().to_lowercase();
-        if model_id.contains("gemini") || model_id.contains("grok-4") {
+        if model_id.contains("gemini") || model_id.contains("grok") {
             LanguageModelToolSchemaFormat::JsonSchemaSubset
         } else {
             LanguageModelToolSchemaFormat::JsonSchema
@@ -430,12 +466,12 @@ impl LanguageModel for OpenRouterLanguageModel {
         >,
     > {
         let request = into_open_router(request, &self.model, self.max_output_tokens());
-        let completions = self.stream_completion(request, cx);
-        async move {
-            let mapper = OpenRouterEventMapper::new();
-            Ok(mapper.map_stream(completions.await?).boxed())
-        }
-        .boxed()
+        let request = self.stream_completion(request, cx);
+        let future = self.request_limiter.stream(async move {
+            let response = request.await?;
+            Ok(OpenRouterEventMapper::new().map_stream(response))
+        });
+        async move { Ok(future.await?.boxed()) }.boxed()
     }
 }
 
@@ -551,6 +587,7 @@ pub fn into_open_router(
             LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
+        provider: model.provider.clone(),
     }
 }
 
@@ -603,13 +640,17 @@ impl OpenRouterEventMapper {
 
     pub fn map_stream(
         mut self,
-        events: Pin<Box<dyn Send + Stream<Item = Result<ResponseStreamEvent>>>>,
+        events: Pin<
+            Box<
+                dyn Send + Stream<Item = Result<ResponseStreamEvent, open_router::OpenRouterError>>,
+            >,
+        >,
     ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
     {
         events.flat_map(move |event| {
             futures::stream::iter(match event {
                 Ok(event) => self.map_event(event),
-                Err(error) => vec![Err(LanguageModelCompletionError::from(anyhow!(error)))],
+                Err(error) => vec![Err(error.into())],
             })
         })
     }
@@ -750,8 +791,11 @@ impl ConfigurationView {
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor
-                .set_placeholder_text("sk_or_000000000000000000000000000000000000000000000000", cx);
+            editor.set_placeholder_text(
+                "sk_or_000000000000000000000000000000000000000000000000",
+                window,
+                cx,
+            );
             editor
         });
 

@@ -1,21 +1,12 @@
 mod connection_pool;
 
-use crate::api::billing::find_or_create_billing_customer;
 use crate::api::{CloudflareIpCountryHeader, SystemIdHeader};
-use crate::db::billing_subscription::SubscriptionKind;
-use crate::llm::db::LlmDatabase;
-use crate::llm::{
-    AGENT_EXTENDED_TRIAL_FEATURE_FLAG, BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG, LlmTokenClaims,
-    MIN_ACCOUNT_AGE_FOR_LLM_USE,
-};
-use crate::stripe_client::StripeCustomerId;
 use crate::{
     AppState, Error, Result, auth,
     db::{
-        self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser,
-        CreatedChannelMessage, Database, InviteMemberResult, MembershipUpdated, MessageId,
-        NotificationId, ProjectId, RejoinedProject, RemoveChannelMemberResult,
-        RespondToChannelInvite, RoomId, ServerId, UpdatedChannelMessage, User, UserId,
+        self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
+        InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, User, UserId,
     },
     executor::Executor,
 };
@@ -37,13 +28,12 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
 use reqwest_client::ReqwestClient;
-use rpc::proto::{MultiLspQuery, split_repository_update};
+use rpc::proto::split_repository_update;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 use tracing::Span;
 
@@ -75,7 +65,6 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use time::OffsetDateTime;
 use tokio::sync::{Semaphore, watch};
 use tower::ServiceBuilder;
 use tracing::{
@@ -89,8 +78,6 @@ pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 // kubernetes gives terminated pods 10s to shutdown gracefully. After they're gone, we can clean up old resources.
 pub const CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 
-const MESSAGE_COUNT_PER_PAGE: usize = 100;
-const MAX_MESSAGE_LEN: usize = 1024;
 const NOTIFICATION_COUNT_PER_PAGE: usize = 50;
 const MAX_CONCURRENT_CONNECTIONS: usize = 512;
 
@@ -148,13 +135,6 @@ pub enum Principal {
 }
 
 impl Principal {
-    fn user(&self) -> &User {
-        match self {
-            Principal::User(user) => user,
-            Principal::Impersonated { user, .. } => user,
-        }
-    }
-
     fn update_span(&self, span: &tracing::Span) {
         match &self {
             Principal::User(user) => {
@@ -218,6 +198,7 @@ struct Session {
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
+    #[allow(unused)]
     system_id: Option<String>,
     _executor: Executor,
 }
@@ -325,7 +306,7 @@ impl Server {
         let mut server = Self {
             id: parking_lot::Mutex::new(id),
             peer: Peer::new(id.0 as u32),
-            app_state: app_state.clone(),
+            app_state,
             connection_pool: Default::default(),
             handlers: Default::default(),
             teardown: watch::channel(false).0,
@@ -354,10 +335,6 @@ impl Server {
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
-            .add_request_handler(forward_read_only_project_request::<proto::GetHover>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
             .add_request_handler(forward_read_only_project_request::<proto::FindSearchCandidates>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
@@ -368,7 +345,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
@@ -383,7 +359,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::LspExtCancelFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtRunFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtClearFlycheck>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -396,7 +371,6 @@ impl Server {
             .add_request_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             )
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeActions>)
             .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
@@ -414,7 +388,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            .add_request_handler(multi_lsp_query)
+            .add_request_handler(lsp_query)
+            .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::StopLanguageServers>)
             .add_request_handler(forward_mutating_project_request::<proto::LinkedEditingRange>)
@@ -463,9 +438,6 @@ impl Server {
             .add_request_handler(follow)
             .add_message_handler(unfollow)
             .add_message_handler(update_followers)
-            .add_request_handler(get_private_user_info)
-            .add_request_handler(get_llm_api_token)
-            .add_request_handler(accept_terms_of_service)
             .add_message_handler(acknowledge_channel_message)
             .add_message_handler(acknowledge_buffer_version)
             .add_request_handler(get_supermaven_api_key)
@@ -492,7 +464,9 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitChangeBranch>)
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_message_handler(broadcast_project_message_from_host::<proto::AdvertiseContexts>)
-            .add_message_handler(update_context);
+            .add_message_handler(update_context)
+            .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>);
 
         Arc::new(server)
     }
@@ -634,10 +608,10 @@ impl Server {
                             }
                         }
 
-                        if let Some(live_kit) = livekit_client.as_ref() {
-                            if delete_livekit_room {
-                                live_kit.delete_room(livekit_room).await.trace_err();
-                            }
+                        if let Some(live_kit) = livekit_client.as_ref()
+                            && delete_livekit_room
+                        {
+                            live_kit.delete_room(livekit_room).await.trace_err();
                         }
                     }
                 }
@@ -928,7 +902,7 @@ impl Server {
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
-                                multi_lsp_query_request=field::Empty,
+                                lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
                                 { PROCESSING_DURATION_MS }=field::Empty,
@@ -1000,8 +974,6 @@ impl Server {
                         .await?;
                 }
 
-                update_user_plan(session).await?;
-
                 let contacts = self.app_state.db.get_contacts(user.id).await?;
 
                 {
@@ -1035,97 +1007,50 @@ impl Server {
         inviter_id: UserId,
         invitee_id: UserId,
     ) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await? {
-            if let Some(code) = &user.invite_code {
-                let pool = self.connection_pool.lock();
-                let invitee_contact = contact_for_user(invitee_id, false, &pool);
-                for connection_id in pool.user_connection_ids(inviter_id) {
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateContacts {
-                            contacts: vec![invitee_contact.clone()],
-                            ..Default::default()
-                        },
-                    )?;
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateInviteInfo {
-                            url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
-                            count: user.invite_count as u32,
-                        },
-                    )?;
-                }
+        if let Some(user) = self.app_state.db.get_user_by_id(inviter_id).await?
+            && let Some(code) = &user.invite_code
+        {
+            let pool = self.connection_pool.lock();
+            let invitee_contact = contact_for_user(invitee_id, false, &pool);
+            for connection_id in pool.user_connection_ids(inviter_id) {
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateContacts {
+                        contacts: vec![invitee_contact.clone()],
+                        ..Default::default()
+                    },
+                )?;
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateInviteInfo {
+                        url: format!("{}{}", self.app_state.config.invite_link_prefix, &code),
+                        count: user.invite_count as u32,
+                    },
+                )?;
             }
         }
         Ok(())
     }
 
     pub async fn invite_count_updated(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await? {
-            if let Some(invite_code) = &user.invite_code {
-                let pool = self.connection_pool.lock();
-                for connection_id in pool.user_connection_ids(user_id) {
-                    self.peer.send(
-                        connection_id,
-                        proto::UpdateInviteInfo {
-                            url: format!(
-                                "{}{}",
-                                self.app_state.config.invite_link_prefix, invite_code
-                            ),
-                            count: user.invite_count as u32,
-                        },
-                    )?;
-                }
+        if let Some(user) = self.app_state.db.get_user_by_id(user_id).await?
+            && let Some(invite_code) = &user.invite_code
+        {
+            let pool = self.connection_pool.lock();
+            for connection_id in pool.user_connection_ids(user_id) {
+                self.peer.send(
+                    connection_id,
+                    proto::UpdateInviteInfo {
+                        url: format!(
+                            "{}{}",
+                            self.app_state.config.invite_link_prefix, invite_code
+                        ),
+                        count: user.invite_count as u32,
+                    },
+                )?;
             }
         }
         Ok(())
-    }
-
-    pub async fn update_plan_for_user(
-        self: &Arc<Self>,
-        user_id: UserId,
-        update_user_plan: proto::UpdateUserPlan,
-    ) -> Result<()> {
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, update_user_plan.clone())
-                .trace_err();
-        }
-
-        Ok(())
-    }
-
-    /// This is the legacy way of updating the user's plan, where we fetch the data to construct the `UpdateUserPlan`
-    /// message on the Collab server.
-    ///
-    /// The new way is to receive the data from Cloud via the `POST /users/:id/update_plan` endpoint.
-    pub async fn update_plan_for_user_legacy(self: &Arc<Self>, user_id: UserId) -> Result<()> {
-        let user = self
-            .app_state
-            .db
-            .get_user_by_id(user_id)
-            .await?
-            .context("user not found")?;
-
-        let update_user_plan = make_update_user_plan_message(
-            &user,
-            user.admin,
-            &self.app_state.db,
-            self.app_state.llm_db.clone(),
-        )
-        .await?;
-
-        self.update_plan_for_user(user_id, update_user_plan).await
-    }
-
-    pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
-        let pool = self.connection_pool.lock();
-        for connection_id in pool.user_connection_ids(user_id) {
-            self.peer
-                .send(connection_id, proto::RefreshLlmToken {})
-                .trace_err();
-        }
     }
 
     pub async fn snapshot(self: &Arc<Self>) -> ServerSnapshot<'_> {
@@ -1168,10 +1093,10 @@ fn broadcast<F>(
     F: FnMut(ConnectionId) -> anyhow::Result<()>,
 {
     for receiver_id in receiver_ids {
-        if Some(receiver_id) != sender_id {
-            if let Err(error) = f(receiver_id) {
-                tracing::error!("failed to send to {:?} {}", receiver_id, error);
-            }
+        if Some(receiver_id) != sender_id
+            && let Err(error) = f(receiver_id)
+        {
+            tracing::error!("failed to send to {:?} {}", receiver_id, error);
         }
     }
 }
@@ -1453,9 +1378,7 @@ async fn create_room(
         let live_kit = live_kit?;
         let user_id = session.user_id().to_string();
 
-        let token = live_kit
-            .room_token(&livekit_room, &user_id.to_string())
-            .trace_err()?;
+        let token = live_kit.room_token(&livekit_room, &user_id).trace_err()?;
 
         Some(proto::LiveKitConnectionInfo {
             server_url: live_kit.url().into(),
@@ -2082,9 +2005,9 @@ async fn join_project(
         .unzip();
     response.send(proto::JoinProjectResponse {
         project_id: project.id.0 as u64,
-        worktrees: worktrees.clone(),
+        worktrees,
         replica_id: replica_id.0 as u32,
-        collaborators: collaborators.clone(),
+        collaborators,
         language_servers,
         language_server_capabilities,
         role: project.role.into(),
@@ -2361,11 +2284,10 @@ async fn update_language_server(
     let db = session.db().await;
 
     if let Some(proto::update_language_server::Variant::MetadataUpdated(update)) = &request.variant
+        && let Some(capabilities) = update.capabilities.clone()
     {
-        if let Some(capabilities) = update.capabilities.clone() {
-            db.update_server_capabilities(project_id, request.language_server_id, capabilities)
-                .await?;
-        }
+        db.update_server_capabilities(project_id, request.language_server_id, capabilities)
+            .await?;
     }
 
     let project_connection_ids = db
@@ -2426,14 +2348,19 @@ where
     Ok(())
 }
 
-async fn multi_lsp_query(
-    request: MultiLspQuery,
-    response: Response<MultiLspQuery>,
+async fn lsp_query(
+    request: proto::LspQuery,
+    response: Response<proto::LspQuery>,
     session: MessageContext,
 ) -> Result<()> {
-    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
-    tracing::info!("multi_lsp_query message received");
-    forward_mutating_project_request(request, response, session).await
+    let (name, should_write) = request.query_name_and_write_permissions();
+    tracing::Span::current().record("lsp_query_request", name);
+    tracing::info!("lsp_query message received");
+    if should_write {
+        forward_mutating_project_request(request, response, session).await
+    } else {
+        forward_read_only_project_request(request, response, session).await
+    }
 }
 
 /// Notify other participants that a new buffer has been created
@@ -2880,214 +2807,6 @@ async fn remove_contact(
 
 fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
     version.0.minor() < 139
-}
-
-async fn current_plan(db: &Arc<Database>, user_id: UserId, is_staff: bool) -> Result<proto::Plan> {
-    if is_staff {
-        return Ok(proto::Plan::ZedPro);
-    }
-
-    let subscription = db.get_active_billing_subscription(user_id).await?;
-    let subscription_kind = subscription.and_then(|subscription| subscription.kind);
-
-    let plan = if let Some(subscription_kind) = subscription_kind {
-        match subscription_kind {
-            SubscriptionKind::ZedPro => proto::Plan::ZedPro,
-            SubscriptionKind::ZedProTrial => proto::Plan::ZedProTrial,
-            SubscriptionKind::ZedFree => proto::Plan::Free,
-        }
-    } else {
-        proto::Plan::Free
-    };
-
-    Ok(plan)
-}
-
-async fn make_update_user_plan_message(
-    user: &User,
-    is_staff: bool,
-    db: &Arc<Database>,
-    llm_db: Option<Arc<LlmDatabase>>,
-) -> Result<proto::UpdateUserPlan> {
-    let feature_flags = db.get_user_flags(user.id).await?;
-    let plan = current_plan(db, user.id, is_staff).await?;
-    let billing_customer = db.get_billing_customer_by_user_id(user.id).await?;
-    let billing_preferences = db.get_billing_preferences(user.id).await?;
-
-    let (subscription_period, usage) = if let Some(llm_db) = llm_db {
-        let subscription = db.get_active_billing_subscription(user.id).await?;
-
-        let subscription_period =
-            crate::db::billing_subscription::Model::current_period(subscription, is_staff);
-
-        let usage = if let Some((period_start_at, period_end_at)) = subscription_period {
-            llm_db
-                .get_subscription_usage_for_period(user.id, period_start_at, period_end_at)
-                .await?
-        } else {
-            None
-        };
-
-        (subscription_period, usage)
-    } else {
-        (None, None)
-    };
-
-    let bypass_account_age_check = feature_flags
-        .iter()
-        .any(|flag| flag == BYPASS_ACCOUNT_AGE_CHECK_FEATURE_FLAG);
-    let account_too_young = !matches!(plan, proto::Plan::ZedPro)
-        && !bypass_account_age_check
-        && user.account_age() < MIN_ACCOUNT_AGE_FOR_LLM_USE;
-
-    Ok(proto::UpdateUserPlan {
-        plan: plan.into(),
-        trial_started_at: billing_customer
-            .as_ref()
-            .and_then(|billing_customer| billing_customer.trial_started_at)
-            .map(|trial_started_at| trial_started_at.and_utc().timestamp() as u64),
-        is_usage_based_billing_enabled: if is_staff {
-            Some(true)
-        } else {
-            billing_preferences.map(|preferences| preferences.model_request_overages_enabled)
-        },
-        subscription_period: subscription_period.map(|(started_at, ended_at)| {
-            proto::SubscriptionPeriod {
-                started_at: started_at.timestamp() as u64,
-                ended_at: ended_at.timestamp() as u64,
-            }
-        }),
-        account_too_young: Some(account_too_young),
-        has_overdue_invoices: billing_customer
-            .map(|billing_customer| billing_customer.has_overdue_invoices),
-        usage: Some(
-            usage
-                .map(|usage| subscription_usage_to_proto(plan, usage, &feature_flags))
-                .unwrap_or_else(|| make_default_subscription_usage(plan, &feature_flags)),
-        ),
-    })
-}
-
-fn model_requests_limit(
-    plan: cloud_llm_client::Plan,
-    feature_flags: &Vec<String>,
-) -> cloud_llm_client::UsageLimit {
-    match plan.model_requests_limit() {
-        cloud_llm_client::UsageLimit::Limited(limit) => {
-            let limit = if plan == cloud_llm_client::Plan::ZedProTrial
-                && feature_flags
-                    .iter()
-                    .any(|flag| flag == AGENT_EXTENDED_TRIAL_FEATURE_FLAG)
-            {
-                1_000
-            } else {
-                limit
-            };
-
-            cloud_llm_client::UsageLimit::Limited(limit)
-        }
-        cloud_llm_client::UsageLimit::Unlimited => cloud_llm_client::UsageLimit::Unlimited,
-    }
-}
-
-fn subscription_usage_to_proto(
-    plan: proto::Plan,
-    usage: crate::llm::db::subscription_usage::Model,
-    feature_flags: &Vec<String>,
-) -> proto::SubscriptionUsage {
-    let plan = match plan {
-        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
-    };
-
-    proto::SubscriptionUsage {
-        model_requests_usage_amount: usage.model_requests as u32,
-        model_requests_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match model_requests_limit(plan, feature_flags) {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-        edit_predictions_usage_amount: usage.edit_predictions as u32,
-        edit_predictions_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match plan.edit_predictions_limit() {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-    }
-}
-
-fn make_default_subscription_usage(
-    plan: proto::Plan,
-    feature_flags: &Vec<String>,
-) -> proto::SubscriptionUsage {
-    let plan = match plan {
-        proto::Plan::Free => cloud_llm_client::Plan::ZedFree,
-        proto::Plan::ZedPro => cloud_llm_client::Plan::ZedPro,
-        proto::Plan::ZedProTrial => cloud_llm_client::Plan::ZedProTrial,
-    };
-
-    proto::SubscriptionUsage {
-        model_requests_usage_amount: 0,
-        model_requests_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match model_requests_limit(plan, feature_flags) {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-        edit_predictions_usage_amount: 0,
-        edit_predictions_usage_limit: Some(proto::UsageLimit {
-            variant: Some(match plan.edit_predictions_limit() {
-                cloud_llm_client::UsageLimit::Limited(limit) => {
-                    proto::usage_limit::Variant::Limited(proto::usage_limit::Limited {
-                        limit: limit as u32,
-                    })
-                }
-                cloud_llm_client::UsageLimit::Unlimited => {
-                    proto::usage_limit::Variant::Unlimited(proto::usage_limit::Unlimited {})
-                }
-            }),
-        }),
-    }
-}
-
-async fn update_user_plan(session: &Session) -> Result<()> {
-    let db = session.db().await;
-
-    let update_user_plan = make_update_user_plan_message(
-        session.principal.user(),
-        session.is_staff(),
-        &db.0,
-        session.app_state.llm_db.clone(),
-    )
-    .await?;
-
-    session
-        .peer
-        .send(session.connection_id, update_user_plan)
-        .trace_err();
-
-    Ok(())
 }
 
 async fn subscribe_to_channels(
@@ -3853,235 +3572,36 @@ fn send_notifications(
 
 /// Send a message to the channel
 async fn send_channel_message(
-    request: proto::SendChannelMessage,
-    response: Response<proto::SendChannelMessage>,
-    session: MessageContext,
+    _request: proto::SendChannelMessage,
+    _response: Response<proto::SendChannelMessage>,
+    _session: MessageContext,
 ) -> Result<()> {
-    // Validate the message body.
-    let body = request.body.trim().to_string();
-    if body.len() > MAX_MESSAGE_LEN {
-        return Err(anyhow!("message is too long"))?;
-    }
-    if body.is_empty() {
-        return Err(anyhow!("message can't be blank"))?;
-    }
-
-    // TODO: adjust mentions if body is trimmed
-
-    let timestamp = OffsetDateTime::now_utc();
-    let nonce = request.nonce.context("nonce can't be blank")?;
-
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let CreatedChannelMessage {
-        message_id,
-        participant_connection_ids,
-        notifications,
-    } = session
-        .db()
-        .await
-        .create_channel_message(
-            channel_id,
-            session.user_id(),
-            &body,
-            &request.mentions,
-            timestamp,
-            nonce.clone().into(),
-            request.reply_to_message_id.map(MessageId::from_proto),
-        )
-        .await?;
-
-    let message = proto::ChannelMessage {
-        sender_id: session.user_id().to_proto(),
-        id: message_id.to_proto(),
-        body,
-        mentions: request.mentions,
-        timestamp: timestamp.unix_timestamp() as u64,
-        nonce: Some(nonce),
-        reply_to_message_id: request.reply_to_message_id,
-        edited_at: None,
-    };
-    broadcast(
-        Some(session.connection_id),
-        participant_connection_ids.clone(),
-        |connection| {
-            session.peer.send(
-                connection,
-                proto::ChannelMessageSent {
-                    channel_id: channel_id.to_proto(),
-                    message: Some(message.clone()),
-                },
-            )
-        },
-    );
-    response.send(proto::SendChannelMessageResponse {
-        message: Some(message),
-    })?;
-
-    let pool = &*session.connection_pool().await;
-    let non_participants =
-        pool.channel_connection_ids(channel_id)
-            .filter_map(|(connection_id, _)| {
-                if participant_connection_ids.contains(&connection_id) {
-                    None
-                } else {
-                    Some(connection_id)
-                }
-            });
-    broadcast(None, non_participants, |peer_id| {
-        session.peer.send(
-            peer_id,
-            proto::UpdateChannels {
-                latest_channel_message_ids: vec![proto::ChannelMessageId {
-                    channel_id: channel_id.to_proto(),
-                    message_id: message_id.to_proto(),
-                }],
-                ..Default::default()
-            },
-        )
-    });
-    send_notifications(pool, &session.peer, notifications);
-
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Delete a channel message
 async fn remove_channel_message(
-    request: proto::RemoveChannelMessage,
-    response: Response<proto::RemoveChannelMessage>,
-    session: MessageContext,
+    _request: proto::RemoveChannelMessage,
+    _response: Response<proto::RemoveChannelMessage>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let message_id = MessageId::from_proto(request.message_id);
-    let (connection_ids, existing_notification_ids) = session
-        .db()
-        .await
-        .remove_channel_message(channel_id, message_id, session.user_id())
-        .await?;
-
-    broadcast(
-        Some(session.connection_id),
-        connection_ids,
-        move |connection| {
-            session.peer.send(connection, request.clone())?;
-
-            for notification_id in &existing_notification_ids {
-                session.peer.send(
-                    connection,
-                    proto::DeleteNotification {
-                        notification_id: (*notification_id).to_proto(),
-                    },
-                )?;
-            }
-
-            Ok(())
-        },
-    );
-    response.send(proto::Ack {})?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 async fn update_channel_message(
-    request: proto::UpdateChannelMessage,
-    response: Response<proto::UpdateChannelMessage>,
-    session: MessageContext,
+    _request: proto::UpdateChannelMessage,
+    _response: Response<proto::UpdateChannelMessage>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let message_id = MessageId::from_proto(request.message_id);
-    let updated_at = OffsetDateTime::now_utc();
-    let UpdatedChannelMessage {
-        message_id,
-        participant_connection_ids,
-        notifications,
-        reply_to_message_id,
-        timestamp,
-        deleted_mention_notification_ids,
-        updated_mention_notifications,
-    } = session
-        .db()
-        .await
-        .update_channel_message(
-            channel_id,
-            message_id,
-            session.user_id(),
-            request.body.as_str(),
-            &request.mentions,
-            updated_at,
-        )
-        .await?;
-
-    let nonce = request.nonce.clone().context("nonce can't be blank")?;
-
-    let message = proto::ChannelMessage {
-        sender_id: session.user_id().to_proto(),
-        id: message_id.to_proto(),
-        body: request.body.clone(),
-        mentions: request.mentions.clone(),
-        timestamp: timestamp.assume_utc().unix_timestamp() as u64,
-        nonce: Some(nonce),
-        reply_to_message_id: reply_to_message_id.map(|id| id.to_proto()),
-        edited_at: Some(updated_at.unix_timestamp() as u64),
-    };
-
-    response.send(proto::Ack {})?;
-
-    let pool = &*session.connection_pool().await;
-    broadcast(
-        Some(session.connection_id),
-        participant_connection_ids,
-        |connection| {
-            session.peer.send(
-                connection,
-                proto::ChannelMessageUpdate {
-                    channel_id: channel_id.to_proto(),
-                    message: Some(message.clone()),
-                },
-            )?;
-
-            for notification_id in &deleted_mention_notification_ids {
-                session.peer.send(
-                    connection,
-                    proto::DeleteNotification {
-                        notification_id: (*notification_id).to_proto(),
-                    },
-                )?;
-            }
-
-            for notification in &updated_mention_notifications {
-                session.peer.send(
-                    connection,
-                    proto::UpdateNotification {
-                        notification: Some(notification.clone()),
-                    },
-                )?;
-            }
-
-            Ok(())
-        },
-    );
-
-    send_notifications(pool, &session.peer, notifications);
-
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Mark a channel message as read
 async fn acknowledge_channel_message(
-    request: proto::AckChannelMessage,
-    session: MessageContext,
+    _request: proto::AckChannelMessage,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let message_id = MessageId::from_proto(request.message_id);
-    let notifications = session
-        .db()
-        .await
-        .observe_channel_message(channel_id, session.user_id(), message_id)
-        .await?;
-    send_notifications(
-        &*session.connection_pool().await,
-        &session.peer,
-        notifications,
-    );
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Mark a buffer version as synced
@@ -4134,84 +3654,37 @@ async fn get_supermaven_api_key(
 
 /// Start receiving chat updates for a channel
 async fn join_channel_chat(
-    request: proto::JoinChannelChat,
-    response: Response<proto::JoinChannelChat>,
-    session: MessageContext,
+    _request: proto::JoinChannelChat,
+    _response: Response<proto::JoinChannelChat>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-
-    let db = session.db().await;
-    db.join_channel_chat(channel_id, session.connection_id, session.user_id())
-        .await?;
-    let messages = db
-        .get_channel_messages(channel_id, session.user_id(), MESSAGE_COUNT_PER_PAGE, None)
-        .await?;
-    response.send(proto::JoinChannelChatResponse {
-        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-        messages,
-    })?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Stop receiving chat updates for a channel
 async fn leave_channel_chat(
-    request: proto::LeaveChannelChat,
-    session: MessageContext,
+    _request: proto::LeaveChannelChat,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    session
-        .db()
-        .await
-        .leave_channel_chat(channel_id, session.connection_id, session.user_id())
-        .await?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Retrieve the chat history for a channel
 async fn get_channel_messages(
-    request: proto::GetChannelMessages,
-    response: Response<proto::GetChannelMessages>,
-    session: MessageContext,
+    _request: proto::GetChannelMessages,
+    _response: Response<proto::GetChannelMessages>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let channel_id = ChannelId::from_proto(request.channel_id);
-    let messages = session
-        .db()
-        .await
-        .get_channel_messages(
-            channel_id,
-            session.user_id(),
-            MESSAGE_COUNT_PER_PAGE,
-            Some(MessageId::from_proto(request.before_message_id)),
-        )
-        .await?;
-    response.send(proto::GetChannelMessagesResponse {
-        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-        messages,
-    })?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Retrieve specific chat messages
 async fn get_channel_messages_by_id(
-    request: proto::GetChannelMessagesById,
-    response: Response<proto::GetChannelMessagesById>,
-    session: MessageContext,
+    _request: proto::GetChannelMessagesById,
+    _response: Response<proto::GetChannelMessagesById>,
+    _session: MessageContext,
 ) -> Result<()> {
-    let message_ids = request
-        .message_ids
-        .iter()
-        .map(|id| MessageId::from_proto(*id))
-        .collect::<Vec<_>>();
-    let messages = session
-        .db()
-        .await
-        .get_channel_messages_by_id(session.user_id(), &message_ids)
-        .await?;
-    response.send(proto::GetChannelMessagesResponse {
-        done: messages.len() < MESSAGE_COUNT_PER_PAGE,
-        messages,
-    })?;
-    Ok(())
+    Err(anyhow!("chat has been removed in the latest version of Zed").into())
 }
 
 /// Retrieve the current users notifications
@@ -4255,139 +3728,6 @@ async fn mark_notification_as_read(
         notifications,
     );
     response.send(proto::Ack {})?;
-    Ok(())
-}
-
-/// Get the current users information
-async fn get_private_user_info(
-    _request: proto::GetPrivateUserInfo,
-    response: Response<proto::GetPrivateUserInfo>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let metrics_id = db.get_user_metrics_id(session.user_id()).await?;
-    let user = db
-        .get_user_by_id(session.user_id())
-        .await?
-        .context("user not found")?;
-    let flags = db.get_user_flags(session.user_id()).await?;
-
-    response.send(proto::GetPrivateUserInfoResponse {
-        metrics_id,
-        staff: user.admin,
-        flags,
-        accepted_tos_at: user.accepted_tos_at.map(|t| t.and_utc().timestamp() as u64),
-    })?;
-    Ok(())
-}
-
-/// Accept the terms of service (tos) on behalf of the current user
-async fn accept_terms_of_service(
-    _request: proto::AcceptTermsOfService,
-    response: Response<proto::AcceptTermsOfService>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let accepted_tos_at = Utc::now();
-    db.set_user_accepted_tos_at(session.user_id(), Some(accepted_tos_at.naive_utc()))
-        .await?;
-
-    response.send(proto::AcceptTermsOfServiceResponse {
-        accepted_tos_at: accepted_tos_at.timestamp() as u64,
-    })?;
-
-    // When the user accepts the terms of service, we want to refresh their LLM
-    // token to grant access.
-    session
-        .peer
-        .send(session.connection_id, proto::RefreshLlmToken {})?;
-
-    Ok(())
-}
-
-async fn get_llm_api_token(
-    _request: proto::GetLlmToken,
-    response: Response<proto::GetLlmToken>,
-    session: MessageContext,
-) -> Result<()> {
-    let db = session.db().await;
-
-    let flags = db.get_user_flags(session.user_id()).await?;
-
-    let user_id = session.user_id();
-    let user = db
-        .get_user_by_id(user_id)
-        .await?
-        .with_context(|| format!("user {user_id} not found"))?;
-
-    if user.accepted_tos_at.is_none() {
-        Err(anyhow!("terms of service not accepted"))?
-    }
-
-    let stripe_client = session
-        .app_state
-        .stripe_client
-        .as_ref()
-        .context("failed to retrieve Stripe client")?;
-
-    let stripe_billing = session
-        .app_state
-        .stripe_billing
-        .as_ref()
-        .context("failed to retrieve Stripe billing object")?;
-
-    let billing_customer = if let Some(billing_customer) =
-        db.get_billing_customer_by_user_id(user.id).await?
-    {
-        billing_customer
-    } else {
-        let customer_id = stripe_billing
-            .find_or_create_customer_by_email(user.email_address.as_deref())
-            .await?;
-
-        find_or_create_billing_customer(&session.app_state, stripe_client.as_ref(), &customer_id)
-            .await?
-            .context("billing customer not found")?
-    };
-
-    let billing_subscription =
-        if let Some(billing_subscription) = db.get_active_billing_subscription(user.id).await? {
-            billing_subscription
-        } else {
-            let stripe_customer_id =
-                StripeCustomerId(billing_customer.stripe_customer_id.clone().into());
-
-            let stripe_subscription = stripe_billing
-                .subscribe_to_zed_free(stripe_customer_id)
-                .await?;
-
-            db.create_billing_subscription(&db::CreateBillingSubscriptionParams {
-                billing_customer_id: billing_customer.id,
-                kind: Some(SubscriptionKind::ZedFree),
-                stripe_subscription_id: stripe_subscription.id.to_string(),
-                stripe_subscription_status: stripe_subscription.status.into(),
-                stripe_cancellation_reason: None,
-                stripe_current_period_start: Some(stripe_subscription.current_period_start),
-                stripe_current_period_end: Some(stripe_subscription.current_period_end),
-            })
-            .await?
-        };
-
-    let billing_preferences = db.get_billing_preferences(user.id).await?;
-
-    let token = LlmTokenClaims::create(
-        &user,
-        session.is_staff(),
-        billing_customer,
-        billing_preferences,
-        &flags,
-        billing_subscription,
-        session.system_id.clone(),
-        &session.app_state.config,
-    )?;
-    response.send(proto::GetLlmTokenResponse { token })?;
     Ok(())
 }
 
@@ -4484,7 +3824,6 @@ fn build_update_user_channels(channels: &ChannelsForUser) -> proto::UpdateUserCh
             })
             .collect(),
         observed_channel_buffer_version: channels.observed_buffer_versions.clone(),
-        observed_channel_message_id: channels.observed_channel_messages.clone(),
     }
 }
 
@@ -4496,7 +3835,6 @@ fn build_channels_update(channels: ChannelsForUser) -> proto::UpdateChannels {
     }
 
     update.latest_channel_buffer_versions = channels.latest_buffer_versions;
-    update.latest_channel_message_ids = channels.latest_channel_messages;
 
     for (channel_id, participants) in channels.channel_participants {
         update

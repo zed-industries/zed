@@ -1,15 +1,12 @@
 mod acp;
-mod active_thread;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
 mod agent_panel;
 mod buffer_codegen;
-mod burn_mode_tooltip;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
-mod debug;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -21,40 +18,37 @@ mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
-mod thread_history;
-mod tool_compatibility;
 mod ui;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::{Thread, ThreadId};
+use agent::ThreadId;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
-use gpui::{Action, App, Entity, actions};
+use gpui::{Action, App, Entity, SharedString, actions};
 use language::LanguageRegistry;
 use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
+use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::any::TypeId;
 
-pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
-pub use ui::preview::{all_agent_previews, get_agent_preview};
 use zed_actions;
 
 actions!(
@@ -64,14 +58,18 @@ actions!(
         NewTextThread,
         /// Toggles the context picker interface for adding files, symbols, or other context.
         ToggleContextPicker,
+        /// Toggles the menu to create new agent threads.
+        ToggleNewThreadMenu,
         /// Toggles the navigation menu for switching between threads and views.
         ToggleNavigationMenu,
         /// Toggles the options menu for agent settings and preferences.
         ToggleOptionsMenu,
         /// Deletes the recently opened thread from history.
         DeleteRecentlyOpenThread,
-        /// Toggles the profile selector for switching between agent profiles.
+        /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Cycles through available session modes.
+        CycleModeSelector,
         /// Removes all added context from the current conversation.
         RemoveAllContext,
         /// Expands the message editor to full size.
@@ -112,6 +110,12 @@ actions!(
         RejectAll,
         /// Keeps all suggestions or changes.
         KeepAll,
+        /// Allow this operation only this time.
+        AllowOnce,
+        /// Allow this operation and remember the choice.
+        AllowAlways,
+        /// Reject this operation only this time.
+        RejectOnce,
         /// Follows the agent's suggestions.
         Follow,
         /// Resets the trial upsell notification.
@@ -126,6 +130,12 @@ actions!(
         ToggleBurnMode,
     ]
 );
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Action)]
+#[action(namespace = agent)]
+#[action(deprecated_aliases = ["assistant::QuoteSelection"])]
+/// Quotes the current selection in the agent panel's message editor.
+pub struct QuoteSelection;
 
 /// Creates a new conversation thread, optionally based on an existing thread.
 #[derive(Default, Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -145,21 +155,57 @@ pub struct NewExternalAgentThread {
     agent: Option<ExternalAgent>,
 }
 
-#[derive(Default, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct NewNativeAgentThreadFromSummary {
+    from_session_id: agent_client_protocol::SessionId,
+}
+
+// TODO unify this with AgentType
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum ExternalAgent {
     #[default]
     Gemini,
     ClaudeCode,
     NativeAgent,
+    Custom {
+        name: SharedString,
+        command: AgentServerCommand,
+    },
+}
+
+fn placeholder_command() -> AgentServerCommand {
+    AgentServerCommand {
+        path: "/placeholder".into(),
+        args: vec![],
+        env: None,
+    }
 }
 
 impl ExternalAgent {
-    pub fn server(&self, fs: Arc<dyn fs::Fs>) -> Rc<dyn agent_servers::AgentServer> {
+    fn name(&self) -> &'static str {
         match self {
-            ExternalAgent::Gemini => Rc::new(agent_servers::Gemini),
-            ExternalAgent::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
-            ExternalAgent::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs)),
+            Self::NativeAgent => "zed",
+            Self::Gemini => "gemini-cli",
+            Self::ClaudeCode => "claude-code",
+            Self::Custom { .. } => "custom",
+        }
+    }
+
+    pub fn server(
+        &self,
+        fs: Arc<dyn fs::Fs>,
+        history: Entity<agent2::HistoryStore>,
+    ) -> Rc<dyn agent_servers::AgentServer> {
+        match self {
+            Self::Gemini => Rc::new(agent_servers::Gemini),
+            Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
+            Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
+            Self::Custom { name, command: _ } => {
+                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
+            }
         }
     }
 }
@@ -183,14 +229,12 @@ impl ManageProfiles {
 
 #[derive(Clone)]
 pub(crate) enum ModelUsageContext {
-    Thread(Entity<Thread>),
     InlineAssistant,
 }
 
 impl ModelUsageContext {
     pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
         match self {
-            Self::Thread(thread) => thread.read(cx).configured_model(),
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }
@@ -235,13 +279,7 @@ pub fn init(
         client.telemetry().clone(),
         cx,
     );
-    terminal_inline_assistant::init(
-        fs.clone(),
-        prompt_builder.clone(),
-        client.telemetry().clone(),
-        cx,
-    );
-    indexed_docs::init(cx);
+    terminal_inline_assistant::init(fs.clone(), prompt_builder, client.telemetry().clone(), cx);
     cx.observe_new(move |workspace, window, cx| {
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
@@ -306,8 +344,7 @@ fn update_command_palette_filter(cx: &mut App) {
             ];
             filter.show_action_types(edit_prediction_actions.iter());
 
-            filter
-                .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
+            filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
     });
 }
@@ -320,7 +357,7 @@ fn init_language_model_settings(cx: &mut App) {
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
         |_, event: &language_model::Event, cx| match event {
-            language_model::Event::ProviderStateChanged
+            language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
             | language_model::Event::RemovedProvider(_) => {
                 update_active_language_model_from_settings(cx);
@@ -387,7 +424,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
 
     cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
-        let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
             if is_enabled {
                 slash_command_registry.register_command(
@@ -407,12 +443,6 @@ fn register_slash_commands(cx: &mut App) {
 fn update_slash_commands_from_settings(cx: &mut App) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
     let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.docs.enabled {
-        slash_command_registry.register_command(assistant_slash_commands::DocsSlashCommand, true);
-    } else {
-        slash_command_registry.unregister_command(assistant_slash_commands::DocsSlashCommand);
-    }
 
     if settings.cargo_workspace.enabled {
         slash_command_registry

@@ -125,7 +125,7 @@
   {
     "context": "Workspace || Editor",
     "bindings": {
-      "alt-f12": "terminal_panel::ToggleFocus",
+      "alt-f12": "terminal_panel::Toggle",
       "ctrl-shift-k": "git::Push"
     }
   },

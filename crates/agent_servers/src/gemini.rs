@@ -1,32 +1,26 @@
-use std::path::Path;
 use std::rc::Rc;
+use std::{any::Any, path::Path};
 
-use crate::{AgentServer, AgentServerCommand};
-use acp_thread::{AgentConnection, LoadError};
-use anyhow::Result;
-use gpui::{Entity, Task};
-use project::Project;
+use crate::{AgentServer, AgentServerDelegate};
+use acp_thread::AgentConnection;
+use anyhow::{Context as _, Result};
+use client::ProxySettings;
+use collections::HashMap;
+use gpui::{App, AppContext, SharedString, Task};
+use language_models::provider::google::GoogleLanguageModelProvider;
+use project::agent_server_store::GEMINI_NAME;
 use settings::SettingsStore;
-use ui::App;
-
-use crate::AllAgentServersSettings;
 
 #[derive(Clone)]
 pub struct Gemini;
 
-const ACP_ARG: &str = "--experimental-acp";
-
 impl AgentServer for Gemini {
-    fn name(&self) -> &'static str {
-        "Gemini"
+    fn telemetry_id(&self) -> &'static str {
+        "gemini-cli"
     }
 
-    fn empty_state_headline(&self) -> &'static str {
-        "Welcome to Gemini"
-    }
-
-    fn empty_state_message(&self) -> &'static str {
-        "Ask questions, edit files, run commands.\nBe specific for the best results."
+    fn name(&self) -> SharedString {
+        "Gemini CLI".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -35,66 +29,73 @@ impl AgentServer for Gemini {
 
     fn connect(
         &self,
-        root_dir: &Path,
-        project: &Entity<Project>,
+        root_dir: Option<&Path>,
+        delegate: AgentServerDelegate,
         cx: &mut App,
-    ) -> Task<Result<Rc<dyn AgentConnection>>> {
-        let project = project.clone();
-        let root_dir = root_dir.to_path_buf();
-        let server_name = self.name();
+    ) -> Task<Result<(Rc<dyn AgentConnection>, Option<task::SpawnInTerminal>)>> {
+        let name = self.name();
+        let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
+        let is_remote = delegate.project.read(cx).is_via_remote_server();
+        let store = delegate.store.downgrade();
+        let proxy_url = cx.read_global(|settings: &SettingsStore, _| {
+            settings.get::<ProxySettings>(None).proxy.clone()
+        });
+        let default_mode = self.default_mode(cx);
+
         cx.spawn(async move |cx| {
-            let settings = cx.read_global(|settings: &SettingsStore, _| {
-                settings.get::<AllAgentServersSettings>(None).gemini.clone()
-            })?;
-
-            let Some(command) =
-                AgentServerCommand::resolve("gemini", &[ACP_ARG], None, settings, &project, cx).await
-            else {
-                anyhow::bail!("Failed to find gemini binary");
-            };
-
-            let result = crate::acp::connect(server_name, command.clone(), &root_dir, cx).await;
-            if result.is_err() {
-                let version_fut = util::command::new_smol_command(&command.path)
-                    .args(command.args.iter())
-                    .arg("--version")
-                    .kill_on_drop(true)
-                    .output();
-
-                let help_fut = util::command::new_smol_command(&command.path)
-                    .args(command.args.iter())
-                    .arg("--help")
-                    .kill_on_drop(true)
-                    .output();
-
-                let (version_output, help_output) = futures::future::join(version_fut, help_fut).await;
-
-                let current_version = String::from_utf8(version_output?.stdout)?;
-                let supported = String::from_utf8(help_output?.stdout)?.contains(ACP_ARG);
-
-                if !supported {
-                    return Err(LoadError::Unsupported {
-                        error_message: format!(
-                            "Your installed version of Gemini {} doesn't support the Agentic Coding Protocol (ACP).",
-                            current_version
-                        ).into(),
-                        upgrade_message: "Upgrade Gemini to Latest".into(),
-                        upgrade_command: "npm install -g @google/gemini-cli@latest".into(),
-                    }.into())
-                }
+            let mut extra_env = HashMap::default();
+            if let Some(api_key) = cx.update(GoogleLanguageModelProvider::api_key)?.await.ok() {
+                extra_env.insert("GEMINI_API_KEY".into(), api_key.key);
             }
-            result
+            let (mut command, root_dir, login) = store
+                .update(cx, |store, cx| {
+                    let agent = store
+                        .get_external_agent(&GEMINI_NAME.into())
+                        .context("Gemini CLI is not registered")?;
+                    anyhow::Ok(agent.get_command(
+                        root_dir.as_deref(),
+                        extra_env,
+                        delegate.status_tx,
+                        delegate.new_version_available,
+                        &mut cx.to_async(),
+                    ))
+                })??
+                .await?;
+
+            // Add proxy flag if proxy settings are configured in Zed and not in the args
+            if let Some(proxy_url_value) = &proxy_url
+                && !command.args.iter().any(|arg| arg.contains("--proxy"))
+            {
+                command.args.push("--proxy".into());
+                command.args.push(proxy_url_value.clone());
+            }
+
+            let connection = crate::acp::connect(
+                name,
+                command,
+                root_dir.as_ref(),
+                default_mode,
+                is_remote,
+                cx,
+            )
+            .await?;
+            Ok((connection, login))
         })
+    }
+
+    fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
+        self
     }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use project::agent_server_store::AgentServerCommand;
+
     use super::*;
-    use crate::AgentServerCommand;
     use std::path::Path;
 
-    crate::common_e2e_tests!(Gemini, allow_option_id = "proceed_once");
+    crate::common_e2e_tests!(async |_, _, _| Gemini, allow_option_id = "proceed_once");
 
     pub fn local_command() -> AgentServerCommand {
         let cli_path = Path::new(env!("CARGO_MANIFEST_DIR"))

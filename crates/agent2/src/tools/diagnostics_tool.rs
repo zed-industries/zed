@@ -63,15 +63,19 @@ impl AgentTool for DiagnosticsTool {
     type Input = DiagnosticsToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "diagnostics".into()
+    fn name() -> &'static str {
+        "diagnostics"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Some(path) = input.ok().and_then(|input| match input.path {
             Some(path) if !path.is_empty() => Some(path),
             _ => None,

@@ -22,6 +22,7 @@ test-support = ["collections/test-support", "gpui/test-support"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+audio.workspace = true
 collections.workspace = true
 cpal.workspace = true
 futures.workspace = true
@@ -34,6 +35,10 @@ log.workspace = true
 nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
+rodio = { workspace = true, features = ["wav_output", "recording"] }
+serde.workspace = true
+serde_urlencoded.workspace = true
+settings.workspace = true
 smallvec.workspace = true
 tokio-tungstenite.workspace = true
 util.workspace = true

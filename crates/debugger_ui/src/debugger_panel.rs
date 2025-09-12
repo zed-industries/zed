@@ -13,11 +13,8 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
-use dap::{
-    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
-    client::SessionId, debugger_settings::DebuggerSettings,
-};
 use dap::{DapRegistry, StartDebuggingRequestArguments};
+use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::Editor;
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
@@ -45,23 +42,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::ToggleFocus;
-
-pub enum DebugPanelEvent {
-    Exited(SessionId),
-    Terminated(SessionId),
-    Stopped {
-        client_id: SessionId,
-        event: StoppedEvent,
-        go_to_stack_frame: bool,
-    },
-    Thread((SessionId, ThreadEvent)),
-    Continued((SessionId, ContinuedEvent)),
-    Output((SessionId, OutputEvent)),
-    Module((SessionId, ModuleEvent)),
-    LoadedSource((SessionId, LoadedSourceEvent)),
-    ClientShutdown(SessionId),
-    CapabilitiesChanged(SessionId),
-}
 
 pub struct DebugPanel {
     size: Pixels,
@@ -257,7 +237,7 @@ impl DebugPanel {
                                         .as_ref()
                                         .map(|entity| entity.downgrade()),
                                     task_context: task_context.clone(),
-                                    worktree_id: worktree_id,
+                                    worktree_id,
                                 });
                             };
                             running.resolve_scenario(
@@ -386,10 +366,10 @@ impl DebugPanel {
             return;
         };
 
-        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let dap_store_handle = self.project.read(cx).dap_store();
         let label = curr_session.read(cx).label();
         let quirks = curr_session.read(cx).quirks();
-        let adapter = curr_session.read(cx).adapter().clone();
+        let adapter = curr_session.read(cx).adapter();
         let binary = curr_session.read(cx).binary().cloned().unwrap();
         let task_context = curr_session.read(cx).task_context().clone();
 
@@ -447,9 +427,9 @@ impl DebugPanel {
             return;
         };
 
-        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let dap_store_handle = self.project.read(cx).dap_store();
         let label = self.label_for_child_session(&parent_session, request, cx);
-        let adapter = parent_session.read(cx).adapter().clone();
+        let adapter = parent_session.read(cx).adapter();
         let quirks = parent_session.read(cx).quirks();
         let Some(mut binary) = parent_session.read(cx).binary().cloned() else {
             log::error!("Attempted to start a child-session without a binary");
@@ -530,10 +510,9 @@ impl DebugPanel {
                     .active_session
                     .as_ref()
                     .map(|session| session.entity_id())
+                    && active_session_id == entity_id
                 {
-                    if active_session_id == entity_id {
-                        this.active_session = this.sessions_with_children.keys().next().cloned();
-                    }
+                    this.active_session = this.sessions_with_children.keys().next().cloned();
                 }
                 cx.notify()
             })
@@ -693,7 +672,7 @@ impl DebugPanel {
                                                 )
                                                 .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _window, cx| {
                                                         this.pause_thread(cx);
                                                     },
@@ -719,7 +698,7 @@ impl DebugPanel {
                                                 )
                                                 .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _window, cx| this.continue_thread(cx),
                                                 ))
                                                 .disabled(thread_status != ThreadStatus::Stopped)
@@ -742,7 +721,7 @@ impl DebugPanel {
                                         IconButton::new("debug-step-over", IconName::ArrowRight)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     this.step_over(cx);
                                                 },
@@ -768,7 +747,7 @@ impl DebugPanel {
                                         )
                                         .icon_size(IconSize::Small)
                                         .on_click(window.listener_for(
-                                            &running_state,
+                                            running_state,
                                             |this, _, _window, cx| {
                                                 this.step_in(cx);
                                             },
@@ -791,7 +770,7 @@ impl DebugPanel {
                                         IconButton::new("debug-step-out", IconName::ArrowUpRight)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     this.step_out(cx);
                                                 },
@@ -815,7 +794,7 @@ impl DebugPanel {
                                         IconButton::new("debug-restart", IconName::RotateCcw)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, window, cx| {
                                                     this.rerun_session(window, cx);
                                                 },
@@ -837,7 +816,7 @@ impl DebugPanel {
                                         IconButton::new("debug-stop", IconName::Power)
                                             .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     if this.session().read(cx).is_building() {
                                                         this.session().update(cx, |session, cx| {
@@ -892,7 +871,7 @@ impl DebugPanel {
                                                 )
                                                 .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _, cx| {
                                                         this.detach_client(cx);
                                                     },
@@ -933,7 +912,6 @@ impl DebugPanel {
                                     .cloned(),
                                 |this, running_state| {
                                     this.children({
-                                        let running_state = running_state.clone();
                                         let threads =
                                             running_state.update(cx, |running_state, cx| {
                                                 let session = running_state.session();
@@ -1160,7 +1138,7 @@ impl DebugPanel {
                         workspace
                             .project()
                             .read(cx)
-                            .project_path_for_absolute_path(&path, cx)
+                            .project_path_for_absolute_path(path, cx)
                             .context(
                                 "Couldn't get project path for .zed/debug.json in active worktree",
                             )
@@ -1302,10 +1280,10 @@ impl DebugPanel {
         cx: &mut Context<'_, Self>,
     ) -> Option<SharedString> {
         let adapter = parent_session.read(cx).adapter();
-        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter) {
-            if let Some(label) = adapter.label_for_child_session(request) {
-                return Some(label.into());
-            }
+        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter)
+            && let Some(label) = adapter.label_for_child_session(request)
+        {
+            return Some(label.into());
         }
         None
     }
@@ -1409,7 +1387,6 @@ async fn register_session_inner(
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
-impl EventEmitter<DebugPanelEvent> for DebugPanel {}
 
 impl Focusable for DebugPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1646,7 +1623,6 @@ impl Render for DebugPanel {
                 }
             })
             .on_action({
-                let this = this.clone();
                 move |_: &ToggleSessionPicker, window, cx| {
                     this.update(cx, |this, cx| {
                         this.toggle_session_picker(window, cx);

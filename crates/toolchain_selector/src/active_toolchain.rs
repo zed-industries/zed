@@ -5,8 +5,8 @@ use gpui::{
     AsyncWindowContext, Context, Entity, IntoElement, ParentElement, Render, Subscription, Task,
     WeakEntity, Window, div,
 };
-use language::{Buffer, BufferEvent, LanguageName, Toolchain};
-use project::{Project, ProjectPath, WorktreeId, toolchain_store::ToolchainStoreEvent};
+use language::{Buffer, BufferEvent, LanguageName, Toolchain, ToolchainScope};
+use project::{Project, ProjectPath, Toolchains, WorktreeId, toolchain_store::ToolchainStoreEvent};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
 use util::maybe;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
@@ -38,7 +38,6 @@ impl ActiveToolchain {
                         .ok()
                         .flatten();
                     if let Some(editor) = editor {
-                        this.active_toolchain.take();
                         this.update_lister(editor, window, cx);
                     }
                 },
@@ -70,15 +69,15 @@ impl ActiveToolchain {
                     .read_with(cx, |this, _| Some(this.language()?.name()))
                     .ok()
                     .flatten()?;
-                let term = workspace
+                let meta = workspace
                     .update(cx, |workspace, cx| {
                         let languages = workspace.project().read(cx).languages();
-                        Project::toolchain_term(languages.clone(), language_name.clone())
+                        Project::toolchain_metadata(languages.clone(), language_name.clone())
                     })
                     .ok()?
                     .await?;
                 let _ = this.update(cx, |this, cx| {
-                    this.term = term;
+                    this.term = meta.term;
                     cx.notify();
                 });
                 let (worktree_id, path) = active_file
@@ -121,31 +120,20 @@ impl ActiveToolchain {
         cx: &mut Context<Self>,
     ) {
         let editor = editor.read(cx);
-        if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-            if let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx)) {
-                if self
-                    .active_buffer
-                    .as_ref()
-                    .is_some_and(|(old_worktree_id, old_buffer, _)| {
-                        (old_worktree_id, old_buffer.entity_id())
-                            == (&worktree_id, buffer.entity_id())
-                    })
-                {
-                    return;
-                }
-
-                let subscription = cx.subscribe_in(
-                    &buffer,
-                    window,
-                    |this, _, event: &BufferEvent, window, cx| {
-                        if matches!(event, BufferEvent::LanguageChanged) {
-                            this._update_toolchain_task = Self::spawn_tracker_task(window, cx);
-                        }
-                    },
-                );
-                self.active_buffer = Some((worktree_id, buffer.downgrade(), subscription));
-                self._update_toolchain_task = Self::spawn_tracker_task(window, cx);
-            }
+        if let Some((_, buffer, _)) = editor.active_excerpt(cx)
+            && let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx))
+        {
+            let subscription = cx.subscribe_in(
+                &buffer,
+                window,
+                |this, _, event: &BufferEvent, window, cx| {
+                    if matches!(event, BufferEvent::LanguageChanged) {
+                        this._update_toolchain_task = Self::spawn_tracker_task(window, cx);
+                    }
+                },
+            );
+            self.active_buffer = Some((worktree_id, buffer.downgrade(), subscription));
+            self._update_toolchain_task = Self::spawn_tracker_task(window, cx);
         }
 
         cx.notify();
@@ -182,7 +170,11 @@ impl ActiveToolchain {
                 let project = workspace
                     .read_with(cx, |this, _| this.project().clone())
                     .ok()?;
-                let (toolchains, relative_path) = cx
+                let Toolchains {
+                    toolchains,
+                    root_path: relative_path,
+                    user_toolchains,
+                } = cx
                     .update(|_, cx| {
                         project.read(cx).available_toolchains(
                             ProjectPath {
@@ -195,8 +187,20 @@ impl ActiveToolchain {
                     })
                     .ok()?
                     .await?;
-                if let Some(toolchain) = toolchains.toolchains.first() {
-                    // Since we don't have a selected toolchain, pick one for user here.
+                // Since we don't have a selected toolchain, pick one for user here.
+                let default_choice = user_toolchains
+                    .iter()
+                    .find_map(|(scope, toolchains)| {
+                        if scope == &ToolchainScope::Global {
+                            // Ignore global toolchains when making a default choice. They're unlikely to be the right choice.
+                            None
+                        } else {
+                            toolchains.first()
+                        }
+                    })
+                    .or_else(|| toolchains.toolchains.first())
+                    .cloned();
+                if let Some(toolchain) = &default_choice {
                     workspace::WORKSPACE_DB
                         .set_toolchain(
                             workspace_id,
@@ -221,7 +225,7 @@ impl ActiveToolchain {
                         .await;
                 }
 
-                toolchains.toolchains.first().cloned()
+                default_choice
             }
         })
     }

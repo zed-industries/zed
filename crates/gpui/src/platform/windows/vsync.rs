@@ -94,12 +94,12 @@ impl VSyncProvider {
         // DwmFlush and DCompositionWaitForCompositorClock returns very early
         // instead of waiting until vblank when the monitor goes to sleep or is
         // unplugged (nothing to present due to desktop occlusion). We use 1ms as
-        // a threshhold for the duration of the wait functions and fallback to
+        // a threshold for the duration of the wait functions and fallback to
         // Sleep() if it returns before that. This could happen during normal
         // operation for the first call after the vsync thread becomes non-idle,
         // but it shouldn't happen often.
         if !wait_succeeded || elapsed < VSYNC_INTERVAL_THRESHOLD {
-            log::warn!("VSyncProvider::wait_for_vsync() took shorter than expected");
+            log::trace!("VSyncProvider::wait_for_vsync() took less time than expected");
             std::thread::sleep(self.interval);
         }
     }

@@ -73,11 +73,8 @@ impl AcpModelPickerDelegate {
                     this.update_in(cx, |this, window, cx| {
                         this.delegate.models = models.ok();
                         this.delegate.selected_model = selected_model.ok();
-                        this.delegate.update_matches(this.query(cx), window, cx)
-                    })?
-                    .await;
-
-                    Ok(())
+                        this.refresh(window, cx)
+                    })
                 }
 
                 refresh(&this, &session_id, cx).await.log_err();
@@ -195,8 +192,10 @@ impl PickerDelegate for AcpModelPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<Self>>) {
-        cx.emit(DismissEvent);
+    fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        cx.defer_in(window, |picker, window, cx| {
+            picker.set_query("", window, cx);
+        });
     }
 
     fn render_match(
@@ -330,7 +329,7 @@ async fn fuzzy_search(
             .collect::<Vec<_>>();
         let mut matches = match_strings(
             &candidates,
-            &query,
+            query,
             false,
             true,
             100,

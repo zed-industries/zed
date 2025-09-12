@@ -262,7 +262,7 @@ impl MemoryView {
         cx: &mut Context<Self>,
     ) {
         use parse_int::parse;
-        let Ok(as_address) = parse::<u64>(&memory_reference) else {
+        let Ok(as_address) = parse::<u64>(memory_reference) else {
             return;
         };
         let access_size = evaluate_name
@@ -428,14 +428,14 @@ impl MemoryView {
         if !self.is_writing_memory {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);
-                this.set_placeholder_text("Write to Selected Memory Range", cx);
+                this.set_placeholder_text("Write to Selected Memory Range", window, cx);
             });
             self.is_writing_memory = true;
             self.query_editor.focus_handle(cx).focus(window);
         } else {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);
-                this.set_placeholder_text("Go to Memory Address / Expression", cx);
+                this.set_placeholder_text("Go to Memory Address / Expression", window, cx);
             });
             self.is_writing_memory = false;
         }
@@ -461,7 +461,7 @@ impl MemoryView {
             let data_breakpoint_info = this.data_breakpoint_info(context.clone(), None, cx);
             cx.spawn(async move |this, cx| {
                 if let Some(info) = data_breakpoint_info.await {
-                    let Some(data_id) = info.data_id.clone() else {
+                    let Some(data_id) = info.data_id else {
                         return;
                     };
                     _ = this.update(cx, |this, cx| {
@@ -931,7 +931,7 @@ impl Render for MemoryView {
                 v_flex()
                     .size_full()
                     .on_drag_move(cx.listener(|this, evt, _, _| {
-                        this.handle_memory_drag(&evt);
+                        this.handle_memory_drag(evt);
                     }))
                     .child(self.render_memory(cx).size_full())
                     .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {

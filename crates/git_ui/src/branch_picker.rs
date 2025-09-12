@@ -10,6 +10,8 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::git_store::Repository;
+use project::project_settings::ProjectSettings;
+use settings::Settings;
 use std::sync::Arc;
 use time::OffsetDateTime;
 use time_format::format_local_timestamp;
@@ -48,7 +50,7 @@ pub fn open(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let repository = workspace.project().read(cx).active_repository(cx).clone();
+    let repository = workspace.project().read(cx).active_repository(cx);
     let style = BranchListStyle::Modal;
     workspace.toggle_modal(window, cx, |window, cx| {
         BranchList::new(repository, style, rems(34.), window, cx)
@@ -122,10 +124,13 @@ impl BranchList {
                     all_branches.retain(|branch| !remote_upstreams.contains(&branch.ref_name));
 
                     all_branches.sort_by_key(|branch| {
-                        branch
-                            .most_recent_commit
-                            .as_ref()
-                            .map(|commit| 0 - commit.commit_timestamp)
+                        (
+                            !branch.is_head, // Current branch (is_head=true) comes first
+                            branch
+                                .most_recent_commit
+                                .as_ref()
+                                .map(|commit| 0 - commit.commit_timestamp),
+                        )
                     });
 
                     all_branches
@@ -144,7 +149,7 @@ impl BranchList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = BranchListDelegate::new(repository.clone(), style);
+        let delegate = BranchListDelegate::new(repository, style);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
 
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| {
@@ -341,7 +346,6 @@ impl PickerDelegate for BranchListDelegate {
             };
             picker
                 .update(cx, |picker, _| {
-                    #[allow(clippy::nonminimal_bool)]
                     if !query.is_empty()
                         && !matches
                             .first()
@@ -450,9 +454,9 @@ impl PickerDelegate for BranchListDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let entry = &self.matches[ix];
+        let entry = &self.matches.get(ix)?;
 
-        let (commit_time, subject) = entry
+        let (commit_time, author_name, subject) = entry
             .branch
             .most_recent_commit
             .as_ref()
@@ -465,9 +469,10 @@ impl PickerDelegate for BranchListDelegate {
                     OffsetDateTime::now_utc(),
                     time_format::TimestampFormat::Relative,
                 );
-                (Some(formatted_time), Some(subject))
+                let author = commit.author_name.clone();
+                (Some(formatted_time), Some(author), Some(subject))
             })
-            .unwrap_or_else(|| (None, None));
+            .unwrap_or_else(|| (None, None, None));
 
         let icon = if let Some(default_branch) = self.default_branch.clone()
             && entry.is_new
@@ -548,7 +553,19 @@ impl PickerDelegate for BranchListDelegate {
                                         "based off the current branch".to_string()
                                     }
                                 } else {
-                                    subject.unwrap_or("no commits found".into()).to_string()
+                                    let show_author_name = ProjectSettings::get_global(cx)
+                                        .git
+                                        .branch_picker
+                                        .unwrap_or_default()
+                                        .show_author_name;
+
+                                    subject.map_or("no commits found".into(), |subject| {
+                                        if show_author_name && author_name.is_some() {
+                                            format!("{} • {}", author_name.unwrap(), subject)
+                                        } else {
+                                            subject.to_string()
+                                        }
+                                    })
                                 };
                                 Label::new(message)
                                     .size(LabelSize::Small)

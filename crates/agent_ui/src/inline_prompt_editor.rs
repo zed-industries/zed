@@ -1,29 +1,18 @@
-use crate::agent_model_selector::AgentModelSelector;
-use crate::buffer_codegen::BufferCodegen;
-use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
-use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
-use crate::message_editor::{ContextCreasesAddon, extract_message_creases, insert_message_creases};
-use crate::terminal_codegen::TerminalCodegen;
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
-use crate::{RemoveAllContext, ToggleContextPicker};
 use agent::{
     context_store::ContextStore,
     thread_store::{TextThreadStore, ThreadStore},
 };
-use client::ErrorExt;
 use collections::VecDeque;
-use db::kvp::Dismissable;
 use editor::actions::Paste;
 use editor::display_map::EditorMargins;
 use editor::{
     ContextMenuOptions, Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, MultiBuffer,
     actions::{MoveDown, MoveUp},
 };
-use feature_flags::{FeatureFlagAppExt as _, ZedProFeatureFlag};
 use fs::Fs;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
-    Focusable, FontWeight, Subscription, TextStyle, WeakEntity, Window, anchored, deferred, point,
+    AnyElement, App, ClipboardEntry, Context, CursorStyle, Entity, EventEmitter, FocusHandle,
+    Focusable, Subscription, TextStyle, WeakEntity, Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use parking_lot::Mutex;
@@ -33,11 +22,18 @@ use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
-use ui::{
-    CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, PopoverMenuHandle, Tooltip, prelude::*,
-};
+use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::Workspace;
 use zed_actions::agent::ToggleModelSelector;
+
+use crate::agent_model_selector::AgentModelSelector;
+use crate::buffer_codegen::BufferCodegen;
+use crate::context_picker::{ContextPicker, ContextPickerCompletionProvider};
+use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
+use crate::message_editor::{ContextCreasesAddon, extract_message_creases, insert_message_creases};
+use crate::terminal_codegen::TerminalCodegen;
+use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, ModelUsageContext};
+use crate::{RemoveAllContext, ToggleContextPicker};
 
 pub struct PromptEditor<T> {
     pub editor: Entity<Editor>,
@@ -75,7 +71,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                 let codegen = codegen.read(cx);
 
                 if codegen.alternative_count(cx) > 1 {
-                    buttons.push(self.render_cycle_controls(&codegen, cx));
+                    buttons.push(self.render_cycle_controls(codegen, cx));
                 }
 
                 let editor_margins = editor_margins.lock();
@@ -93,8 +89,8 @@ impl<T: 'static> Render for PromptEditor<T> {
         };
 
         let bottom_padding = match &self.mode {
-            PromptEditorMode::Buffer { .. } => Pixels::from(0.),
-            PromptEditorMode::Terminal { .. } => Pixels::from(8.0),
+            PromptEditorMode::Buffer { .. } => rems_from_px(2.0),
+            PromptEditorMode::Terminal { .. } => rems_from_px(8.0),
         };
 
         buttons.extend(self.render_buttons(window, cx));
@@ -144,47 +140,16 @@ impl<T: 'static> Render for PromptEditor<T> {
                                 };
 
                                 let error_message = SharedString::from(error.to_string());
-                                if error.error_code() == proto::ErrorCode::RateLimitExceeded
-                                    && cx.has_flag::<ZedProFeatureFlag>()
-                                {
-                                    el.child(
-                                        v_flex()
-                                            .child(
-                                                IconButton::new(
-                                                    "rate-limit-error",
-                                                    IconName::XCircle,
-                                                )
-                                                .toggle_state(self.show_rate_limit_notice)
-                                                .shape(IconButtonShape::Square)
-                                                .icon_size(IconSize::Small)
-                                                .on_click(
-                                                    cx.listener(Self::toggle_rate_limit_notice),
-                                                ),
-                                            )
-                                            .children(self.show_rate_limit_notice.then(|| {
-                                                deferred(
-                                                    anchored()
-                                                        .position_mode(
-                                                            gpui::AnchoredPositionMode::Local,
-                                                        )
-                                                        .position(point(px(0.), px(24.)))
-                                                        .anchor(gpui::Corner::TopLeft)
-                                                        .child(self.render_rate_limit_notice(cx)),
-                                                )
-                                            })),
-                                    )
-                                } else {
-                                    el.child(
-                                        div()
-                                            .id("error")
-                                            .tooltip(Tooltip::text(error_message))
-                                            .child(
-                                                Icon::new(IconName::XCircle)
-                                                    .size(IconSize::Small)
-                                                    .color(Color::Error),
-                                            ),
-                                    )
-                                }
+                                el.child(
+                                    div()
+                                        .id("error")
+                                        .tooltip(Tooltip::text(error_message))
+                                        .child(
+                                            Icon::new(IconName::XCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Error),
+                                        ),
+                                )
                             }),
                     )
                     .child(
@@ -264,7 +229,7 @@ impl<T: 'static> PromptEditor<T> {
         self.editor = cx.new(|cx| {
             let mut editor = Editor::auto_height(1, Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text("Add a prompt…", window, cx);
             editor.set_text(prompt, window, cx);
             insert_message_creases(
                 &mut editor,
@@ -307,20 +272,31 @@ impl<T: 'static> PromptEditor<T> {
     }
 
     fn paste(&mut self, _: &Paste, _window: &mut Window, cx: &mut Context<Self>) {
-        crate::active_thread::attach_pasted_images_as_context(&self.context_store, cx);
-    }
+        let images = cx
+            .read_from_clipboard()
+            .map(|item| {
+                item.into_entries()
+                    .filter_map(|entry| {
+                        if let ClipboardEntry::Image(image) = entry {
+                            Some(image)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
-    fn toggle_rate_limit_notice(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.show_rate_limit_notice = !self.show_rate_limit_notice;
-        if self.show_rate_limit_notice {
-            window.focus(&self.editor.focus_handle(cx));
+        if images.is_empty() {
+            return;
         }
-        cx.notify();
+        cx.stop_propagation();
+
+        self.context_store.update(cx, |store, cx| {
+            for image in images {
+                store.add_image_instance(Arc::new(image), cx);
+            }
+        });
     }
 
     fn handle_prompt_editor_events(
@@ -334,7 +310,7 @@ impl<T: 'static> PromptEditor<T> {
             EditorEvent::Edited { .. } => {
                 if let Some(workspace) = window.root::<Workspace>().flatten() {
                     workspace.update(cx, |workspace, cx| {
-                        let is_via_ssh = workspace.project().read(cx).is_via_ssh();
+                        let is_via_ssh = workspace.project().read(cx).is_via_remote_server();
 
                         workspace
                             .client()
@@ -345,7 +321,7 @@ impl<T: 'static> PromptEditor<T> {
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
-                    .map_or(true, |ix| self.prompt_history[ix] != prompt)
+                    .is_none_or(|ix| self.prompt_history[ix] != prompt)
                 {
                     self.prompt_history_ix.take();
                     self.pending_prompt = prompt;
@@ -707,75 +683,22 @@ impl<T: 'static> PromptEditor<T> {
             .into_any_element()
     }
 
-    fn render_rate_limit_notice(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Popover::new().child(
-            v_flex()
-                .occlude()
-                .p_2()
-                .child(
-                    Label::new("Out of Tokens")
-                        .size(LabelSize::Small)
-                        .weight(FontWeight::BOLD),
-                )
-                .child(Label::new(
-                    "Try Zed Pro for higher limits, a wider range of models, and more.",
-                ))
-                .child(
-                    h_flex()
-                        .justify_between()
-                        .child(CheckboxWithLabel::new(
-                            "dont-show-again",
-                            Label::new("Don't show again"),
-                            if RateLimitNotice::dismissed() {
-                                ui::ToggleState::Selected
-                            } else {
-                                ui::ToggleState::Unselected
-                            },
-                            |selection, _, cx| {
-                                let is_dismissed = match selection {
-                                    ui::ToggleState::Unselected => false,
-                                    ui::ToggleState::Indeterminate => return,
-                                    ui::ToggleState::Selected => true,
-                                };
-
-                                RateLimitNotice::set_dismissed(is_dismissed, cx);
-                            },
-                        ))
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    Button::new("dismiss", "Dismiss")
-                                        .style(ButtonStyle::Transparent)
-                                        .on_click(cx.listener(Self::toggle_rate_limit_notice)),
-                                )
-                                .child(Button::new("more-info", "More Info").on_click(
-                                    |_event, window, cx| {
-                                        window.dispatch_action(
-                                            Box::new(zed_actions::OpenAccountSettings),
-                                            cx,
-                                        )
-                                    },
-                                )),
-                        ),
-                ),
-        )
-    }
-
-    fn render_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let font_size = TextSize::Default.rems(cx);
-        let line_height = font_size.to_pixels(window.rem_size()) * 1.3;
+    fn render_editor(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors();
 
         div()
             .key_context("InlineAssistEditor")
             .size_full()
             .p_2()
             .pl_1()
-            .bg(cx.theme().colors().editor_background)
+            .bg(colors.editor_background)
             .child({
                 let settings = ThemeSettings::get_global(cx);
+                let font_size = settings.buffer_font_size(cx);
+                let line_height = font_size * 1.2;
+
                 let text_style = TextStyle {
-                    color: cx.theme().colors().editor_foreground,
+                    color: colors.editor_foreground,
                     font_family: settings.buffer_font.family.clone(),
                     font_features: settings.buffer_font.features.clone(),
                     font_size: font_size.into(),
@@ -786,7 +709,7 @@ impl<T: 'static> PromptEditor<T> {
                 EditorElement::new(
                     &self.editor,
                     EditorStyle {
-                        background: cx.theme().colors().editor_background,
+                        background: colors.editor_background,
                         local_player: cx.theme().players().local(),
                         text: text_style,
                         ..Default::default()
@@ -883,7 +806,7 @@ impl PromptEditor<BufferCodegen> {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_placeholder_text(&Self::placeholder_text(&mode, window, cx), window, cx);
             editor.register_addon(ContextCreasesAddon::new());
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
@@ -976,15 +899,7 @@ impl PromptEditor<BufferCodegen> {
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
             }
-            CodegenStatus::Error(error) => {
-                if cx.has_flag::<ZedProFeatureFlag>()
-                    && error.error_code() == proto::ErrorCode::RateLimitExceeded
-                    && !RateLimitNotice::dismissed()
-                {
-                    self.show_rate_limit_notice = true;
-                    cx.notify();
-                }
-
+            CodegenStatus::Error(_error) => {
                 self.edited_since_done = false;
                 self.editor
                     .update(cx, |editor, _| editor.set_read_only(false));
@@ -1058,7 +973,7 @@ impl PromptEditor<TerminalCodegen> {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
+            editor.set_placeholder_text(&Self::placeholder_text(&mode, window, cx), window, cx);
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
@@ -1187,12 +1102,6 @@ impl PromptEditor<TerminalCodegen> {
     }
 }
 
-struct RateLimitNotice;
-
-impl Dismissable for RateLimitNotice {
-    const KEY: &'static str = "dismissed-rate-limit-notice";
-}
-
 pub enum CodegenStatus {
     Idle,
     Pending,
@@ -1229,27 +1138,27 @@ pub enum GenerationMode {
 impl GenerationMode {
     fn start_label(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Generate",
+            GenerationMode::Generate => "Generate",
             GenerationMode::Transform => "Transform",
         }
     }
     fn tooltip_interrupt(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Interrupt Generation",
+            GenerationMode::Generate => "Interrupt Generation",
             GenerationMode::Transform => "Interrupt Transform",
         }
     }
 
     fn tooltip_restart(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Restart Generation",
+            GenerationMode::Generate => "Restart Generation",
             GenerationMode::Transform => "Restart Transform",
         }
     }
 
     fn tooltip_accept(self) -> &'static str {
         match self {
-            GenerationMode::Generate { .. } => "Accept Generation",
+            GenerationMode::Generate => "Accept Generation",
             GenerationMode::Transform => "Accept Transform",
         }
     }

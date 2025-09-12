@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
+use audio::AudioSettings;
 use collections::HashMap;
 use futures::{SinkExt, channel::mpsc};
 use gpui::{App, AsyncApp, ScreenCaptureSource, ScreenCaptureStream, Task};
 use gpui_tokio::Tokio;
+use log::info;
 use playback::capture_local_video_track;
+use settings::Settings;
 
 mod playback;
 
@@ -94,9 +97,13 @@ impl Room {
 
     pub async fn publish_local_microphone_track(
         &self,
+        user_name: String,
+        is_staff: bool,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-        let (track, stream) = self.playback.capture_local_microphone_track()?;
+        let (track, stream) = self
+            .playback
+            .capture_local_microphone_track(user_name, is_staff, &cx)?;
         let publication = self
             .local_participant()
             .publish_track(
@@ -123,9 +130,14 @@ impl Room {
     pub fn play_remote_audio_track(
         &self,
         track: &RemoteAudioTrack,
-        _cx: &App,
+        cx: &mut App,
     ) -> Result<playback::AudioStream> {
-        Ok(self.playback.play_remote_audio_track(&track.0))
+        if AudioSettings::get_global(cx).rodio_audio {
+            info!("Using experimental.rodio_audio audio pipeline for output");
+            playback::play_remote_audio_track(&track.0, cx)
+        } else {
+            Ok(self.playback.play_remote_audio_track(&track.0))
+        }
     }
 }
 

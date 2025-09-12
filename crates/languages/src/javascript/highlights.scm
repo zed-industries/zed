@@ -231,6 +231,7 @@
   "implements"
   "interface"
   "keyof"
+  "module"
   "namespace"
   "private"
   "protected"

@@ -7,15 +7,14 @@ use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate,
+    LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use smol::{fs, lock::RwLock, stream::StreamExt};
 use std::{
-    any::Any,
     borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
@@ -27,8 +26,8 @@ use util::{ResultExt, fs::remove_matching, maybe};
 
 use crate::{PackageJson, PackageJsonData, github_download::download_server_binary};
 
-#[derive(Debug)]
 pub(crate) struct TypeScriptContextProvider {
+    fs: Arc<dyn Fs>,
     last_package_json: PackageJsonContents,
 }
 
@@ -253,8 +252,9 @@ impl PackageJsonData {
 }
 
 impl TypeScriptContextProvider {
-    pub fn new() -> Self {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
         Self {
+            fs,
             last_package_json: PackageJsonContents::default(),
         }
     }
@@ -341,10 +341,10 @@ async fn detect_package_manager(
     fs: Arc<dyn Fs>,
     package_json_data: Option<PackageJsonData>,
 ) -> &'static str {
-    if let Some(package_json_data) = package_json_data {
-        if let Some(package_manager) = package_json_data.package_manager {
-            return package_manager;
-        }
+    if let Some(package_json_data) = package_json_data
+        && let Some(package_manager) = package_json_data.package_manager
+    {
+        return package_manager;
     }
     if fs.is_file(&worktree_root.join("pnpm-lock.yaml")).await {
         return "pnpm";
@@ -358,7 +358,6 @@ async fn detect_package_manager(
 impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(
         &self,
-        fs: Arc<dyn Fs>,
         file: Option<Arc<dyn File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
@@ -369,8 +368,12 @@ impl ContextProvider for TypeScriptContextProvider {
             return Task::ready(None);
         };
         let file_relative_path = file.path().clone();
-        let package_json_data =
-            self.combined_package_json_data(fs.clone(), &worktree_root, &file_relative_path, cx);
+        let package_json_data = self.combined_package_json_data(
+            self.fs.clone(),
+            &worktree_root,
+            &file_relative_path,
+            cx,
+        );
 
         cx.background_spawn(async move {
             let mut task_templates = TaskTemplates(Vec::new());
@@ -514,6 +517,7 @@ fn replace_test_name_parameters(test_name: &str) -> String {
 }
 
 pub struct TypeScriptLspAdapter {
+    fs: Arc<dyn Fs>,
     node: NodeRuntime,
 }
 
@@ -523,10 +527,10 @@ impl TypeScriptLspAdapter {
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
     const PACKAGE_NAME: &str = "typescript";
-    pub fn new(node: NodeRuntime) -> Self {
-        TypeScriptLspAdapter { node }
+    pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
+        TypeScriptLspAdapter { fs, node }
     }
-    async fn tsdk_path(fs: &dyn Fs, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
+    async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
             .await
@@ -538,7 +542,8 @@ impl TypeScriptLspAdapter {
             "node_modules/typescript/lib"
         };
 
-        if fs
+        if self
+            .fs
             .is_dir(&adapter.worktree_root_path().join(tsdk_path))
             .await
         {
@@ -549,37 +554,35 @@ impl TypeScriptLspAdapter {
     }
 }
 
-struct TypeScriptVersions {
+pub struct TypeScriptVersions {
     typescript_version: String,
     server_version: String,
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for TypeScriptLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
-    }
+impl LspInstaller for TypeScriptLspAdapter {
+    type BinaryVersion = TypeScriptVersions;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(TypeScriptVersions {
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<TypeScriptVersions> {
+        Ok(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
                 .node
                 .npm_package_latest_version("typescript-language-server")
                 .await?,
-        }) as Box<_>)
+        })
     }
 
     async fn check_if_version_installed(
         &self,
-        version: &(dyn 'static + Send + Any),
+        version: &TypeScriptVersions,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let version = version.downcast_ref::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         let should_install_language_server = self
@@ -587,8 +590,8 @@ impl LspAdapter for TypeScriptLspAdapter {
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
-                &container_dir,
-                version.typescript_version.as_str(),
+                container_dir,
+                VersionStrategy::Latest(version.typescript_version.as_str()),
             )
             .await;
 
@@ -605,11 +608,10 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: TypeScriptVersions,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         self.node
@@ -641,6 +643,13 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_ts_server_binary(container_dir, &self.node).await
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for TypeScriptLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -695,10 +704,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        fs: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(fs, adapter).await;
+        let tsdk_path = self.tsdk_path(adapter).await;
         Ok(Some(json!({
             "provideFormatter": true,
             "hostInfo": "zed",
@@ -720,9 +728,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
+
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
@@ -809,108 +817,39 @@ impl EsLintLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for EsLintLspAdapter {
-    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        Some(vec![
-            CodeActionKind::QUICKFIX,
-            CodeActionKind::new("source.fixAll.eslint"),
-        ])
-    }
-
-    async fn workspace_configuration(
-        self: Arc<Self>,
-        _: &dyn Fs,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
-        cx: &mut AsyncApp,
-    ) -> Result<Value> {
-        let workspace_root = delegate.worktree_root_path();
-        let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
-            .iter()
-            .any(|file| workspace_root.join(file).is_file());
-
-        let mut default_workspace_configuration = json!({
-            "validate": "on",
-            "rulesCustomizations": [],
-            "run": "onType",
-            "nodePath": null,
-            "workingDirectory": {
-                "mode": "auto"
-            },
-            "workspaceFolder": {
-                "uri": workspace_root,
-                "name": workspace_root.file_name()
-                    .unwrap_or(workspace_root.as_os_str())
-                    .to_string_lossy(),
-            },
-            "problems": {},
-            "codeActionOnSave": {
-                // We enable this, but without also configuring code_actions_on_format
-                // in the Zed configuration, it doesn't have an effect.
-                "enable": true,
-            },
-            "codeAction": {
-                "disableRuleComment": {
-                    "enable": true,
-                    "location": "separateLine",
-                },
-                "showDocumentation": {
-                    "enable": true
-                }
-            },
-            "experimental": {
-                "useFlatConfig": use_flat_config,
-            }
-        });
-
-        let override_options = cx.update(|cx| {
-            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-        })?;
-
-        if let Some(override_options) = override_options {
-            merge_json_value_into(override_options, &mut default_workspace_configuration);
-        }
-
-        Ok(json!({
-            "": default_workspace_configuration
-        }))
-    }
-
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
-    }
+impl LspInstaller for EsLintLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
 
     async fn fetch_latest_server_version(
         &self,
         _delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
         let url = build_asset_url(
             "zed-industries/vscode-eslint",
             Self::CURRENT_VERSION_TAG_NAME,
             Self::GITHUB_ASSET_KIND,
         )?;
 
-        Ok(Box::new(GitHubLspBinaryVersion {
+        Ok(GitHubLspBinaryVersion {
             name: Self::CURRENT_VERSION.into(),
             digest: None,
             url,
-        }))
+        })
     }
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
         let destination_path = Self::build_destination_path(&container_dir);
         let server_path = destination_path.join(Self::SERVER_PATH);
 
         if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
+            remove_matching(&container_dir, |_| true).await;
 
             download_server_binary(
                 delegate,
@@ -971,6 +910,79 @@ impl LspAdapter for EsLintLspAdapter {
     }
 }
 
+#[async_trait(?Send)]
+impl LspAdapter for EsLintLspAdapter {
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        Some(vec![
+            CodeActionKind::QUICKFIX,
+            CodeActionKind::new("source.fixAll.eslint"),
+        ])
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Option<Toolchain>,
+        cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        let workspace_root = delegate.worktree_root_path();
+        let use_flat_config = Self::FLAT_CONFIG_FILE_NAMES
+            .iter()
+            .any(|file| workspace_root.join(file).is_file());
+
+        let mut default_workspace_configuration = json!({
+            "validate": "on",
+            "rulesCustomizations": [],
+            "run": "onType",
+            "nodePath": null,
+            "workingDirectory": {
+                "mode": "auto"
+            },
+            "workspaceFolder": {
+                "uri": workspace_root,
+                "name": workspace_root.file_name()
+                    .unwrap_or(workspace_root.as_os_str())
+                    .to_string_lossy(),
+            },
+            "problems": {},
+            "codeActionOnSave": {
+                // We enable this, but without also configuring code_actions_on_format
+                // in the Zed configuration, it doesn't have an effect.
+                "enable": true,
+            },
+            "codeAction": {
+                "disableRuleComment": {
+                    "enable": true,
+                    "location": "separateLine",
+                },
+                "showDocumentation": {
+                    "enable": true
+                }
+            },
+            "experimental": {
+                "useFlatConfig": use_flat_config,
+            }
+        });
+
+        let override_options = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &Self::SERVER_NAME, cx)
+                .and_then(|s| s.settings.clone())
+        })?;
+
+        if let Some(override_options) = override_options {
+            merge_json_value_into(override_options, &mut default_workspace_configuration);
+        }
+
+        Ok(json!({
+            "": default_workspace_configuration
+        }))
+    }
+
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
+    }
+}
+
 #[cfg(target_os = "windows")]
 async fn handle_symlink(src_dir: PathBuf, dest_dir: PathBuf) -> Result<()> {
     anyhow::ensure!(
@@ -1028,7 +1040,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(
             outline
                 .items
@@ -1082,7 +1094,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(
             outline
                 .items
@@ -1143,7 +1155,7 @@ mod tests {
         )
         .await;
 
-        let provider = TypeScriptContextProvider::new();
+        let provider = TypeScriptContextProvider::new(fs.clone());
         let package_json_data = cx
             .update(|cx| {
                 provider.combined_package_json_data(

@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::sync::Arc;
+use util::markdown::MarkdownCodeBlock;
 
 use crate::{AgentTool, ToolCallEventStream};
 
@@ -21,8 +22,7 @@ use crate::{AgentTool, ToolCallEventStream};
 pub struct ReadFileToolInput {
     /// The relative path of the file to read.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -34,11 +34,9 @@ pub struct ReadFileToolInput {
     /// If you want to access `file.txt` in `directory2`, you should use the path `directory2/file.txt`.
     /// </example>
     pub path: String,
-
     /// Optional line number to start reading on (1-based index)
     #[serde(default)]
     pub start_line: Option<u32>,
-
     /// Optional line number to end reading on (1-based index, inclusive)
     #[serde(default)]
     pub end_line: Option<u32>,
@@ -62,31 +60,34 @@ impl AgentTool for ReadFileTool {
     type Input = ReadFileToolInput;
     type Output = LanguageModelToolResultContent;
 
-    fn name(&self) -> SharedString {
-        "read_file".into()
+    fn name() -> &'static str {
+        "read_file"
     }
 
-    fn kind(&self) -> acp::ToolKind {
+    fn kind() -> acp::ToolKind {
         acp::ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
-        if let Ok(input) = input {
-            let path = &input.path;
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        cx: &mut App,
+    ) -> SharedString {
+        if let Ok(input) = input
+            && let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx)
+            && let Some(path) = self
+                .project
+                .read(cx)
+                .short_full_path_for_project_path(&project_path, cx)
+        {
             match (input.start_line, input.end_line) {
                 (Some(start), Some(end)) => {
-                    format!(
-                        "[Read file `{}` (lines {}-{})](@selection:{}:({}-{}))",
-                        path, start, end, path, start, end
-                    )
+                    format!("Read file `{}` (lines {}-{})", path.display(), start, end,)
                 }
                 (Some(start), None) => {
-                    format!(
-                        "[Read file `{}` (from line {})](@selection:{}:({}-{}))",
-                        path, start, path, start, start
-                    )
+                    format!("Read file `{}` (from line {})", path.display(), start)
                 }
-                _ => format!("[Read file `{}`](@file:{})", path, path),
+                _ => format!("Read file `{}`", path.display()),
             }
             .into()
         } else {
@@ -102,6 +103,12 @@ impl AgentTool for ReadFileTool {
     ) -> Task<Result<LanguageModelToolResultContent>> {
         let Some(project_path) = self.project.read(cx).find_project_path(&input.path, cx) else {
             return Task::ready(Err(anyhow!("Path {} not found in project", &input.path)));
+        };
+        let Some(abs_path) = self.project.read(cx).absolute_path(&project_path, cx) else {
+            return Task::ready(Err(anyhow!(
+                "Failed to convert {} to absolute path",
+                &input.path
+            )));
         };
 
         // Error out if this path is either excluded or private in global settings
@@ -137,6 +144,15 @@ impl AgentTool for ReadFileTool {
         }
 
         let file_path = input.path.clone();
+
+        event_stream.update_fields(ToolCallUpdateFields {
+            locations: Some(vec![acp::ToolCallLocation {
+                path: abs_path.clone(),
+                line: input.start_line.map(|line| line.saturating_sub(1)),
+                meta: None,
+            }]),
+            ..Default::default()
+        });
 
         if image_store::is_image_file(&self.project, &project_path, cx) {
             return cx.spawn(async move |cx| {
@@ -175,7 +191,7 @@ impl AgentTool for ReadFileTool {
                 buffer
                     .file()
                     .as_ref()
-                    .map_or(true, |file| !file.disk_state().exists())
+                    .is_none_or(|file| !file.disk_state().exists())
             })? {
                 anyhow::bail!("{file_path} not found");
             }
@@ -210,57 +226,53 @@ impl AgentTool for ReadFileTool {
                 Ok(result.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
-                let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
+                let buffer_content =
+                    outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), cx)
+                        .await?;
 
-                if file_size <= outline::AUTO_OUTLINE_SIZE {
-                    // File is small enough, so return its contents.
-                    let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+                action_log.update(cx, |log, cx| {
+                    log.buffer_read(buffer.clone(), cx);
+                })?;
 
-                    action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer.clone(), cx);
-                    })?;
-
-                    Ok(result.into())
-                } else {
-                    // File is too big, so return the outline
-                    // and a suggestion to read again with line numbers.
-                    let outline =
-                        outline::file_outline(project.clone(), file_path, action_log, None, cx)
-                            .await?;
+                if buffer_content.is_outline {
                     Ok(formatdoc! {"
                         This file was too big to read all at once.
 
-                        Here is an outline of its symbols:
-
-                        {outline}
+                        {}
 
                         Using the line numbers in this outline, you can call this tool again
                         while specifying the start_line and end_line fields to see the
                         implementations of symbols in the outline.
 
                         Alternatively, you can fall back to the `grep` tool (if available)
-                        to search the file for specific content."
+                        to search the file for specific content.", buffer_content.text
                     }
                     .into())
+                } else {
+                    Ok(buffer_content.text.into())
                 }
             };
 
             project.update(cx, |project, cx| {
-                if let Some(abs_path) = project.absolute_path(&project_path, cx) {
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position: anchor.unwrap_or(text::Anchor::MIN),
-                        }),
-                        cx,
-                    );
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: anchor.unwrap_or(text::Anchor::MIN),
+                    }),
+                    cx,
+                );
+                if let Ok(LanguageModelToolResultContent::Text(text)) = &result {
+                    let markdown = MarkdownCodeBlock {
+                        tag: &input.path,
+                        text,
+                    }
+                    .to_string();
                     event_stream.update_fields(ToolCallUpdateFields {
-                        locations: Some(vec![acp::ToolCallLocation {
-                            path: abs_path,
-                            line: input.start_line.map(|line| line.saturating_sub(1)),
+                        content: Some(vec![acp::ToolCallContent::Content {
+                            content: markdown.into(),
                         }]),
                         ..Default::default()
-                    });
+                    })
                 }
             })?;
 

@@ -150,7 +150,7 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
                     }],
                     run_commands_in_text: false,
                 }
-                .to_event_stream())
+                .into_event_stream())
             })
         });
         output.unwrap_or_else(|error| Task::ready(Err(error)))
