@@ -260,9 +260,9 @@ impl Tool for ReadFileTool {
 
                 Ok(result)
             } else {
-                // No line ranges specified, so use shared function to get content or outline
+                // No line ranges specified
                 let path_buf = std::path::PathBuf::from(&file_path);
-                let content = outline::get_buffer_content_or_outline(
+                let buffer_content = outline::get_buffer_content_or_outline(
                     buffer.clone(),
                     Some(&path_buf),
                     cx
@@ -272,8 +272,8 @@ impl Tool for ReadFileTool {
                     log.buffer_read(buffer, cx);
                 })?;
 
-                // Check if we returned an outline (file was too large)
-                if content.starts_with("# File outline") {
+                // Check if we returned an outline or full content
+                if buffer_content.is_outline {
                     Ok(formatdoc! {"
                         This file was too big to read all at once.
 
@@ -284,11 +284,11 @@ impl Tool for ReadFileTool {
                         implementations of symbols in the outline.
 
                         Alternatively, you can fall back to the `grep` tool (if available)
-                        to search the file for specific content.", content
+                        to search the file for specific content.", buffer_content.text
                     }
                     .into())
                 } else {
-                    Ok(content.into())
+                    Ok(buffer_content.text.into())
                 }
             }
         })

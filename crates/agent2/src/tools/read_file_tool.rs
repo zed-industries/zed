@@ -225,7 +225,7 @@ impl AgentTool for ReadFileTool {
                 Ok(result.into())
             } else {
                 // No line ranges specified, so use shared function to get content or outline
-                let content = outline::get_buffer_content_or_outline(
+                let buffer_content = outline::get_buffer_content_or_outline(
                     buffer.clone(),
                     Some(&abs_path),
                     cx
@@ -235,8 +235,8 @@ impl AgentTool for ReadFileTool {
                     log.buffer_read(buffer.clone(), cx);
                 })?;
 
-                // Check if we returned an outline (file was too large)
-                if content.starts_with("# File outline") {
+                // Check if we returned an outline or full content
+                if buffer_content.is_outline {
                     Ok(formatdoc! {"
                         This file was too big to read all at once.
 
@@ -247,11 +247,11 @@ impl AgentTool for ReadFileTool {
                         implementations of symbols in the outline.
 
                         Alternatively, you can fall back to the `grep` tool (if available)
-                        to search the file for specific content.", content
+                        to search the file for specific content.", buffer_content.text
                     }
                     .into())
                 } else {
-                    Ok(content.into())
+                    Ok(buffer_content.text.into())
                 }
             };
 

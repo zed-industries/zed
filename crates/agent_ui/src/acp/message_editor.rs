@@ -459,10 +459,10 @@ impl MessageEditor {
             let buffer = buffer.await?;
 
             // Use shared function to get content or outline based on file size
-            let content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx).await?;
+            let buffer_content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx).await?;
 
             Ok(Mention::Text {
-                content,
+                content: buffer_content.text,
                 tracked_buffers: vec![buffer],
             })
         })
@@ -528,11 +528,11 @@ impl MessageEditor {
                         let buffer = open_task.await.log_err()?;
 
                         // Use shared function to get content or outline based on file size
-                        let content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
+                        let buffer_content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
                             .await
                             .ok()?;
 
-                        Some((rel_path, full_path, content, buffer))
+                        Some((rel_path, full_path, buffer_content.text, buffer))
                     })
                 }))
             })?;

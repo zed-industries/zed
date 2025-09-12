@@ -192,17 +192,18 @@ impl FileContextHandle {
 
         cx.spawn(async move |cx| {
             // Get content or outline based on file size
-            let content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
+            let buffer_content = outline::get_buffer_content_or_outline(buffer.clone(), Some(&full_path), &cx)
                 .await
-                .unwrap_or_else(|_| rope.to_string());
-
-            let is_outline = rope.len() > outline::AUTO_OUTLINE_SIZE;
+                .unwrap_or_else(|_| outline::BufferContent {
+                    text: rope.to_string(),
+                    is_outline: false,
+                });
 
             let context = AgentContext::File(FileContext {
                 handle: self,
                 full_path,
-                text: content.into(),
-                is_outline,
+                text: buffer_content.text.into(),
+                is_outline: buffer_content.is_outline,
             });
             Some((context, vec![buffer]))
         })

@@ -130,6 +130,14 @@ fn render_entries(
     entries_rendered
 }
 
+/// Result of getting buffer content, which can be either full content or an outline.
+pub struct BufferContent {
+    /// The actual content (either full text or outline)
+    pub text: String,
+    /// Whether this is an outline (true) or full content (false)
+    pub is_outline: bool,
+}
+
 /// Returns either the full content of a buffer or its outline, depending on size.
 /// For files larger than AUTO_OUTLINE_SIZE, returns an outline with a header.
 /// For smaller files, returns the full content.
@@ -137,7 +145,7 @@ pub async fn get_buffer_content_or_outline(
     buffer: Entity<Buffer>,
     path: Option<&Path>,
     cx: &AsyncApp,
-) -> Result<String> {
+) -> Result<BufferContent> {
     let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len())?;
 
     if file_size > AUTO_OUTLINE_SIZE {
@@ -160,20 +168,28 @@ pub async fn get_buffer_content_or_outline(
 
         let outline_text = render_outline(outline_items, None, 0, usize::MAX).await?;
 
-        if let Some(path) = path {
-            Ok(format!(
+        let text = if let Some(path) = path {
+            format!(
                 "# File outline for {} (file too large to show full content)\n\n{}",
                 path.display(),
                 outline_text
-            ))
+            )
         } else {
-            Ok(format!(
+            format!(
                 "# File outline (file too large to show full content)\n\n{}",
                 outline_text
-            ))
-        }
+            )
+        };
+        Ok(BufferContent {
+            text,
+            is_outline: true,
+        })
     } else {
         // File is small enough, return full content
-        buffer.read_with(cx, |buffer, _| Ok(buffer.text()))?
+        let text = buffer.read_with(cx, |buffer, _| buffer.text())?;
+        Ok(BufferContent {
+            text,
+            is_outline: false,
+        })
     }
 }
