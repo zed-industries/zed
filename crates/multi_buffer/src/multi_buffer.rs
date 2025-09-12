@@ -6403,33 +6403,29 @@ impl MultiBufferSnapshot {
         self.diffs.get(&buffer_id)
     }
 
+    /// Debugging helper to highlight a range. Only one highlight will be shown per callsite. The
+    /// `value` argument is an `Hsla` color for the highlight (alpha will be set to 0.25).
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug_range<T, V>(&self, range: T, value: V)
+    pub fn debug_range<V, R>(&self, value: V, range: &R)
     where
-        T: ToMultiBufferDebugRange,
-        V: std::fmt::Debug,
-    {
-        self.debug_range_with_hover(range, format!("{:?}", value));
-    }
-
-    #[cfg(debug_assertions)]
-    #[track_caller]
-    pub fn debug_range_with_hover<T, V>(&self, range: T, value: V)
-    where
-        T: ToMultiBufferDebugRange,
         V: std::any::Any + Send,
+        R: ToMultiBufferDebugRange,
     {
-        self.debug_range_with_key(range, &std::panic::Location::caller(), value);
+        self.debug_range_with_key(std::panic::Location::caller(), value, range);
     }
 
+    /// Debugging helper to highlight a range. Replaces the highlights associated with the provided
+    /// key. The `value` argument is an `Hsla` color for the highlight (alpha will be set to 0.25).
     #[cfg(debug_assertions)]
-    pub fn debug_range_with_key<T, K, V>(&self, range: T, key: &K, value: V)
+    #[track_caller]
+    pub fn debug_range_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
     where
-        T: ToMultiBufferDebugRange,
         K: std::hash::Hash + 'static,
         V: std::any::Any + Send,
+        R: ToMultiBufferDebugRange,
     {
+        let caller = std::panic::Location::caller();
         let range = range.to_multi_buffer_debug_range(self);
         let text_ranges = self
             .range_to_buffer_ranges(range)
@@ -6439,7 +6435,7 @@ impl MultiBufferSnapshot {
             })
             .collect();
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
-            debug_ranges.insert(text_ranges, key, value)
+            debug_ranges.insert(key, value, text_ranges, caller)
         });
     }
 }

@@ -2594,37 +2594,33 @@ impl BufferSnapshot {
         })
     }
 
+    /// Debugging helper to highlight a range. Only one highlight will be shown per callsite. The
+    /// `value` argument is an `Hsla` color for the highlight (alpha will be set to 0.25).
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug_range<T, V>(&self, range: T, value: V)
+    pub fn debug_range<V, R>(&self, value: V, range: &R)
     where
-        T: debug::ToDebugRange,
-        V: std::fmt::Debug,
-    {
-        self.debug_range_with_hover(range, format!("{:?}", value));
-    }
-
-    #[cfg(debug_assertions)]
-    #[track_caller]
-    pub fn debug_range_with_hover<T, V>(&self, range: T, value: V)
-    where
-        T: debug::ToDebugRange,
         V: std::any::Any + Send,
+        R: debug::ToDebugRange,
     {
-        self.debug_range_with_key(range, &std::panic::Location::caller(), value);
+        self.debug_range_with_key(std::panic::Location::caller(), value, range);
     }
 
+    /// Debugging helper to highlight a range. Replaces the highlights associated with the provided
+    /// key. The `value` argument is an `Hsla` color for the highlight (alpha will be set to 0.25).
     #[cfg(debug_assertions)]
-    pub fn debug_range_with_key<T, K, V>(&self, range: T, key: &K, value: V)
+    #[track_caller]
+    pub fn debug_range_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
     where
-        T: debug::ToDebugRange,
         K: std::hash::Hash + 'static,
         V: std::any::Any + Send,
+        R: debug::ToDebugRange,
     {
+        let caller = std::panic::Location::caller();
         let range = range.to_debug_range(self);
         let range = self.anchor_after(range.start)..self.anchor_before(range.end);
         debug::GlobalDebugRanges::with_locked(|debug_ranges| {
-            debug_ranges.insert(vec![range], key, value)
+            debug_ranges.insert(key, value, vec![range], caller);
         });
     }
 }
@@ -3293,11 +3289,11 @@ pub mod debug {
 
     pub struct GlobalDebugRanges(pub Vec<DebugRange>);
 
-    // todo! Add stable insertion order index and use for color.
     pub struct DebugRange {
         pub ranges: Vec<Range<Anchor>>,
         key: Key,
         pub value: Box<dyn Any + Send>,
+        pub caller: &'static std::panic::Location<'static>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -3321,9 +3317,10 @@ pub mod debug {
 
         pub fn insert<K: Hash + 'static, V: Any + Send>(
             &mut self,
-            ranges: Vec<Range<Anchor>>,
             key: &K,
             value: V,
+            ranges: Vec<Range<Anchor>>,
+            caller: &'static std::panic::Location<'static>,
         ) {
             let key = Key::new(key);
             let existing = self
@@ -3336,7 +3333,12 @@ pub mod debug {
             }
 
             let value = Box::new(value);
-            self.0.push(DebugRange { ranges, key, value });
+            self.0.push(DebugRange {
+                ranges,
+                key,
+                value,
+                caller,
+            });
         }
 
         pub fn remove<K: Hash + 'static>(&mut self, key: &K) {

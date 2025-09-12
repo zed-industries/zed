@@ -20233,13 +20233,18 @@ impl Editor {
                                 if ranges.is_empty() {
                                     None
                                 } else {
-                                    Some(ranges)
+                                    let color = if let Some(color) =
+                                        debug_range.value.downcast_ref::<gpui::Hsla>()
+                                    {
+                                        color.alpha(0.25)
+                                    } else {
+                                        log::error!("expected Hsla value in debug_range value in call at {:?}", debug_range.caller);
+                                        gpui::hsla(0.97, 1.00, 0.88, 0.5)
+                                    };
+                                    Some((ranges, color))
                                 }
                             })
-                            .enumerate()
-                            .flat_map(|(ix, ranges)| {
-                                let color =
-                                    gpui::hsla(((ix + 2) % 6) as f32 / 6.0, 0.75, 0.5, 0.05);
+                            .flat_map(|(ranges, color)| {
                                 ranges.into_iter().filter_map(move |range| {
                                     let clipped_start =
                                         range.start.max(&buffer_range.start, buffer);
