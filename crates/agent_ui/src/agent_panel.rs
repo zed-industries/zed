@@ -550,8 +550,7 @@ impl AgentPanel {
         let inline_assist_context_store =
             cx.new(|_cx| ContextStore::new(project.downgrade(), Some(thread_store.downgrade())));
 
-        let history_store =
-            cx.new(|cx| HistoryStore::new(thread_store.clone(), context_store.clone(), [], cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store.clone(), [], cx));
 
         let acp_history_store = cx.new(|cx| agent2::HistoryStore::new(context_store.clone(), cx));
         let acp_history = cx.new(|cx| AcpThreadHistory::new(acp_history_store.clone(), window, cx));
