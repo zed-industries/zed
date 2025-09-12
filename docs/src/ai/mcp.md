@@ -35,7 +35,14 @@ In any case, here are some of the ones available:
 ### As Custom Servers
 
 Creating an extension is not the only way to use MCP servers in Zed.
-You can connect them by adding their commands directly to your `settings.json`.
+You can connect them by adding their commands directly to your `settings.json` or by using the UI in the Agent Panel.
+
+To add a custom server via the UI:
+
+1. Open the Agent Panel
+2. Click the "Add Custom Server" button  
+3. Choose between "Local Server" and "Remote Server" from the dropdown menu
+4. Fill in the configuration template that appears
 
 #### Local MCP Servers
 

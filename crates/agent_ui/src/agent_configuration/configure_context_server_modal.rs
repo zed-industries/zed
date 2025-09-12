@@ -25,10 +25,10 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
-use crate::AddContextServer;
+use crate::{AddContextServer, AddLocalContextServer, AddRemoteContextServer};
 
 enum ConfigurationTarget {
-    New,
+    New { server_type: ServerType },
     Existing {
         id: ContextServerId,
         command: ContextServerCommand,
@@ -91,8 +91,8 @@ impl ConfigurationSource {
         }
 
         match target {
-            ConfigurationTarget::New => ConfigurationSource::New {
-                editor: create_editor(context_server_input(None), jsonc_language, window, cx),
+            ConfigurationTarget::New { server_type } => ConfigurationSource::New {
+                editor: create_editor(context_server_input_template(server_type), jsonc_language, window, cx),
             },
             ConfigurationTarget::Existing { id, command } => ConfigurationSource::Existing {
                 editor: create_editor(
@@ -236,6 +236,21 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
             }
         },
         None => {
+            // Default to local server template
+            context_server_input_template(ServerType::Local)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ServerType {
+    Local,
+    Remote,
+}
+
+fn context_server_input_template(server_type: ServerType) -> String {
+    match server_type {
+        ServerType::Local => {
             format!(
                 r#"{{
   /// The name of your MCP server
@@ -248,6 +263,23 @@ fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)
     "args": [],
     /// The environment variables to set
     "env": {{}}
+  }}
+}}"#
+            )
+        }
+        ServerType::Remote => {
+            format!(
+                r#"{{
+  /// The name of your MCP server
+  "remote-mcp-server": {{
+    /// Type of MCP server: "local" for command-based, "http" for remote
+    "type": "http",
+    /// The URL of the remote MCP server (requires mcp-remote: npm install -g mcp-remote)
+    "url": "https://mcp.example.com/v1/sse",
+    /// Optional headers to send with requests
+    "headers": {{
+      "Authorization": "Bearer your-token-here"
+    }}
   }}
 }}"#
             )
@@ -305,14 +337,55 @@ impl ConfigureContextServerModal {
         _window: Option<&mut Window>,
         _cx: &mut Context<Workspace>,
     ) {
+        // Register handler for legacy AddContextServer action (defaults to local)
         workspace.register_action({
+            let language_registry = language_registry.clone();
             move |_workspace, _: &AddContextServer, window, cx| {
                 let workspace_handle = cx.weak_entity();
                 let language_registry = language_registry.clone();
                 window
                     .spawn(cx, async move |cx| {
                         Self::show_modal(
-                            ConfigurationTarget::New,
+                            ConfigurationTarget::New { server_type: ServerType::Local },
+                            language_registry,
+                            workspace_handle,
+                            cx,
+                        )
+                        .await
+                    })
+                    .detach_and_log_err(cx);
+            }
+        });
+
+        // Register handler for AddLocalContextServer action
+        workspace.register_action({
+            let language_registry = language_registry.clone();
+            move |_workspace, _: &AddLocalContextServer, window, cx| {
+                let workspace_handle = cx.weak_entity();
+                let language_registry = language_registry.clone();
+                window
+                    .spawn(cx, async move |cx| {
+                        Self::show_modal(
+                            ConfigurationTarget::New { server_type: ServerType::Local },
+                            language_registry,
+                            workspace_handle,
+                            cx,
+                        )
+                        .await
+                    })
+                    .detach_and_log_err(cx);
+            }
+        });
+
+        // Register handler for AddRemoteContextServer action
+        workspace.register_action({
+            move |_workspace, _: &AddRemoteContextServer, window, cx| {
+                let workspace_handle = cx.weak_entity();
+                let language_registry = language_registry.clone();
+                window
+                    .spawn(cx, async move |cx| {
+                        Self::show_modal(
+                            ConfigurationTarget::New { server_type: ServerType::Remote },
                             language_registry,
                             workspace_handle,
                             cx,
@@ -396,7 +469,7 @@ impl ConfigureContextServerModal {
                     original_server_id: match &target {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
                         ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
-                        ConfigurationTarget::New => None,
+                        ConfigurationTarget::New { .. } => None,
                     },
                     source: ConfigurationSource::from_target(
                         target,

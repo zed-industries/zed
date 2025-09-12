@@ -82,7 +82,11 @@ actions!(
         ExpandMessageEditor,
         /// Opens the conversation history view.
         OpenHistory,
-        /// Adds a context server to the configuration.
+        /// Adds a local context server to the configuration.
+        AddLocalContextServer,
+        /// Adds a remote context server to the configuration.
+        AddRemoteContextServer,
+        /// Adds a context server to the configuration (legacy).
         AddContextServer,
         /// Removes the currently selected thread.
         RemoveSelectedThread,
