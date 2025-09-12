@@ -667,14 +667,15 @@ impl WasmHost {
         let file_perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
         let path = SanitizedPath::new(&extension_work_dir);
+        let path = path.to_string().replace('\\', "/");
 
         let mut ctx = wasi::WasiCtxBuilder::new();
         ctx.inherit_stdio()
-            .env("PWD", path.to_string())
+            .env("PWD", &path)
             .env("RUST_BACKTRACE", "full");
 
         ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
-        ctx.preopened_dir(&path, path.to_string(), dir_perms, file_perms)?;
+        ctx.preopened_dir(&path, &path, dir_perms, file_perms)?;
 
         Ok(ctx.build())
     }
