@@ -15,10 +15,10 @@ with the community to improve the product in ways we haven't thought of (or had 
 
 In particular we love PRs that are:
 
-* Fixes to existing bugs and issues.
-* Small enhancements to existing features, particularly to make them work for more people.
-* Small extra features, like keybindings or actions you miss from other editors or extensions.
-* Work towards shipping larger features on our roadmap.
+- Fixes to existing bugs and issues.
+- Small enhancements to existing features, particularly to make them work for more people.
+- Small extra features, like keybindings or actions you miss from other editors or extensions.
+- Work towards shipping larger features on our roadmap.
 
 If you're looking for concrete ideas:
 
@@ -37,14 +37,15 @@ like, sorry).
 Although we will take a look, we tend to only merge about half the PRs that are
 submitted. If you'd like your PR to have the best chance of being merged:
 
-* Include a clear description of what you're solving, and why it's important to you.
-* Include tests.
-* If it changes the UI, attach screenshots or screen recordings.
+- Include a clear description of what you're solving, and why it's important to you.
+- Include tests.
+- If it changes the UI, attach screenshots or screen recordings.
 
 The internal advice for reviewers is as follows:
-* If the fix/feature is obviously great, and the code is great. Hit merge.
-* If the fix/feature is obviously great, and the code is nearly great. Send PR comments, or offer to pair to get things perfect.
-* If the fix/feature is not obviously great, or the code needs rewriting from scratch. Close the PR with a thank you and some explanation.
+
+- If the fix/feature is obviously great, and the code is great. Hit merge.
+- If the fix/feature is obviously great, and the code is nearly great. Send PR comments, or offer to pair to get things perfect.
+- If the fix/feature is not obviously great, or the code needs rewriting from scratch. Close the PR with a thank you and some explanation.
 
 If you need more feedback from us: the best way is to be responsive to
 Github comments, or to offer up time to pair with us.
@@ -58,16 +59,16 @@ diff gets too big.
 
 Although there are few hard and fast rules, typically we don't merge:
 
-* Anything that can be provided by an extension. For example a new language, or theme.  For adding themes or support for a new language to Zed, check out our [docs on developing extensions](https://zed.dev/docs/extensions/developing-extensions).
-* New file icons. Zed's default icon theme consists of icons that are hand-designed to fit together in a cohesive manner, please don't submit PRs with off-the-shelf SVGs.
-* Giant refactorings.
-* Non-trivial changes with no tests.
-* Features where (in our subjective opinion) the extra complexity isn't worth it for the number of people who will benefit.
-* Anything that seems completely AI generated.
+- Anything that can be provided by an extension. For example a new language, or theme. For adding themes or support for a new language to Zed, check out our [docs on developing extensions](https://zed.dev/docs/extensions/developing-extensions).
+- New file icons. Zed's default icon theme consists of icons that are hand-designed to fit together in a cohesive manner, please don't submit PRs with off-the-shelf SVGs.
+- Giant refactorings.
+- Non-trivial changes with no tests.
+- Features where (in our subjective opinion) the extra complexity isn't worth it for the number of people who will benefit.
+- Anything that seems completely AI generated.
 
 ## Bird's-eye view of Zed
 
-We suggest you keep the [zed glossary](docs/src/development/glossary.md) at your side when starting out. It lists and explains some of the structures and terms you will see throughout the codebase.
+We suggest you keep the [Zed glossary](docs/src/development/glossary.md) at your side when starting out. It lists and explains some of the structures and terms you will see throughout the codebase.
 
 Zed is made up of several smaller crates - let's go over those you're most likely to interact with:
 
