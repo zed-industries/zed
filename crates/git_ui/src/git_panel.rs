@@ -1034,6 +1034,75 @@ impl GitPanel {
         });
     }
 
+    fn add_to_gitignore(
+        &mut self,
+        _: &git::AddToGitignore,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        maybe!({
+            let list_entry = self.entries.get(self.selected_entry?)?.clone();
+            let entry = list_entry.status_entry()?.to_owned();
+
+            if !entry.status.is_created() {
+                return Some(());
+            }
+
+            let project = self.project.clone();
+            let repo_path = entry.repo_path.clone();
+
+            cx.spawn(async move |_handle, cx| {
+                let file_path_str = repo_path.0.to_string_lossy().to_string();
+
+                let worktree = project.read_with(cx, |project, cx| {
+                    project.worktrees(cx).next()
+                })?;
+
+                let Some(worktree) = worktree else {
+                    return Err(anyhow::anyhow!("No worktrees available"));
+                };
+
+                let gitignore_path = Arc::new(Path::new(".gitignore"));
+
+                let (abs_gitignore_path, fs) = worktree.read_with(cx, |worktree, _| {
+                    let abs_path = worktree.abs_path().join(".gitignore");
+                    let fs = worktree.as_local().map(|local| local.fs().clone());
+                    (abs_path, fs)
+                })?;
+
+                let Some(fs) = fs else {
+                    return Err(anyhow::anyhow!("Cannot access filesystem for remote worktree"));
+                };
+
+                let existing_content = fs.load(&abs_gitignore_path).await.unwrap_or_else(|_| String::new());
+
+                if existing_content.lines().any(|line| line.trim() == file_path_str.trim()) {
+                    return Ok(()); // File already ignored
+                }
+
+                let new_content = if existing_content.is_empty() {
+                    format!("{}\n", file_path_str)
+                } else if existing_content.ends_with('\n') {
+                    format!("{}{}\n", existing_content, file_path_str)
+                } else {
+                    format!("{}\n{}\n", existing_content, file_path_str)
+                };
+
+                let rope = language::Rope::from(new_content.as_str());
+                let _ = worktree.update(cx, |worktree, cx| {
+                    worktree.write_file(gitignore_path.as_ref(), rope, language::LineEnding::Unix, cx)
+                        .detach_and_log_err(cx);
+                    anyhow::Ok(())
+                })?;
+
+                anyhow::Ok(())
+            })
+            .detach_and_log_err(cx);
+
+            Some(())
+        });
+    }
+
     fn revert_entry(
         &mut self,
         entry: &GitStatusEntry,
@@ -4147,10 +4216,16 @@ impl GitPanel {
             "Restore File"
         };
         let context_menu = ContextMenu::build(window, cx, |context_menu, _, _| {
-            context_menu
+            let mut context_menu = context_menu
                 .context(self.focus_handle.clone())
                 .action(stage_title, ToggleStaged.boxed_clone())
-                .action(restore_title, git::RestoreFile::default().boxed_clone())
+                .action(restore_title, git::RestoreFile::default().boxed_clone());
+
+            if entry.status.is_created() {
+                context_menu = context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone());
+            }
+
+            context_menu
                 .separator()
                 .action("Open Diff", Confirm.boxed_clone())
                 .action("Open File", SecondaryConfirm.boxed_clone())
@@ -4568,6 +4643,7 @@ impl Render for GitPanel {
                     .on_action(cx.listener(Self::unstage_selected))
                     .on_action(cx.listener(Self::restore_tracked_files))
                     .on_action(cx.listener(Self::revert_selected))
+                    .on_action(cx.listener(Self::add_to_gitignore))
                     .on_action(cx.listener(Self::clean_all))
                     .on_action(cx.listener(Self::generate_commit_message_action))
                     .on_action(cx.listener(Self::stash_all))
