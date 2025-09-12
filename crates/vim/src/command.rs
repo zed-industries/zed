@@ -680,23 +680,6 @@ struct VimCommand {
     has_filename: bool,
 }
 
-// todo!() remove once the lifecycle stuff is sorted out
-impl Clone for VimCommand {
-    fn clone(&self) -> Self {
-        Self {
-            prefix: self.prefix,
-            suffix: self.suffix,
-            action: self.action.as_ref().map(|action| action.boxed_clone()),
-            action_name: self.action_name,
-            bang_action: self.bang_action.as_ref().map(|action| action.boxed_clone()),
-            args: self.args.clone(),
-            range: self.range.clone(),
-            has_count: self.has_count,
-            has_filename: self.has_filename,
-        }
-    }
-}
-
 impl VimCommand {
     fn new(pattern: (&'static str, &'static str), action: impl Action) -> Self {
         Self {
@@ -755,7 +738,6 @@ impl VimCommand {
     fn generate_filename_completions(
         &self,
         query: &str,
-        has_trailing_space: bool,
         workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> Task<Vec<String>> {
@@ -763,7 +745,7 @@ impl VimCommand {
             return Task::ready(Vec::new());
         };
 
-        if args.is_empty() && !has_trailing_space {
+        if args.is_empty() {
             return Task::ready(Vec::new());
         }
 
@@ -1395,7 +1377,7 @@ unsafe impl Sync for VimCommands {}
 unsafe impl Send for VimCommands {}
 impl Global for VimCommands {}
 
-fn commands(cx: &App) -> &Vec<VimCommand> {
+fn commands(cx: &App) -> &'static Vec<VimCommand> {
     static COMMANDS: OnceLock<VimCommands> = OnceLock::new();
     &COMMANDS
         .get_or_init(|| VimCommands(generate_commands(cx)))
@@ -1450,36 +1432,10 @@ pub fn command_interceptor(
 
     let on_matching_lines = (query.starts_with('g') || query.starts_with('v'))
         .then(|| {
-            let mut global = "global".chars().peekable();
-            let mut new_query = query.chars().peekable();
-            let mut invert = false;
-            if new_query.peek() == Some(&'v') {
-                invert = true;
-                new_query.next();
-                query = &query[1..];
-            }
-            while global
-                .peek()
-                .is_some_and(|char| Some(char) == new_query.peek())
-            {
-                global.next();
-                new_query.next();
-                query = &query[1..];
-            }
-            if !invert && new_query.peek() == Some(&'!') {
-                invert = true;
-                new_query.next();
-                query = &query[1..];
-            }
-            let range = range.clone().unwrap_or(CommandRange {
-                start: Position::Line { row: 0, offset: 0 },
-                end: Some(Position::LastLine { offset: 0 }),
-            });
-            let delimiter = new_query.next().filter(|c| {
-                !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'' && *c != '!'
-            })?;
-            query = &query[1..];
-            Some((new_query, invert, range, delimiter))
+            let (pattern, range, search, invert) = OnMatchingLines::parse(query, &range)?;
+            let start_idx = query.len() - pattern.len();
+            query = query[start_idx..].trim();
+            Some((range, search, invert))
         })
         .flatten();
 
@@ -1529,20 +1485,23 @@ pub fn command_interceptor(
         }
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
+    } else if on_matching_lines.is_some() {
+        commands(cx)
+            .iter()
+            .find_map(|command| command.parse(query, &range, cx))
     } else {
         None
     };
 
-    if let Some((chars, invert, range, delimiter)) = on_matching_lines
+    if let Some((range, search, invert)) = on_matching_lines
         && let Some(ref inner) = action
     {
-        action = Some(Box::new(OnMatchingLines::parse(
-            chars,
+        action = Some(Box::new(OnMatchingLines {
+            range,
+            search,
+            action: WrappedAction(inner.boxed_clone()),
             invert,
-            range.clone(),
-            delimiter,
-            inner.boxed_clone(),
-        )));
+        }));
     };
 
     if let Some(action) = action {
@@ -1555,69 +1514,86 @@ pub fn command_interceptor(
         }]);
     }
 
-    for command in commands(cx).iter() {
-        if let Some(action) = command.parse(query, &range, cx) {
+    if let Some((command, mut results, filename_autocomplete)) =
+        commands(cx)
+            .iter()
+            .find_map(|command: &'static VimCommand| {
+                let action = command.parse(query, &range, cx)?;
+
+                let command_string = range_prefix.clone() + command.prefix + command.suffix;
+
+                let mut display_string = ":".to_owned() + &command_string;
+                if query.contains('!') {
+                    display_string.push('!');
+                }
+                let positions =
+                    generate_positions(&display_string, &(range_prefix.clone() + query));
+
+                let results = vec![CommandInterceptResult {
+                    action,
+                    string: display_string.clone(),
+                    positions,
+                }];
+
+                let filename_autocomplete = command.has_filename && has_trailing_space;
+
+                Some((command, results, filename_autocomplete))
+            })
+    {
+        if !filename_autocomplete {
+            return Task::ready(results);
+        }
+
+        let query = query.to_owned();
+        cx.spawn(async move |cx| {
+            let query = query.as_str();
             let command_string = range_prefix.clone() + command.prefix + command.suffix;
             let mut display_string = ":".to_owned() + &command_string;
             if query.contains('!') {
                 display_string.push('!');
             }
-            let positions = generate_positions(&display_string, &(range_prefix.clone() + query));
-
-            let mut results = vec![CommandInterceptResult {
-                action,
-                string: display_string.clone(),
-                positions,
-            }];
-
-            let query = query.to_owned();
-            let command = command.clone();
-            return cx.spawn(async move |cx| {
-                let query = query.as_str();
-                let Ok(filenames) = cx.update(|cx| {
-                    command.generate_filename_completions(query, has_trailing_space, workspace, cx)
-                }) else {
-                    return results;
+            let Ok(filenames) =
+                cx.update(|cx| command.generate_filename_completions(query, workspace, cx))
+            else {
+                return results;
+            };
+            for filename in filenames.await {
+                let action = match cx.update(|cx| {
+                    command.parse(&format!("{} {}", command_string, filename), &range, cx)
+                }) {
+                    Ok(Some(action)) => action,
+                    _ => continue,
                 };
-                let filenames = filenames.await;
 
-                for filename in filenames {
-                    let action = match cx.update(|cx| {
-                        command.parse(&format!("{} {}", command_string, filename), &range, cx)
-                    }) {
-                        Ok(Some(action)) => action,
-                        _ => continue,
-                    };
+                let completed_string = display_string.clone() + " " + &filename;
+                let query = range_prefix.clone() + query;
 
-                    let completed_string = display_string.clone() + " " + &filename;
-                    let query = range_prefix.clone() + query;
-
-                    // skip files that are not similar to what has been typed
-                    let mut chars = query.chars();
-                    if completed_string
-                        .chars()
-                        .fold(chars.next(), |needle, haystack_char| match needle {
-                            Some(c) if c == haystack_char => chars.next(),
-                            _ => needle,
-                        })
-                        .is_some()
-                    {
-                        continue;
-                    }
-
-                    let positions = generate_positions(&completed_string, &query);
-
-                    results.push(CommandInterceptResult {
-                        action,
-                        string: completed_string,
-                        positions,
-                    });
+                // skip files that are not similar to what has been typed
+                let mut chars = query.chars();
+                if completed_string
+                    .chars()
+                    .fold(chars.next(), |needle, haystack_char| match needle {
+                        Some(c) if c == haystack_char => chars.next(),
+                        _ => needle,
+                    })
+                    .is_some()
+                {
+                    continue;
                 }
-                results
-            });
-        }
+
+                let positions = generate_positions(&completed_string, &query);
+
+                results.push(CommandInterceptResult {
+                    action,
+                    string: completed_string,
+                    positions,
+                });
+            }
+            results
+        })
+    } else {
+        Task::ready(Vec::new())
     }
-    Task::ready(Vec::new())
 }
 
 fn generate_positions(string: &str, query: &str) -> Vec<usize> {
@@ -1658,16 +1634,40 @@ impl OnMatchingLines {
     // but we do flip \( and \) to ( and ) (and vice-versa) in the pattern,
     // and convert \0..\9 to $0..$9 in the replacement so that common idioms work.
     pub(crate) fn parse(
-        mut chars: Peekable<Chars>,
-        invert: bool,
-        range: CommandRange,
-        delimiter: char,
-        action: Box<dyn Action>,
-    ) -> Self {
+        query: &str,
+        range: &Option<CommandRange>,
+    ) -> Option<(String, CommandRange, String, bool)> {
+        let mut global = "global".chars().peekable();
+        let mut query_chars = query.chars().peekable();
+        let mut invert = false;
+        if query_chars.peek() == Some(&'v') {
+            invert = true;
+            query_chars.next();
+        }
+        while global
+            .peek()
+            .is_some_and(|char| Some(char) == query_chars.peek())
+        {
+            global.next();
+            query_chars.next();
+        }
+        if !invert && query_chars.peek() == Some(&'!') {
+            invert = true;
+            query_chars.next();
+        }
+        let range = range.clone().unwrap_or(CommandRange {
+            start: Position::Line { row: 0, offset: 0 },
+            end: Some(Position::LastLine { offset: 0 }),
+        });
+
+        let delimiter = query_chars.next().filter(|c| {
+            !c.is_alphanumeric() && *c != '"' && *c != '|' && *c != '\'' && *c != '!'
+        })?;
+
         let mut search = String::new();
         let mut escaped = false;
 
-        for c in chars.by_ref() {
+        for c in query_chars.by_ref() {
             if escaped {
                 escaped = false;
                 // unescape escaped parens
@@ -1688,12 +1688,7 @@ impl OnMatchingLines {
             }
         }
 
-        Self {
-            range,
-            search,
-            invert,
-            action: WrappedAction(action),
-        }
+        Some((query_chars.collect::<String>(), range, search, invert))
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut Context<Vim>) {
