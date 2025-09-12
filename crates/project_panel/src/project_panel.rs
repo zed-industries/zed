@@ -310,6 +310,27 @@ impl FoldedAncestors {
     fn max_ancestor_depth(&self) -> usize {
         self.ancestors.len()
     }
+
+    /// Note: This returns None for last item in ancestors list
+    fn active_ancestor(&self) -> Option<ProjectEntryId> {
+        if self.current_ancestor_depth == 0 {
+            return None;
+        }
+        self.ancestors.get(self.current_ancestor_depth).copied()
+    }
+
+    fn active_index(&self) -> usize {
+        self.max_ancestor_depth()
+            .saturating_sub(1)
+            .saturating_sub(self.current_ancestor_depth)
+    }
+
+    fn active_component(&self, file_name: &str) -> Option<String> {
+        Path::new(file_name)
+            .components()
+            .nth(self.active_index())
+            .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
+    }
 }
 
 pub fn init_settings(cx: &mut App) {
@@ -393,7 +414,8 @@ struct SerializedProjectPanel {
 
 struct DraggedProjectEntryView {
     selection: SelectedEntry,
-    details: EntryDetails,
+    icon: Option<SharedString>,
+    filename: String,
     click_offset: Point<Pixels>,
     selections: Arc<[SelectedEntry]>,
 }
@@ -2943,13 +2965,7 @@ impl ProjectPanel {
     fn resolve_entry(&self, id: ProjectEntryId) -> ProjectEntryId {
         self.ancestors
             .get(&id)
-            .and_then(|ancestors| {
-                if ancestors.current_ancestor_depth == 0 {
-                    return None;
-                }
-                ancestors.ancestors.get(ancestors.current_ancestor_depth)
-            })
-            .copied()
+            .and_then(|ancestors| ancestors.active_ancestor())
             .unwrap_or(id)
     }
 
@@ -4090,7 +4106,10 @@ impl ProjectPanel {
         let depth = details.depth;
         let worktree_id = details.worktree_id;
         let dragged_selection = DraggedSelection {
-            active_selection: selection,
+            active_selection: SelectedEntry {
+                worktree_id: selection.worktree_id,
+                entry_id: self.resolve_entry(selection.entry_id),
+            },
             marked_selections: Arc::from(self.marked_entries.clone()),
         };
 
@@ -4320,14 +4339,19 @@ impl ProjectPanel {
                 ))
                 .on_drag(
                     dragged_selection,
-                    move |selection, click_offset, _window, cx| {
-                        cx.new(|_| DraggedProjectEntryView {
-                            details: details.clone(),
-                            click_offset,
-                            selection: selection.active_selection,
-                            selections: selection.marked_selections.clone(),
-                        })
-                    },
+                    {
+                        let active_component = self.ancestors.get(&entry_id).and_then(|ancestors| ancestors.active_component(&details.filename));
+                        move |selection, click_offset, _window, cx| {
+                            let filename = active_component.as_ref().unwrap_or_else(|| &details.filename);
+                            cx.new(|_| DraggedProjectEntryView {
+                                icon: details.icon.clone(),
+                                filename: filename.clone(),
+                                click_offset,
+                                selection: selection.active_selection,
+                                selections: selection.marked_selections.clone(),
+                            })
+                        }
+                    }
                 )
                 .on_drop(
                     cx.listener(move |this, selections: &DraggedSelection, window, cx| {
@@ -4530,19 +4554,13 @@ impl ProjectPanel {
                                 if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
                                     let components = Path::new(&file_name)
                                         .components()
-                                        .map(|comp| {
-                                            comp.as_os_str().to_string_lossy().into_owned()
-                                        })
+                                        .map(|comp| comp.as_os_str().to_string_lossy().into_owned())
                                         .collect::<Vec<_>>();
-
+                                    let active_index = folded_ancestors.active_index();
                                     let components_len = components.len();
-                                    // TODO this can underflow
-                                    let active_index = components_len
-                                        - 1
-                                        - folded_ancestors.current_ancestor_depth;
                                         const DELIMITER: SharedString =
                                         SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
-                                    for (index, component) in components.into_iter().enumerate() {
+                                    for (index, component) in components.iter().enumerate() {
                                         if index != 0 {
                                                 let delimiter_target_index = index - 1;
                                                 let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - delimiter_target_index).cloned();
@@ -4643,16 +4661,19 @@ impl ProjectPanel {
                                                     }))
                                                 })
                                             })
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                if index != active_index
-                                                    && let Some(folds) =
-                                                        this.ancestors.get_mut(&entry_id)
-                                                    {
-                                                        folds.current_ancestor_depth =
-                                                            components_len - 1 - index;
-                                                        cx.notify();
-                                                    }
-                                            }))
+                                            .on_mouse_down(
+                                                MouseButton::Left,
+                                                cx.listener(move |this, _, _, cx| {
+                                                    if index != active_index
+                                                        && let Some(folds) =
+                                                            this.ancestors.get_mut(&entry_id)
+                                                        {
+                                                            folds.current_ancestor_depth =
+                                                                components_len - 1 - index;
+                                                            cx.notify();
+                                                        }
+                                                }),
+                                            )
                                             .child(
                                                 Label::new(component)
                                                     .single_line()
@@ -5846,12 +5867,12 @@ impl Render for DraggedProjectEntryView {
                         if self.selections.len() > 1 && self.selections.contains(&self.selection) {
                             this.child(Label::new(format!("{} entries", self.selections.len())))
                         } else {
-                            this.child(if let Some(icon) = &self.details.icon {
+                            this.child(if let Some(icon) = &self.icon {
                                 div().child(Icon::from_path(icon.clone()))
                             } else {
                                 div()
                             })
-                            .child(Label::new(self.details.filename.clone()))
+                            .child(Label::new(self.filename.clone()))
                         }
                     }),
             )
