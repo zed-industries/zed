@@ -805,6 +805,16 @@ impl Pane {
         &mut self.nav_history
     }
 
+    pub fn fork_nav_history(&self) -> NavHistory {
+        let history = self.nav_history.0.lock().clone();
+        NavHistory(Arc::new(Mutex::new(history)))
+    }
+
+    pub fn set_nav_history(&mut self, history: NavHistory, cx: &Context<Self>) {
+        self.nav_history = history;
+        self.nav_history().0.lock().pane = cx.entity().downgrade();
+    }
+
     pub fn disable_history(&mut self) {
         self.nav_history.disable();
     }

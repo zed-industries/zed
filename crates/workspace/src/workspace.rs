@@ -4115,8 +4115,10 @@ impl Workspace {
         let maybe_pane_handle =
             if let Some(clone) = item.clone_on_split(self.database_id(), window, cx) {
                 let new_pane = self.add_pane(window, cx);
+                let nav_history = pane.read(cx).fork_nav_history();
                 new_pane.update(cx, |pane, cx| {
-                    pane.add_item(clone, true, true, None, window, cx)
+                    pane.set_nav_history(nav_history, cx);
+                    pane.add_item(clone, true, true, None, window, cx);
                 });
                 self.center.split(&pane, &new_pane, direction).unwrap();
                 cx.notify();
