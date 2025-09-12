@@ -667,6 +667,7 @@ impl WasmHost {
         let file_perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
         let path = SanitizedPath::new(&extension_work_dir);
+        #[cfg(target_os = "windows")]
         let path = path.to_string().replace('\\', "/");
 
         let mut ctx = wasi::WasiCtxBuilder::new();
