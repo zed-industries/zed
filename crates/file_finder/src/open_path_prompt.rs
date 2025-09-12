@@ -695,8 +695,8 @@ impl PickerDelegate for OpenPathDelegate {
             if !settings.file_icons {
                 return None;
             }
-            let path = path::Path::new(&candidate.path.string);
 
+            let path = path::Path::new(&candidate.path.string);
             let icon = if candidate.is_dir {
                 if is_current_dir_candidate {
                     return Some(Icon::new(IconName::ReplyArrowRight).color(Color::Muted));
