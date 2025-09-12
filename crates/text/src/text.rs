@@ -2600,7 +2600,7 @@ impl BufferSnapshot {
     #[track_caller]
     pub fn debug_range<V, R>(&self, value: V, range: &R)
     where
-        V: std::any::Any + Send,
+        V: std::fmt::Debug,
         R: debug::ToDebugRange,
     {
         self.debug_range_with_key(std::panic::Location::caller(), value, range);
@@ -2613,14 +2613,14 @@ impl BufferSnapshot {
     pub fn debug_range_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
     where
         K: std::hash::Hash + 'static,
-        V: std::any::Any + Send,
+        V: std::fmt::Debug,
         R: debug::ToDebugRange,
     {
         let caller = std::panic::Location::caller();
         let range = range.to_debug_range(self);
         let range = self.anchor_after(range.start)..self.anchor_before(range.end);
         debug::GlobalDebugRanges::with_locked(|debug_ranges| {
-            debug_ranges.insert(key, value, vec![range], caller);
+            debug_ranges.insert(key, format!("{value:?}").into(), vec![range], caller);
         });
     }
 }
@@ -3282,18 +3282,23 @@ impl LineEnding {
 pub mod debug {
     use super::*;
     use parking_lot::Mutex;
-    use std::any::{Any, TypeId};
+    use std::any::TypeId;
     use std::hash::{Hash, Hasher};
 
     static GLOBAL_DEBUG_RANGES: Mutex<Option<GlobalDebugRanges>> = Mutex::new(None);
 
-    pub struct GlobalDebugRanges(pub Vec<DebugRange>);
+    pub struct GlobalDebugRanges {
+        pub ranges: Vec<DebugRange>,
+        key_to_occurrence_index: HashMap<Key, usize>,
+        next_occurrence_index: usize,
+    }
 
     pub struct DebugRange {
         pub ranges: Vec<Range<Anchor>>,
         key: Key,
-        pub value: Box<dyn Any + Send>,
+        pub value: Arc<str>,
         pub caller: &'static std::panic::Location<'static>,
+        pub occurrence_index: usize,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -3306,7 +3311,11 @@ pub mod debug {
         pub fn with_locked<R>(f: impl FnOnce(&mut Self) -> R) -> R {
             let mut state = GLOBAL_DEBUG_RANGES.lock();
             if state.is_none() {
-                *state = Some(GlobalDebugRanges(Vec::new()));
+                *state = Some(GlobalDebugRanges {
+                    ranges: Vec::new(),
+                    key_to_occurrence_index: HashMap::default(),
+                    next_occurrence_index: 0,
+                });
             }
             if let Some(global_debug_ranges) = state.as_mut() {
                 f(global_debug_ranges)
@@ -3315,29 +3324,36 @@ pub mod debug {
             }
         }
 
-        pub fn insert<K: Hash + 'static, V: Any + Send>(
+        pub fn insert<K: Hash + 'static>(
             &mut self,
             key: &K,
-            value: V,
+            value: Arc<str>,
             ranges: Vec<Range<Anchor>>,
             caller: &'static std::panic::Location<'static>,
         ) {
+            let occurrence_index = *self
+                .key_to_occurrence_index
+                .entry(Key::new(key))
+                .or_insert_with(|| {
+                    let occurrence_index = self.next_occurrence_index;
+                    self.next_occurrence_index += 1;
+                    occurrence_index
+                });
             let key = Key::new(key);
             let existing = self
-                .0
+                .ranges
                 .iter()
                 .enumerate()
                 .rfind(|(_, existing)| existing.key == key);
             if let Some((existing_ix, _)) = existing {
-                self.0.remove(existing_ix);
+                self.ranges.remove(existing_ix);
             }
-
-            let value = Box::new(value);
-            self.0.push(DebugRange {
+            self.ranges.push(DebugRange {
                 ranges,
                 key,
                 value,
                 caller,
+                occurrence_index,
             });
         }
 
@@ -3347,17 +3363,18 @@ pub mod debug {
 
         fn remove_impl(&mut self, key: &Key) {
             let existing = self
-                .0
+                .ranges
                 .iter()
                 .enumerate()
                 .rfind(|(_, existing)| &existing.key == key);
             if let Some((existing_ix, _)) = existing {
-                self.0.remove(existing_ix);
+                self.ranges.remove(existing_ix);
             }
         }
 
         pub fn remove_all_with_key_type<K: 'static>(&mut self) {
-            self.0.retain(|item| item.key.type_id != TypeId::of::<K>());
+            self.ranges
+                .retain(|item| item.key.type_id != TypeId::of::<K>());
         }
     }
 

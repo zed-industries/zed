@@ -6409,7 +6409,7 @@ impl MultiBufferSnapshot {
     #[track_caller]
     pub fn debug_range<V, R>(&self, value: V, range: &R)
     where
-        V: std::any::Any + Send,
+        V: std::fmt::Debug,
         R: ToMultiBufferDebugRange,
     {
         self.debug_range_with_key(std::panic::Location::caller(), value, range);
@@ -6422,7 +6422,7 @@ impl MultiBufferSnapshot {
     pub fn debug_range_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
     where
         K: std::hash::Hash + 'static,
-        V: std::any::Any + Send,
+        V: std::fmt::Debug,
         R: ToMultiBufferDebugRange,
     {
         let caller = std::panic::Location::caller();
@@ -6435,7 +6435,7 @@ impl MultiBufferSnapshot {
             })
             .collect();
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
-            debug_ranges.insert(key, value, text_ranges, caller)
+            debug_ranges.insert(key, format!("{value:?}").into(), text_ranges, caller)
         });
     }
 }
