@@ -1572,7 +1572,7 @@ mod tests {
     use std::{
         cell::{Cell, RefCell},
         ops::Range,
-        path::Path,
+        path::{Path, PathBuf},
         rc::Rc,
         sync::Arc,
     };
@@ -1581,6 +1581,7 @@ mod tests {
     use agent_client_protocol as acp;
     use agent2::HistoryStore;
     use assistant_context::ContextStore;
+    use assistant_tool::outline;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -2595,95 +2596,89 @@ mod tests {
         // Create a large file that exceeds AUTO_OUTLINE_SIZE
         const LINE: &str = "fn example_function() { /* some code */ }\n";
         let large_content = LINE.repeat(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()));
-        let content_len = large_content.len();
-        assert!(content_len > outline::AUTO_OUTLINE_SIZE);
-
-        fs.save(
-            path!("/project/large_file.rs"),
-            &large_content.as_bytes(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
+        assert!(large_content.len() > outline::AUTO_OUTLINE_SIZE);
 
         // Create a small file that doesn't exceed AUTO_OUTLINE_SIZE
         let small_content = "fn small_function() { /* small */ }\n";
         assert!(small_content.len() < outline::AUTO_OUTLINE_SIZE);
 
-        fs.save(
-            path!("/project/small_file.rs"),
-            &small_content.as_bytes(),
-            Default::default(),
-        )
-        .await
-        .unwrap();
-
-        let app_state = AppState::test(cx);
-        app_state.fs.as_fake().insert_tree(
-            path!("/project"),
+        fs.insert_tree(
+            "/project",
             json!({
-                "large_file.rs": large_content,
+                "large_file.rs": large_content.clone(),
                 "small_file.rs": small_content,
             }),
-        ).await;
+        )
+        .await;
 
-        let project = Project::test(app_state.fs.clone(), [path!("/project")], cx).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
 
-        cx.update(|cx| {
-            let workspace = cx.new(|cx| {
-                Workspace::new(Default::default(), project.clone(), app_state.clone(), cx)
-            });
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-            let mut message_editor = MessageEditor::new(
-                project.clone(),
-                HistoryStore::new(project.clone(), cx),
-                workspace.downgrade(),
-                cx,
-            );
-            message_editor.set_prompt_capabilities(
-                acp::PromptCapabilities {
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                let editor = MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                );
+                // Enable embedded context so files are actually included
+                editor.prompt_capabilities.set(acp::PromptCapabilities {
                     embedded_context: true,
                     ..Default::default()
-                },
-                cx,
-            );
-
-            // Test large file mention - now using shared get_buffer_content_or_outline function
-            let large_file_path = PathBuf::from("/project/large_file.rs");
-            let large_file_mention = message_editor.confirm_mention_for_file(large_file_path.clone(), cx);
-
-            cx.spawn(async move |cx| {
-                let mention = large_file_mention.await.unwrap();
-                match mention {
-                    Mention::Text { content, .. } => {
-                        // The shared function adds this header for large files
-                        assert!(content.contains("File outline for"));
-                        assert!(content.contains("file too large to show full content"));
-                        // Should not contain the full repeated content
-                        assert!(!content.contains(&LINE.repeat(100)));
-                    }
-                    _ => panic!("Expected Text mention for large file"),
-                }
-            }).detach();
-
-            // Test small file mention - should get full content from shared function
-            let small_file_path = PathBuf::from("/project/small_file.rs");
-            let small_file_mention = message_editor.confirm_mention_for_file(small_file_path, cx);
-
-            cx.spawn(async move |cx| {
-                let mention = small_file_mention.await.unwrap();
-                match mention {
-                    Mention::Text { content, .. } => {
-                        // Should contain the actual content
-                        assert_eq!(content, small_content);
-                        // Should not contain outline header
-                        assert!(!content.contains("File outline for"));
-                    }
-                    _ => panic!("Expected Text mention for small file"),
-                }
-            }).detach();
+                });
+                editor
+            })
         });
 
-        cx.run_until_parked();
+        // Test large file mention
+        let large_file_path = PathBuf::from("/project/large_file.rs");
+        let large_file_task = message_editor.update(cx, |editor, cx| {
+            editor.confirm_mention_for_file(large_file_path, cx)
+        });
+
+        let large_file_mention = large_file_task.await.unwrap();
+        match large_file_mention {
+            Mention::Text { content, .. } => {
+                // Should contain outline header for large files
+                assert!(content.contains("File outline for"));
+                assert!(content.contains("file too large to show full content"));
+                // Should not contain the full repeated content
+                assert!(!content.contains(&LINE.repeat(100)));
+            }
+            _ => panic!("Expected Text mention for large file"),
+        }
+
+        // Test small file mention
+        let small_file_path = PathBuf::from("/project/small_file.rs");
+        let small_file_task = message_editor.update(cx, |editor, cx| {
+            editor.confirm_mention_for_file(small_file_path, cx)
+        });
+
+        let small_file_mention = small_file_task.await.unwrap();
+        match small_file_mention {
+            Mention::Text { content, .. } => {
+                // Should contain the actual content
+                assert_eq!(content, small_content);
+                // Should not contain outline header
+                assert!(!content.contains("File outline for"));
+            }
+            _ => panic!("Expected Text mention for small file"),
+        }
     }
 }

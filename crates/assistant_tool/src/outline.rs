@@ -6,7 +6,6 @@ use project::Project;
 use regex::Regex;
 use std::fmt::Write;
 use std::path::Path;
-use std::sync::Arc;
 use text::Point;
 
 /// For files over this size, instead of reading them (or including them in context),

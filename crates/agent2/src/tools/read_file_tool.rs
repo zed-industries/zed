@@ -147,7 +147,7 @@ impl AgentTool for ReadFileTool {
 
         event_stream.update_fields(ToolCallUpdateFields {
             locations: Some(vec![acp::ToolCallLocation {
-                path: abs_path,
+                path: abs_path.clone(),
                 line: input.start_line.map(|line| line.saturating_sub(1)),
             }]),
             ..Default::default()
@@ -227,7 +227,7 @@ impl AgentTool for ReadFileTool {
                 // No line ranges specified, so use shared function to get content or outline
                 let content = outline::get_buffer_content_or_outline(
                     buffer.clone(),
-                    Some(&path_buf),
+                    Some(&abs_path),
                     cx
                 ).await?;
 
