@@ -1199,11 +1199,7 @@ impl Render for ContextMenu {
                 .w_full()
                 .gap_1()
                 .justify_end()
-                .children(
-                    aside
-                        .clone()
-                        .and_then(|(_, aside)| Some(render_aside(aside, cx))),
-                )
+                .children(aside.and_then(|(_, aside)| Some(render_aside(aside, cx))))
                 .child(render_menu(cx, window))
         }
     }
