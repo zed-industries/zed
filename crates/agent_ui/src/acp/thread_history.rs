@@ -11,9 +11,7 @@ use gpui::{
 use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{
-    HighlightedLabel, ListItem, ListItemSpacing, WithScrollbar, Tooltip, prelude::*,
-};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, WithScrollbar, prelude::*};
 
 pub struct AcpThreadHistory {
     pub(crate) history_store: Entity<HistoryStore>,

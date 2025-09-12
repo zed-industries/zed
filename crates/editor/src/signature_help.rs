@@ -14,8 +14,8 @@ use text::Rope;
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, AnyElement, ButtonCommon, ButtonStyle, Clickable, FluentBuilder, IconButton,
-    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,
-    LabelSize, ParentElement, Pixels, SharedString, StatefulInteractiveElement, Styled, StyledExt,
+    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, LabelSize,
+    ParentElement, Pixels, SharedString, StatefulInteractiveElement, Styled, StyledExt,
     WithScrollbar, div, relative,
 };
 

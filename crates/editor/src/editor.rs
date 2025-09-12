@@ -195,8 +195,8 @@ use theme::{
     observe_buffer_font_size_adjustment,
 };
 use ui::{
-    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconName,
-    IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
+    ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconName, IconSize, Indicator,
+    Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{

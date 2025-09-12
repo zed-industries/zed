@@ -33,8 +33,8 @@ use std::{
     },
 };
 use ui::{
-    List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Section, Tooltip, WithScrollbar, prelude::*,
+    List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry, Section, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
