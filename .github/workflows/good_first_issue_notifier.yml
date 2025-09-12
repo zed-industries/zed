@@ -21,7 +21,7 @@ jobs:
           ISSUE_URL: ${{ github.event.issue.html_url }}
           ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
         run: |
-          MESSAGE="[${ISSUE_TITLE} (#${ISSUE_NUMBER})](${ISSUE_URL})"
+          MESSAGE="[${ISSUE_TITLE} (#${ISSUE_NUMBER})](<${ISSUE_URL}>)"
 
           {
             echo "message<<EOF"
