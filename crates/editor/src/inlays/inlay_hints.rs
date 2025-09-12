@@ -309,6 +309,7 @@ impl Editor {
         }
 
         let invalidate_cache = {
+            let visible_inlay_hints = self.visible_inlay_hints(cx);
             let Some(inlay_hints) = self.inlay_hints.as_mut() else {
                 return;
             };
@@ -329,8 +330,7 @@ impl Editor {
                                 (InvalidationStrategy::RefreshRequested, None)
                             } else {
                                 self.splice_inlays(
-                                    &self
-                                        .visible_inlay_hints(cx)
+                                    &visible_inlay_hints
                                         .iter()
                                         .map(|inlay| inlay.id)
                                         .collect::<Vec<InlayId>>(),
@@ -349,8 +349,7 @@ impl Editor {
                             (InvalidationStrategy::RefreshRequested, None)
                         } else {
                             self.splice_inlays(
-                                &self
-                                    .visible_inlay_hints(cx)
+                                &visible_inlay_hints
                                     .iter()
                                     .map(|inlay| inlay.id)
                                     .collect::<Vec<InlayId>>(),
@@ -364,21 +363,27 @@ impl Editor {
                     }
                 }
                 InlayHintRefreshReason::SettingsChange(new_settings) => {
-                    // TODO kb
-                    return;
+                    match inlay_hints.update_settings(
+                        &self.buffer,
+                        new_settings,
+                        visible_inlay_hints,
+                        cx,
+                    ) {
+                        ControlFlow::Break(Some(InlaySplice {
+                            to_remove,
+                            to_insert,
+                        })) => {
+                            self.splice_inlays(&to_remove, to_insert, cx);
+                            return;
+                        }
+                        ControlFlow::Break(None) => return,
+                        ControlFlow::Continue(()) => (InvalidationStrategy::RefreshRequested, None),
+                    }
                 }
                 InlayHintRefreshReason::ExcerptsRemoved(excerpts_removed) => {
-                    // TODO kb
-                    // if let Some(InlaySplice {
-                    //     to_remove,
-                    //     to_insert,
-                    // }) = self.inlay_hint_cache.remove_excerpts(&excerpts_removed)
-                    // {
-                    //     self.splice_inlays(&to_remove, to_insert, cx);
-                    // }
-                    // self.display_map.update(cx, |display_map, _| {
-                    //     display_map.remove_inlays_for_excerpts(&excerpts_removed)
-                    // });
+                    self.display_map.update(cx, |display_map, _| {
+                        display_map.remove_inlays_for_excerpts(&excerpts_removed)
+                    });
                     return;
                 }
                 InlayHintRefreshReason::NewLinesShown => (InvalidationStrategy::None, None),
