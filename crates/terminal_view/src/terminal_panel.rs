@@ -385,19 +385,44 @@ impl TerminalPanel {
                 }
                 self.serialize(cx);
             }
-            &pane::Event::Split(direction) => {
-                let fut = self.new_pane_with_cloned_active_terminal(window, cx);
-                let pane = pane.clone();
-                cx.spawn_in(window, async move |panel, cx| {
-                    let Some(new_pane) = fut.await else {
+            &pane::Event::Split {
+                direction,
+                clone_active_item,
+            } => {
+                if clone_active_item {
+                    let fut = self.new_pane_with_cloned_active_terminal(window, cx);
+                    let pane = pane.clone();
+                    cx.spawn_in(window, async move |panel, cx| {
+                        let Some(new_pane) = fut.await else {
+                            return;
+                        };
+                        panel
+                            .update_in(cx, |panel, window, cx| {
+                                panel.center.split(&pane, &new_pane, direction).log_err();
+                                window.focus(&new_pane.focus_handle(cx));
+                            })
+                            .ok();
+                    })
+                    .detach();
+                } else {
+                    let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx))
+                    else {
                         return;
                     };
-                    _ = panel.update_in(cx, |panel, window, cx| {
-                        panel.center.split(&pane, &new_pane, direction).log_err();
-                        window.focus(&new_pane.focus_handle(cx));
+                    let Ok(project) = self
+                        .workspace
+                        .update(cx, |workspace, _| workspace.project().clone())
+                    else {
+                        return;
+                    };
+                    let new_pane =
+                        new_terminal_pane(self.workspace.clone(), project, false, window, cx);
+                    new_pane.update(cx, |pane, cx| {
+                        pane.add_item(item, true, true, None, window, cx);
                     });
-                })
-                .detach();
+                    self.center.split(&pane, &new_pane, direction).log_err();
+                    window.focus(&new_pane.focus_handle(cx));
+                }
             }
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
