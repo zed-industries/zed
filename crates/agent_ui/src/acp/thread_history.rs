@@ -12,8 +12,7 @@ use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
-    Tooltip, prelude::*,
+    HighlightedLabel, ListItem, ListItemSpacing, Scrollbar, ScrollbarState, Tooltip, prelude::*,
 };
 
 pub struct AcpThreadHistory {
@@ -465,7 +464,6 @@ impl AcpThreadHistory {
                     .end_slot::<IconButton>(if hovered {
                         Some(
                             IconButton::new("delete", IconName::Trash)
-                                .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
                                 .tooltip(move |window, cx| {
@@ -635,7 +633,6 @@ impl RenderOnce for AcpHistoryEntryElement {
             .end_slot::<IconButton>(if self.hovered || self.selected {
                 Some(
                     IconButton::new("delete", IconName::Trash)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .tooltip(move |window, cx| {
