@@ -47,9 +47,9 @@ use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
 use ui::{
     ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, DynamicSpacing, FluentBuilder,
-    HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, IndentGuideColors,
-    IndentGuideLayout, Label, LabelCommon, ListItem, ScrollAxes, Scrollbars, StyledExt,
-    StyledTypography, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
+    HighlightedLabel, Icon, IconButton, IconName, IconSize, IndentGuideColors, IndentGuideLayout,
+    Label, LabelCommon, ListItem, ScrollAxes, Scrollbars, StyledExt, StyledTypography, Toggleable,
+    Tooltip, WithScrollbar, h_flex, v_flex,
 };
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic};
 use workspace::{
