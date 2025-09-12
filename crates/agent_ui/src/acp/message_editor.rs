@@ -8,6 +8,7 @@ use agent_servers::{AgentServer, AgentServerDelegate};
 use agent2::HistoryStore;
 use anyhow::{Result, anyhow};
 use assistant_slash_commands::codeblock_fence_for_path;
+use assistant_tool::outline;
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Anchor, AnchorRangeExt, ContextMenuOptions, ContextMenuPlacement, Editor, EditorElement,
@@ -456,11 +457,14 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-            let mention = buffer.update(cx, |buffer, cx| Mention::Text {
-                content: buffer.text(),
-                tracked_buffers: vec![cx.entity()],
-            })?;
-            anyhow::Ok(mention)
+            let buffer_content =
+                outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx)
+                    .await?;
+
+            Ok(Mention::Text {
+                content: buffer_content.text,
+                tracked_buffers: vec![buffer],
+            })
         })
     }
 
@@ -520,18 +524,17 @@ impl MessageEditor {
                         })
                     });
 
-                    // TODO: report load errors instead of just logging
-                    let rope_task = cx.spawn(async move |cx| {
+                    cx.spawn(async move |cx| {
                         let buffer = open_task.await.log_err()?;
-                        let rope = buffer
-                            .read_with(cx, |buffer, _cx| buffer.as_rope().clone())
-                            .log_err()?;
-                        Some((rope, buffer))
-                    });
+                        let buffer_content = outline::get_buffer_content_or_outline(
+                            buffer.clone(),
+                            Some(&full_path),
+                            &cx,
+                        )
+                        .await
+                        .ok()?;
 
-                    cx.background_spawn(async move {
-                        let (rope, buffer) = rope_task.await?;
-                        Some((rel_path, full_path, rope.to_string(), buffer))
+                        Some((rel_path, full_path, buffer_content.text, buffer))
                     })
                 }))
             })?;
@@ -1580,6 +1583,7 @@ mod tests {
     use agent_client_protocol as acp;
     use agent2::HistoryStore;
     use assistant_context::ContextStore;
+    use assistant_tool::outline;
     use editor::{AnchorRangeExt as _, Editor, EditorMode};
     use fs::FakeFs;
     use futures::StreamExt as _;
@@ -2583,5 +2587,110 @@ mod tests {
                 )
             })
             .collect::<Vec<_>>()
+    }
+
+    #[gpui::test]
+    async fn test_large_file_mention_uses_outline(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+
+        // Create a large file that exceeds AUTO_OUTLINE_SIZE
+        const LINE: &str = "fn example_function() { /* some code */ }\n";
+        let large_content = LINE.repeat(2 * (outline::AUTO_OUTLINE_SIZE / LINE.len()));
+        assert!(large_content.len() > outline::AUTO_OUTLINE_SIZE);
+
+        // Create a small file that doesn't exceed AUTO_OUTLINE_SIZE
+        let small_content = "fn small_function() { /* small */ }\n";
+        assert!(small_content.len() < outline::AUTO_OUTLINE_SIZE);
+
+        fs.insert_tree(
+            "/project",
+            json!({
+                "large_file.rs": large_content.clone(),
+                "small_file.rs": small_content,
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let context_store = cx.new(|cx| ContextStore::fake(project.clone(), cx));
+        let history_store = cx.new(|cx| HistoryStore::new(context_store, cx));
+
+        let message_editor = cx.update(|window, cx| {
+            cx.new(|cx| {
+                let editor = MessageEditor::new(
+                    workspace.downgrade(),
+                    project.clone(),
+                    history_store.clone(),
+                    None,
+                    Default::default(),
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: None,
+                    },
+                    window,
+                    cx,
+                );
+                // Enable embedded context so files are actually included
+                editor.prompt_capabilities.set(acp::PromptCapabilities {
+                    embedded_context: true,
+                    ..Default::default()
+                });
+                editor
+            })
+        });
+
+        // Test large file mention
+        // Get the absolute path using the project's worktree
+        let large_file_abs_path = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree_root = worktree.read(cx).abs_path();
+            worktree_root.join("large_file.rs")
+        });
+        let large_file_task = message_editor.update(cx, |editor, cx| {
+            editor.confirm_mention_for_file(large_file_abs_path, cx)
+        });
+
+        let large_file_mention = large_file_task.await.unwrap();
+        match large_file_mention {
+            Mention::Text { content, .. } => {
+                // Should contain outline header for large files
+                assert!(content.contains("File outline for"));
+                assert!(content.contains("file too large to show full content"));
+                // Should not contain the full repeated content
+                assert!(!content.contains(&LINE.repeat(100)));
+            }
+            _ => panic!("Expected Text mention for large file"),
+        }
+
+        // Test small file mention
+        // Get the absolute path using the project's worktree
+        let small_file_abs_path = project.read_with(cx, |project, cx| {
+            let worktree = project.worktrees(cx).next().unwrap();
+            let worktree_root = worktree.read(cx).abs_path();
+            worktree_root.join("small_file.rs")
+        });
+        let small_file_task = message_editor.update(cx, |editor, cx| {
+            editor.confirm_mention_for_file(small_file_abs_path, cx)
+        });
+
+        let small_file_mention = small_file_task.await.unwrap();
+        match small_file_mention {
+            Mention::Text { content, .. } => {
+                // Should contain the actual content
+                assert_eq!(content, small_content);
+                // Should not contain outline header
+                assert!(!content.contains("File outline for"));
+            }
+            _ => panic!("Expected Text mention for small file"),
+        }
     }
 }
