@@ -20204,6 +20204,64 @@ impl Editor {
                 results.push((start..end, color))
             }
         }
+
+        #[cfg(debug_assertions)]
+        {
+            text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
+                if debug_ranges.0.is_empty() {
+                    return;
+                }
+                let buffer_snapshot = display_snapshot.buffer_snapshot.clone();
+                for (buffer, buffer_range, excerpt_id) in
+                    buffer_snapshot.range_to_buffer_ranges(search_range)
+                {
+                    let buffer_range = buffer.anchor_after(buffer_range.start)
+                        ..buffer.anchor_before(buffer_range.end);
+                    let buffer_snapshot = &buffer_snapshot;
+                    results.extend(
+                        debug_ranges
+                            .0
+                            .iter()
+                            .filter_map(|debug_range| {
+                                let ranges = debug_range
+                                    .ranges
+                                    .iter()
+                                    .filter(|range| {
+                                        range.start.buffer_id == Some(buffer.remote_id())
+                                    })
+                                    .collect::<Vec<_>>();
+                                if ranges.is_empty() {
+                                    None
+                                } else {
+                                    Some(ranges)
+                                }
+                            })
+                            .enumerate()
+                            .flat_map(|(ix, ranges)| {
+                                let color =
+                                    gpui::hsla(((ix + 2) % 6) as f32 / 6.0, 0.75, 0.5, 0.05);
+                                ranges.into_iter().filter_map(move |range| {
+                                    let clipped_start =
+                                        range.start.max(&buffer_range.start, buffer);
+                                    let clipped_end = range.end.min(&buffer_range.end, buffer);
+                                    if clipped_start.cmp(&clipped_end, buffer) == Ordering::Greater
+                                    {
+                                        return None;
+                                    }
+                                    let range = buffer_snapshot
+                                        .anchor_in_excerpt(excerpt_id, clipped_start)?
+                                        ..buffer_snapshot
+                                            .anchor_in_excerpt(excerpt_id, clipped_end)?;
+                                    let start = range.start.to_display_point(display_snapshot);
+                                    let end = range.end.to_display_point(display_snapshot);
+                                    Some((start..end, color.clone()))
+                                })
+                            }),
+                    );
+                }
+            });
+        }
+
         results
     }
 

@@ -2593,6 +2593,40 @@ impl BufferSnapshot {
             last_old_end + new_offset.saturating_sub(last_new_end)
         })
     }
+
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn debug_range<T, V>(&self, range: T, value: V)
+    where
+        T: debug::ToDebugRange,
+        V: std::fmt::Debug,
+    {
+        self.debug_range_with_hover(range, format!("{:?}", value));
+    }
+
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn debug_range_with_hover<T, V>(&self, range: T, value: V)
+    where
+        T: debug::ToDebugRange,
+        V: std::any::Any + Send,
+    {
+        self.debug_range_with_key(range, &std::panic::Location::caller(), value);
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_range_with_key<T, K, V>(&self, range: T, key: &K, value: V)
+    where
+        T: debug::ToDebugRange,
+        K: std::hash::Hash + 'static,
+        V: std::any::Any + Send,
+    {
+        let range = range.to_debug_range(self);
+        let range = self.anchor_after(range.start)..self.anchor_before(range.end);
+        debug::GlobalDebugRanges::with_locked(|debug_ranges| {
+            debug_ranges.insert(vec![range], key, value)
+        });
+    }
 }
 
 struct RopeBuilder<'a> {
@@ -3244,6 +3278,112 @@ impl LineEnding {
             replaced.into()
         } else {
             text
+        }
+    }
+}
+
+#[cfg(debug_assertions)]
+pub mod debug {
+    use super::*;
+    use parking_lot::Mutex;
+    use std::any::{Any, TypeId};
+    use std::hash::{Hash, Hasher};
+
+    static GLOBAL_DEBUG_RANGES: Mutex<Option<GlobalDebugRanges>> = Mutex::new(None);
+
+    pub struct GlobalDebugRanges(pub Vec<DebugRange>);
+
+    // todo! Add stable insertion order index and use for color.
+    pub struct DebugRange {
+        pub ranges: Vec<Range<Anchor>>,
+        key: Key,
+        pub value: Box<dyn Any + Send>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    struct Key {
+        type_id: TypeId,
+        hash: u64,
+    }
+
+    impl GlobalDebugRanges {
+        pub fn with_locked<R>(f: impl FnOnce(&mut Self) -> R) -> R {
+            let mut state = GLOBAL_DEBUG_RANGES.lock();
+            if state.is_none() {
+                *state = Some(GlobalDebugRanges(Vec::new()));
+            }
+            if let Some(global_debug_ranges) = state.as_mut() {
+                f(global_debug_ranges)
+            } else {
+                unreachable!()
+            }
+        }
+
+        pub fn insert<K: Hash + 'static, V: Any + Send>(
+            &mut self,
+            ranges: Vec<Range<Anchor>>,
+            key: &K,
+            value: V,
+        ) {
+            let key = Key::new(key);
+            let existing = self
+                .0
+                .iter()
+                .enumerate()
+                .rfind(|(_, existing)| existing.key == key);
+            if let Some((existing_ix, _)) = existing {
+                self.0.remove(existing_ix);
+            }
+
+            let value = Box::new(value);
+            self.0.push(DebugRange { ranges, key, value });
+        }
+
+        pub fn remove<K: Hash + 'static>(&mut self, key: &K) {
+            self.remove_impl(&Key::new(key));
+        }
+
+        fn remove_impl(&mut self, key: &Key) {
+            let existing = self
+                .0
+                .iter()
+                .enumerate()
+                .rfind(|(_, existing)| &existing.key == key);
+            if let Some((existing_ix, _)) = existing {
+                self.0.remove(existing_ix);
+            }
+        }
+
+        pub fn remove_all_with_key_type<K: 'static>(&mut self) {
+            self.0.retain(|item| item.key.type_id != TypeId::of::<K>());
+        }
+    }
+
+    impl Key {
+        fn new<K: Hash + 'static>(key: &K) -> Self {
+            let type_id = TypeId::of::<K>();
+            let mut hasher = collections::FxHasher::default();
+            key.hash(&mut hasher);
+            Key {
+                type_id,
+                hash: hasher.finish(),
+            }
+        }
+    }
+
+    pub trait ToDebugRange {
+        fn to_debug_range(&self, snapshot: &BufferSnapshot) -> Range<usize>;
+    }
+
+    impl<T: ToOffset> ToDebugRange for T {
+        fn to_debug_range(&self, snapshot: &BufferSnapshot) -> Range<usize> {
+            self.to_offset(snapshot)..self.to_offset(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToDebugRange for Range<T> {
+        fn to_debug_range(&self, snapshot: &BufferSnapshot) -> Range<usize> {
+            self.start.to_offset(snapshot)..self.end.to_offset(snapshot)
         }
     }
 }

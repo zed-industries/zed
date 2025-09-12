@@ -6402,6 +6402,46 @@ impl MultiBufferSnapshot {
     pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
         self.diffs.get(&buffer_id)
     }
+
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn debug_range<T, V>(&self, range: T, value: V)
+    where
+        T: ToMultiBufferDebugRange,
+        V: std::fmt::Debug,
+    {
+        self.debug_range_with_hover(range, format!("{:?}", value));
+    }
+
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn debug_range_with_hover<T, V>(&self, range: T, value: V)
+    where
+        T: ToMultiBufferDebugRange,
+        V: std::any::Any + Send,
+    {
+        self.debug_range_with_key(range, &std::panic::Location::caller(), value);
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn debug_range_with_key<T, K, V>(&self, range: T, key: &K, value: V)
+    where
+        T: ToMultiBufferDebugRange,
+        K: std::hash::Hash + 'static,
+        V: std::any::Any + Send,
+    {
+        let range = range.to_multi_buffer_debug_range(self);
+        let text_ranges = self
+            .range_to_buffer_ranges(range)
+            .into_iter()
+            .map(|(buffer, range, _excerpt_id)| {
+                buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+            })
+            .collect();
+        text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
+            debug_ranges.insert(text_ranges, key, value)
+        });
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -7981,5 +8021,24 @@ impl ToPointUtf16 for PointUtf16 {
 impl From<ExcerptId> for EntityId {
     fn from(id: ExcerptId) -> Self {
         EntityId::from(id.0 as u64)
+    }
+}
+
+#[cfg(debug_assertions)]
+pub trait ToMultiBufferDebugRange {
+    fn to_multi_buffer_debug_range(&self, snapshot: &MultiBufferSnapshot) -> Range<usize>;
+}
+
+#[cfg(debug_assertions)]
+impl<T: ToOffset> ToMultiBufferDebugRange for T {
+    fn to_multi_buffer_debug_range(&self, snapshot: &MultiBufferSnapshot) -> Range<usize> {
+        self.to_offset(snapshot)..self.to_offset(snapshot)
+    }
+}
+
+#[cfg(debug_assertions)]
+impl<T: ToOffset> ToMultiBufferDebugRange for Range<T> {
+    fn to_multi_buffer_debug_range(&self, snapshot: &MultiBufferSnapshot) -> Range<usize> {
+        self.start.to_offset(snapshot)..self.end.to_offset(snapshot)
     }
 }
