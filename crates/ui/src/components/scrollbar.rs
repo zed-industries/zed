@@ -1226,7 +1226,9 @@ impl<S: ScrollbarVisibility, T: ScrollableHandle> Element for ScrollbarElement<S
                                         state.show_scrollbars(window, cx);
                                     }
                                     state.update_hovered_thumb(&event.position, window, cx);
-                                    cx.stop_propagation();
+                                    if state.thumb_state != ThumbState::Inactive {
+                                        cx.stop_propagation();
+                                    }
                                 }
                                 ParentHovered::No(state_changed) if state_changed => {
                                     state.set_thumb_state(ThumbState::Inactive, window, cx);
