@@ -15900,11 +15900,10 @@ dependencies = [
  "editor",
  "file_icons",
  "gpui",
- "project",
+ "multi_buffer",
  "ui",
  "workspace",
  "workspace-hack",
- "worktree",
 ]
 
 [[package]]
