@@ -1292,8 +1292,23 @@ impl Workspace {
         }
 
         cx.on_focus_lost(window, |this, window, cx| {
-            let focus_handle = this.focus_handle(cx);
-            window.focus(&focus_handle);
+            let active_pane = this.active_pane();
+            let focus_handle = active_pane.focus_handle(cx);
+
+            let is_empty_pane = active_pane.read(cx).items_len() == 0;
+
+            if is_empty_pane {
+                // Empty panes should immediately reclaim focus to stay responsive
+                focus_handle.focus(window);
+            } else {
+                // For panes with items, use deferred focus restoration
+                cx.on_next_frame(window, move |_this, window, cx| {
+                    if window.focused(cx).is_none() {
+                        focus_handle.focus(window);
+                    }
+                    cx.notify();
+                });
+            }
         })
         .detach();
 
@@ -1441,6 +1456,10 @@ impl Workspace {
         cx.defer_in(window, |this, window, cx| {
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
+
+            // Start periodic focus maintenance for empty panes to handle race conditions
+            // with deferred operations that might interfere with focus
+            this.start_empty_pane_focus_maintenance(window, cx);
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -1670,6 +1689,20 @@ impl Workspace {
                 .update(cx, |workspace, window, cx| {
                     window.activate_window();
                     workspace.update_history(cx);
+
+                    // Ensure focus is properly established, especially for empty panes
+                    // This helps prevent race conditions where the window becomes unresponsive
+                    cx.on_next_frame(window, |workspace, window, cx| {
+                        let active_pane = workspace.active_pane();
+                        if window.focused(cx).is_none()
+                            || !active_pane.read(cx).has_focus(window, cx)
+                        {
+                            let focus_handle = active_pane.focus_handle(cx);
+                            focus_handle.focus(window);
+                        }
+
+                        workspace.start_empty_pane_focus_maintenance(window, cx);
+                    });
                 })
                 .log_err();
             Ok((window, opened_items))
@@ -1678,6 +1711,83 @@ impl Workspace {
 
     pub fn weak_handle(&self) -> WeakEntity<Self> {
         self.weak_self.clone()
+    }
+
+    /// Start periodic focus maintenance for empty panes to handle delayed focus loss
+    fn start_empty_pane_focus_maintenance(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let active_pane = self.active_pane();
+
+        // Only start maintenance if the pane is empty or likely to become empty
+        let should_maintain_focus =
+            active_pane.read(cx).items_len() == 0 || active_pane.read(cx).items_len() <= 1;
+
+        if should_maintain_focus {
+            let weak_workspace = cx.entity().downgrade();
+            let weak_pane = active_pane.downgrade();
+
+            cx.spawn_in(window, async move |_, cx| {
+                // Wait for deferred operations to complete
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(150))
+                    .await;
+
+                // Check focus multiple times to handle race conditions, but respect user interactions
+                for attempt in 0..3 {
+                    let should_continue = cx
+                        .update(|window, cx| {
+                            let Some(workspace) = weak_workspace.upgrade() else {
+                                return false;
+                            };
+                            let Some(pane) = weak_pane.upgrade() else {
+                                return false;
+                            };
+
+                            // If the pane is no longer empty, stop maintenance
+                            if pane.read(cx).items_len() > 0 {
+                                return false;
+                            }
+
+                            // Check if any modals are open (like command palette) - if so, respect them
+                            if workspace.read(cx).modal_layer.read(cx).has_active_modal() {
+                                return false;
+                            }
+
+                            let workspace_read = workspace.read(cx);
+                            let left_dock = workspace_read.left_dock();
+                            let bottom_dock = workspace_read.bottom_dock();
+                            let right_dock = workspace_read.right_dock();
+
+                            let dock_has_focus = (left_dock.read(cx).is_open()
+                                && left_dock.focus_handle(cx).contains_focused(window, cx))
+                                || (bottom_dock.read(cx).is_open()
+                                    && bottom_dock.focus_handle(cx).contains_focused(window, cx))
+                                || (right_dock.read(cx).is_open()
+                                    && right_dock.focus_handle(cx).contains_focused(window, cx));
+
+                            // For empty panes, restore focus unless docks legitimately have it
+                            if !dock_has_focus && !pane.read(cx).has_focus(window, cx) {
+                                let focus_handle = pane.focus_handle(cx);
+                                focus_handle.focus(window);
+                            }
+
+                            attempt < 2
+                        })
+                        .unwrap_or(false);
+
+                    if !should_continue {
+                        break;
+                    }
+
+                    // Wait between attempts
+                    cx.background_executor()
+                        .timer(std::time::Duration::from_millis(300))
+                        .await;
+                }
+
+                anyhow::Ok(())
+            })
+            .detach();
+        }
     }
 
     pub fn left_dock(&self) -> &Entity<Dock> {
