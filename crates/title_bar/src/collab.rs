@@ -356,7 +356,6 @@ impl TitleBar {
                     IconButton::new("leave-call", IconName::Exit)
                         .style(ButtonStyle::Subtle)
                         .tooltip(Tooltip::text("Leave Call"))
-                        .icon_size(IconSize::Small)
                         .on_click(move |_, _window, cx| {
                             ActiveCall::global(cx)
                                 .update(cx, |call, cx| call.hang_up(cx))
@@ -421,7 +420,6 @@ impl TitleBar {
                     }
                 })
                 .style(ButtonStyle::Subtle)
-                .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Error))
                 .on_click(move |_, _window, cx| {
@@ -442,7 +440,6 @@ impl TitleBar {
             )
             .style(ButtonStyle::Subtle)
             .selected_style(ButtonStyle::Tinted(TintColor::Error))
-            .icon_size(IconSize::Small)
             .toggle_state(is_deafened)
             .tooltip(move |window, cx| {
                 if is_deafened {
@@ -470,7 +467,6 @@ impl TitleBar {
         if can_use_microphone && screen_sharing_supported {
             let trigger = IconButton::new("screen-share", IconName::Screen)
                 .style(ButtonStyle::Subtle)
-                .icon_size(IconSize::Small)
                 .toggle_state(is_screen_sharing)
                 .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .tooltip(Tooltip::text(if is_screen_sharing {
