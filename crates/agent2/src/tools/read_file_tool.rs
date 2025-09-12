@@ -149,6 +149,7 @@ impl AgentTool for ReadFileTool {
             locations: Some(vec![acp::ToolCallLocation {
                 path: abs_path.clone(),
                 line: input.start_line.map(|line| line.saturating_sub(1)),
+                meta: None,
             }]),
             ..Default::default()
         });

@@ -274,6 +274,7 @@ impl AgentTool for EditFileTool {
                 locations: Some(vec![acp::ToolCallLocation {
                     path: abs_path,
                     line: None,
+                    meta: None,
                 }]),
                 ..Default::default()
             });
@@ -353,7 +354,7 @@ impl AgentTool for EditFileTool {
                             }).ok();
                             if let Some(abs_path) = abs_path.clone() {
                                 event_stream.update_fields(ToolCallUpdateFields {
-                                    locations: Some(vec![ToolCallLocation { path: abs_path, line }]),
+                                    locations: Some(vec![ToolCallLocation { path: abs_path, line, meta: None }]),
                                     ..Default::default()
                                 });
                             }
