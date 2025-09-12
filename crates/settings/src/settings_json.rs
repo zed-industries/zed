@@ -167,8 +167,6 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                 replace_key,
                 tab_size,
             ) {
-                let array_replacement =
-                    array_replacement.expect("todo! make this fn return result");
                 return array_replacement;
             }
 
@@ -336,7 +334,7 @@ fn handle_possible_array_value(
     new_value: Option<&Value>,
     replace_key: Option<&str>,
     tab_size: usize,
-) -> Option<Result<(Range<usize>, String)>> {
+) -> Option<(Range<usize>, String)> {
     if remaining_key_path.is_empty() {
         return None;
     }
@@ -351,17 +349,14 @@ fn handle_possible_array_value(
         ""
     };
 
-    let (mut replace_range, mut replace_value) = match replace_top_level_array_value_in_json_text(
+    let (mut replace_range, mut replace_value) = replace_top_level_array_value_in_json_text(
         array_str,
         &key_path[1..],
         new_value,
         replace_key,
         index,
         tab_size,
-    ) {
-        Ok(value) => value,
-        Err(err) => return Some(Err(err.context("Failed to replace array value"))),
-    };
+    );
 
     if value_is_array {
         replace_range.start += value_node.start_byte();
@@ -395,7 +390,7 @@ fn handle_possible_array_value(
             replace_value.remove(idx);
         }
     }
-    return Some(Ok((replace_range, replace_value)));
+    return Some((replace_range, replace_value));
 }
 
 const TS_DOCUMENT_KIND: &str = "document";
@@ -409,29 +404,26 @@ pub fn replace_top_level_array_value_in_json_text(
     replace_key: Option<&str>,
     array_index: usize,
     tab_size: usize,
-) -> Result<(Range<usize>, String)> {
+) -> (Range<usize>, String) {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
         .unwrap();
-    if text.trim().is_empty() {
-        let json_value = construct_json_value(key_path, new_value);
-        let json_value = serde_json::json!([json_value]);
-        return Ok((0..text.len(), to_pretty_json(&json_value, tab_size, 0)));
-    }
+
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = syntax_tree.walk();
 
     if cursor.node().kind() == TS_DOCUMENT_KIND {
-        anyhow::ensure!(
-            cursor.goto_first_child(),
-            "Document empty - No top level array"
-        );
+        cursor.goto_first_child();
     }
 
     while cursor.node().kind() != TS_ARRAY_KIND {
-        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
+        if !cursor.goto_next_sibling() {
+            let json_value = construct_json_value(key_path, new_value);
+            let json_value = serde_json::json!([json_value]);
+            return (0..text.len(), to_pretty_json(&json_value, tab_size, 0));
+        }
     }
 
     // false if no children
@@ -456,7 +448,7 @@ pub fn replace_top_level_array_value_in_json_text(
             if let Some(new_value) = new_value {
                 return append_top_level_array_value_in_json_text(text, new_value, tab_size);
             } else {
-                return Ok((0..0, String::new()));
+                return (0..0, String::new());
             }
         }
     }
@@ -492,7 +484,7 @@ pub fn replace_top_level_array_value_in_json_text(
                 remove_range.start = cursor.node().range().start_byte;
             }
         }
-        Ok((remove_range, String::new()))
+        (remove_range, String::new())
     } else {
         if let Some(array_replacement) = handle_possible_array_value(
             &cursor.node(),
@@ -523,7 +515,7 @@ pub fn replace_top_level_array_value_in_json_text(
             }
         }
 
-        Ok((replace_range, replace_value))
+        (replace_range, replace_value)
     }
 }
 
@@ -531,35 +523,31 @@ pub fn append_top_level_array_value_in_json_text(
     text: &str,
     new_value: &Value,
     tab_size: usize,
-) -> Result<(Range<usize>, String)> {
+) -> (Range<usize>, String) {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
         .unwrap();
-    if text.trim().is_empty() {
-        let json_value = serde_json::json!([new_value]);
-        return Ok((0..text.len(), to_pretty_json(&json_value, tab_size, 0)));
-    }
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = syntax_tree.walk();
 
     if cursor.node().kind() == TS_DOCUMENT_KIND {
-        anyhow::ensure!(
-            cursor.goto_first_child(),
-            "Document empty - No top level array"
-        );
+        cursor.goto_first_child();
     }
 
     while cursor.node().kind() != TS_ARRAY_KIND {
-        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
+        if !cursor.goto_next_sibling() {
+            let json_value = serde_json::json!([new_value]);
+            return (0..text.len(), to_pretty_json(&json_value, tab_size, 0));
+        }
     }
 
-    anyhow::ensure!(
-        cursor.goto_last_child(),
+    let went_to_last_child = cursor.goto_last_child();
+    debug_assert!(
+        went_to_last_child && cursor.node().kind() == "]",
         "Malformed JSON syntax tree, expected `]` at end of array"
     );
-    debug_assert_eq!(cursor.node().kind(), "]");
     let close_bracket_start = cursor.node().start_byte();
     while cursor.goto_previous_sibling()
         && (cursor.node().is_extra() || cursor.node().is_missing())
@@ -639,7 +627,7 @@ pub fn append_top_level_array_value_in_json_text(
         replace_value.insert_str(0, &indent);
         replace_value.push('\n');
     }
-    return Ok((replace_range, replace_value));
+    return (replace_range, replace_value);
 
     fn is_error_of_kind(cursor: &mut tree_sitter::TreeCursor<'_>, kind: &str) -> bool {
         if cursor.node().kind() != "ERROR" {
@@ -1866,8 +1854,7 @@ mod tests {
                 None,
                 index,
                 4,
-            )
-            .expect("replace succeeded");
+            );
             let mut result_str = input;
             result_str.replace_range(result.0, &result.1);
             pretty_assertions::assert_eq!(expected.to_string(), result_str);
@@ -2244,8 +2231,7 @@ mod tests {
         #[track_caller]
         fn check_array_append(input: impl ToString, value: Value, expected: impl ToString) {
             let input = input.to_string();
-            let result = append_top_level_array_value_in_json_text(&input, &value, 4)
-                .expect("append succeeded");
+            let result = append_top_level_array_value_in_json_text(&input, &value, 4);
             let mut result_str = input;
             result_str.replace_range(result.0, &result.1);
             pretty_assertions::assert_eq!(expected.to_string(), result_str);
