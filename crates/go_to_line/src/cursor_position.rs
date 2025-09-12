@@ -293,7 +293,7 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, JsonSchema, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LineIndicatorFormat {
     Short,
@@ -301,8 +301,9 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
-#[serde(transparent)]
+#[derive(
+    Clone, Copy, Default, Debug, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey,
+)]
 #[settings_key(None)]
 pub(crate) struct LineIndicatorFormatContent {
     line_indicator_format: Option<LineIndicatorFormat>,
@@ -315,13 +316,14 @@ impl Settings for LineIndicatorFormat {
         let format = [
             sources.release_channel,
             sources.profile,
-            sources.operating_system,
             sources.user,
+            sources.operating_system,
+            Some(sources.default),
         ]
         .into_iter()
-        .find_map(|value| value.copied())
-        .unwrap_or(*sources.default)
-        .line_indicator_format
+        .flatten()
+        .filter_map(|val| val.line_indicator_format)
+        .next()
         .ok_or_else(Self::missing_default)?;
 
         Ok(format)
