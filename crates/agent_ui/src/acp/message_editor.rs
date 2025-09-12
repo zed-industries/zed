@@ -1574,7 +1574,7 @@ mod tests {
     use std::{
         cell::{Cell, RefCell},
         ops::Range,
-        path::{Path, PathBuf},
+        path::Path,
         rc::Rc,
         sync::Arc,
     };
