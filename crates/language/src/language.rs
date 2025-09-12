@@ -1427,7 +1427,7 @@ impl Language {
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
         let mut annotation_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
             &self.config.name,
             "outline",
@@ -1441,17 +1441,18 @@ impl Language {
                 Capture::Optional("close", &mut close_capture_ix),
                 Capture::Optional("annotation", &mut annotation_capture_ix),
             ],
-        )?;
-        self.grammar_mut()?.outline_config = Some(OutlineConfig {
-            query,
-            item_capture_ix,
-            name_capture_ix,
-            context_capture_ix,
-            extra_context_capture_ix,
-            open_capture_ix,
-            close_capture_ix,
-            annotation_capture_ix,
-        });
+        ) {
+            self.grammar_mut()?.outline_config = Some(OutlineConfig {
+                query,
+                item_capture_ix,
+                name_capture_ix,
+                context_capture_ix,
+                extra_context_capture_ix,
+                open_capture_ix,
+                close_capture_ix,
+                annotation_capture_ix,
+            });
+        }
         Ok(self)
     }
 
@@ -1485,7 +1486,7 @@ impl Language {
         let mut context_capture_ix = None;
         let mut collapse_capture_ix = None;
         let mut keep_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
             &self.config.name,
             "embedding",
@@ -1497,15 +1498,16 @@ impl Language {
                 Capture::Optional("keep", &mut keep_capture_ix),
                 Capture::Optional("collapse", &mut collapse_capture_ix),
             ],
-        )?;
-        self.grammar_mut()?.embedding_config = Some(EmbeddingConfig {
-            query,
-            item_capture_ix,
-            name_capture_ix,
-            context_capture_ix,
-            collapse_capture_ix,
-            keep_capture_ix,
-        });
+        ) {
+            self.grammar_mut()?.embedding_config = Some(EmbeddingConfig {
+                query,
+                item_capture_ix,
+                name_capture_ix,
+                context_capture_ix,
+                collapse_capture_ix,
+                keep_capture_ix,
+            });
+        }
         Ok(self)
     }
 
@@ -1536,7 +1538,7 @@ impl Language {
         let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
         let mut open_capture_ix = 0;
         let mut close_capture_ix = 0;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
             &self.config.name,
             "brackets",
@@ -1545,24 +1547,25 @@ impl Language {
                 Capture::Required("open", &mut open_capture_ix),
                 Capture::Required("close", &mut close_capture_ix),
             ],
-        )?;
-        let patterns = (0..query.pattern_count())
-            .map(|ix| {
-                let mut config = BracketsPatternConfig::default();
-                for setting in query.property_settings(ix) {
-                    if setting.key.as_ref() == "newline.only" {
-                        config.newline_only = true
+        ) {
+            let patterns = (0..query.pattern_count())
+                .map(|ix| {
+                    let mut config = BracketsPatternConfig::default();
+                    for setting in query.property_settings(ix) {
+                        if setting.key.as_ref() == "newline.only" {
+                            config.newline_only = true
+                        }
                     }
-                }
-                config
-            })
-            .collect();
-        self.grammar_mut()?.brackets_config = Some(BracketsConfig {
-            query,
-            open_capture_ix,
-            close_capture_ix,
-            patterns,
-        });
+                    config
+                })
+                .collect();
+            self.grammar_mut()?.brackets_config = Some(BracketsConfig {
+                query,
+                open_capture_ix,
+                close_capture_ix,
+                patterns,
+            });
+        }
         Ok(self)
     }
 
@@ -1572,7 +1575,7 @@ impl Language {
         let mut start_capture_ix = None;
         let mut end_capture_ix = None;
         let mut outdent_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
             &self.config.name,
             "indents",
@@ -1583,23 +1586,23 @@ impl Language {
                 Capture::Optional("end", &mut end_capture_ix),
                 Capture::Optional("outdent", &mut outdent_capture_ix),
             ],
-        )?;
-
-        let mut suffixed_start_captures = HashMap::default();
-        for (ix, name) in query.capture_names().iter().enumerate() {
-            if let Some(suffix) = name.strip_prefix("start.") {
-                suffixed_start_captures.insert(ix as u32, suffix.to_owned().into());
+        ) {
+            let mut suffixed_start_captures = HashMap::default();
+            for (ix, name) in query.capture_names().iter().enumerate() {
+                if let Some(suffix) = name.strip_prefix("start.") {
+                    suffixed_start_captures.insert(ix as u32, suffix.to_owned().into());
+                }
             }
-        }
 
-        self.grammar_mut()?.indents_config = Some(IndentConfig {
-            query,
-            indent_capture_ix,
-            start_capture_ix,
-            end_capture_ix,
-            outdent_capture_ix,
-            suffixed_start_captures,
-        });
+            self.grammar_mut()?.indents_config = Some(IndentConfig {
+                query,
+                indent_capture_ix,
+                start_capture_ix,
+                end_capture_ix,
+                outdent_capture_ix,
+                suffixed_start_captures,
+            });
+        }
         Ok(self)
     }
 
@@ -1609,7 +1612,7 @@ impl Language {
         let mut injection_language_capture_ix = None;
         let mut content_capture_ix = None;
         let mut injection_content_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
             &self.config.name,
             "injections",
@@ -1620,49 +1623,52 @@ impl Language {
                 Capture::Optional("content", &mut content_capture_ix),
                 Capture::Optional("injection.content", &mut injection_content_capture_ix),
             ],
-        )?;
-        language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
-            (None, Some(ix)) => Some(ix),
-            (Some(_), Some(_)) => {
-                anyhow::bail!("both language and injection.language captures are present");
-            }
-            _ => language_capture_ix,
-        };
-        content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
-            (None, Some(ix)) => Some(ix),
-            (Some(_), Some(_)) => {
-                anyhow::bail!("both content and injection.content captures are present")
-            }
-            _ => content_capture_ix,
-        };
-        let patterns = (0..query.pattern_count())
-            .map(|ix| {
-                let mut config = InjectionPatternConfig::default();
-                for setting in query.property_settings(ix) {
-                    match setting.key.as_ref() {
-                        "language" | "injection.language" => {
-                            config.language.clone_from(&setting.value);
-                        }
-                        "combined" | "injection.combined" => {
-                            config.combined = true;
-                        }
-                        _ => {}
-                    }
+        ) {
+            language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
+                (None, Some(ix)) => Some(ix),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("both language and injection.language captures are present");
                 }
-                config
-            })
-            .collect();
-        if let Some(content_capture_ix) = content_capture_ix {
-            self.grammar_mut()?.injection_config = Some(InjectionConfig {
-                query,
-                language_capture_ix,
-                content_capture_ix,
-                patterns,
-            });
-        } else {
-            return Err(anyhow::anyhow!(
-                "missing required capture: content or injection.content",
-            ));
+                _ => language_capture_ix,
+            };
+            content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
+                (None, Some(ix)) => Some(ix),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("both content and injection.content captures are present")
+                }
+                _ => content_capture_ix,
+            };
+            let patterns = (0..query.pattern_count())
+                .map(|ix| {
+                    let mut config = InjectionPatternConfig::default();
+                    for setting in query.property_settings(ix) {
+                        match setting.key.as_ref() {
+                            "language" | "injection.language" => {
+                                config.language.clone_from(&setting.value);
+                            }
+                            "combined" | "injection.combined" => {
+                                config.combined = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    config
+                })
+                .collect();
+            if let Some(content_capture_ix) = content_capture_ix {
+                self.grammar_mut()?.injection_config = Some(InjectionConfig {
+                    query,
+                    language_capture_ix,
+                    content_capture_ix,
+                    patterns,
+                });
+            } else {
+                log::error!(
+                    "missing required capture in injections {} TreeSitter query: \
+                    content or injection.content",
+                    &self.config.name,
+                );
+            }
         }
         Ok(self)
     }
@@ -1754,19 +1760,18 @@ impl Language {
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
         let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
         let mut redaction_capture_ix = 0;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
             &self.config.name,
             "redactions",
             &[],
             &mut [Capture::Required("redact", &mut redaction_capture_ix)],
-        )?;
-
-        self.grammar_mut()?.redactions_config = Some(RedactionConfig {
-            query,
-            redaction_capture_ix,
-        });
-
+        ) {
+            self.grammar_mut()?.redactions_config = Some(RedactionConfig {
+                query,
+                redaction_capture_ix,
+            });
+        }
         Ok(self)
     }
 
@@ -2310,13 +2315,13 @@ enum Capture<'a> {
     Optional(&'static str, &'a mut Option<u32>),
 }
 
-fn get_capture_indices(
+fn populate_capture_indices(
     query: &Query,
     language_name: &LanguageName,
     query_type: &str,
     expected_prefixes: &[&str],
     captures: &mut [Capture<'_>],
-) -> Result<()> {
+) -> bool {
     let mut found_required_indices = Vec::new();
     'outer: for (ix, name) in query.capture_names().iter().enumerate() {
         for (required_ix, capture) in captures.iter_mut().enumerate() {
@@ -2355,13 +2360,16 @@ fn get_capture_indices(
             missing_required_captures.push(*capture_name);
         }
     }
-    if !missing_required_captures.is_empty() {
-        return Err(anyhow::anyhow!(
-            "missing required capture(s): {}",
+    let success = missing_required_captures.is_empty();
+    if !success {
+        log::error!(
+            "missing required capture(s) in {} {} TreeSitter query: {}",
+            language_name,
+            query_type,
             missing_required_captures.join(", ")
-        ));
+        );
     }
-    Ok(())
+    success
 }
 
 pub fn point_to_lsp(point: PointUtf16) -> lsp::Position {
