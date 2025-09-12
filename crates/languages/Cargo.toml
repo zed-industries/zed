@@ -56,6 +56,7 @@ pet-core.workspace = true
 pet-fs.workspace = true
 pet-poetry.workspace = true
 pet-reporter.workspace = true
+pet-virtualenv.workspace = true
 pet.workspace = true
 project.workspace = true
 regex.workspace = true
