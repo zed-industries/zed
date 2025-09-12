@@ -4340,14 +4340,12 @@ impl ProjectPanel {
                 .on_drag(
                     dragged_selection,
                     {
-                        let weak = cx.weak_entity();
+                        let active_component = self.ancestors.get(&entry_id).and_then(|ancestors| ancestors.active_component(&details.filename));
                         move |selection, click_offset, _window, cx| {
-                            let filename = weak.update(cx, |this, _| {
-                                this.ancestors.get(&entry_id).and_then(|ancestors| ancestors.active_component(&details.filename))
-                            }).ok().and_then(|active_component| active_component).unwrap_or_else(|| details.filename.clone());
+                            let filename = active_component.as_ref().unwrap_or_else(|| &details.filename);
                             cx.new(|_| DraggedProjectEntryView {
                                 icon: details.icon.clone(),
-                                filename,
+                                filename: filename.clone(),
                                 click_offset,
                                 selection: selection.active_selection,
                                 selections: selection.marked_selections.clone(),
