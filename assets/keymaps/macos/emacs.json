@@ -4,6 +4,7 @@
 // from the command palette.
 [
   {
+    "context": "!GitPanel",
     "bindings": {
       "ctrl-g": "menu::Cancel"
     }
