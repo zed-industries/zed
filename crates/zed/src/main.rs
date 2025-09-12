@@ -278,13 +278,6 @@ pub fn main() {
                 .unwrap_or_else(|| "no sha".to_owned()),
         }))
         .detach();
-    reliability::init_panic_hook(
-        app_version,
-        app_commit_sha.clone(),
-        system_id.as_ref().map(|id| id.to_string()),
-        installation_id.as_ref().map(|id| id.to_string()),
-        session_id.clone(),
-    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -467,7 +460,7 @@ pub fn main() {
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
-        languages::init(languages.clone(), node_runtime.clone(), cx);
+        languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -542,8 +535,6 @@ pub fn main() {
         reliability::init(
             client.http_client(),
             system_id.as_ref().map(|id| id.to_string()),
-            installation_id.clone().map(|id| id.to_string()),
-            session_id.clone(),
             cx,
         );
 

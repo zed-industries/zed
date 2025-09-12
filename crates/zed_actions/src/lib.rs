@@ -36,6 +36,8 @@ actions!(
         OpenDefaultKeymap,
         /// Opens account settings.
         OpenAccountSettings,
+        /// Opens the keymap editor.
+        OpenKeymapEditor,
         /// Opens server settings.
         OpenServerSettings,
         /// Quits the application.
@@ -178,7 +180,9 @@ pub mod git {
             SelectRepo,
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
-            Branch
+            Branch,
+            /// Opens the git stash selector.
+            ViewStash
         ]
     );
 }

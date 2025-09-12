@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -68,7 +68,7 @@ pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
 }
 
@@ -78,7 +78,7 @@ impl ContextPickerCompletionProvider {
         workspace: WeakEntity<Workspace>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     ) -> Self {
         Self {
@@ -600,7 +600,7 @@ impl ContextPickerCompletionProvider {
                 }),
         );
 
-        if self.prompt_capabilities.get().embedded_context {
+        if self.prompt_capabilities.borrow().embedded_context {
             const RECENT_COUNT: usize = 2;
             let threads = self
                 .history_store
@@ -622,7 +622,7 @@ impl ContextPickerCompletionProvider {
         workspace: &Entity<Workspace>,
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
-        let embedded_context = self.prompt_capabilities.get().embedded_context;
+        let embedded_context = self.prompt_capabilities.borrow().embedded_context;
         let mut entries = if embedded_context {
             vec![
                 ContextPickerEntry::Mode(ContextPickerMode::File),
@@ -694,7 +694,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ContextCompletion::try_parse(
                 line,
                 offset_to_line,
-                self.prompt_capabilities.get().embedded_context,
+                self.prompt_capabilities.borrow().embedded_context,
             )
         });
         let Some(state) = state else {
@@ -896,7 +896,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ContextCompletion::try_parse(
                 line,
                 offset_to_line,
-                self.prompt_capabilities.get().embedded_context,
+                self.prompt_capabilities.borrow().embedded_context,
             )
             .map(|completion| {
                 completion.source_range().start <= offset_to_line + position.column as usize
@@ -1108,6 +1108,12 @@ impl MentionCompletion {
             match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
                 Some(whitespace_count) => {
                     if let Some(argument_text) = parts.next() {
+                        // If mode wasn't recognized but we have an argument, don't suggest completions
+                        // (e.g. '@something word')
+                        if mode.is_none() && !argument_text.is_empty() {
+                            return None;
+                        }
+
                         argument = Some(argument_text.to_string());
                         end += whitespace_count + argument_text.len();
                     }
@@ -1265,6 +1271,17 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @main ", 0),
+            Some(MentionCompletion {
+                source_range: 6..12,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(MentionCompletion::try_parse(true, "Lorem @main m", 0), None);
+
         assert_eq!(MentionCompletion::try_parse(true, "test@", 0), None);
 
         // Allowed non-file mentions
@@ -1279,14 +1296,9 @@ mod tests {
         );
 
         // Disallowed non-file mentions
-
         assert_eq!(
             MentionCompletion::try_parse(false, "Lorem @symbol main", 0),
-            Some(MentionCompletion {
-                source_range: 6..18,
-                mode: None,
-                argument: Some("main".to_string()),
-            })
+            None
         );
 
         assert_eq!(

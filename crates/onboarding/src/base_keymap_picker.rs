@@ -213,7 +213,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let keymap_match = &self.matches[ix];
+        let keymap_match = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)

@@ -14,6 +14,7 @@ use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
+use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
@@ -35,7 +36,7 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -60,9 +61,9 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
-use crate::ui::preview::UsageCallout;
 use crate::ui::{
     AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
+    UsageCallout,
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
@@ -287,7 +288,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     should_be_following: bool,
     editing_message: Option<usize>,
-    prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
@@ -331,7 +332,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
         let placeholder = if agent.name() == "Zed Agent" {
@@ -555,7 +556,7 @@ impl AcpThreadView {
                         let action_log = thread.read(cx).action_log().clone();
 
                         this.prompt_capabilities
-                            .set(thread.read(cx).prompt_capabilities());
+                            .replace(thread.read(cx).prompt_capabilities());
 
                         let count = thread.read(cx).entries().len();
                         this.entry_view_state.update(cx, |view_state, cx| {
@@ -1369,7 +1370,7 @@ impl AcpThreadView {
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 self.prompt_capabilities
-                    .set(thread.read(cx).prompt_capabilities());
+                    .replace(thread.read(cx).prompt_capabilities());
             }
             AcpThreadEvent::TokenUsageUpdated => {}
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
@@ -1386,11 +1387,13 @@ impl AcpThreadView {
                         name: "login".to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
+                        meta: None,
                     });
                     available_commands.push(acp::AvailableCommand {
                         name: "logout".to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
+                        meta: None,
                     });
                 }
 
@@ -1603,7 +1606,7 @@ impl AcpThreadView {
             task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(&login, window, cx)
+                terminal_panel.spawn_task(login.clone(), window, cx)
             })?;
 
             let terminal = terminal.await?;
@@ -4839,7 +4842,9 @@ impl AcpThreadView {
             return None;
         }
 
-        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
+        let plan = user_store
+            .plan()
+            .unwrap_or(cloud_llm_client::Plan::V1(PlanV1::ZedFree));
 
         let usage = user_store.model_request_usage()?;
 
@@ -5098,13 +5103,12 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Callout {
         let error_message = match plan {
-            cloud_llm_client::Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
-            cloud_llm_client::Plan::ZedProTrial | cloud_llm_client::Plan::ZedFree => {
-                "Upgrade to Zed Pro for more prompts."
+            cloud_llm_client::Plan::V1(PlanV1::ZedPro) => {
+                "Upgrade to usage-based billing for more prompts."
             }
-            cloud_llm_client::Plan::ZedProV2
-            | cloud_llm_client::Plan::ZedProTrialV2
-            | cloud_llm_client::Plan::ZedFreeV2 => "",
+            cloud_llm_client::Plan::V1(PlanV1::ZedProTrial)
+            | cloud_llm_client::Plan::V1(PlanV1::ZedFree) => "Upgrade to Zed Pro for more prompts.",
+            cloud_llm_client::Plan::V2(_) => "",
         };
 
         Callout::new()
@@ -5690,6 +5694,7 @@ pub(crate) mod tests {
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         };
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -5698,6 +5703,7 @@ pub(crate) mod tests {
                     id: acp::PermissionOptionId("1".into()),
                     name: "Allow".into(),
                     kind: acp::PermissionOptionKind::AllowOnce,
+                    meta: None,
                 }],
             )]));
 
@@ -5874,6 +5880,7 @@ pub(crate) mod tests {
                         image: true,
                         audio: true,
                         embedded_context: true,
+                        meta: None,
                     }),
                     cx,
                 )
@@ -5933,6 +5940,7 @@ pub(crate) mod tests {
                         image: true,
                         audio: true,
                         embedded_context: true,
+                        meta: None,
                     }),
                     cx,
                 )
@@ -5959,6 +5967,7 @@ pub(crate) mod tests {
         ) -> Task<gpui::Result<acp::PromptResponse>> {
             Task::ready(Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::Refusal,
+                meta: None,
             }))
         }
 
@@ -6042,11 +6051,13 @@ pub(crate) mod tests {
                     path: "/project/test1.txt".into(),
                     old_text: Some("old content 1".into()),
                     new_text: "new content 1".into(),
+                    meta: None,
                 },
             }],
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         })]);
 
         thread
@@ -6083,11 +6094,13 @@ pub(crate) mod tests {
                     path: "/project/test2.txt".into(),
                     old_text: Some("old content 2".into()),
                     new_text: "new content 2".into(),
+                    meta: None,
                 },
             }],
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         })]);
 
         thread
@@ -6165,6 +6178,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6254,6 +6268,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6297,6 +6312,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "New Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6389,6 +6405,7 @@ pub(crate) mod tests {
                     content: acp::ContentBlock::Text(acp::TextContent {
                         text: "Response".into(),
                         annotations: None,
+                        meta: None,
                     }),
                 },
                 cx,

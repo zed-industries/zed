@@ -135,6 +135,7 @@ impl Project {
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
+            let shell_kind = ShellKind::new(&shell);
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -147,7 +148,7 @@ impl Project {
                     let lister = language?.toolchain_lister();
                     return Some(
                         lister?
-                            .activation_script(&toolchain, ShellKind::new(&shell), fs.as_ref())
+                            .activation_script(&toolchain, shell_kind, fs.as_ref())
                             .await,
                     );
                 }
@@ -157,26 +158,36 @@ impl Project {
             .unwrap_or_default();
 
             project.update(cx, move |this, cx| {
+                let format_to_run = || {
+                    if let Some(command) = &spawn_task.command {
+                        let mut command: Option<Cow<str>> = shlex::try_quote(command).ok();
+                        if let Some(command) = &mut command
+                            && command.starts_with('"')
+                            && let Some(prefix) = shell_kind.command_prefix()
+                        {
+                            *command = Cow::Owned(format!("{prefix}{command}"));
+                        }
+
+                        let args = spawn_task
+                            .args
+                            .iter()
+                            .filter_map(|arg| shlex::try_quote(arg).ok());
+                        command.into_iter().chain(args).join(" ")
+                    } else {
+                        // todo: this breaks for remotes to windows
+                        format!("exec {shell} -l")
+                    }
+                };
+
                 let shell = {
                     env.extend(spawn_task.env);
                     match remote_client {
                         Some(remote_client) => match activation_script.clone() {
                             activation_script if !activation_script.is_empty() => {
                                 let activation_script = activation_script.join("; ");
-                                let to_run = if let Some(command) = spawn_task.command {
-                                    let command: Option<Cow<str>> = shlex::try_quote(&command).ok();
-                                    let args = spawn_task
-                                        .args
-                                        .iter()
-                                        .filter_map(|arg| shlex::try_quote(arg).ok());
-                                    command.into_iter().chain(args).join(" ")
-                                } else {
-                                    format!("exec {shell} -l")
-                                };
-                                let args = vec![
-                                    "-c".to_owned(),
-                                    format!("{activation_script}; {to_run}",),
-                                ];
+                                let to_run = format_to_run();
+                                let args =
+                                    vec!["-c".to_owned(), format!("{activation_script}; {to_run}")];
                                 create_remote_shell(
                                     Some((&shell, &args)),
                                     &mut env,
@@ -197,25 +208,21 @@ impl Project {
                             )?,
                         },
                         None => match activation_script.clone() {
-                            #[cfg(not(target_os = "windows"))]
                             activation_script if !activation_script.is_empty() => {
                                 let activation_script = activation_script.join("; ");
-                                let to_run = if let Some(command) = spawn_task.command {
-                                    let command: Option<Cow<str>> = shlex::try_quote(&command).ok();
-                                    let args = spawn_task
-                                        .args
-                                        .iter()
-                                        .filter_map(|arg| shlex::try_quote(arg).ok());
-                                    command.into_iter().chain(args).join(" ")
-                                } else {
-                                    format!("exec {shell} -l")
-                                };
+                                let to_run = format_to_run();
+
+                                // todo(lw): Alacritty uses `CreateProcessW` on windows with the entire command and arg sequence merged into a single string,
+                                // without quoting the arguments
+                                #[cfg(windows)]
+                                let arg =
+                                    quote_arg(&format!("{activation_script}; {to_run}"), true);
+                                #[cfg(not(windows))]
+                                let arg = format!("{activation_script}; {to_run}");
+
                                 Shell::WithArguments {
                                     program: shell,
-                                    args: vec![
-                                        "-c".to_owned(),
-                                        format!("{activation_script}; {to_run}",),
-                                    ],
+                                    args: vec!["-c".to_owned(), arg],
                                     title_override: None,
                                 }
                             }
@@ -503,6 +510,37 @@ impl Project {
     pub fn local_terminal_handles(&self) -> &Vec<WeakEntity<terminal::Terminal>> {
         &self.terminals.local_handles
     }
+}
+
+/// We're not using shlex for windows as it is overly eager with escaping some of the special characters (^) we need for nu. Hence, we took
+/// that quote impl straight from Rust stdlib (Command API).
+#[cfg(windows)]
+fn quote_arg(argument: &str, quote: bool) -> String {
+    let mut arg = String::new();
+    if quote {
+        arg.push('"');
+    }
+
+    let mut backslashes: usize = 0;
+    for x in argument.chars() {
+        if x == '\\' {
+            backslashes += 1;
+        } else {
+            if x == '"' {
+                // Add n+1 backslashes to total 2n+1 before internal '"'.
+                arg.extend((0..=backslashes).map(|_| '\\'));
+            }
+            backslashes = 0;
+        }
+        arg.push(x);
+    }
+
+    if quote {
+        // Add n backslashes to total 2n before ending '"'.
+        arg.extend((0..backslashes).map(|_| '\\'));
+        arg.push('"');
+    }
+    arg
 }
 
 fn create_remote_shell(

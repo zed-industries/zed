@@ -1,5 +1,3 @@
-use std::ops::Not;
-
 use heck::{ToSnakeCase as _, ToTitleCase as _};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
@@ -14,7 +12,7 @@ use syn::{Data, DeriveInput, LitStr, Token, parse_macro_input};
 /// # Example
 ///
 /// ```
-/// use settings::SettingsUi;
+/// use settings_ui_macros::SettingsUi;
 ///
 /// #[derive(SettingsUi)]
 /// #[settings_ui(group = "Standard")]
@@ -52,6 +50,10 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
                     meta.input.parse::<Token![=]>()?;
                     let lit: LitStr = meta.input.parse()?;
                     path_name = Some(lit.value());
+                } else if meta.path.is_ident("render") {
+                    // Just consume the tokens even if we don't use them here
+                    meta.input.parse::<Token![=]>()?;
+                    let _lit: LitStr = meta.input.parse()?;
                 }
                 Ok(())
             })
@@ -67,7 +69,7 @@ pub fn derive_settings_ui(input: proc_macro::TokenStream) -> proc_macro::TokenSt
 
     let doc_str = parse_documentation_from_attrs(&input.attrs);
 
-    let ui_item_fn_body = generate_ui_item_body(group_name.as_ref(), path_name.as_ref(), &input);
+    let ui_item_fn_body = generate_ui_item_body(group_name.as_ref(), &input);
 
     // todo(settings_ui): make group name optional, repurpose group as tag indicating item is group, and have "title" tag for custom title
     let title = group_name.unwrap_or(input.ident.to_string().to_title_case());
@@ -126,102 +128,220 @@ fn map_ui_item_to_entry(
     doc_str: Option<&str>,
     ty: TokenStream,
 ) -> TokenStream {
-    let ty = extract_type_from_option(ty);
     // todo(settings_ui): does quote! just work with options?
     let path = path.map_or_else(|| quote! {None}, |path| quote! {Some(#path)});
     let doc_str = doc_str.map_or_else(|| quote! {None}, |doc_str| quote! {Some(#doc_str)});
+    let item = ui_item_from_type(ty);
     quote! {
         settings::SettingsUiEntry {
             title: #title,
             path: #path,
-            item: #ty::settings_ui_item(),
+            item: #item,
             documentation: #doc_str,
         }
     }
 }
 
-fn generate_ui_item_body(
-    group_name: Option<&String>,
-    path_name: Option<&String>,
-    input: &syn::DeriveInput,
+fn ui_item_from_type(ty: TokenStream) -> TokenStream {
+    let ty = extract_type_from_option(ty);
+    return trait_method_call(ty, quote! {settings::SettingsUi}, quote! {settings_ui_item});
+}
+
+fn trait_method_call(
+    ty: TokenStream,
+    trait_name: TokenStream,
+    method_name: TokenStream,
 ) -> TokenStream {
-    match (group_name, path_name, &input.data) {
-        (_, _, Data::Union(_)) => unimplemented!("Derive SettingsUi for Unions"),
-        (None, _, Data::Struct(_)) => quote! {
+    // doing the <ty as settings::SettingsUi> makes the error message better:
+    //  -> "#ty Doesn't implement settings::SettingsUi" instead of "no item "settings_ui_item" for #ty"
+    // and ensures safety against name conflicts
+    //
+    // todo(settings_ui): Turn `Vec<T>` into `Vec::<T>` here as well
+    quote! {
+        <#ty as #trait_name>::#method_name()
+    }
+}
+
+fn generate_ui_item_body(group_name: Option<&String>, input: &syn::DeriveInput) -> TokenStream {
+    match (group_name, &input.data) {
+        (_, Data::Union(_)) => unimplemented!("Derive SettingsUi for Unions"),
+        (None, Data::Struct(_)) => quote! {
             settings::SettingsUiItem::None
         },
-        (Some(_), _, Data::Struct(data_struct)) => {
-            let struct_serde_attrs = parse_serde_attributes(&input.attrs);
-            let fields = data_struct
-                .fields
-                .iter()
-                .filter(|field| {
-                    !field.attrs.iter().any(|attr| {
-                        let mut has_skip = false;
-                        if attr.path().is_ident("settings_ui") {
-                            let _ = attr.parse_nested_meta(|meta| {
-                                if meta.path.is_ident("skip") {
-                                    has_skip = true;
-                                }
-                                Ok(())
-                            });
-                        }
-
-                        has_skip
-                    })
-                })
-                .map(|field| {
-                    let field_serde_attrs = parse_serde_attributes(&field.attrs);
-                    let name = field.ident.clone().expect("tuple fields").to_string();
-                    let doc_str = parse_documentation_from_attrs(&field.attrs);
-
-                    (
-                        name.to_title_case(),
-                        doc_str,
-                        field_serde_attrs.flatten.not().then(|| {
-                            struct_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)
-                        }),
-                        field.ty.to_token_stream(),
-                    )
-                })
-                // todo(settings_ui): Re-format field name as nice title, and support setting different title with attr
-                .map(|(title, doc_str, path, ty)| {
-                    map_ui_item_to_entry(path.as_deref(), &title, doc_str.as_deref(), ty)
-                });
-
-            quote! {
-                settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#fields),*] })
-            }
+        (Some(_), Data::Struct(data_struct)) => {
+            let parent_serde_attrs = parse_serde_attributes(&input.attrs);
+            item_group_from_fields(&data_struct.fields, &parent_serde_attrs)
         }
-        (None, _, Data::Enum(data_enum)) => {
+        (None, Data::Enum(data_enum)) => {
             let serde_attrs = parse_serde_attributes(&input.attrs);
+            let render_as = parse_render_as(&input.attrs);
             let length = data_enum.variants.len();
 
-            let variants = data_enum.variants.iter().map(|variant| {
-                let string = variant.ident.clone().to_string();
+            let mut variants = Vec::with_capacity(length);
+            let mut labels = Vec::with_capacity(length);
 
-                let title = string.to_title_case();
-                let string = serde_attrs.rename_all.apply(&string);
+            for variant in &data_enum.variants {
+                // todo(settings_ui): Can #[serde(rename = )] be on enum variants?
+                let ident = variant.ident.clone().to_string();
+                let variant_name = serde_attrs.rename_all.apply(&ident);
+                let title = variant_name.to_title_case();
 
-                (string, title)
-            });
-
-            let (variants, labels): (Vec<_>, Vec<_>) = variants.unzip();
-
-            if length > 6 {
-                quote! {
-                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
-                }
-            } else {
-                quote! {
-                    settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
-                }
+                variants.push(variant_name);
+                labels.push(title);
             }
+
+            let is_not_union = data_enum.variants.iter().all(|v| v.fields.is_empty());
+            if is_not_union {
+                return match render_as {
+                    RenderAs::ToggleGroup if length > 6 => {
+                        panic!("Can't set toggle group with more than six entries");
+                    }
+                    RenderAs::ToggleGroup => {
+                        quote! {
+                            settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::ToggleGroup{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
+                        }
+                    }
+                    RenderAs::Default => {
+                        quote! {
+                            settings::SettingsUiItem::Single(settings::SettingsUiItemSingle::DropDown{ variants: &[#(#variants),*], labels: &[#(#labels),*] })
+                        }
+                    }
+                };
+            }
+            // else: Union!
+            let enum_name = &input.ident;
+
+            let options = data_enum.variants.iter().map(|variant| {
+                if variant.fields.is_empty() {
+                    return quote! {None};
+                }
+                let name = &variant.ident;
+                let item = item_group_from_fields(&variant.fields, &serde_attrs);
+                // todo(settings_ui): documentation
+                return quote! {
+                    Some(settings::SettingsUiEntry {
+                        path: None,
+                        title: stringify!(#name),
+                        documentation: None,
+                        item: #item,
+                    })
+                };
+            });
+            let defaults = data_enum.variants.iter().map(|variant| {
+                let variant_name = &variant.ident;
+                if variant.fields.is_empty() {
+                    quote! {
+                        serde_json::to_value(#enum_name::#variant_name).expect("Failed to serialize default value for #enum_name::#variant_name")
+                    }
+                } else {
+                    let fields = variant.fields.iter().enumerate().map(|(index, field)| {
+                        let field_name = field.ident.as_ref().map_or_else(|| syn::Index::from(index).into_token_stream(), |ident| ident.to_token_stream());
+                        let field_type_is_option = option_inner_type(field.ty.to_token_stream()).is_some();
+                        let field_default = if field_type_is_option {
+                            quote! {
+                                None
+                            }
+                        } else {
+                            quote! {
+                                ::std::default::Default::default()
+                            }
+                        };
+
+                        quote!{
+                            #field_name: #field_default
+                        }
+                    });
+                    quote! {
+                        serde_json::to_value(#enum_name::#variant_name {
+                            #(#fields),*
+                        }).expect("Failed to serialize default value for #enum_name::#variant_name")
+                    }
+                }
+            });
+            // todo(settings_ui): Identify #[default] attr and use it for index, defaulting to 0
+            let default_variant_index: usize = 0;
+            let determine_option_fn = {
+                let match_arms = data_enum
+                    .variants
+                    .iter()
+                    .enumerate()
+                    .map(|(index, variant)| {
+                        let variant_name = &variant.ident;
+                        quote! {
+                            Ok(#variant_name {..}) => #index
+                        }
+                    });
+                quote! {
+                    |value: &serde_json::Value, _cx: &gpui::App| -> usize {
+                        use #enum_name::*;
+                        match serde_json::from_value::<#enum_name>(value.clone()) {
+                            #(#match_arms),*,
+                            Err(_) => #default_variant_index,
+                        }
+                    }
+                }
+            };
+            // todo(settings_ui) should probably always use toggle group for unions, dropdown makes less sense
+            return quote! {
+                settings::SettingsUiItem::Union(settings::SettingsUiItemUnion {
+                    defaults: Box::new([#(#defaults),*]),
+                    labels: &[#(#labels),*],
+                    options: Box::new([#(#options),*]),
+                    determine_option: #determine_option_fn,
+                })
+            };
+            // panic!("Unhandled");
         }
         // todo(settings_ui) discriminated unions
-        (_, _, Data::Enum(_)) => quote! {
+        (_, Data::Enum(_)) => quote! {
             settings::SettingsUiItem::None
         },
+    }
+}
+
+fn item_group_from_fields(fields: &syn::Fields, parent_serde_attrs: &SerdeOptions) -> TokenStream {
+    let group_items = fields
+        .iter()
+        .filter(|field| {
+            !field.attrs.iter().any(|attr| {
+                let mut has_skip = false;
+                if attr.path().is_ident("settings_ui") {
+                    let _ = attr.parse_nested_meta(|meta| {
+                        if meta.path.is_ident("skip") {
+                            has_skip = true;
+                        }
+                        Ok(())
+                    });
+                }
+
+                has_skip
+            })
+        })
+        .map(|field| {
+            let field_serde_attrs = parse_serde_attributes(&field.attrs);
+            let name = field.ident.as_ref().map(ToString::to_string);
+            let title = name.as_ref().map_or_else(
+                || "todo(settings_ui): Titles for tuple fields".to_string(),
+                |name| name.to_title_case(),
+            );
+            let doc_str = parse_documentation_from_attrs(&field.attrs);
+
+            (
+                title,
+                doc_str,
+                name.filter(|_| !field_serde_attrs.flatten).map(|name| {
+                    parent_serde_attrs.apply_rename_to_field(&field_serde_attrs, &name)
+                }),
+                field.ty.to_token_stream(),
+            )
+        })
+        // todo(settings_ui): Re-format field name as nice title, and support setting different title with attr
+        .map(|(title, doc_str, path, ty)| {
+            map_ui_item_to_entry(path.as_deref(), &title, doc_str.as_deref(), ty)
+        });
+
+    quote! {
+        settings::SettingsUiItem::Group(settings::SettingsUiItemGroup{ items: vec![#(#group_items),*] })
     }
 }
 
@@ -229,6 +349,7 @@ struct SerdeOptions {
     rename_all: SerdeRenameAll,
     rename: Option<String>,
     flatten: bool,
+    untagged: bool,
     _alias: Option<String>, // todo(settings_ui)
 }
 
@@ -259,11 +380,44 @@ impl SerdeOptions {
     }
 }
 
+enum RenderAs {
+    ToggleGroup,
+    Default,
+}
+
+fn parse_render_as(attrs: &[syn::Attribute]) -> RenderAs {
+    let mut render_as = RenderAs::Default;
+
+    for attr in attrs {
+        if !attr.path().is_ident("settings_ui") {
+            continue;
+        }
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("render") {
+                meta.input.parse::<Token![=]>()?;
+                let lit = meta.input.parse::<LitStr>()?.value();
+
+                if lit == "toggle_group" {
+                    render_as = RenderAs::ToggleGroup;
+                } else {
+                    return Err(meta.error(format!("invalid `render` attribute: {}", lit)));
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    render_as
+}
+
 fn parse_serde_attributes(attrs: &[syn::Attribute]) -> SerdeOptions {
     let mut options = SerdeOptions {
         rename_all: SerdeRenameAll::None,
         rename: None,
         flatten: false,
+        untagged: false,
         _alias: None,
     };
 
@@ -296,6 +450,8 @@ fn parse_serde_attributes(attrs: &[syn::Attribute]) -> SerdeOptions {
                 meta.input.parse::<Token![=]>()?;
                 let lit = meta.input.parse::<LitStr>()?.value();
                 options.rename = Some(lit);
+            } else if meta.path.is_ident("untagged") {
+                options.untagged = true;
             }
             Ok(())
         })

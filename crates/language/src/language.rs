@@ -27,9 +27,8 @@ use crate::language_settings::SoftWrap;
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
-use fs::Fs;
 use futures::Future;
-use gpui::{App, AsyncApp, Entity, SharedString, Task};
+use gpui::{App, AsyncApp, Entity, SharedString};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{
@@ -46,7 +45,6 @@ use settings::WorktreeId;
 use smol::future::FutureExt as _;
 use std::num::NonZeroU32;
 use std::{
-    any::Any,
     ffi::OsStr,
     fmt::Debug,
     hash::Hash,
@@ -157,6 +155,8 @@ pub struct Location {
     pub range: Range<Anchor>,
 }
 
+type ServerBinaryCache = futures::lock::Mutex<Option<(bool, LanguageServerBinary)>>;
+
 /// Represents a Language Server, with certain cached sync properties.
 /// Uses [`LspAdapter`] under the hood, but calls all 'static' methods
 /// once at startup, and caches the results.
@@ -167,7 +167,7 @@ pub struct CachedLspAdapter {
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
-    cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    cached_binary: ServerBinaryCache,
 }
 
 impl Debug for CachedLspAdapter {
@@ -217,10 +217,16 @@ impl CachedLspAdapter {
         binary_options: LanguageServerBinaryOptions,
         cx: &mut AsyncApp,
     ) -> Result<LanguageServerBinary> {
-        let cached_binary = self.cached_binary.lock().await;
+        let mut cached_binary = self.cached_binary.lock().await;
         self.adapter
             .clone()
-            .get_language_server_command(delegate, toolchains, binary_options, cached_binary, cx)
+            .get_language_server_command(
+                delegate,
+                toolchains,
+                binary_options,
+                &mut cached_binary,
+                cx,
+            )
             .await
     }
 
@@ -307,127 +313,8 @@ pub trait LspAdapterDelegate: Send + Sync {
 }
 
 #[async_trait(?Send)]
-pub trait LspAdapter: 'static + Send + Sync {
+pub trait LspAdapter: 'static + Send + Sync + DynLspInstaller {
     fn name(&self) -> LanguageServerName;
-
-    fn get_language_server_command<'a>(
-        self: Arc<Self>,
-        delegate: Arc<dyn LspAdapterDelegate>,
-        toolchains: Option<Toolchain>,
-        binary_options: LanguageServerBinaryOptions,
-        mut cached_binary: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        cx: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
-        async move {
-            // First we check whether the adapter can give us a user-installed binary.
-            // If so, we do *not* want to cache that, because each worktree might give us a different
-            // binary:
-            //
-            //      worktree 1: user-installed at `.bin/gopls`
-            //      worktree 2: user-installed at `~/bin/gopls`
-            //      worktree 3: no gopls found in PATH -> fallback to Zed installation
-            //
-            // We only want to cache when we fall back to the global one,
-            // because we don't want to download and overwrite our global one
-            // for each worktree we might have open.
-            if binary_options.allow_path_lookup
-                && let Some(binary) = self.check_if_user_installed(delegate.as_ref(), toolchains, cx).await {
-                    log::debug!(
-                        "found user-installed language server for {}. path: {:?}, arguments: {:?}",
-                        self.name().0,
-                        binary.path,
-                        binary.arguments
-                    );
-                    return Ok(binary);
-                }
-
-            anyhow::ensure!(binary_options.allow_binary_download, "downloading language servers disabled");
-
-            if let Some(cached_binary) = cached_binary.as_ref() {
-                return Ok(cached_binary.clone());
-            }
-
-            let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await else {
-                anyhow::bail!("no language server download dir defined")
-            };
-
-            let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
-
-            if let Err(error) = binary.as_ref() {
-                if let Some(prev_downloaded_binary) = self
-                    .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
-                    .await
-                {
-                    log::info!(
-                        "failed to fetch newest version of language server {:?}. error: {:?}, falling back to using {:?}",
-                        self.name(),
-                        error,
-                        prev_downloaded_binary.path
-                    );
-                    binary = Ok(prev_downloaded_binary);
-                } else {
-                    delegate.update_status(
-                        self.name(),
-                        BinaryStatus::Failed {
-                            error: format!("{error:?}"),
-                        },
-                    );
-                }
-            }
-
-            if let Ok(binary) = &binary {
-                *cached_binary = Some(binary.clone());
-            }
-
-            binary
-        }
-        .boxed_local()
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        None
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>>;
-
-    fn will_fetch_server(
-        &self,
-        _: &Arc<dyn LspAdapterDelegate>,
-        _: &mut AsyncApp,
-    ) -> Option<Task<Result<()>>> {
-        None
-    }
-
-    async fn check_if_version_installed(
-        &self,
-        _version: &(dyn 'static + Send + Any),
-        _container_dir: &PathBuf,
-        _delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        None
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        latest_version: Box<dyn 'static + Send + Any>,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary>;
-
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary>;
 
     fn process_diagnostics(
         &self,
@@ -511,7 +398,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -519,7 +405,6 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         _cx: &mut AsyncApp,
@@ -530,7 +415,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn additional_initialization_options(
         self: Arc<Self>,
         _target_language_server_id: LanguageServerName,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -539,7 +423,6 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn additional_workspace_configuration(
         self: Arc<Self>,
         _target_language_server_id: LanguageServerName,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _cx: &mut AsyncApp,
     ) -> Result<Option<Value>> {
@@ -597,40 +480,194 @@ pub trait LspAdapter: 'static + Send + Sync {
     }
 }
 
-async fn try_fetch_server_binary<L: LspAdapter + 'static + Send + Sync + ?Sized>(
-    adapter: &L,
-    delegate: &Arc<dyn LspAdapterDelegate>,
-    container_dir: PathBuf,
-    cx: &mut AsyncApp,
-) -> Result<LanguageServerBinary> {
-    if let Some(task) = adapter.will_fetch_server(delegate, cx) {
-        task.await?;
+pub trait LspInstaller {
+    type BinaryVersion;
+    fn check_if_user_installed(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> impl Future<Output = Option<LanguageServerBinary>> {
+        async { None }
     }
 
-    let name = adapter.name();
-    log::debug!("fetching latest version of language server {:?}", name.0);
-    delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
+    fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        pre_release: bool,
+        cx: &mut AsyncApp,
+    ) -> impl Future<Output = Result<Self::BinaryVersion>>;
 
-    let latest_version = adapter
-        .fetch_latest_server_version(delegate.as_ref(), cx)
-        .await?;
+    fn check_if_version_installed(
+        &self,
+        _version: &Self::BinaryVersion,
+        _container_dir: &PathBuf,
+        _delegate: &dyn LspAdapterDelegate,
+    ) -> impl Future<Output = Option<LanguageServerBinary>> {
+        async { None }
+    }
 
-    if let Some(binary) = adapter
-        .check_if_version_installed(latest_version.as_ref(), &container_dir, delegate.as_ref())
-        .await
-    {
-        log::debug!("language server {:?} is already installed", name.0);
-        delegate.update_status(name.clone(), BinaryStatus::None);
-        Ok(binary)
-    } else {
-        log::info!("downloading language server {:?}", name.0);
-        delegate.update_status(adapter.name(), BinaryStatus::Downloading);
-        let binary = adapter
-            .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
-            .await;
+    fn fetch_server_binary(
+        &self,
+        latest_version: Self::BinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> impl Future<Output = Result<LanguageServerBinary>>;
 
-        delegate.update_status(name.clone(), BinaryStatus::None);
-        binary
+    fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> impl Future<Output = Option<LanguageServerBinary>>;
+}
+
+#[async_trait(?Send)]
+pub trait DynLspInstaller {
+    async fn try_fetch_server_binary(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        container_dir: PathBuf,
+        pre_release: bool,
+        cx: &mut AsyncApp,
+    ) -> Result<LanguageServerBinary>;
+    fn get_language_server_command<'a>(
+        self: Arc<Self>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        toolchains: Option<Toolchain>,
+        binary_options: LanguageServerBinaryOptions,
+        cached_binary: &'a mut Option<(bool, LanguageServerBinary)>,
+        cx: &'a mut AsyncApp,
+    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>>;
+}
+
+#[async_trait(?Send)]
+impl<LI, BinaryVersion> DynLspInstaller for LI
+where
+    LI: LspInstaller<BinaryVersion = BinaryVersion> + LspAdapter,
+{
+    async fn try_fetch_server_binary(
+        &self,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        container_dir: PathBuf,
+        pre_release: bool,
+        cx: &mut AsyncApp,
+    ) -> Result<LanguageServerBinary> {
+        let name = self.name();
+
+        log::debug!("fetching latest version of language server {:?}", name.0);
+        delegate.update_status(name.clone(), BinaryStatus::CheckingForUpdate);
+
+        let latest_version = self
+            .fetch_latest_server_version(delegate.as_ref(), pre_release, cx)
+            .await?;
+
+        if let Some(binary) = self
+            .check_if_version_installed(&latest_version, &container_dir, delegate.as_ref())
+            .await
+        {
+            log::debug!("language server {:?} is already installed", name.0);
+            delegate.update_status(name.clone(), BinaryStatus::None);
+            Ok(binary)
+        } else {
+            log::debug!("downloading language server {:?}", name.0);
+            delegate.update_status(name.clone(), BinaryStatus::Downloading);
+            let binary = self
+                .fetch_server_binary(latest_version, container_dir, delegate.as_ref())
+                .await;
+
+            delegate.update_status(name.clone(), BinaryStatus::None);
+            binary
+        }
+    }
+    fn get_language_server_command<'a>(
+        self: Arc<Self>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        toolchain: Option<Toolchain>,
+        binary_options: LanguageServerBinaryOptions,
+        cached_binary: &'a mut Option<(bool, LanguageServerBinary)>,
+        cx: &'a mut AsyncApp,
+    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
+        async move {
+            // First we check whether the adapter can give us a user-installed binary.
+            // If so, we do *not* want to cache that, because each worktree might give us a different
+            // binary:
+            //
+            //      worktree 1: user-installed at `.bin/gopls`
+            //      worktree 2: user-installed at `~/bin/gopls`
+            //      worktree 3: no gopls found in PATH -> fallback to Zed installation
+            //
+            // We only want to cache when we fall back to the global one,
+            // because we don't want to download and overwrite our global one
+            // for each worktree we might have open.
+            if binary_options.allow_path_lookup
+                && let Some(binary) = self
+                    .check_if_user_installed(delegate.as_ref(), toolchain, cx)
+                    .await
+            {
+                log::info!(
+                    "found user-installed language server for {}. path: {:?}, arguments: {:?}",
+                    self.name().0,
+                    binary.path,
+                    binary.arguments
+                );
+                return Ok(binary);
+            }
+
+            anyhow::ensure!(
+                binary_options.allow_binary_download,
+                "downloading language servers disabled"
+            );
+
+            if let Some((pre_release, cached_binary)) = cached_binary
+                && *pre_release == binary_options.pre_release
+            {
+                return Ok(cached_binary.clone());
+            }
+
+            let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
+            else {
+                anyhow::bail!("no language server download dir defined")
+            };
+
+            let mut binary = self
+                .try_fetch_server_binary(
+                    &delegate,
+                    container_dir.to_path_buf(),
+                    binary_options.pre_release,
+                    cx,
+                )
+                .await;
+
+            if let Err(error) = binary.as_ref() {
+                if let Some(prev_downloaded_binary) = self
+                    .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
+                    .await
+                {
+                    log::info!(
+                        "failed to fetch newest version of language server {:?}. \
+                        error: {:?}, falling back to using {:?}",
+                        self.name(),
+                        error,
+                        prev_downloaded_binary.path
+                    );
+                    binary = Ok(prev_downloaded_binary);
+                } else {
+                    delegate.update_status(
+                        self.name(),
+                        BinaryStatus::Failed {
+                            error: format!("{error:?}"),
+                        },
+                    );
+                }
+            }
+
+            if let Ok(binary) = &binary {
+                *cached_binary = Some((binary_options.pre_release, binary.clone()));
+            }
+
+            binary
+        }
+        .boxed_local()
     }
 }
 
@@ -1331,6 +1368,7 @@ impl Language {
         self.manifest_name = name;
         self
     }
+
     pub fn with_queries(mut self, queries: LanguageQueries) -> Result<Self> {
         if let Some(query) = queries.highlights {
             self = self
@@ -1391,13 +1429,13 @@ impl Language {
     }
 
     pub fn with_highlights_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let grammar = self.grammar_mut()?;
         grammar.highlights_query = Some(Query::new(&grammar.ts_language, source)?);
         Ok(self)
     }
 
     pub fn with_runnable_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let grammar = self.grammar_mut()?;
 
         let query = Query::new(&grammar.ts_language, source)?;
         let extra_captures: Vec<_> = query
@@ -1418,29 +1456,30 @@ impl Language {
     }
 
     pub fn with_outline_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut item_capture_ix = None;
-        let mut name_capture_ix = None;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut item_capture_ix = 0;
+        let mut name_capture_ix = 0;
         let mut context_capture_ix = None;
         let mut extra_context_capture_ix = None;
         let mut open_capture_ix = None;
         let mut close_capture_ix = None;
         let mut annotation_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "outline",
+            &[],
             &mut [
-                ("item", &mut item_capture_ix),
-                ("name", &mut name_capture_ix),
-                ("context", &mut context_capture_ix),
-                ("context.extra", &mut extra_context_capture_ix),
-                ("open", &mut open_capture_ix),
-                ("close", &mut close_capture_ix),
-                ("annotation", &mut annotation_capture_ix),
+                Capture::Required("item", &mut item_capture_ix),
+                Capture::Required("name", &mut name_capture_ix),
+                Capture::Optional("context", &mut context_capture_ix),
+                Capture::Optional("context.extra", &mut extra_context_capture_ix),
+                Capture::Optional("open", &mut open_capture_ix),
+                Capture::Optional("close", &mut close_capture_ix),
+                Capture::Optional("annotation", &mut annotation_capture_ix),
             ],
-        );
-        if let Some((item_capture_ix, name_capture_ix)) = item_capture_ix.zip(name_capture_ix) {
-            grammar.outline_config = Some(OutlineConfig {
+        ) {
+            self.grammar_mut()?.outline_config = Some(OutlineConfig {
                 query,
                 item_capture_ix,
                 name_capture_ix,
@@ -1455,17 +1494,22 @@ impl Language {
     }
 
     pub fn with_text_object_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
         let mut text_objects_by_capture_ix = Vec::new();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if let Some(text_object) = TextObject::from_capture_name(name) {
                 text_objects_by_capture_ix.push((ix as u32, text_object));
+            } else {
+                log::warn!(
+                    "unrecognized capture name '{}' in {} textobjects TreeSitter query",
+                    name,
+                    self.config.name,
+                );
             }
         }
 
-        grammar.text_object_config = Some(TextObjectConfig {
+        self.grammar_mut()?.text_object_config = Some(TextObjectConfig {
             query,
             text_objects_by_capture_ix,
         });
@@ -1473,25 +1517,26 @@ impl Language {
     }
 
     pub fn with_embedding_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut item_capture_ix = None;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut item_capture_ix = 0;
         let mut name_capture_ix = None;
         let mut context_capture_ix = None;
         let mut collapse_capture_ix = None;
         let mut keep_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "embedding",
+            &[],
             &mut [
-                ("item", &mut item_capture_ix),
-                ("name", &mut name_capture_ix),
-                ("context", &mut context_capture_ix),
-                ("keep", &mut keep_capture_ix),
-                ("collapse", &mut collapse_capture_ix),
+                Capture::Required("item", &mut item_capture_ix),
+                Capture::Optional("name", &mut name_capture_ix),
+                Capture::Optional("context", &mut context_capture_ix),
+                Capture::Optional("keep", &mut keep_capture_ix),
+                Capture::Optional("collapse", &mut collapse_capture_ix),
             ],
-        );
-        if let Some(item_capture_ix) = item_capture_ix {
-            grammar.embedding_config = Some(EmbeddingConfig {
+        ) {
+            self.grammar_mut()?.embedding_config = Some(EmbeddingConfig {
                 query,
                 item_capture_ix,
                 name_capture_ix,
@@ -1504,17 +1549,22 @@ impl Language {
     }
 
     pub fn with_debug_variables_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
         let mut objects_by_capture_ix = Vec::new();
         for (ix, name) in query.capture_names().iter().enumerate() {
             if let Some(text_object) = DebuggerTextObject::from_capture_name(name) {
                 objects_by_capture_ix.push((ix as u32, text_object));
+            } else {
+                log::warn!(
+                    "unrecognized capture name '{}' in {} debugger TreeSitter query",
+                    name,
+                    self.config.name,
+                );
             }
         }
 
-        grammar.debug_variables_config = Some(DebugVariablesConfig {
+        self.grammar_mut()?.debug_variables_config = Some(DebugVariablesConfig {
             query,
             objects_by_capture_ix,
         });
@@ -1522,30 +1572,31 @@ impl Language {
     }
 
     pub fn with_brackets_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut open_capture_ix = None;
-        let mut close_capture_ix = None;
-        get_capture_indices(
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut open_capture_ix = 0;
+        let mut close_capture_ix = 0;
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "brackets",
+            &[],
             &mut [
-                ("open", &mut open_capture_ix),
-                ("close", &mut close_capture_ix),
+                Capture::Required("open", &mut open_capture_ix),
+                Capture::Required("close", &mut close_capture_ix),
             ],
-        );
-        let patterns = (0..query.pattern_count())
-            .map(|ix| {
-                let mut config = BracketsPatternConfig::default();
-                for setting in query.property_settings(ix) {
-                    if setting.key.as_ref() == "newline.only" {
-                        config.newline_only = true
+        ) {
+            let patterns = (0..query.pattern_count())
+                .map(|ix| {
+                    let mut config = BracketsPatternConfig::default();
+                    for setting in query.property_settings(ix) {
+                        if setting.key.as_ref() == "newline.only" {
+                            config.newline_only = true
+                        }
                     }
-                }
-                config
-            })
-            .collect();
-        if let Some((open_capture_ix, close_capture_ix)) = open_capture_ix.zip(close_capture_ix) {
-            grammar.brackets_config = Some(BracketsConfig {
+                    config
+                })
+                .collect();
+            self.grammar_mut()?.brackets_config = Some(BracketsConfig {
                 query,
                 open_capture_ix,
                 close_capture_ix,
@@ -1556,31 +1607,31 @@ impl Language {
     }
 
     pub fn with_indents_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut indent_capture_ix = None;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut indent_capture_ix = 0;
         let mut start_capture_ix = None;
         let mut end_capture_ix = None;
         let mut outdent_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "indents",
+            &["start."],
             &mut [
-                ("indent", &mut indent_capture_ix),
-                ("start", &mut start_capture_ix),
-                ("end", &mut end_capture_ix),
-                ("outdent", &mut outdent_capture_ix),
+                Capture::Required("indent", &mut indent_capture_ix),
+                Capture::Optional("start", &mut start_capture_ix),
+                Capture::Optional("end", &mut end_capture_ix),
+                Capture::Optional("outdent", &mut outdent_capture_ix),
             ],
-        );
-
-        let mut suffixed_start_captures = HashMap::default();
-        for (ix, name) in query.capture_names().iter().enumerate() {
-            if let Some(suffix) = name.strip_prefix("start.") {
-                suffixed_start_captures.insert(ix as u32, suffix.to_owned().into());
+        ) {
+            let mut suffixed_start_captures = HashMap::default();
+            for (ix, name) in query.capture_names().iter().enumerate() {
+                if let Some(suffix) = name.strip_prefix("start.") {
+                    suffixed_start_captures.insert(ix as u32, suffix.to_owned().into());
+                }
             }
-        }
 
-        if let Some(indent_capture_ix) = indent_capture_ix {
-            grammar.indents_config = Some(IndentConfig {
+            self.grammar_mut()?.indents_config = Some(IndentConfig {
                 query,
                 indent_capture_ix,
                 start_capture_ix,
@@ -1593,68 +1644,74 @@ impl Language {
     }
 
     pub fn with_injection_query(mut self, source: &str) -> Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-        let query = Query::new(&grammar.ts_language, source)?;
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
         let mut language_capture_ix = None;
         let mut injection_language_capture_ix = None;
         let mut content_capture_ix = None;
         let mut injection_content_capture_ix = None;
-        get_capture_indices(
+        if populate_capture_indices(
             &query,
+            &self.config.name,
+            "injections",
+            &[],
             &mut [
-                ("language", &mut language_capture_ix),
-                ("injection.language", &mut injection_language_capture_ix),
-                ("content", &mut content_capture_ix),
-                ("injection.content", &mut injection_content_capture_ix),
+                Capture::Optional("language", &mut language_capture_ix),
+                Capture::Optional("injection.language", &mut injection_language_capture_ix),
+                Capture::Optional("content", &mut content_capture_ix),
+                Capture::Optional("injection.content", &mut injection_content_capture_ix),
             ],
-        );
-        language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
-            (None, Some(ix)) => Some(ix),
-            (Some(_), Some(_)) => {
-                anyhow::bail!("both language and injection.language captures are present");
-            }
-            _ => language_capture_ix,
-        };
-        content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
-            (None, Some(ix)) => Some(ix),
-            (Some(_), Some(_)) => {
-                anyhow::bail!("both content and injection.content captures are present")
-            }
-            _ => content_capture_ix,
-        };
-        let patterns = (0..query.pattern_count())
-            .map(|ix| {
-                let mut config = InjectionPatternConfig::default();
-                for setting in query.property_settings(ix) {
-                    match setting.key.as_ref() {
-                        "language" | "injection.language" => {
-                            config.language.clone_from(&setting.value);
-                        }
-                        "combined" | "injection.combined" => {
-                            config.combined = true;
-                        }
-                        _ => {}
-                    }
+        ) {
+            language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
+                (None, Some(ix)) => Some(ix),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("both language and injection.language captures are present");
                 }
-                config
-            })
-            .collect();
-        if let Some(content_capture_ix) = content_capture_ix {
-            grammar.injection_config = Some(InjectionConfig {
-                query,
-                language_capture_ix,
-                content_capture_ix,
-                patterns,
-            });
+                _ => language_capture_ix,
+            };
+            content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
+                (None, Some(ix)) => Some(ix),
+                (Some(_), Some(_)) => {
+                    anyhow::bail!("both content and injection.content captures are present")
+                }
+                _ => content_capture_ix,
+            };
+            let patterns = (0..query.pattern_count())
+                .map(|ix| {
+                    let mut config = InjectionPatternConfig::default();
+                    for setting in query.property_settings(ix) {
+                        match setting.key.as_ref() {
+                            "language" | "injection.language" => {
+                                config.language.clone_from(&setting.value);
+                            }
+                            "combined" | "injection.combined" => {
+                                config.combined = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                    config
+                })
+                .collect();
+            if let Some(content_capture_ix) = content_capture_ix {
+                self.grammar_mut()?.injection_config = Some(InjectionConfig {
+                    query,
+                    language_capture_ix,
+                    content_capture_ix,
+                    patterns,
+                });
+            } else {
+                log::error!(
+                    "missing required capture in injections {} TreeSitter query: \
+                    content or injection.content",
+                    &self.config.name,
+                );
+            }
         }
         Ok(self)
     }
 
     pub fn with_override_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let query = {
-            let grammar = self.grammar.as_ref().context("no grammar for language")?;
-            Query::new(&grammar.ts_language, source)?
-        };
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
 
         let mut override_configs_by_id = HashMap::default();
         for (ix, mut name) in query.capture_names().iter().copied().enumerate() {
@@ -1729,7 +1786,7 @@ impl Language {
 
         self.config.brackets.disabled_scopes_by_bracket_ix.clear();
 
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
+        let grammar = self.grammar_mut()?;
         grammar.override_config = Some(OverrideConfig {
             query,
             values: override_configs_by_id,
@@ -1738,24 +1795,33 @@ impl Language {
     }
 
     pub fn with_redaction_query(mut self, source: &str) -> anyhow::Result<Self> {
-        let grammar = self.grammar_mut().context("cannot mutate grammar")?;
-
-        let query = Query::new(&grammar.ts_language, source)?;
-        let mut redaction_capture_ix = None;
-        get_capture_indices(&query, &mut [("redact", &mut redaction_capture_ix)]);
-
-        if let Some(redaction_capture_ix) = redaction_capture_ix {
-            grammar.redactions_config = Some(RedactionConfig {
+        let query = Query::new(&self.expect_grammar()?.ts_language, source)?;
+        let mut redaction_capture_ix = 0;
+        if populate_capture_indices(
+            &query,
+            &self.config.name,
+            "redactions",
+            &[],
+            &mut [Capture::Required("redact", &mut redaction_capture_ix)],
+        ) {
+            self.grammar_mut()?.redactions_config = Some(RedactionConfig {
                 query,
                 redaction_capture_ix,
             });
         }
-
         Ok(self)
     }
 
-    fn grammar_mut(&mut self) -> Option<&mut Grammar> {
-        Arc::get_mut(self.grammar.as_mut()?)
+    fn expect_grammar(&self) -> Result<&Grammar> {
+        self.grammar
+            .as_ref()
+            .map(|grammar| grammar.as_ref())
+            .context("no grammar for language")
+    }
+
+    fn grammar_mut(&mut self) -> Result<&mut Grammar> {
+        Arc::get_mut(self.grammar.as_mut().context("no grammar for language")?)
+            .context("cannot mutate grammar")
     }
 
     pub fn name(&self) -> LanguageName {
@@ -2200,10 +2266,16 @@ impl Default for FakeLspAdapter {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[async_trait(?Send)]
-impl LspAdapter for FakeLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        LanguageServerName(self.name.into())
+impl LspInstaller for FakeLspAdapter {
+    type BinaryVersion = ();
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<Self::BinaryVersion> {
+        unreachable!()
     }
 
     async fn check_if_user_installed(
@@ -2215,28 +2287,9 @@ impl LspAdapter for FakeLspAdapter {
         Some(self.language_server_binary.clone())
     }
 
-    fn get_language_server_command<'a>(
-        self: Arc<Self>,
-        _: Arc<dyn LspAdapterDelegate>,
-        _: Option<Toolchain>,
-        _: LanguageServerBinaryOptions,
-        _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
-        _: &'a mut AsyncApp,
-    ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
-        async move { Ok(self.language_server_binary.clone()) }.boxed_local()
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        unreachable!();
-    }
-
     async fn fetch_server_binary(
         &self,
-        _: Box<dyn 'static + Send + Any>,
+        _: (),
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
@@ -2250,6 +2303,14 @@ impl LspAdapter for FakeLspAdapter {
     ) -> Option<LanguageServerBinary> {
         unreachable!();
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+#[async_trait(?Send)]
+impl LspAdapter for FakeLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName(self.name.into())
+    }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
         self.disk_based_diagnostics_sources.clone()
@@ -2261,7 +2322,6 @@ impl LspAdapter for FakeLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
@@ -2281,15 +2341,66 @@ impl LspAdapter for FakeLspAdapter {
     }
 }
 
-fn get_capture_indices(query: &Query, captures: &mut [(&str, &mut Option<u32>)]) {
-    for (ix, name) in query.capture_names().iter().enumerate() {
-        for (capture_name, index) in captures.iter_mut() {
-            if capture_name == name {
-                **index = Some(ix as u32);
-                break;
+enum Capture<'a> {
+    Required(&'static str, &'a mut u32),
+    Optional(&'static str, &'a mut Option<u32>),
+}
+
+fn populate_capture_indices(
+    query: &Query,
+    language_name: &LanguageName,
+    query_type: &str,
+    expected_prefixes: &[&str],
+    captures: &mut [Capture<'_>],
+) -> bool {
+    let mut found_required_indices = Vec::new();
+    'outer: for (ix, name) in query.capture_names().iter().enumerate() {
+        for (required_ix, capture) in captures.iter_mut().enumerate() {
+            match capture {
+                Capture::Required(capture_name, index) if capture_name == name => {
+                    **index = ix as u32;
+                    found_required_indices.push(required_ix);
+                    continue 'outer;
+                }
+                Capture::Optional(capture_name, index) if capture_name == name => {
+                    **index = Some(ix as u32);
+                    continue 'outer;
+                }
+                _ => {}
             }
         }
+        if !name.starts_with("_")
+            && !expected_prefixes
+                .iter()
+                .any(|&prefix| name.starts_with(prefix))
+        {
+            log::warn!(
+                "unrecognized capture name '{}' in {} {} TreeSitter query \
+                (suppress this warning by prefixing with '_')",
+                name,
+                language_name,
+                query_type
+            );
+        }
     }
+    let mut missing_required_captures = Vec::new();
+    for (capture_ix, capture) in captures.iter().enumerate() {
+        if let Capture::Required(capture_name, _) = capture
+            && !found_required_indices.contains(&capture_ix)
+        {
+            missing_required_captures.push(*capture_name);
+        }
+    }
+    let success = missing_required_captures.is_empty();
+    if !success {
+        log::error!(
+            "missing required capture(s) in {} {} TreeSitter query: {}",
+            language_name,
+            query_type,
+            missing_required_captures.join(", ")
+        );
+    }
+    success
 }
 
 pub fn point_to_lsp(point: PointUtf16) -> lsp::Position {

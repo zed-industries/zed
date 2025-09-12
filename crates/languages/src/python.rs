@@ -2,16 +2,14 @@ use anyhow::{Context as _, ensure};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
-use futures::AsyncBufReadExt;
-use gpui::{App, Task};
-use gpui::{AsyncApp, SharedString};
-use language::ToolchainList;
-use language::ToolchainLister;
+use futures::{AsyncBufReadExt, StreamExt as _};
+use gpui::{App, AsyncApp, SharedString, Task};
+use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 use language::language_settings::language_settings;
-use language::{ContextLocation, LanguageToolchainStore};
+use language::{ContextLocation, LanguageToolchainStore, LspInstaller};
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
-use language::{Toolchain, ToolchainMetadata};
+use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
 use lsp::LanguageServerBinary;
 use lsp::LanguageServerName;
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -23,11 +21,12 @@ use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
 use smol::lock::OnceCell;
 use std::cmp::Ordering;
+use std::env::consts;
+use util::fs::{make_file_executable, remove_matching};
 
 use parking_lot::Mutex;
 use std::str::FromStr;
 use std::{
-    any::Any,
     borrow::Cow,
     ffi::OsString,
     fmt::Write,
@@ -36,6 +35,8 @@ use std::{
 };
 use task::{ShellKind, TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
+
+use crate::github_download::{GithubBinaryMetadata, download_server_binary};
 
 pub(crate) struct PyprojectTomlManifestProvider;
 
@@ -99,27 +100,253 @@ fn process_pyright_completions(items: &mut [lsp::CompletionItem]) {
         item.sort_text.take();
     }
 }
-pub struct PythonLspAdapter {
-    node: NodeRuntime,
+
+pub struct TyLspAdapter {
+    fs: Arc<dyn Fs>,
 }
 
-impl PythonLspAdapter {
-    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
+#[cfg(target_os = "macos")]
+impl TyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
+}
 
-    pub fn new(node: NodeRuntime) -> Self {
-        PythonLspAdapter { node }
+#[cfg(target_os = "linux")]
+impl TyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+}
+
+#[cfg(target_os = "freebsd")]
+impl TyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const ARCH_SERVER_NAME: &str = "unknown-freebsd";
+}
+
+#[cfg(target_os = "windows")]
+impl TyLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+    const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
+}
+
+impl TyLspAdapter {
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("ty");
+
+    pub fn new(fs: Arc<dyn Fs>) -> TyLspAdapter {
+        TyLspAdapter { fs }
+    }
+
+    fn build_asset_name() -> Result<(String, String)> {
+        let arch = match consts::ARCH {
+            "x86" => "i686",
+            _ => consts::ARCH,
+        };
+        let os = Self::ARCH_SERVER_NAME;
+        let suffix = match consts::OS {
+            "windows" => "zip",
+            _ => "tar.gz",
+        };
+        let asset_name = format!("ty-{arch}-{os}.{suffix}");
+        let asset_stem = format!("ty-{arch}-{os}");
+        Ok((asset_stem, asset_name))
     }
 }
 
 #[async_trait(?Send)]
-impl LspAdapter for PythonLspAdapter {
+impl LspAdapter for TyLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+        toolchain: Option<Toolchain>,
+        _cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        let mut ret = json!({});
+        if let Some(toolchain) = toolchain.and_then(|toolchain| {
+            serde_json::from_value::<PythonEnvironment>(toolchain.as_json).ok()
+        }) {
+            _ = maybe!({
+                let uri = url::Url::from_file_path(toolchain.executable?).ok()?;
+                let sys_prefix = toolchain.prefix.clone()?;
+                let environment = json!({
+                    "executable": {
+                        "uri": uri,
+                        "sysPrefix": sys_prefix
+                    }
+                });
+                ret.as_object_mut()?.insert(
+                    "pythonExtension".into(),
+                    json!({ "activeEnvironment": environment }),
+                );
+                Some(())
+            });
+        }
+        Ok(json!({"ty": ret}))
+    }
+}
+
+impl LspInstaller for TyLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<Self::BinaryVersion> {
+        let release =
+            latest_github_release("astral-sh/ty", true, true, delegate.http_client()).await?;
+        let (_, asset_name) = Self::build_asset_name()?;
+        let asset = release
+            .assets
+            .into_iter()
+            .find(|asset| asset.name == asset_name)
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+        Ok(GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url,
+            digest: asset.digest,
+        })
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        latest_version: Self::BinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = latest_version;
+        let destination_path = container_dir.join(format!("ty-{name}"));
+        let server_path = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
+            AssetKind::Zip => destination_path.clone().join("ty.exe"),    // zip contains a .exe
+        };
+
+        let binary = LanguageServerBinary {
+            path: server_path.clone(),
+            env: None,
+            arguments: Default::default(),
+        };
+
+        let metadata_path = destination_path.with_extension("metadata");
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+            .await
+            .ok();
+        if let Some(metadata) = metadata {
+            let validity_check = async || {
+                delegate
+                    .try_exec(LanguageServerBinary {
+                        path: server_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .inspect_err(|err| {
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                    })
+            };
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, &expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
+                }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
+            }
+        }
+
+        download_server_binary(
+            delegate,
+            &url,
+            expected_digest.as_deref(),
+            &destination_path,
+            Self::GITHUB_ASSET_KIND,
+        )
+        .await?;
+        make_file_executable(&server_path).await?;
+        remove_matching(&container_dir, |path| path != destination_path).await;
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest,
+            },
+            &metadata_path,
+        )
+        .await?;
+
+        Ok(LanguageServerBinary {
+            path: server_path,
+            env: None,
+            arguments: Default::default(),
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        maybe!(async {
+            let mut last = None;
+            let mut entries = self.fs.read_dir(&container_dir).await?;
+            while let Some(entry) = entries.next().await {
+                let path = entry?;
+                if path.extension().is_some_and(|ext| ext == "metadata") {
+                    continue;
+                }
+                last = Some(path);
+            }
+
+            let path = last.context("no cached binary")?;
+            let path = match TyLspAdapter::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
+                AssetKind::Zip => path.join("ty.exe"),    // zip contains a .exe
+            };
+
+            anyhow::Ok(LanguageServerBinary {
+                path,
+                env: None,
+                arguments: Default::default(),
+            })
+        })
+        .await
+        .log_err()
+    }
+}
+
+pub struct PyrightLspAdapter {
+    node: NodeRuntime,
+}
+
+impl PyrightLspAdapter {
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
+
+    pub fn new(node: NodeRuntime) -> Self {
+        PyrightLspAdapter { node }
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for PyrightLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         // Provide minimal initialization options
@@ -133,114 +360,6 @@ impl LspAdapter for PythonLspAdapter {
                 }
             }
         })))
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        _: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
-            let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: pyright_bin,
-                env: Some(env),
-                arguments: vec!["--stdio".into()],
-            })
-        } else {
-            let node = delegate.which("node".as_ref()).await?;
-            let (node_modules_path, _) = delegate
-                .npm_package_installed_version(Self::SERVER_NAME.as_ref())
-                .await
-                .log_err()??;
-
-            let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
-
-            let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: node,
-                env: Some(env),
-                arguments: server_binary_arguments(&path),
-            })
-        }
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(
-            self.node
-                .npm_package_latest_version(Self::SERVER_NAME.as_ref())
-                .await?,
-        ) as Box<_>)
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        latest_version: Box<dyn 'static + Send + Any>,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<String>().unwrap();
-        let server_path = container_dir.join(SERVER_PATH);
-
-        self.node
-            .npm_install_packages(
-                &container_dir,
-                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-            )
-            .await?;
-
-        let env = delegate.shell_env().await;
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: Some(env),
-            arguments: server_binary_arguments(&server_path),
-        })
-    }
-
-    async fn check_if_version_installed(
-        &self,
-        version: &(dyn 'static + Send + Any),
-        container_dir: &PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let version = version.downcast_ref::<String>().unwrap();
-        let server_path = container_dir.join(SERVER_PATH);
-
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                Self::SERVER_NAME.as_ref(),
-                &server_path,
-                container_dir,
-                VersionStrategy::Latest(version),
-            )
-            .await;
-
-        if should_install_language_server {
-            None
-        } else {
-            let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: self.node.binary_path().await.ok()?,
-                env: Some(env),
-                arguments: server_binary_arguments(&server_path),
-            })
-        }
-    }
-
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let mut binary = get_cached_server_binary(container_dir, &self.node).await?;
-        binary.env = Some(delegate.shell_env().await);
-        Some(binary)
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
@@ -324,7 +443,7 @@ impl LspAdapter for PythonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
+
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -389,6 +508,115 @@ impl LspAdapter for PythonLspAdapter {
 
             user_settings
         })
+    }
+}
+
+impl LspInstaller for PyrightLspAdapter {
+    type BinaryVersion = String;
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<String> {
+        self.node
+            .npm_package_latest_version(Self::SERVER_NAME.as_ref())
+            .await
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        if let Some(pyright_bin) = delegate.which("pyright-langserver".as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: pyright_bin,
+                env: Some(env),
+                arguments: vec!["--stdio".into()],
+            })
+        } else {
+            let node = delegate.which("node".as_ref()).await?;
+            let (node_modules_path, _) = delegate
+                .npm_package_installed_version(Self::SERVER_NAME.as_ref())
+                .await
+                .log_err()??;
+
+            let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
+
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: node,
+                env: Some(env),
+                arguments: server_binary_arguments(&path),
+            })
+        }
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        latest_version: Self::BinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let server_path = container_dir.join(SERVER_PATH);
+
+        self.node
+            .npm_install_packages(
+                &container_dir,
+                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
+            )
+            .await?;
+
+        let env = delegate.shell_env().await;
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            env: Some(env),
+            arguments: server_binary_arguments(&server_path),
+        })
+    }
+
+    async fn check_if_version_installed(
+        &self,
+        version: &Self::BinaryVersion,
+        container_dir: &PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let server_path = container_dir.join(SERVER_PATH);
+
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                Self::SERVER_NAME.as_ref(),
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version),
+            )
+            .await;
+
+        if should_install_language_server {
+            None
+        } else {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: self.node.binary_path().await.ok()?,
+                env: Some(env),
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let mut binary = get_cached_server_binary(container_dir, &self.node).await?;
+        binary.env = Some(delegate.shell_env().await);
+        Some(binary)
     }
 }
 
@@ -471,7 +699,6 @@ impl ContextProvider for PythonContextProvider {
 
     fn associated_tasks(
         &self,
-        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
@@ -481,7 +708,7 @@ impl ContextProvider for PythonContextProvider {
             // Execute a selection
             TaskTemplate {
                 label: "execute selection".to_owned(),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-c".to_owned(),
                     VariableName::SelectedText.template_value_with_whitespace(),
@@ -492,7 +719,7 @@ impl ContextProvider for PythonContextProvider {
             // Execute an entire file
             TaskTemplate {
                 label: format!("run '{}'", VariableName::File.template_value()),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
                 cwd: Some(VariableName::WorktreeRoot.template_value()),
                 ..TaskTemplate::default()
@@ -500,10 +727,10 @@ impl ContextProvider for PythonContextProvider {
             // Execute a file as module
             TaskTemplate {
                 label: format!("run module '{}'", VariableName::File.template_value()),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-m".to_owned(),
-                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value_with_whitespace(),
+                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
                 ],
                 cwd: Some(VariableName::WorktreeRoot.template_value()),
                 tags: vec!["python-module-main-method".to_owned()],
@@ -517,7 +744,7 @@ impl ContextProvider for PythonContextProvider {
                     // Run tests for an entire file
                     TaskTemplate {
                         label: format!("unittest '{}'", VariableName::File.template_value()),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
@@ -529,7 +756,7 @@ impl ContextProvider for PythonContextProvider {
                     // Run test(s) for a specific target within a file
                     TaskTemplate {
                         label: "unittest $ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
@@ -549,7 +776,7 @@ impl ContextProvider for PythonContextProvider {
                     // Run tests for an entire file
                     TaskTemplate {
                         label: format!("pytest '{}'", VariableName::File.template_value()),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
@@ -561,7 +788,7 @@ impl ContextProvider for PythonContextProvider {
                     // Run test(s) for a specific target within a file
                     TaskTemplate {
                         label: "pytest $ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
@@ -918,9 +1145,12 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::Cmd => "activate.bat",
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
-                    if fs.is_file(&path).await {
-                        activation_script
-                            .push(format!("{activate_keyword} \"{}\"", path.display()));
+
+                    if let Ok(quoted) =
+                        shlex::try_quote(&path.to_string_lossy()).map(Cow::into_owned)
+                        && fs.is_file(&path).await
+                    {
+                        activation_script.push(format!("{activate_keyword} {quoted}"));
                     }
                 }
             }
@@ -1107,101 +1337,6 @@ impl LspAdapter for PyLspAdapter {
         Self::SERVER_NAME
     }
 
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        toolchain: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
-            let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: pylsp_bin,
-                env: Some(env),
-                arguments: vec![],
-            })
-        } else {
-            let toolchain = toolchain?;
-            let pylsp_path = Path::new(toolchain.path.as_ref()).parent()?.join("pylsp");
-            pylsp_path.exists().then(|| LanguageServerBinary {
-                path: toolchain.path.to_string().into(),
-                arguments: vec![pylsp_path.into()],
-                env: None,
-            })
-        }
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(()) as Box<_>)
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        _: Box<dyn 'static + Send + Any>,
-        _: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
-        let pip_path = venv.join(BINARY_DIR).join("pip3");
-        ensure!(
-            util::command::new_smol_command(pip_path.as_path())
-                .arg("install")
-                .arg("python-lsp-server")
-                .arg("-U")
-                .output()
-                .await?
-                .status
-                .success(),
-            "python-lsp-server installation failed"
-        );
-        ensure!(
-            util::command::new_smol_command(pip_path.as_path())
-                .arg("install")
-                .arg("python-lsp-server[all]")
-                .arg("-U")
-                .output()
-                .await?
-                .status
-                .success(),
-            "python-lsp-server[all] installation failed"
-        );
-        ensure!(
-            util::command::new_smol_command(pip_path)
-                .arg("install")
-                .arg("pylsp-mypy")
-                .arg("-U")
-                .output()
-                .await?
-                .status
-                .success(),
-            "pylsp-mypy installation failed"
-        );
-        let pylsp = venv.join(BINARY_DIR).join("pylsp");
-        Ok(LanguageServerBinary {
-            path: pylsp,
-            env: None,
-            arguments: vec![],
-        })
-    }
-
-    async fn cached_server_binary(
-        &self,
-        _: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join(BINARY_DIR).join("pylsp");
-        Some(LanguageServerBinary {
-            path: pylsp,
-            env: None,
-            arguments: vec![],
-        })
-    }
-
     async fn process_completions(&self, _items: &mut [lsp::CompletionItem]) {}
 
     async fn label_for_completion(
@@ -1267,7 +1402,6 @@ impl LspAdapter for PyLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -1330,6 +1464,105 @@ impl LspAdapter for PyLspAdapter {
             )]));
 
             user_settings
+        })
+    }
+}
+
+impl LspInstaller for PyLspAdapter {
+    type BinaryVersion = ();
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        if let Some(pylsp_bin) = delegate.which(Self::SERVER_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: pylsp_bin,
+                env: Some(env),
+                arguments: vec![],
+            })
+        } else {
+            let toolchain = toolchain?;
+            let pylsp_path = Path::new(toolchain.path.as_ref()).parent()?.join("pylsp");
+            pylsp_path.exists().then(|| LanguageServerBinary {
+                path: toolchain.path.to_string().into(),
+                arguments: vec![pylsp_path.into()],
+                env: None,
+            })
+        }
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        _: (),
+        _: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
+        let pip_path = venv.join(BINARY_DIR).join("pip3");
+        ensure!(
+            util::command::new_smol_command(pip_path.as_path())
+                .arg("install")
+                .arg("python-lsp-server")
+                .arg("-U")
+                .output()
+                .await?
+                .status
+                .success(),
+            "python-lsp-server installation failed"
+        );
+        ensure!(
+            util::command::new_smol_command(pip_path.as_path())
+                .arg("install")
+                .arg("python-lsp-server[all]")
+                .arg("-U")
+                .output()
+                .await?
+                .status
+                .success(),
+            "python-lsp-server[all] installation failed"
+        );
+        ensure!(
+            util::command::new_smol_command(pip_path)
+                .arg("install")
+                .arg("pylsp-mypy")
+                .arg("-U")
+                .output()
+                .await?
+                .status
+                .success(),
+            "pylsp-mypy installation failed"
+        );
+        let pylsp = venv.join(BINARY_DIR).join("pylsp");
+        Ok(LanguageServerBinary {
+            path: pylsp,
+            env: None,
+            arguments: vec![],
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.ok()?;
+        let pylsp = venv.join(BINARY_DIR).join("pylsp");
+        Some(LanguageServerBinary {
+            path: pylsp,
+            env: None,
+            arguments: vec![],
         })
     }
 }
@@ -1402,7 +1635,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         // Provide minimal initialization options
@@ -1416,80 +1648,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 }
             }
         })))
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        toolchain: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        if let Some(bin) = delegate.which(Self::BINARY_NAME.as_ref()).await {
-            let env = delegate.shell_env().await;
-            Some(LanguageServerBinary {
-                path: bin,
-                env: Some(env),
-                arguments: vec!["--stdio".into()],
-            })
-        } else {
-            let path = Path::new(toolchain?.path.as_ref())
-                .parent()?
-                .join(Self::BINARY_NAME);
-            path.exists().then(|| LanguageServerBinary {
-                path,
-                arguments: vec!["--stdio".into()],
-                env: None,
-            })
-        }
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(()) as Box<_>)
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        _latest_version: Box<dyn 'static + Send + Any>,
-        _container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
-        let pip_path = venv.join(BINARY_DIR).join("pip3");
-        ensure!(
-            util::command::new_smol_command(pip_path.as_path())
-                .arg("install")
-                .arg("basedpyright")
-                .arg("-U")
-                .output()
-                .await?
-                .status
-                .success(),
-            "basedpyright installation failed"
-        );
-        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
-        Ok(LanguageServerBinary {
-            path: pylsp,
-            env: None,
-            arguments: vec!["--stdio".into()],
-        })
-    }
-
-    async fn cached_server_binary(
-        &self,
-        _container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
-        Some(LanguageServerBinary {
-            path: pylsp,
-            env: None,
-            arguments: vec!["--stdio".into()],
-        })
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
@@ -1573,7 +1731,6 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
         toolchain: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -1652,6 +1809,316 @@ impl LspAdapter for BasedPyrightLspAdapter {
 
             user_settings
         })
+    }
+}
+
+impl LspInstaller for BasedPyrightLspAdapter {
+    type BinaryVersion = ();
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        if let Some(bin) = delegate.which(Self::BINARY_NAME.as_ref()).await {
+            let env = delegate.shell_env().await;
+            Some(LanguageServerBinary {
+                path: bin,
+                env: Some(env),
+                arguments: vec!["--stdio".into()],
+            })
+        } else {
+            let path = Path::new(toolchain?.path.as_ref())
+                .parent()?
+                .join(Self::BINARY_NAME);
+            path.exists().then(|| LanguageServerBinary {
+                path,
+                arguments: vec!["--stdio".into()],
+                env: None,
+            })
+        }
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        _latest_version: (),
+        _container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
+        let pip_path = venv.join(BINARY_DIR).join("pip3");
+        ensure!(
+            util::command::new_smol_command(pip_path.as_path())
+                .arg("install")
+                .arg("basedpyright")
+                .arg("-U")
+                .output()
+                .await?
+                .status
+                .success(),
+            "basedpyright installation failed"
+        );
+        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        Ok(LanguageServerBinary {
+            path: pylsp,
+            env: None,
+            arguments: vec!["--stdio".into()],
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.ok()?;
+        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        Some(LanguageServerBinary {
+            path: pylsp,
+            env: None,
+            arguments: vec!["--stdio".into()],
+        })
+    }
+}
+
+pub(crate) struct RuffLspAdapter {
+    fs: Arc<dyn Fs>,
+}
+
+#[cfg(target_os = "macos")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
+}
+
+#[cfg(target_os = "linux")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+}
+
+#[cfg(target_os = "freebsd")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "unknown-freebsd";
+}
+
+#[cfg(target_os = "windows")]
+impl RuffLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+    const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
+}
+
+impl RuffLspAdapter {
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("ruff");
+
+    pub fn new(fs: Arc<dyn Fs>) -> RuffLspAdapter {
+        RuffLspAdapter { fs }
+    }
+
+    fn build_asset_name() -> Result<(String, String)> {
+        let arch = match consts::ARCH {
+            "x86" => "i686",
+            _ => consts::ARCH,
+        };
+        let os = Self::ARCH_SERVER_NAME;
+        let suffix = match consts::OS {
+            "windows" => "zip",
+            _ => "tar.gz",
+        };
+        let asset_name = format!("ruff-{arch}-{os}.{suffix}");
+        let asset_stem = format!("ruff-{arch}-{os}");
+        Ok((asset_stem, asset_name))
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for RuffLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
+    }
+}
+
+impl LspInstaller for RuffLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        toolchain: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let ruff_in_venv = if let Some(toolchain) = toolchain
+            && toolchain.language_name.as_ref() == "Python"
+        {
+            Path::new(toolchain.path.as_str())
+                .parent()
+                .map(|path| path.join("ruff"))
+        } else {
+            None
+        };
+
+        for path in ruff_in_venv.into_iter().chain(["ruff".into()]) {
+            if let Some(ruff_bin) = delegate.which(path.as_os_str()).await {
+                let env = delegate.shell_env().await;
+                return Some(LanguageServerBinary {
+                    path: ruff_bin,
+                    env: Some(env),
+                    arguments: vec!["server".into()],
+                });
+            }
+        }
+
+        None
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
+        let release =
+            latest_github_release("astral-sh/ruff", true, false, delegate.http_client()).await?;
+        let (_, asset_name) = Self::build_asset_name()?;
+        let asset = release
+            .assets
+            .into_iter()
+            .find(|asset| asset.name == asset_name)
+            .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
+        Ok(GitHubLspBinaryVersion {
+            name: release.tag_name,
+            url: asset.browser_download_url,
+            digest: asset.digest,
+        })
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        latest_version: GitHubLspBinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = latest_version;
+        let destination_path = container_dir.join(format!("ruff-{name}"));
+        let server_path = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz | AssetKind::Gz => destination_path
+                .join(Self::build_asset_name()?.0)
+                .join("ruff"),
+            AssetKind::Zip => destination_path.clone().join("ruff.exe"),
+        };
+
+        let binary = LanguageServerBinary {
+            path: server_path.clone(),
+            env: None,
+            arguments: vec!["server".into()],
+        };
+
+        let metadata_path = destination_path.with_extension("metadata");
+        let metadata = GithubBinaryMetadata::read_from_file(&metadata_path)
+            .await
+            .ok();
+        if let Some(metadata) = metadata {
+            let validity_check = async || {
+                delegate
+                    .try_exec(LanguageServerBinary {
+                        path: server_path.clone(),
+                        arguments: vec!["--version".into()],
+                        env: None,
+                    })
+                    .await
+                    .inspect_err(|err| {
+                        log::warn!("Unable to run {server_path:?} asset, redownloading: {err}",)
+                    })
+            };
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, &expected_digest)
+            {
+                if actual_digest == expected_digest {
+                    if validity_check().await.is_ok() {
+                        return Ok(binary);
+                    }
+                } else {
+                    log::info!(
+                        "SHA-256 mismatch for {destination_path:?} asset, downloading new asset. Expected: {expected_digest}, Got: {actual_digest}"
+                    );
+                }
+            } else if validity_check().await.is_ok() {
+                return Ok(binary);
+            }
+        }
+
+        download_server_binary(
+            delegate,
+            &url,
+            expected_digest.as_deref(),
+            &destination_path,
+            Self::GITHUB_ASSET_KIND,
+        )
+        .await?;
+        make_file_executable(&server_path).await?;
+        remove_matching(&container_dir, |path| path != destination_path).await;
+        GithubBinaryMetadata::write_to_file(
+            &GithubBinaryMetadata {
+                metadata_version: 1,
+                digest: expected_digest,
+            },
+            &metadata_path,
+        )
+        .await?;
+
+        Ok(LanguageServerBinary {
+            path: server_path,
+            env: None,
+            arguments: vec!["server".into()],
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        maybe!(async {
+            let mut last = None;
+            let mut entries = self.fs.read_dir(&container_dir).await?;
+            while let Some(entry) = entries.next().await {
+                let path = entry?;
+                if path.extension().is_some_and(|ext| ext == "metadata") {
+                    continue;
+                }
+                last = Some(path);
+            }
+
+            let path = last.context("no cached binary")?;
+            let path = match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz | AssetKind::Gz => {
+                    path.join(Self::build_asset_name()?.0).join("ruff")
+                }
+                AssetKind::Zip => path.join("ruff.exe"),
+            };
+
+            anyhow::Ok(LanguageServerBinary {
+                path,
+                env: None,
+                arguments: vec!["server".into()],
+            })
+        })
+        .await
+        .log_err()
     }
 }
 
@@ -1759,6 +2226,26 @@ mod tests {
             assert_eq!(
                 buffer.text(),
                 "def a():\n  \n  if a:\n    b()\n  else:\n    foo(\n    )\n\n"
+            );
+
+            // reset to a for loop statement
+            let statement = "for i in range(10):\n  print(i)\n";
+            buffer.edit([(0..buffer.len(), statement)], None, cx);
+
+            // insert single line comment after each line
+            let eol_ixs = statement
+                .char_indices()
+                .filter_map(|(ix, c)| if c == '\n' { Some(ix) } else { None })
+                .collect::<Vec<usize>>();
+            let editions = eol_ixs
+                .iter()
+                .enumerate()
+                .map(|(i, &eol_ix)| (eol_ix..eol_ix, format!(" # comment {}", i + 1)))
+                .collect::<Vec<(std::ops::Range<usize>, String)>>();
+            buffer.edit(editions, Some(AutoindentMode::EachLine), cx);
+            assert_eq!(
+                buffer.text(),
+                "for i in range(10): # comment 1\n  print(i) # comment 2\n"
             );
 
             // reset to a simple if statement

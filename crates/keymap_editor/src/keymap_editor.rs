@@ -37,6 +37,7 @@ use workspace::{
 };
 
 pub use ui_components::*;
+use zed_actions::OpenKeymapEditor;
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
@@ -47,14 +48,6 @@ use crate::{
 };
 
 const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
-
-actions!(
-    zed,
-    [
-        /// Opens the keymap editor.
-        OpenKeymapEditor
-    ]
-);
 
 actions!(
     keymap_editor,

@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::{convert::TryFrom, io, time::Duration};
 use strum::EnumString;
 use thiserror::Error;
+use util::serde::default_true;
 
 pub const OPEN_ROUTER_API_URL: &str = "https://openrouter.ai/api/v1";
 
@@ -65,6 +66,41 @@ impl From<Role> for String {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataCollection {
+    Allow,
+    Disallow,
+}
+
+impl Default for DataCollection {
+    fn default() -> Self {
+        Self::Allow
+    }
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Provider {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    order: Option<Vec<String>>,
+    #[serde(default = "default_true")]
+    allow_fallbacks: bool,
+    #[serde(default)]
+    require_parameters: bool,
+    #[serde(default)]
+    data_collection: DataCollection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    only: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ignore: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    quantizations: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sort: Option<String>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
@@ -74,6 +110,7 @@ pub struct Model {
     pub supports_images: Option<bool>,
     #[serde(default)]
     pub mode: ModelMode,
+    pub provider: Option<Provider>,
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -95,6 +132,7 @@ impl Model {
             Some(true),
             Some(false),
             Some(ModelMode::Default),
+            None,
         )
     }
 
@@ -109,6 +147,7 @@ impl Model {
         supports_tools: Option<bool>,
         supports_images: Option<bool>,
         mode: Option<ModelMode>,
+        provider: Option<Provider>,
     ) -> Self {
         Self {
             name: name.to_owned(),
@@ -117,6 +156,7 @@ impl Model {
             supports_tools,
             supports_images,
             mode: mode.unwrap_or(ModelMode::Default),
+            provider,
         }
     }
 
@@ -164,6 +204,7 @@ pub struct Request {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<Reasoning>,
     pub usage: RequestUsage,
+    pub provider: Option<Provider>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -597,6 +638,7 @@ pub async fn list_models(
                 } else {
                     ModelMode::Default
                 },
+                provider: None,
             })
             .collect();
 

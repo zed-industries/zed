@@ -3627,7 +3627,7 @@ List of `integer` column numbers
 
 ### Terminal: Cursor Shape
 
-- Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
+- Description: Controls the visual shape of the cursor in the terminal. When not explicitly set, it defaults to a block shape.
 - Setting: `cursor_shape`
 - Default: `null` (defaults to block)
 

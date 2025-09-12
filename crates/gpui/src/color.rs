@@ -537,9 +537,10 @@ impl Hsla {
     ///
     /// Example:
     /// ```
-    /// let color = hlsa(0.7, 1.0, 0.5, 0.7); // A saturated blue
+    /// use gpui::hsla;
+    /// let color = hsla(0.7, 1.0, 0.5, 0.7); // A saturated blue
     /// let faded_color = color.opacity(0.16);
-    /// assert_eq!(faded_color.a, 0.112);
+    /// assert!((faded_color.a - 0.112).abs() < 1e-6);
     /// ```
     ///
     /// This will return a blue color with around ~10% opacity,
@@ -568,6 +569,7 @@ impl Hsla {
     ///
     /// Example:
     /// ```
+    /// use gpui::hsla;
     /// let color = hsla(0.7, 1.0, 0.5, 0.7); // A saturated blue
     /// let faded_color = color.alpha(0.25);
     /// assert_eq!(faded_color.a, 0.25);

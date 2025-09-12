@@ -362,6 +362,11 @@
   // - It is adjacent to an edge (start or end)
   // - It is adjacent to a whitespace (left or right)
   "show_whitespaces": "selection",
+  // Visible characters used to render whitespace when show_whitespaces is enabled.
+  "whitespace_map": {
+    "space": "•",
+    "tab": "→"
+  },
   // Settings related to calls in Zed
   "calls": {
     // Join calls with the microphone live by default
@@ -1687,6 +1692,11 @@
       "allow_rewrap": "anywhere"
     },
     "Python": {
+      "formatter": {
+        "language_server": {
+          "name": "ruff"
+        }
+      },
       "debuggers": ["Debugpy"]
     },
     "Ruby": {

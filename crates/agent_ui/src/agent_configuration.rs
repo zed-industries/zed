@@ -8,7 +8,7 @@ use std::{ops::Range, sync::Arc};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
-use cloud_llm_client::Plan;
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
@@ -509,11 +509,15 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::ZedFree | Plan::ZedFreeV2 => ("Free", Color::Default, free_chip_bg),
-                Plan::ZedProTrial | Plan::ZedProTrialV2 => {
+                Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree) => {
+                    ("Free", Color::Default, free_chip_bg)
+                }
+                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial) => {
                     ("Pro Trial", Color::Accent, pro_chip_bg)
                 }
-                Plan::ZedPro | Plan::ZedProV2 => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro) => {
+                    ("Pro", Color::Accent, pro_chip_bg)
+                }
             };
 
             Chip::new(plan_name.to_string())

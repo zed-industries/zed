@@ -9259,11 +9259,21 @@ impl Element for EditorElement {
                     });
 
                     let invisible_symbol_font_size = font_size / 2.;
+                    let whitespace_map = &self
+                        .editor
+                        .read(cx)
+                        .buffer
+                        .read(cx)
+                        .language_settings(cx)
+                        .whitespace_map;
+
+                    let tab_char = whitespace_map.tab();
+                    let tab_len = tab_char.len();
                     let tab_invisible = window.text_system().shape_line(
-                        "→".into(),
+                        tab_char,
                         invisible_symbol_font_size,
                         &[TextRun {
-                            len: "→".len(),
+                            len: tab_len,
                             font: self.style.text.font(),
                             color: cx.theme().colors().editor_invisible,
                             background_color: None,
@@ -9272,11 +9282,14 @@ impl Element for EditorElement {
                         }],
                         None,
                     );
+
+                    let space_char = whitespace_map.space();
+                    let space_len = space_char.len();
                     let space_invisible = window.text_system().shape_line(
-                        "•".into(),
+                        space_char,
                         invisible_symbol_font_size,
                         &[TextRun {
-                            len: "•".len(),
+                            len: space_len,
                             font: self.style.text.font(),
                             color: cx.theme().colors().editor_invisible,
                             background_color: None,
