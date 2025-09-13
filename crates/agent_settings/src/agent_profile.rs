@@ -83,7 +83,11 @@ impl AgentProfile {
                 .map(|profile| profile.enable_all_context_servers)
                 .unwrap_or_default(),
             context_servers: base_profile
-                .map(|profile| profile.context_servers)
+                .as_ref()
+                .map(|profile| profile.context_servers.clone())
+                .unwrap_or_default(),
+            rules: base_profile
+                .map(|profile| profile.rules.clone())
                 .unwrap_or_default(),
         };
 
