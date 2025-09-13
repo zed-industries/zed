@@ -258,3 +258,8 @@
 (jsx_self_closing_element (["<" "/>"]) @punctuation.bracket.jsx)
 (jsx_attribute "=" @punctuation.delimiter.jsx)
 (jsx_text) @text.jsx
+
+; React component tags
+(jsx_opening_element (identifier) @tag.component.jsx (#match? @tag.component.jsx "^[A-Z].*$"))
+(jsx_closing_element (identifier) @tag.component.jsx (#match? @tag.component.jsx "^[A-Z].*$"))
+(jsx_self_closing_element (identifier) @tag.component.jsx (#match? @tag.component.jsx "^[A-Z].*$"))
