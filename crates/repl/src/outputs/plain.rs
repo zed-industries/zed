@@ -233,8 +233,7 @@ impl TerminalOutput {
             }
         }
 
-        // Trim any trailing newlines
-        full_text.trim_end().to_string()
+        full_text
     }
 }
 
