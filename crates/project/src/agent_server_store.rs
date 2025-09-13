@@ -900,6 +900,7 @@ impl ExternalAgentServer for LocalClaudeCode {
                 })?
                 .await
                 .unwrap_or_default();
+            env.insert("ANTHROPIC_API_KEY".into(), "".into());
 
             let (mut command, login) = if let Some(mut custom_command) = custom_command {
                 env.extend(custom_command.env.unwrap_or_default());
