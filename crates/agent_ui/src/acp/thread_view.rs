@@ -24,10 +24,9 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
-    pulsating_between,
+    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*, pulsating_between,
 };
 use language::Buffer;
 
@@ -37,7 +36,7 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -47,7 +46,7 @@ use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
-    PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
+    PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -64,9 +63,9 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
-use crate::ui::preview::UsageCallout;
 use crate::ui::{
     AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
+    UsageCallout,
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
@@ -283,7 +282,6 @@ pub struct AcpThreadView {
     thread_error: Option<ThreadError>,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
-    scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
@@ -292,7 +290,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     should_be_following: bool,
     editing_message: Option<usize>,
-    prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
@@ -336,7 +334,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
         let placeholder = if agent.name() == "Zed Agent" {
@@ -407,8 +405,7 @@ impl AcpThreadView {
 
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            list_state: list_state.clone(),
-            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
+            list_state: list_state,
             thread_retry_status: None,
             thread_error: None,
             thread_feedback: Default::default(),
@@ -561,7 +558,7 @@ impl AcpThreadView {
                         let action_log = thread.read(cx).action_log().clone();
 
                         this.prompt_capabilities
-                            .set(thread.read(cx).prompt_capabilities());
+                            .replace(thread.read(cx).prompt_capabilities());
 
                         let count = thread.read(cx).entries().len();
                         this.entry_view_state.update(cx, |view_state, cx| {
@@ -1375,7 +1372,7 @@ impl AcpThreadView {
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 self.prompt_capabilities
-                    .set(thread.read(cx).prompt_capabilities());
+                    .replace(thread.read(cx).prompt_capabilities());
             }
             AcpThreadEvent::TokenUsageUpdated => {}
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
@@ -1392,11 +1389,13 @@ impl AcpThreadView {
                         name: "login".to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
+                        meta: None,
                     });
                     available_commands.push(acp::AvailableCommand {
                         name: "logout".to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
+                        meta: None,
                     });
                 }
 
@@ -4833,39 +4832,6 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .id("acp-thread-scrollbar")
-            .occlude()
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
-    }
-
     fn render_token_limit_callout(
         &self,
         line_height: Pixels,
@@ -5439,23 +5405,27 @@ impl Render for AcpThreadView {
                     configuration_view,
                     pending_auth_method,
                     ..
-                } => self.render_auth_required_state(
-                    connection,
-                    description.as_ref(),
-                    configuration_view.as_ref(),
-                    pending_auth_method.as_ref(),
-                    window,
-                    cx,
-                ),
+                } => self
+                    .render_auth_required_state(
+                        connection,
+                        description.as_ref(),
+                        configuration_view.as_ref(),
+                        pending_auth_method.as_ref(),
+                        window,
+                        cx,
+                    )
+                    .into_any(),
                 ThreadState::Loading { .. } => v_flex()
                     .flex_1()
-                    .child(self.render_recent_history(window, cx)),
+                    .child(self.render_recent_history(window, cx))
+                    .into_any(),
                 ThreadState::LoadError(e) => v_flex()
                     .flex_1()
                     .size_full()
                     .items_center()
                     .justify_end()
-                    .child(self.render_load_error(e, window, cx)),
+                    .child(self.render_load_error(e, window, cx))
+                    .into_any(),
                 ThreadState::Ready { .. } => v_flex().flex_1().map(|this| {
                     if has_messages {
                         this.child(
@@ -5475,9 +5445,11 @@ impl Render for AcpThreadView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .child(self.render_vertical_scrollbar(cx))
+                        .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                        .into_any()
                     } else {
                         this.child(self.render_recent_history(window, cx))
+                            .into_any()
                     }
                 }),
             })
@@ -5793,6 +5765,7 @@ pub(crate) mod tests {
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         };
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -5801,6 +5774,7 @@ pub(crate) mod tests {
                     id: acp::PermissionOptionId("1".into()),
                     name: "Allow".into(),
                     kind: acp::PermissionOptionKind::AllowOnce,
+                    meta: None,
                 }],
             )]));
 
@@ -5977,6 +5951,7 @@ pub(crate) mod tests {
                         image: true,
                         audio: true,
                         embedded_context: true,
+                        meta: None,
                     }),
                     cx,
                 )
@@ -6036,6 +6011,7 @@ pub(crate) mod tests {
                         image: true,
                         audio: true,
                         embedded_context: true,
+                        meta: None,
                     }),
                     cx,
                 )
@@ -6062,6 +6038,7 @@ pub(crate) mod tests {
         ) -> Task<gpui::Result<acp::PromptResponse>> {
             Task::ready(Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::Refusal,
+                meta: None,
             }))
         }
 
@@ -6145,11 +6122,13 @@ pub(crate) mod tests {
                     path: "/project/test1.txt".into(),
                     old_text: Some("old content 1".into()),
                     new_text: "new content 1".into(),
+                    meta: None,
                 },
             }],
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         })]);
 
         thread
@@ -6186,11 +6165,13 @@ pub(crate) mod tests {
                     path: "/project/test2.txt".into(),
                     old_text: Some("old content 2".into()),
                     new_text: "new content 2".into(),
+                    meta: None,
                 },
             }],
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         })]);
 
         thread
@@ -6268,6 +6249,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6357,6 +6339,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6400,6 +6383,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "New Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6492,6 +6476,7 @@ pub(crate) mod tests {
                     content: acp::ContentBlock::Text(acp::TextContent {
                         text: "Response".into(),
                         annotations: None,
+                        meta: None,
                     }),
                 },
                 cx,

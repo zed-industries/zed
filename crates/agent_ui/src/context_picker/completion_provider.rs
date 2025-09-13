@@ -596,11 +596,12 @@ impl ContextPickerCompletionProvider {
             file_name.to_string()
         };
 
+        let path = Path::new(&full_path);
         let crease_icon_path = if is_directory {
-            FileIcons::get_folder_icon(false, cx).unwrap_or_else(|| IconName::Folder.path().into())
+            FileIcons::get_folder_icon(false, path, cx)
+                .unwrap_or_else(|| IconName::Folder.path().into())
         } else {
-            FileIcons::get_icon(Path::new(&full_path), cx)
-                .unwrap_or_else(|| IconName::File.path().into())
+            FileIcons::get_icon(path, cx).unwrap_or_else(|| IconName::File.path().into())
         };
         let completion_icon_path = if is_recent {
             IconName::HistoryRerun.path().into()

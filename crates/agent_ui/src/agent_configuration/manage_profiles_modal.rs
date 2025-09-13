@@ -2,7 +2,7 @@ pub mod profile_modal_header;
 
 use std::sync::Arc;
 
-use agent_settings::{AgentProfileId, AgentSettings, builtin_profiles};
+use agent_settings::{AgentProfile, AgentProfileId, AgentSettings, builtin_profiles};
 use assistant_tool::ToolWorkingSet;
 use editor::Editor;
 use fs::Fs;
@@ -19,7 +19,6 @@ use crate::agent_configuration::configure_profile_rules_modal::ConfigureProfileR
 use crate::agent_configuration::manage_profiles_modal::profile_modal_header::ProfileModalHeader;
 use crate::agent_configuration::tool_picker::{ToolPicker, ToolPickerDelegate};
 use crate::{AgentPanel, ManageProfiles};
-use agent::agent_profile::AgentProfile;
 
 use super::tool_picker::ToolPickerMode;
 

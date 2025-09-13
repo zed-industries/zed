@@ -1299,6 +1299,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
                             status: Some(acp::ToolCallStatus::Completed),
                             ..
                         },
+                    meta: None,
                 },
             )) if Some(&id) == echo_id.as_ref() => {
                 echo_completed = true;
@@ -1926,6 +1927,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
                 acp::PromptRequest {
                     session_id: session_id.clone(),
                     prompt: vec!["ghi".into()],
+                    meta: None,
                 },
                 cx,
             )
@@ -1990,6 +1992,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             locations: vec![],
             raw_input: Some(json!({})),
             raw_output: None,
+            meta: None,
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -2003,6 +2006,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 raw_input: Some(json!({ "content": "Thinking hard!" })),
                 ..Default::default()
             },
+            meta: None,
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -2014,6 +2018,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 status: Some(acp::ToolCallStatus::InProgress),
                 ..Default::default()
             },
+            meta: None,
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -2025,6 +2030,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 content: Some(vec!["Thinking hard!".into()]),
                 ..Default::default()
             },
+            meta: None,
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -2037,6 +2043,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 raw_output: Some("Finished thinking.".into()),
                 ..Default::default()
             },
+            meta: None,
         }
     );
 }

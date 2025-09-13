@@ -524,6 +524,53 @@ You can find available models and their specifications on the [OpenRouter models
 
 Custom models will be listed in the model dropdown in the Agent Panel.
 
+#### Provider Routing
+
+You can optionally control how OpenRouter routes a given custom model request among underlying upstream providers via the `provider` object on each model entry.
+
+Supported fields (all optional):
+
+- `order`: Array of provider slugs to try first, in order (e.g. `["anthropic", "openai"]`)
+- `allow_fallbacks` (default: `true`): Whether fallback providers may be used if preferred ones are unavailable
+- `require_parameters` (default: `false`): Only use providers that support every parameter you supplied
+- `data_collection` (default: `allow`): `"allow"` or `"disallow"` (controls use of providers that may store data)
+- `only`: Whitelist of provider slugs allowed for this request
+- `ignore`: Provider slugs to skip
+- `quantizations`: Restrict to specific quantization variants (e.g. `["int4","int8"]`)
+- `sort`: Sort strategy for candidate providers (e.g. `"price"` or `"throughput"`)
+
+Example adding routing preferences to a model:
+
+```json
+{
+  "language_models": {
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1",
+      "available_models": [
+        {
+          "name": "openrouter/auto",
+          "display_name": "Auto Router (Tools Preferred)",
+          "max_tokens": 2000000,
+          "supports_tools": true,
+          "provider": {
+            "order": ["anthropic", "openai"],
+            "allow_fallbacks": true,
+            "require_parameters": true,
+            "only": ["anthropic", "openai", "google"],
+            "ignore": ["cohere"],
+            "quantizations": ["int8"],
+            "sort": "price",
+            "data_collection": "allow"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+These routing controls let you fine‑tune cost, capability, and reliability trade‑offs without changing the model name you select in the UI.
+
 ### Vercel v0 {#vercel-v0}
 
 [Vercel v0](https://vercel.com/docs/v0/api) is an expert model for generating full-stack apps, with framework-aware completions optimized for modern stacks like Next.js and Vercel.

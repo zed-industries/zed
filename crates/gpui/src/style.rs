@@ -153,7 +153,7 @@ pub struct Style {
     #[refineable]
     pub overflow: Point<Overflow>,
     /// How much space (in points) should be reserved for the scrollbars of `Overflow::Scroll` and `Overflow::Auto` nodes.
-    pub scrollbar_width: f32,
+    pub scrollbar_width: AbsoluteLength,
     /// Whether both x and y axis should be scrollable at the same time.
     pub allow_concurrent_scroll: bool,
     /// Whether scrolling should be restricted to the axis indicated by the mouse wheel.
@@ -745,7 +745,7 @@ impl Default for Style {
             },
             allow_concurrent_scroll: false,
             restrict_scroll_to_axis: false,
-            scrollbar_width: 0.0,
+            scrollbar_width: AbsoluteLength::default(),
             position: Position::Relative,
             inset: Edges::auto(),
             margin: Edges::<Length>::zero(),

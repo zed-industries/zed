@@ -819,6 +819,7 @@ impl NativeAgentConnection {
                                         acp::ContentBlock::Text(acp::TextContent {
                                             text,
                                             annotations: None,
+                                            meta: None,
                                         }),
                                         false,
                                         cx,
@@ -831,6 +832,7 @@ impl NativeAgentConnection {
                                         acp::ContentBlock::Text(acp::TextContent {
                                             text,
                                             annotations: None,
+                                            meta: None,
                                         }),
                                         true,
                                         cx,
@@ -876,7 +878,10 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp::PromptResponse { stop_reason });
+                                return Ok(acp::PromptResponse {
+                                    stop_reason,
+                                    meta: None,
+                                });
                             }
                         }
                     }
@@ -890,6 +895,7 @@ impl NativeAgentConnection {
             log::debug!("Response stream completed");
             anyhow::Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::EndTurn,
+                meta: None,
             })
         })
     }
@@ -1513,6 +1519,7 @@ mod tests {
                         mime_type: None,
                         size: None,
                         title: None,
+                        meta: None,
                     }),
                     " mean?".into(),
                 ],

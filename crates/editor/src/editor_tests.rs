@@ -21403,6 +21403,159 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(
+        &r#"
+        fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 4), lsp::Position::new(4, 7)),
+                },
+            ]))
+        });
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(editors.len(), 2, "We should have opened a new multibuffer");
+    });
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}"#
+            .unindent(),
+    );
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}"#
+            .unindent(),
+    );
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            2,
+            "should have re-used the previous multibuffer"
+        );
+    });
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+        fn three() {}
+        fn two() {}"#
+            .unindent(),
+    );
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(5, 4), lsp::Position::new(5, 7)),
+                },
+            ]))
+        });
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+                let mut a = ˇtwo();
+            }
+            fn three() {}
+            fn two() {}"#
+            .unindent(),
+    );
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            3,
+            "should have used a new multibuffer as offsets changed"
+        );
+    });
+}
+#[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 

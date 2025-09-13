@@ -33,7 +33,7 @@ pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
 use reqwest_client::ReqwestClient;
-use rpc::proto::{MultiLspQuery, split_repository_update};
+use rpc::proto::split_repository_update;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 use tracing::Span;
 
@@ -335,10 +335,6 @@ impl Server {
             .add_message_handler(update_language_server)
             .add_message_handler(update_diagnostic_summary)
             .add_message_handler(update_worktree_settings)
-            .add_request_handler(forward_read_only_project_request::<proto::GetHover>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetTypeDefinition>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetReferences>)
             .add_request_handler(forward_read_only_project_request::<proto::FindSearchCandidates>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentHighlights>)
             .add_request_handler(forward_read_only_project_request::<proto::GetDocumentSymbols>)
@@ -349,7 +345,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::InlayHints>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeLens>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetBranches>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenUnstagedDiff>)
@@ -364,7 +359,6 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::LspExtCancelFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtRunFlycheck>)
             .add_request_handler(forward_read_only_project_request::<proto::LspExtClearFlycheck>)
-            .add_request_handler(forward_read_only_project_request::<proto::GetDocumentDiagnostics>)
             .add_request_handler(
                 forward_mutating_project_request::<proto::RegisterBufferWithLanguageServers>,
             )
@@ -377,7 +371,6 @@ impl Server {
             .add_request_handler(
                 forward_mutating_project_request::<proto::ResolveCompletionDocumentation>,
             )
-            .add_request_handler(forward_mutating_project_request::<proto::GetCodeActions>)
             .add_request_handler(forward_mutating_project_request::<proto::ApplyCodeAction>)
             .add_request_handler(forward_mutating_project_request::<proto::PrepareRename>)
             .add_request_handler(forward_mutating_project_request::<proto::PerformRename>)
@@ -395,7 +388,6 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::OnTypeFormatting>)
             .add_request_handler(forward_mutating_project_request::<proto::SaveBuffer>)
             .add_request_handler(forward_mutating_project_request::<proto::BlameBuffer>)
-            .add_request_handler(multi_lsp_query)
             .add_request_handler(lsp_query)
             .add_message_handler(broadcast_project_message_from_host::<proto::LspQueryResponse>)
             .add_request_handler(forward_mutating_project_request::<proto::RestartLanguageServers>)
@@ -456,6 +448,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::Unstage>)
             .add_request_handler(forward_mutating_project_request::<proto::Stash>)
             .add_request_handler(forward_mutating_project_request::<proto::StashPop>)
+            .add_request_handler(forward_mutating_project_request::<proto::StashDrop>)
             .add_request_handler(forward_mutating_project_request::<proto::Commit>)
             .add_request_handler(forward_mutating_project_request::<proto::GitInit>)
             .add_request_handler(forward_read_only_project_request::<proto::GetRemotes>)
@@ -910,8 +903,6 @@ impl Server {
                                 user_id=field::Empty,
                                 login=field::Empty,
                                 impersonator=field::Empty,
-                                // todo(lsp) remove after Zed Stable hits v0.204.x
-                                multi_lsp_query_request=field::Empty,
                                 lsp_query_request=field::Empty,
                                 release_channel=field::Empty,
                                 { TOTAL_DURATION_MS }=field::Empty,
@@ -2356,17 +2347,6 @@ where
     let payload = session.forward_request(host_connection_id, request).await?;
     response.send(payload)?;
     Ok(())
-}
-
-// todo(lsp) remove after Zed Stable hits v0.204.x
-async fn multi_lsp_query(
-    request: MultiLspQuery,
-    response: Response<MultiLspQuery>,
-    session: MessageContext,
-) -> Result<()> {
-    tracing::Span::current().record("multi_lsp_query_request", request.request_str());
-    tracing::info!("multi_lsp_query message received");
-    forward_mutating_project_request(request, response, session).await
 }
 
 async fn lsp_query(
