@@ -681,6 +681,8 @@ pub trait LanguageModelTool: 'static + DeserializeOwned + JsonSchema {
 /// An error that occurred when trying to authenticate the language model provider.
 #[derive(Debug, Error)]
 pub enum AuthenticateError {
+    #[error("connection refused")]
+    ConnectionRefused,
     #[error("credentials not found")]
     CredentialsNotFound,
     #[error(transparent)]
