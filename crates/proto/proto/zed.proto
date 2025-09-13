@@ -395,6 +395,8 @@ message Envelope {
 
         LspQuery lsp_query = 365;
         LspQueryResponse lsp_query_response = 366;
+
+
         ToggleLspLogs toggle_lsp_logs = 367;
 
         UpdateUserSettings update_user_settings = 368;
@@ -414,7 +416,10 @@ message Envelope {
         NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
 
         StashDrop stash_drop = 378;
-        StashApply stash_apply = 379; // current max
+        StashApply stash_apply = 379;
+
+        GitLog git_log = 380;
+        GitLogResponse git_log_response = 381; // current max
     }
 
     reserved 87 to 88;
