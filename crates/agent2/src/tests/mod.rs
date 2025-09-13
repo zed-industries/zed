@@ -1020,9 +1020,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
     tool_call_response
         .send(rmcp::model::CallToolResult {
             content: vec![rmcp::model::Content {
-                raw: rmcp::model::RawContent::Text {
-                    text: "test".into(),
-                },
+                raw: rmcp::model::RawContent::Text("test".into()),
                 annotations: None,
             }],
             is_error: Some(false),
@@ -1183,7 +1181,12 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             rmcp::model::Tool {
                 name: "unique_tool_1".into(),
                 description: None,
-                input_schema: json!({"type": "object", "properties": {}}),
+                input_schema: Arc::new(
+                    json!({"type": "object", "properties": {}})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
                 output_schema: None,
                 annotations: None,
             },
@@ -1213,21 +1216,36 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             rmcp::model::Tool {
                 name: "unique_tool_2".into(),
                 description: None,
-                input_schema: json!({"type": "object", "properties": {}}),
+                input_schema: Arc::new(
+                    json!({"type": "object", "properties": {}})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
                 output_schema: None,
                 annotations: None,
             },
             rmcp::model::Tool {
-                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2),
+                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2).into(),
                 description: None,
-                input_schema: json!({"type": "object", "properties": {}}),
+                input_schema: Arc::new(
+                    json!({"type": "object", "properties": {}})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
                 output_schema: None,
                 annotations: None,
             },
             rmcp::model::Tool {
-                name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
+                name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1).into(),
                 description: None,
-                input_schema: json!({"type": "object", "properties": {}}),
+                input_schema: Arc::new(
+                    json!({"type": "object", "properties": {}})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
                 output_schema: None,
                 annotations: None,
             },
@@ -1239,19 +1257,40 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         "zzz",
         vec![
             rmcp::model::Tool {
-                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2),
+                name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2).into(),
                 description: None,
-                input_schema: json!({"type": "object", "properties": {}}),
+                input_schema: Arc::new(
+                    json!({"type": "object", "properties": {}})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+                output_schema: None,
+                annotations: None,
             },
             rmcp::model::Tool {
-                name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
+                name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1).into(),
                 description: None,
-                input_schema: json!({"type": "object", "properties": {}}),
+                input_schema: Arc::new(
+                    json!({"type": "object", "properties": {}})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+                output_schema: None,
+                annotations: None,
             },
             rmcp::model::Tool {
-                name: "c".repeat(MAX_TOOL_NAME_LENGTH + 1),
+                name: "c".repeat(MAX_TOOL_NAME_LENGTH + 1).into(),
                 description: None,
-                input_schema: json!({"type": "object", "properties": {}}),
+                input_schema: Arc::new(
+                    json!({"type": "object", "properties": {}})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+                output_schema: None,
+                annotations: None,
             },
         ],
         &context_server_store,
@@ -2483,8 +2522,8 @@ fn tool_names_for_completion(completion: &LanguageModelRequest) -> Vec<String> {
 
 fn setup_context_server(
     name: &'static str,
-    tools: Vec<rmcp::model::Tool>,
-    context_server_store: &Entity<ContextServerStore>,
+    _tools: Vec<rmcp::model::Tool>,
+    _context_server_store: &Entity<ContextServerStore>,
     cx: &mut TestAppContext,
 ) -> mpsc::UnboundedReceiver<(
     rmcp::model::CallToolRequestParam,
@@ -2507,7 +2546,7 @@ fn setup_context_server(
         ProjectSettings::override_global(settings, cx);
     });
 
-    let (mcp_tool_calls_tx, mcp_tool_calls_rx) = mpsc::unbounded();
+    let (_mcp_tool_calls_tx, mcp_tool_calls_rx) = mpsc::unbounded();
 
     // TODO: Reimplement fake context server setup for RMCP-based tests
     // The old fake transport system has been removed in favor of RMCP
