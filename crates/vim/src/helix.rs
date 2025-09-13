@@ -1107,5 +1107,4 @@ mod test {
         cx.simulate_keystrokes("v w");
         cx.assert_state("«one ˇ»two", Mode::HelixSelect);
     }
-
 }
