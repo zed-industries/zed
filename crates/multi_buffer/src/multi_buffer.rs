@@ -6407,12 +6407,12 @@ impl MultiBufferSnapshot {
     /// callsite of this function is used as a key - previous annotations will be removed.
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug<V, R>(&self, range: &R, value: V)
+    pub fn debug<V, R>(&self, ranges: &R, value: V)
     where
         R: debug::ToMultiBufferDebugRanges,
         V: std::fmt::Debug,
     {
-        self.debug_with_key(std::panic::Location::caller(), range, value);
+        self.debug_with_key(std::panic::Location::caller(), ranges, value);
     }
 
     /// Visually annotates a position or range with the `Debug` representation of a value. Previous
@@ -6420,14 +6420,14 @@ impl MultiBufferSnapshot {
     /// annotation's color.
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug_with_key<K, R, V>(&self, key: &K, range: &R, value: V)
+    pub fn debug_with_key<K, R, V>(&self, key: &K, ranges: &R, value: V)
     where
         K: std::hash::Hash + 'static,
         R: debug::ToMultiBufferDebugRanges,
         V: std::fmt::Debug,
     {
         let caller = std::panic::Location::caller();
-        let text_ranges = range
+        let text_ranges = ranges
             .to_multi_buffer_debug_ranges(self)
             .into_iter()
             .flat_map(|range| {

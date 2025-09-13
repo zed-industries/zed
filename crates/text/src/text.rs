@@ -2598,12 +2598,12 @@ impl BufferSnapshot {
     /// callsite of this function is used as a key - previous annotations will be removed.
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug<R, V>(&self, range: &R, value: V)
+    pub fn debug<R, V>(&self, ranges: &R, value: V)
     where
         R: debug::ToDebugRanges,
         V: std::fmt::Debug,
     {
-        self.debug_with_key(std::panic::Location::caller(), range, value);
+        self.debug_with_key(std::panic::Location::caller(), ranges, value);
     }
 
     /// Visually annotates a position or range with the `Debug` representation of a value. Previous
@@ -2611,14 +2611,14 @@ impl BufferSnapshot {
     /// annotation's color.
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug_with_key<K, R, V>(&self, key: &K, range: &R, value: V)
+    pub fn debug_with_key<K, R, V>(&self, key: &K, ranges: &R, value: V)
     where
         K: std::hash::Hash + 'static,
         R: debug::ToDebugRanges,
         V: std::fmt::Debug,
     {
         let caller = std::panic::Location::caller();
-        let ranges = range
+        let ranges = ranges
             .to_debug_ranges(self)
             .into_iter()
             .map(|range| self.anchor_after(range.start)..self.anchor_before(range.end))
