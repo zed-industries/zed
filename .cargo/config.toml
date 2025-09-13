@@ -5,7 +5,13 @@ rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
 [alias]
 xtask = "run --package xtask --"
 
-[target.x86_64-unknown-linux-gnu]
+[target.'(cfg(all(debug_assertions, target_arch = "x86_64", target_os = "linux"))']
+# Wild is not yet considered ready for production use, but it is faster, so use it
+# only for debug builds.
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+
+[target.'(cfg(all(not(debug_assertions), target_arch = "x86_64", target_os = "linux"))']
 linker = "clang"
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
