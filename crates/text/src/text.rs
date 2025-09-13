@@ -2594,8 +2594,8 @@ impl BufferSnapshot {
         })
     }
 
-    /// Debugging helper to highlight a range. Only one highlight will be shown per callsite. The
-    /// `value` argument is an `Hsla` color for the highlight (alpha will be set to 0.25).
+    /// Visually annotates a position or range with the `Debug` representation of a value. The
+    /// callsite of this function is used as a key - previous annotations will be removed.
     #[cfg(debug_assertions)]
     #[track_caller]
     pub fn debug<V, R>(&self, value: V, range: &R)
@@ -2603,14 +2603,15 @@ impl BufferSnapshot {
         V: std::fmt::Debug,
         R: debug::ToDebugRanges,
     {
-        self.debug_ranges_with_key(std::panic::Location::caller(), value, range);
+        self.debug_with_key(std::panic::Location::caller(), value, range);
     }
 
-    /// Debugging helper to highlight a range. Replaces the highlights associated with the provided
-    /// key. The `value` argument is an `Hsla` color for the highlight (alpha will be set to 0.25).
+    /// Visually annotates a position or range with the `Debug` representation of a value. Previous
+    /// debug annotations with the same key will be removed. The key is also used to determine the
+    /// annotation's color.
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug_ranges_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
+    pub fn debug_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
     where
         K: std::hash::Hash + 'static,
         V: std::fmt::Debug,
