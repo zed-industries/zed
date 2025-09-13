@@ -325,7 +325,7 @@ impl LspLogView {
         let server_info = format!(
             "* Server: {NAME} (id {ID})
 
-* Binary: {BINARY:#?}
+* Binary: {BINARY}
 
 * Registered workspace folders:
 {WORKSPACE_FOLDERS}
@@ -335,10 +335,10 @@ impl LspLogView {
 * Configuration: {CONFIGURATION}",
             NAME = info.name,
             ID = info.id,
-            BINARY = info.binary.as_ref().map_or_else(
-                || "Unknown".to_string(),
-                |bin| bin.path.as_path().to_string_lossy().to_string()
-            ),
+            BINARY = info
+                .binary
+                .as_ref()
+                .map_or_else(|| "Unknown".to_string(), |binary| format!("{binary:#?}")),
             WORKSPACE_FOLDERS = info.workspace_folders.join(", "),
             CAPABILITIES = serde_json::to_string_pretty(&info.capabilities)
                 .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
@@ -990,10 +990,16 @@ impl Render for LspLogToolbarItemView {
             let server_id = server.server_id;
             let rpc_trace_enabled = server.rpc_trace_enabled;
             let log_view = log_view.clone();
+            let label = match server.selected_entry {
+                LogKind::Rpc => RPC_MESSAGES,
+                LogKind::Trace => SERVER_TRACE,
+                LogKind::Logs => SERVER_LOGS,
+                LogKind::ServerInfo => SERVER_INFO,
+            };
             PopoverMenu::new("LspViewSelector")
                 .anchor(Corner::TopLeft)
                 .trigger(
-                    Button::new("language_server_menu_header", server.selected_entry.label())
+                    Button::new("language_server_menu_header", label)
                         .icon(IconName::ChevronDown)
                         .icon_size(IconSize::Small)
                         .icon_color(Color::Muted),

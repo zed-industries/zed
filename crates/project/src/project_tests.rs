@@ -22,7 +22,7 @@ use itertools::Itertools;
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
-    ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainLister,
+    ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList, ToolchainLister,
     language_settings::{AllLanguageSettings, LanguageSettingsContent, language_settings},
     tree_sitter_rust, tree_sitter_typescript,
 };
@@ -31,7 +31,7 @@ use lsp::{
     Uri, WillRenameFiles, notification::DidRenameFiles,
 };
 use parking_lot::Mutex;
-use paths::{config_dir, tasks_file};
+use paths::{config_dir, global_gitignore_path, tasks_file};
 use postage::stream::Stream as _;
 use pretty_assertions::{assert_eq, assert_matches};
 use rand::{Rng as _, rngs::StdRng};
@@ -727,7 +727,12 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
     // We're not using venvs at all here, so both folders should fall under the same root.
     assert_eq!(server.server_id(), LanguageServerId(0));
     // Now, let's select a different toolchain for one of subprojects.
-    let (available_toolchains_for_b, root_path) = project
+
+    let Toolchains {
+        toolchains: available_toolchains_for_b,
+        root_path,
+        ..
+    } = project
         .update(cx, |this, cx| {
             let worktree_id = this.worktrees(cx).next().unwrap().read(cx).id();
             this.available_toolchains(
@@ -1386,7 +1391,9 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     assert_eq!(fs.read_dir_call_count() - prev_read_dir_count, 5);
 
     let mut new_watched_paths = fs.watched_paths();
-    new_watched_paths.retain(|path| !path.starts_with(config_dir()));
+    new_watched_paths.retain(|path| {
+        !path.starts_with(config_dir()) && !path.starts_with(global_gitignore_path().unwrap())
+    });
     assert_eq!(
         &new_watched_paths,
         &[
@@ -3871,7 +3878,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |this, cx| this.create_buffer(cx))
+        .update(cx, |this, cx| this.create_buffer(false, cx))
         .unwrap()
         .await;
     project.update(cx, |this, cx| {
@@ -4083,7 +4090,9 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
     let languages = project.update(cx, |project, _| project.languages().clone());
     languages.add(rust_lang());
 
-    let buffer = project.update(cx, |project, cx| project.create_local_buffer("", None, cx));
+    let buffer = project.update(cx, |project, cx| {
+        project.create_local_buffer("", None, false, cx)
+    });
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "abc")], None, cx);
         assert!(buffer.is_dirty());
@@ -5580,9 +5589,7 @@ async fn test_search_with_buffer_exclusions(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
     let _buffer = project.update(cx, |project, cx| {
-        let buffer = project.create_local_buffer("file", None, cx);
-        project.mark_buffer_as_non_searchable(buffer.read(cx).remote_id(), cx);
-        buffer
+        project.create_local_buffer("file", None, false, cx)
     });
 
     assert_eq!(
@@ -7661,7 +7668,7 @@ async fn test_staging_random_hunks(
         .unwrap_or(20);
 
     // Try to induce races between diff recalculation and index writes.
-    if rng.gen_bool(0.5) {
+    if rng.random_bool(0.5) {
         executor.deprioritize(*CALCULATE_DIFF_TASK);
     }
 
@@ -7717,7 +7724,7 @@ async fn test_staging_random_hunks(
     assert_eq!(hunks.len(), 6);
 
     for _i in 0..operations {
-        let hunk_ix = rng.gen_range(0..hunks.len());
+        let hunk_ix = rng.random_range(0..hunks.len());
         let hunk = &mut hunks[hunk_ix];
         let row = hunk.range.start.row;
 
@@ -7735,7 +7742,7 @@ async fn test_staging_random_hunks(
             hunk.secondary_status = SecondaryHunkAdditionPending;
         }
 
-        for _ in 0..rng.gen_range(0..10) {
+        for _ in 0..rng.random_range(0..10) {
             log::info!("yielding");
             cx.executor().simulate_random_delay().await;
         }
@@ -7937,21 +7944,19 @@ async fn test_repository_and_path_for_project_path(
 async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
+    let home = paths::home_dir();
     fs.insert_tree(
-        path!("/root"),
+        home,
         json!({
-            "home": {
-                ".git": {},
-                "project": {
-                    "a.txt": "A"
-                },
+            ".git": {},
+            "project": {
+                "a.txt": "A"
             },
         }),
     )
     .await;
-    fs.set_home_dir(Path::new(path!("/root/home")).to_owned());
 
-    let project = Project::test(fs.clone(), [path!("/root/home/project").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [home.join("project").as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
 
@@ -7968,7 +7973,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         assert!(containing.is_none());
     });
 
-    let project = Project::test(fs.clone(), [path!("/root/home").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [home.as_ref()], cx).await;
     let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let tree_id = tree.read_with(cx, |tree, _| tree.id());
     project
@@ -7988,7 +7993,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
                 .read(cx)
                 .work_directory_abs_path
                 .as_ref(),
-            Path::new(path!("/root/home"))
+            home,
         );
     });
 }
@@ -9213,13 +9218,21 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
                 ..Default::default()
             }
         }
-        // Returns a term which we should use in UI to refer to a toolchain.
-        fn term(&self) -> SharedString {
-            SharedString::new_static("virtual environment")
+        async fn resolve(
+            &self,
+            _: PathBuf,
+            _: Option<HashMap<String, String>>,
+        ) -> anyhow::Result<Toolchain> {
+            Err(anyhow::anyhow!("Not implemented"))
         }
-        /// Returns the name of the manifest file for this toolchain.
-        fn manifest_name(&self) -> ManifestName {
-            SharedString::new_static("pyproject.toml").into()
+        fn meta(&self) -> ToolchainMetadata {
+            ToolchainMetadata {
+                term: SharedString::new_static("Virtual Environment"),
+                new_toolchain_placeholder: SharedString::new_static(
+                    "A path to the python3 executable within a virtual environment, or path to virtual environment itself",
+                ),
+                manifest_name: ManifestName::from(SharedString::new_static("pyproject.toml")),
+            }
         }
         async fn activation_script(&self, _: &Toolchain, _: ShellKind, _: &dyn Fs) -> Vec<String> {
             vec![]

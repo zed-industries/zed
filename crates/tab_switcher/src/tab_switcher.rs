@@ -649,10 +649,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let tab_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let tab_match = self.matches.get(ix)?;
 
         let params = TabContentParams {
             detail: Some(tab_match.detail),

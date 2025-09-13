@@ -33,7 +33,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 ### Backend Dependencies (optional) {#backend-dependencies}
 
-If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
+If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ## Building Zed from Source
 
@@ -68,6 +68,8 @@ xcrun: error: unable to find utility "metal", not a developer tool or in PATH
 ```
 
 Try `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer`
+
+If you're on macOS 26, try `xcodebuild -downloadComponent MetalToolchain`
 
 ### Cargo errors claiming that a dependency is using unstable features
 

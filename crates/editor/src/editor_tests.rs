@@ -2476,51 +2476,379 @@ async fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
+async fn test_delete_to_word_boundary(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
-    let editor = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple("one two three four", cx);
-        build_editor(buffer, window, cx)
-    });
+    let mut cx = EditorTestContext::new(cx).await;
 
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_display_ranges([
-                // an empty selection - the preceding word fragment is deleted
-                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 2),
-                // characters selected - they are deleted
-                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 12),
-            ])
-        });
+    // For an empty selection, the preceding word fragment is deleted.
+    // For non-empty selections, only selected characters are deleted.
+    cx.set_state("onˇe two t«hreˇ»e four");
+    cx.update_editor(|editor, window, cx| {
         editor.delete_to_previous_word_start(
             &DeleteToPreviousWordStart {
                 ignore_newlines: false,
+                ignore_brackets: false,
             },
             window,
             cx,
         );
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "e two te four");
     });
+    cx.assert_editor_state("ˇe two tˇe four");
 
-    _ = editor.update(cx, |editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.select_display_ranges([
-                // an empty selection - the following word fragment is deleted
-                DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 3),
-                // characters selected - they are deleted
-                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 10),
-            ])
-        });
+    cx.set_state("e tˇwo te «fˇ»our");
+    cx.update_editor(|editor, window, cx| {
         editor.delete_to_next_word_end(
             &DeleteToNextWordEnd {
                 ignore_newlines: false,
+                ignore_brackets: false,
             },
             window,
             cx,
         );
-        assert_eq!(editor.buffer.read(cx).read(cx).text(), "e t te our");
     });
+    cx.assert_editor_state("e tˇ te ˇour");
+}
+
+#[gpui::test]
+async fn test_delete_whitespaces(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+                ignore_brackets: true,
+            },
+            window,
+            cx,
+        );
+    });
+    // Continuous whitespace sequences are removed entirely, words behind them are not affected by the deletion action.
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some text    ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: false,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: false,
+                ignore_brackets: true,
+            },
+            window,
+            cx,
+        );
+    });
+    // Same happens in the other direction.
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: false,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+
+    cx.set_state("here is some textˇ    with a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some textˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here is some ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Single whitespaces are removed with the word behind them.
+    cx.assert_editor_state("here is ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("here ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇwith a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Same happens in the other direction.
+    cx.assert_editor_state("ˇ a space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ space");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state("ˇ");
+}
+
+#[gpui::test]
+async fn test_delete_to_bracket(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(
+        Language::new(
+            LanguageConfig {
+                brackets: BracketPairConfig {
+                    pairs: vec![
+                        BracketPair {
+                            start: "\"".to_string(),
+                            end: "\"".to_string(),
+                            close: true,
+                            surround: true,
+                            newline: false,
+                        },
+                        BracketPair {
+                            start: "(".to_string(),
+                            end: ")".to_string(),
+                            close: true,
+                            surround: true,
+                            newline: true,
+                        },
+                    ],
+                    ..BracketPairConfig::default()
+                },
+                ..LanguageConfig::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_brackets_query(
+            r#"
+                ("(" @open ")" @close)
+                ("\"" @open "\"" @close)
+            "#,
+        )
+        .unwrap(),
+    );
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    cx.set_state(r#"macro!("// ˇCOMMENT");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Deletion stops before brackets if asked to not ignore them.
+    cx.assert_editor_state(r#"macro!("ˇCOMMENT");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Deletion has to remove a single bracket and then stop again.
+    cx.assert_editor_state(r#"macro!(ˇCOMMENT");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"macro!ˇCOMMENT");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇCOMMENT");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇCOMMENT");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    // Brackets on the right are not paired anymore, hence deletion does not stop at them
+    cx.assert_editor_state(r#"ˇ");"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇ"#);
+
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_next_word_end(
+            &DeleteToNextWordEnd {
+                ignore_newlines: true,
+                ignore_brackets: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"ˇ"#);
+
+    cx.set_state(r#"macro!("// ˇCOMMENT");"#);
+    cx.update_editor(|editor, window, cx| {
+        editor.delete_to_previous_word_start(
+            &DeleteToPreviousWordStart {
+                ignore_newlines: true,
+                ignore_brackets: true,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.assert_editor_state(r#"macroˇCOMMENT");"#);
 }
 
 #[gpui::test]
@@ -2533,9 +2861,11 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
     });
     let del_to_prev_word_start = DeleteToPreviousWordStart {
         ignore_newlines: false,
+        ignore_brackets: false,
     };
     let del_to_prev_word_start_ignore_newlines = DeleteToPreviousWordStart {
         ignore_newlines: true,
+        ignore_brackets: false,
     };
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -2569,9 +2899,11 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     });
     let del_to_next_word_end = DeleteToNextWordEnd {
         ignore_newlines: false,
+        ignore_brackets: false,
     };
     let del_to_next_word_end_ignore_newlines = DeleteToNextWordEnd {
         ignore_newlines: true,
+        ignore_brackets: false,
     };
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -2599,6 +2931,8 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "\nthree\n   four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "\n   four");
+        editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
+        assert_eq!(editor.buffer.read(cx).read(cx).text(), "four");
         editor.delete_to_next_word_end(&del_to_next_word_end_ignore_newlines, window, cx);
         assert_eq!(editor.buffer.read(cx).read(cx).text(), "");
     });
@@ -5029,6 +5363,20 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         «HeLlO, wOrLD!ˇ»
     "});
+
+    // Test selections with `line_mode = true`.
+    cx.update_editor(|editor, _window, _cx| editor.selections.line_mode = true);
+    cx.set_state(indoc! {"
+        «The quick brown
+        fox jumps over
+        tˇ»he lazy dog
+    "});
+    cx.update_editor(|e, window, cx| e.convert_to_upper_case(&ConvertToUpperCase, window, cx));
+    cx.assert_editor_state(indoc! {"
+        «THE QUICK BROWN
+        FOX JUMPS OVER
+        THE LAZY DOGˇ»
+    "});
 }
 
 #[gpui::test]
@@ -6380,6 +6728,58 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
         # 6ˇ
         "
     ));
+}
+
+#[gpui::test]
+async fn test_cut_line_ends(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        The quick« brownˇ»
+        fox jumps overˇ
+        the lazy dog"});
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    cx.assert_editor_state(indoc! {"
+        The quickˇ
+        ˇthe lazy dog"});
+
+    cx.set_state(indoc! {"
+        The quick« brownˇ»
+        fox jumps overˇ
+        the lazy dog"});
+    cx.update_editor(|e, window, cx| e.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx));
+    cx.assert_editor_state(indoc! {"
+        The quickˇ
+        fox jumps overˇthe lazy dog"});
+
+    cx.set_state(indoc! {"
+        The quick« brownˇ»
+        fox jumps overˇ
+        the lazy dog"});
+    cx.update_editor(|e, window, cx| {
+        e.cut_to_end_of_line(
+            &CutToEndOfLine {
+                stop_at_newlines: true,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.assert_editor_state(indoc! {"
+        The quickˇ
+        fox jumps overˇ
+        the lazy dog"});
+
+    cx.set_state(indoc! {"
+        The quick« brownˇ»
+        fox jumps overˇ
+        the lazy dog"});
+    cx.update_editor(|e, window, cx| e.kill_ring_cut(&KillRingCut, window, cx));
+    cx.assert_editor_state(indoc! {"
+        The quickˇ
+        fox jumps overˇthe lazy dog"});
 }
 
 #[gpui::test]
@@ -8243,10 +8643,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
         assert_text_with_selections(
             editor,
             indoc! {r#"
-                use mod1::mod2::{mod3, mo«ˇ»d4};
+                use mod1::mod2::{mod3, moˇd4};
 
                 fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
-                    let var1 = "te«ˇ»xt";
+                    let var1 = "teˇxt";
                 }
             "#},
             cx,
@@ -8261,10 +8661,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
         assert_text_with_selections(
             editor,
             indoc! {r#"
-                use mod1::mod2::{mod3, mo«ˇ»d4};
+                use mod1::mod2::{mod3, moˇd4};
 
                 fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
-                    let var1 = "te«ˇ»xt";
+                    let var1 = "teˇxt";
                 }
             "#},
             cx,
@@ -8365,6 +8765,184 @@ async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContex
     });
     editor.update(cx, |editor, cx| {
         assert_text_with_selections(editor, "«ˇlet a = 2;»", cx);
+    });
+}
+
+#[gpui::test]
+async fn test_select_larger_syntax_node_for_cursor_at_symbol(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+
+    let text = r#"
+        let a = {
+            key: "value",
+        };
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Test case 1: Cursor after '{'
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 9)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {ˇ
+                    key: "value",
+                };
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = «ˇ{
+                    key: "value",
+                }»;
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 2: Cursor after ':'
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 8)..DisplayPoint::new(DisplayRow(1), 8)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {
+                    key:ˇ "value",
+                };
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {
+                    «ˇkey: "value"»,
+                };
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = «ˇ{
+                    key: "value",
+                }»;
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 3: Cursor after ','
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 17)..DisplayPoint::new(DisplayRow(1), 17)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {
+                    key: "value",ˇ
+                };
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = «ˇ{
+                    key: "value",
+                }»;
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 4: Cursor after ';'
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {
+                    key: "value",
+                };ˇ
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                «ˇlet a = {
+                    key: "value",
+                };
+                »"#},
+            cx,
+        );
     });
 }
 
@@ -13930,6 +14508,26 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
         }
     });
 
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, window, cx| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(completion_menu_entries(menu), &["wowser", "wowen", "wow"], "Even though the threshold is not met, invoking word completions with an action should provide the completions");
+        } else {
+            panic!("expected completion menu to be open after the word completions are called with an action");
+        }
+
+        editor.cancel(&Cancel, window, cx);
+    });
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!("expected completion menu to be hidden after canceling");
+        }
+    });
+
     cx.simulate_keystroke("o");
     cx.executor().run_until_parked();
     cx.update_editor(|editor, _, _| {
@@ -13948,6 +14546,50 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
             assert_eq!(completion_menu_entries(menu), &["wowen", "wowser"], "After word completion threshold is met, matching words should be shown, excluding the already typed word");
         } else {
             panic!("expected completion menu to be open after the word completions threshold is met");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_word_completions_disabled(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettings {
+            words: WordsCompletionMode::Enabled,
+            words_min_length: 0,
+            lsp: true,
+            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: LspInsertMode::Insert,
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    cx.update_editor(|editor, _, _| {
+        editor.disable_word_completions();
+    });
+    cx.set_state(indoc! {"ˇ
+        wow
+        wowen
+        wowser
+    "});
+    cx.simulate_keystroke("w");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden, as words completion are disabled for this editor"
+            );
+        }
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, _, _| {
+        if editor.context_menu.borrow_mut().is_some() {
+            panic!(
+                "expected completion menu to be hidden even if called for explicitly, as words completion are disabled for this editor"
+            );
         }
     });
 }
@@ -15453,37 +16095,34 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
         );
 
         let snapshot = editor.snapshot(window, cx);
-        let mut highlighted_ranges = editor.background_highlights_in_range(
+        let highlighted_ranges = editor.sorted_background_highlights_in_range(
             anchor_range(Point::new(3, 4)..Point::new(7, 4)),
             &snapshot,
             cx.theme(),
         );
-        // Enforce a consistent ordering based on color without relying on the ordering of the
-        // highlight's `TypeId` which is non-executor.
-        highlighted_ranges.sort_unstable_by_key(|(_, color)| *color);
         assert_eq!(
             highlighted_ranges,
             &[
-                (
-                    DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 4),
-                    Hsla::red(),
-                ),
-                (
-                    DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
-                    Hsla::red(),
-                ),
                 (
                     DisplayPoint::new(DisplayRow(3), 2)..DisplayPoint::new(DisplayRow(3), 5),
                     Hsla::green(),
                 ),
                 (
+                    DisplayPoint::new(DisplayRow(4), 2)..DisplayPoint::new(DisplayRow(4), 4),
+                    Hsla::red(),
+                ),
+                (
                     DisplayPoint::new(DisplayRow(5), 3)..DisplayPoint::new(DisplayRow(5), 6),
                     Hsla::green(),
+                ),
+                (
+                    DisplayPoint::new(DisplayRow(6), 3)..DisplayPoint::new(DisplayRow(6), 5),
+                    Hsla::red(),
                 ),
             ]
         );
         assert_eq!(
-            editor.background_highlights_in_range(
+            editor.sorted_background_highlights_in_range(
                 anchor_range(Point::new(5, 6)..Point::new(6, 4)),
                 &snapshot,
                 cx.theme(),
@@ -15504,7 +16143,7 @@ async fn test_following(cx: &mut TestAppContext) {
     let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
     let buffer = project.update(cx, |project, cx| {
-        let buffer = project.create_local_buffer(&sample_text(16, 8, 'a'), None, cx);
+        let buffer = project.create_local_buffer(&sample_text(16, 8, 'a'), None, false, cx);
         cx.new(|cx| MultiBuffer::singleton(buffer, cx))
     });
     let leader = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
@@ -15756,8 +16395,8 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let (buffer_1, buffer_2) = project.update(cx, |project, cx| {
         (
-            project.create_local_buffer("abc\ndef\nghi\njkl\n", None, cx),
-            project.create_local_buffer("mno\npqr\nstu\nvwx\n", None, cx),
+            project.create_local_buffer("abc\ndef\nghi\njkl\n", None, false, cx),
+            project.create_local_buffer("mno\npqr\nstu\nvwx\n", None, false, cx),
         )
     });
 
@@ -16452,6 +17091,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "some other init value": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16472,6 +17112,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "anotherInitValue": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16492,6 +17133,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                     "anotherInitValue": false
                 })),
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -16510,6 +17152,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
                 settings: None,
                 initialization_options: None,
                 enable_lsp_tasks: false,
+                fetch: None,
             },
         );
     });
@@ -20760,6 +21403,159 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(
+        &r#"
+        fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 4), lsp::Position::new(4, 7)),
+                },
+            ]))
+        });
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(editors.len(), 2, "We should have opened a new multibuffer");
+    });
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}"#
+            .unindent(),
+    );
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}"#
+            .unindent(),
+    );
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            2,
+            "should have re-used the previous multibuffer"
+        );
+    });
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+        fn three() {}
+        fn two() {}"#
+            .unindent(),
+    );
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(5, 4), lsp::Position::new(5, 7)),
+                },
+            ]))
+        });
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+                let mut a = ˇtwo();
+            }
+            fn three() {}
+            fn two() {}"#
+            .unindent(),
+    );
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            3,
+            "should have used a new multibuffer as offsets changed"
+        );
+    });
+}
+#[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -24914,6 +25710,196 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
     assert_eq!(
         handle.to_any().entity_type(),
         TypeId::of::<InvalidBufferView>()
+    );
+}
+
+#[gpui::test]
+async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    // Test hierarchical sibling navigation
+    let text = r#"
+        fn outer() {
+            if condition {
+                let a = 1;
+            }
+            let b = 2;
+        }
+
+        fn another() {
+            let c = 3;
+        }
+    "#;
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    // Wait for parsing to complete
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    editor.update_in(cx, |editor, window, cx| {
+        // Start by selecting "let a = 1;" inside the if block
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(3), 16)..DisplayPoint::new(DisplayRow(3), 26)
+            ]);
+        });
+
+        let initial_selection = editor.selections.display_ranges(cx);
+        assert_eq!(initial_selection.len(), 1, "Should have one selection");
+
+        // Test select next sibling - should move up levels to find the next sibling
+        // Since "let a = 1;" has no siblings in the if block, it should move up
+        // to find "let b = 2;" which is a sibling of the if block
+        editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
+        let next_selection = editor.selections.display_ranges(cx);
+
+        // Should have a selection and it should be different from the initial
+        assert_eq!(
+            next_selection.len(),
+            1,
+            "Should have one selection after next"
+        );
+        assert_ne!(
+            next_selection[0], initial_selection[0],
+            "Next sibling selection should be different"
+        );
+
+        // Test hierarchical navigation by going to the end of the current function
+        // and trying to navigate to the next function
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(5), 12)..DisplayPoint::new(DisplayRow(5), 22)
+            ]);
+        });
+
+        editor.select_next_syntax_node(&SelectNextSyntaxNode, window, cx);
+        let function_next_selection = editor.selections.display_ranges(cx);
+
+        // Should move to the next function
+        assert_eq!(
+            function_next_selection.len(),
+            1,
+            "Should have one selection after function next"
+        );
+
+        // Test select previous sibling navigation
+        editor.select_prev_syntax_node(&SelectPreviousSyntaxNode, window, cx);
+        let prev_selection = editor.selections.display_ranges(cx);
+
+        // Should have a selection and it should be different
+        assert_eq!(
+            prev_selection.len(),
+            1,
+            "Should have one selection after prev"
+        );
+        assert_ne!(
+            prev_selection[0], function_next_selection[0],
+            "Previous sibling selection should be different from next"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_next_prev_document_highlight(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
+
+    // Set up document highlights manually (simulating LSP response)
+    cx.update_editor(|editor, _window, cx| {
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        // Create highlights for "variable" occurrences
+        let highlight_ranges = [
+            Point::new(0, 4)..Point::new(0, 12),  // First "variable"
+            Point::new(1, 14)..Point::new(1, 22), // Second "variable"
+            Point::new(2, 13)..Point::new(2, 21), // Third "variable"
+        ];
+
+        let anchor_ranges: Vec<_> = highlight_ranges
+            .iter()
+            .map(|range| range.clone().to_anchors(&buffer_snapshot))
+            .collect();
+
+        editor.highlight_background::<DocumentHighlightRead>(
+            &anchor_ranges,
+            |theme| theme.colors().editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    // Go to next highlight - should move to second "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = ˇvariable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to next highlight - should move to third "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = variable + 1;
+let result = ˇvariable * 2;",
+    );
+
+    // Go to next highlight - should stay at third "variable" (no wrap-around)
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = variable + 1;
+let result = ˇvariable * 2;",
+    );
+
+    // Now test going backwards from third position
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = ˇvariable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to previous highlight - should move to first "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to previous highlight - should stay on first "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
     );
 }
 

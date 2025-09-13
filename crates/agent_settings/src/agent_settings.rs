@@ -8,7 +8,7 @@ use gpui::{App, Pixels, SharedString};
 use language_model::LanguageModel;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::borrow::Cow;
 
 pub use crate::agent_profile::*;
@@ -223,7 +223,8 @@ impl AgentSettingsContent {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default, SettingsUi)]
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default, SettingsUi, SettingsKey)]
+#[settings_key(key = "agent", fallback_key = "assistant")]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///
@@ -267,6 +268,10 @@ pub struct AgentSettingsContent {
     pub profiles: Option<IndexMap<AgentProfileId, AgentProfileContent>>,
     /// Whenever a tool action would normally wait for your confirmation
     /// that you allow it, always choose to allow it.
+    ///
+    /// This setting has no effect on external agents that support permission modes, such as Claude Code.
+    ///
+    /// Set `agent_servers.claude.default_mode` to `bypassPermissions`, to disable all permission requests when using Claude Code.
     ///
     /// Default: false
     always_allow_tool_actions: Option<bool>,
@@ -399,10 +404,6 @@ pub struct ContextServerPresetContent {
 }
 
 impl Settings for AgentSettings {
-    const KEY: Option<&'static str> = Some("agent");
-
-    const FALLBACK_KEY: Option<&'static str> = Some("assistant");
-
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
     type FileContent = AgentSettingsContent;

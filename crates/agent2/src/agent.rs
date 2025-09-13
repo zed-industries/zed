@@ -292,7 +292,6 @@ impl NativeAgent {
                 action_log.clone(),
                 session_id.clone(),
                 prompt_capabilities_rx,
-                vec![],
                 cx,
             )
         });
@@ -748,6 +747,7 @@ impl NativeAgentConnection {
                                         acp::ContentBlock::Text(acp::TextContent {
                                             text,
                                             annotations: None,
+                                            meta: None,
                                         }),
                                         false,
                                         cx,
@@ -760,6 +760,7 @@ impl NativeAgentConnection {
                                         acp::ContentBlock::Text(acp::TextContent {
                                             text,
                                             annotations: None,
+                                            meta: None,
                                         }),
                                         true,
                                         cx,
@@ -772,7 +773,9 @@ impl NativeAgentConnection {
                                 response,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(tool_call, options, cx)
+                                    thread.request_tool_call_authorization(
+                                        tool_call, options, true, cx,
+                                    )
                                 })??;
                                 cx.background_spawn(async move {
                                     if let acp::RequestPermissionOutcome::Selected { option_id } =
@@ -803,7 +806,10 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp::PromptResponse { stop_reason });
+                                return Ok(acp::PromptResponse {
+                                    stop_reason,
+                                    meta: None,
+                                });
                             }
                         }
                     }
@@ -817,6 +823,7 @@ impl NativeAgentConnection {
             log::debug!("Response stream completed");
             anyhow::Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::EndTurn,
+                meta: None,
             })
         })
     }
@@ -1440,6 +1447,7 @@ mod tests {
                         mime_type: None,
                         size: None,
                         title: None,
+                        meta: None,
                     }),
                     " mean?".into(),
                 ],

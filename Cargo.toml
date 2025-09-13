@@ -94,9 +94,11 @@ members = [
     "crates/language_extension",
     "crates/language_model",
     "crates/language_models",
+    "crates/language_onboarding",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
+    "crates/line_ending_selector",
     "crates/livekit_api",
     "crates/livekit_client",
     "crates/lmstudio",
@@ -131,6 +133,7 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/scheduler",
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
@@ -141,7 +144,6 @@ members = [
     "crates/rules_library",
     "crates/schema_generator",
     "crates/search",
-    "crates/semantic_index",
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
@@ -193,6 +195,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zed_env_vars",
     "crates/zeta",
     "crates/zeta_cli",
     "crates/zlog",
@@ -209,7 +212,6 @@ members = [
     "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/test-extension",
-    "extensions/toml",
 
     #
     # Tooling
@@ -275,6 +277,7 @@ context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
 crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
+crossbeam = "0.8.4"
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
@@ -319,9 +322,11 @@ language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_models = { path = "crates/language_models" }
+language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
+line_ending_selector = { path = "crates/line_ending_selector" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 lmstudio = { path = "crates/lmstudio" }
@@ -359,17 +364,17 @@ proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
+scheduler = { path = "crates/scheduler" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
-rodio = { version = "0.21.1", default-features = false }
+rodio = { git = "https://github.com/RustAudio/rodio", branch = "better_wav_output"}
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
-semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
@@ -420,6 +425,7 @@ worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zed_env_vars = { path = "crates/zed_env_vars" }
 zeta = { path = "crates/zeta" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
@@ -428,7 +434,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.2.0-alpha.4", features = ["unstable"]}
+agent-client-protocol = { version = "0.2.1", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -442,6 +448,7 @@ async-fs = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
+async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.29.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
@@ -454,16 +461,18 @@ aws-sdk-bedrockruntime = { version = "1.80.0", features = [
 ] }
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
+backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
+cfg-if = "1.0.3"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"
@@ -533,6 +542,31 @@ nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c80421
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "NSArray",
+    "NSAttributedString",
+    "NSBundle",
+    "NSCoder",
+    "NSData",
+    "NSDate",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSNull",
+    "NSObjCRuntime",
+    "NSObject",
+    "NSProcessInfo",
+    "NSRange",
+    "NSRunLoop",
+    "NSString",
+    "NSURL",
+    "NSUndoManager",
+    "NSValue",
+    "objc2-core-foundation",
+    "std"
+] }
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
@@ -558,7 +592,7 @@ prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
-rand = "0.8.5"
+rand = "0.9"
 rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"

@@ -23,7 +23,6 @@ doctest = false
 alacritty_terminal.workspace = true
 anyhow.workspace = true
 collections.workspace = true
-dirs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 libc.workspace = true
@@ -41,6 +40,7 @@ util.workspace = true
 regex.workspace = true
 urlencoding.workspace = true
 workspace-hack.workspace = true
+itertools.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

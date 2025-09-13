@@ -1,8 +1,9 @@
-use editor::ShowScrollbar;
+use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -92,7 +93,8 @@ pub enum ShowDiagnostics {
     All,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "project_panel")]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
     ///
@@ -167,9 +169,15 @@ pub struct ProjectPanelSettingsContent {
     pub drag_and_drop: Option<bool>,
 }
 
-impl Settings for ProjectPanelSettings {
-    const KEY: Option<&'static str> = Some("project_panel");
+impl ScrollbarVisibility for ProjectPanelSettings {
+    fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
+}
 
+impl Settings for ProjectPanelSettings {
     type FileContent = ProjectPanelSettingsContent;
 
     fn load(

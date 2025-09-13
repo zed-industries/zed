@@ -251,7 +251,7 @@ enum MarkdownCacheKey {
 pub enum CompletionsMenuSource {
     Normal,
     SnippetChoices,
-    Words,
+    Words { ignore_threshold: bool },
 }
 
 // TODO: There should really be a wrapper around fuzzy match tasks that does this.
@@ -1481,6 +1481,8 @@ impl CodeActionsMenu {
     ) -> AnyElement {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
+        let is_quick_action_bar = matches!(self.origin(), ContextMenuOrigin::QuickActionBar);
+
         let list = uniform_list(
             "code_actions_menu",
             self.actions.len(),
@@ -1502,6 +1504,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child(
                                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                                                 action.lsp_action.title().replace("\n", ""),

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct FileFinderSettings {
@@ -11,7 +11,8 @@ pub struct FileFinderSettings {
     pub include_ignored: Option<bool>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "file_finder")]
 pub struct FileFinderSettingsContent {
     /// Whether to show file icons in the file finder.
     ///
@@ -42,8 +43,6 @@ pub struct FileFinderSettingsContent {
 }
 
 impl Settings for FileFinderSettings {
-    const KEY: Option<&'static str> = Some("file_finder");
-
     type FileContent = FileFinderSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> Result<Self> {

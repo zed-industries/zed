@@ -23,18 +23,17 @@ use crate::application_menu::{
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore, zed_urls};
-use cloud_llm_client::Plan;
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
     Subscription, WeakEntity, Window, actions, div,
 };
-use keymap_editor;
 use onboarding_banner::OnboardingBanner;
-use project::Project;
+use project::{Project, WorktreeSettings};
 use remote::RemoteConnectionOptions;
-use settings::Settings as _;
-use std::sync::Arc;
+use settings::{Settings, SettingsLocation};
+use std::{path::Path, sync::Arc};
 use theme::ActiveTheme;
 use title_bar_settings::TitleBarSettings;
 use ui::{
@@ -294,13 +293,15 @@ impl TitleBar {
 
         let banner = cx.new(|cx| {
             OnboardingBanner::new(
-                "ACP Onboarding",
-                IconName::Sparkle,
-                "Bring Your Own Agent",
+                "ACP Claude Code Onboarding",
+                IconName::AiClaude,
+                "Claude Code",
                 Some("Introducing:".into()),
-                zed_actions::agent::OpenAcpOnboardingModal.boxed_clone(),
+                zed_actions::agent::OpenClaudeCodeOnboardingModal.boxed_clone(),
                 cx,
             )
+            // When updating this to a non-AI feature release, remove this line.
+            .visible_when(|cx| !project::DisableAiSettings::get_global(cx).disable_ai)
         });
 
         let platform_titlebar = cx.new(|cx| PlatformTitleBar::new(id, cx));
@@ -446,14 +447,24 @@ impl TitleBar {
     }
 
     pub fn render_project_name(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let name = {
-            let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
+        let name = self
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .map(|worktree| {
                 let worktree = worktree.read(cx);
-                worktree.root_name()
-            });
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.id(),
+                    path: Path::new(""),
+                };
 
-            names.next()
-        };
+                let settings = WorktreeSettings::get(Some(settings_location), cx);
+                match &settings.project_name {
+                    Some(name) => name.as_str(),
+                    None => worktree.root_name(),
+                }
+            })
+            .next();
         let is_project_selected = name.is_some();
         let name = if let Some(name) = name {
             util::truncate_and_trailoff(name, MAX_PROJECT_NAME_LENGTH)
@@ -672,9 +683,15 @@ impl TitleBar {
                         let user_login = user.github_login.clone();
 
                         let (plan_name, label_color, bg_color) = match plan {
-                            None | Some(Plan::ZedFree) => ("Free", Color::Default, free_chip_bg),
-                            Some(Plan::ZedProTrial) => ("Pro Trial", Color::Accent, pro_chip_bg),
-                            Some(Plan::ZedPro) => ("Pro", Color::Accent, pro_chip_bg),
+                            None | Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree)) => {
+                                ("Free", Color::Default, free_chip_bg)
+                            }
+                            Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)) => {
+                                ("Pro Trial", Color::Accent, pro_chip_bg)
+                            }
+                            Some(Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)) => {
+                                ("Pro", Color::Accent, pro_chip_bg)
+                            }
                         };
 
                         menu.custom_entry(
@@ -702,7 +719,7 @@ impl TitleBar {
                             "Settings Profiles",
                             zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                         )
-                        .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
+                        .action("Keymap Editor", Box::new(zed_actions::OpenKeymapEditor))
                         .action(
                             "Themes…",
                             zed_actions::theme_selector::Toggle::default().boxed_clone(),
@@ -750,7 +767,7 @@ impl TitleBar {
                                 "Settings Profiles",
                                 zed_actions::settings_profile_selector::Toggle.boxed_clone(),
                             )
-                            .action("Key Bindings", Box::new(keymap_editor::OpenKeymapEditor))
+                            .action("Key Bindings", Box::new(zed_actions::OpenKeymapEditor))
                             .action(
                                 "Themes…",
                                 zed_actions::theme_selector::Toggle::default().boxed_clone(),

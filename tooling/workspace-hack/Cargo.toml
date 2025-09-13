@@ -47,6 +47,7 @@ clap_builder = { version = "4", default-features = false, features = ["cargo", "
 concurrent-queue = { version = "2" }
 cranelift-codegen = { version = "0.116", default-features = false, features = ["host-arch", "incremental-cache", "std", "timing", "unwind"] }
 crc32fast = { version = "1" }
+crossbeam-channel = { version = "0.5" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
 deranged = { version = "0.4", default-features = false, features = ["powerfmt", "serde", "std"] }
@@ -106,7 +107,7 @@ regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
 rustc-hash = { version = "1" }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
@@ -176,6 +177,7 @@ clap_builder = { version = "4", default-features = false, features = ["cargo", "
 concurrent-queue = { version = "2" }
 cranelift-codegen = { version = "0.116", default-features = false, features = ["host-arch", "incremental-cache", "std", "timing", "unwind"] }
 crc32fast = { version = "1" }
+crossbeam-channel = { version = "0.5" }
 crossbeam-epoch = { version = "0.9" }
 crossbeam-utils = { version = "0.8" }
 deranged = { version = "0.4", default-features = false, features = ["powerfmt", "serde", "std"] }
@@ -240,7 +242,7 @@ regex-automata = { version = "0.4" }
 regex-syntax = { version = "0.8" }
 rust_decimal = { version = "1", default-features = false, features = ["maths", "serde", "std"] }
 rustc-hash = { version = "1" }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", default-features = false, features = ["fs", "net", "std"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net"] }
 rustls = { version = "0.23", features = ["ring"] }
 rustls-webpki = { version = "0.103", default-features = false, features = ["aws-lc-rs", "ring", "std"] }
 sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", "sqlx-sqlite"] }
@@ -291,6 +293,7 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
@@ -299,8 +302,8 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["NSA
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -319,6 +322,7 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
@@ -328,8 +332,8 @@ objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -348,6 +352,7 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
@@ -356,8 +361,8 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["NSA
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -376,6 +381,7 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
 objc2 = { version = "0.6" }
@@ -385,8 +391,8 @@ objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -413,18 +419,20 @@ inout = { version = "0.1", default-features = false, features = ["block-padding"
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
-nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
@@ -434,7 +442,7 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
-zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
+zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.x86_64-unknown-linux-gnu.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
@@ -453,17 +461,19 @@ inout = { version = "0.1", default-features = false, features = ["block-padding"
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
-nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -472,7 +482,7 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
-zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
+zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.aarch64-unknown-linux-gnu.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
@@ -491,18 +501,20 @@ inout = { version = "0.1", default-features = false, features = ["block-padding"
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
-nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
@@ -512,7 +524,7 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
-zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
+zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.aarch64-unknown-linux-gnu.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
@@ -531,17 +543,19 @@ inout = { version = "0.1", default-features = false, features = ["block-padding"
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
-nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -550,7 +564,7 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
-zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
+zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.x86_64-pc-windows-msvc.dependencies]
 codespan-reporting = { version = "0.12" }
@@ -560,8 +574,9 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "fs", "net"] }
 scopeguard = { version = "1" }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -583,9 +598,10 @@ getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-f
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "fs", "net"] }
 scopeguard = { version = "1" }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -616,18 +632,20 @@ inout = { version = "0.1", default-features = false, features = ["block-padding"
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
-nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
@@ -637,7 +655,7 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
-zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
+zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.x86_64-unknown-linux-musl.build-dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
@@ -656,17 +674,19 @@ inout = { version = "0.1", default-features = false, features = ["block-padding"
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
+livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 mio = { version = "1", features = ["net", "os-ext"] }
 naga = { version = "25", features = ["spv-out", "wgsl-in"] }
 nix-1f5adca70f036a62 = { package = "nix", version = "0.28", features = ["fs", "mman", "ptrace", "signal", "term", "user"] }
-nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "socket", "uio", "user"] }
+nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
+nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "socket", "uio", "user"] }
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", features = ["fs", "net", "process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
 scopeguard = { version = "1" }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -675,6 +695,6 @@ tokio-stream = { version = "0.1", features = ["fs"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
 tower = { version = "0.5", default-features = false, features = ["timeout", "util"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }
-zvariant = { version = "5", default-features = false, features = ["enumflags2", "gvariant", "url"] }
+zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 ### END HAKARI SECTION

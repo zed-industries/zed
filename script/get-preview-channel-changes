@@ -24,7 +24,7 @@ async function main() {
   const STAFF_MEMBERS = new Set(
     (
       await (
-        await fetch("https://api.github.com/orgs/zed-industries/teams/staff/members", {
+        await fetch("https://api.github.com/orgs/zed-industries/teams/staff/members?per_page=100", {
           headers: {
             Authorization: `token ${GITHUB_ACCESS_TOKEN}`,
             Accept: "application/vnd.github+json",

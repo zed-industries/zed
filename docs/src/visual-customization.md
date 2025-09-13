@@ -94,7 +94,6 @@ To disable this behavior use:
   // "project_panel": {"button": false },
   // "outline_panel": {"button": false },
   // "collaboration_panel": {"button": false },
-  // "chat_panel": {"button": "never" },
   // "git_panel": {"button": false },
   // "notification_panel": {"button": false },
   // "agent": {"button": false },
@@ -458,7 +457,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "button": true,         // Show/hide the icon in the status bar
     "dock": "right",        // Where to dock: left, right, bottom
     "default_width": 640,   // Default width (left/right docked)
-    "default_height": 320,  // Default height (bottom dockeed)
+    "default_height": 320,  // Default height (bottom docked)
   },
   "agent_font_size": 16
 ```
@@ -473,7 +472,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
     "dock": "bottom",                   // Where to dock: left, right, bottom
     "button": true,                     // Show/hide status bar icon
     "default_width": 640,               // Default width (left/right docked)
-    "default_height": 320,              // Default height (bottom dockeed)
+    "default_height": 320,              // Default height (bottom docked)
 
     // Set the cursor blinking behavior in the terminal (on, off, terminal_controlled)
     "blinking": "terminal_controlled",
@@ -554,13 +553,6 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
     "default_width": 240          // Default width of the collaboration panel.
   },
   "show_call_status_icon": true,  // Shown call status in the OS status bar.
-
-  // Chat Panel
-  "chat_panel": {
-    "button": "when_in_call",     // status bar icon (true, false, when_in_call)
-    "dock": "right",              // Where to dock: left, right
-    "default_width": 240          // Default width of the chat panel
-  },
 
   // Notification Panel
   "notification_panel": {

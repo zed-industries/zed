@@ -84,7 +84,6 @@ impl ActivityIndicator {
     ) -> Entity<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
-        let workspace_handle = cx.entity();
         let this = cx.new(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
             cx.spawn(async move |this, cx| {
@@ -100,20 +99,6 @@ impl ActivityIndicator {
                 }
                 anyhow::Ok(())
             })
-            .detach();
-
-            cx.subscribe_in(
-                &workspace_handle,
-                window,
-                |activity_indicator, _, event, window, cx| {
-                    if let workspace::Event::ClearActivityIndicator = event
-                        && activity_indicator.statuses.pop().is_some()
-                    {
-                        activity_indicator.dismiss_error_message(&DismissErrorMessage, window, cx);
-                        cx.notify();
-                    }
-                },
-            )
             .detach();
 
             cx.subscribe(
@@ -227,7 +212,8 @@ impl ActivityIndicator {
                 server_name,
                 status,
             } => {
-                let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
+                let create_buffer =
+                    project.update(cx, |project, cx| project.create_buffer(false, cx));
                 let status = status.clone();
                 let server_name = server_name.clone();
                 cx.spawn_in(window, async move |workspace, cx| {

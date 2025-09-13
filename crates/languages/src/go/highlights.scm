@@ -4,6 +4,8 @@
 (field_identifier) @property
 (package_identifier) @namespace
 
+(label_name) @label
+
 (keyed_element
   .
   (literal_element

@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -68,7 +68,7 @@ pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
 }
 
@@ -78,7 +78,7 @@ impl ContextPickerCompletionProvider {
         workspace: WeakEntity<Workspace>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     ) -> Self {
         Self {
@@ -600,7 +600,7 @@ impl ContextPickerCompletionProvider {
                 }),
         );
 
-        if self.prompt_capabilities.get().embedded_context {
+        if self.prompt_capabilities.borrow().embedded_context {
             const RECENT_COUNT: usize = 2;
             let threads = self
                 .history_store
@@ -622,7 +622,7 @@ impl ContextPickerCompletionProvider {
         workspace: &Entity<Workspace>,
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
-        let embedded_context = self.prompt_capabilities.get().embedded_context;
+        let embedded_context = self.prompt_capabilities.borrow().embedded_context;
         let mut entries = if embedded_context {
             vec![
                 ContextPickerEntry::Mode(ContextPickerMode::File),
@@ -694,7 +694,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ContextCompletion::try_parse(
                 line,
                 offset_to_line,
-                self.prompt_capabilities.get().embedded_context,
+                self.prompt_capabilities.borrow().embedded_context,
             )
         });
         let Some(state) = state else {
@@ -896,7 +896,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ContextCompletion::try_parse(
                 line,
                 offset_to_line,
-                self.prompt_capabilities.get().embedded_context,
+                self.prompt_capabilities.borrow().embedded_context,
             )
             .map(|completion| {
                 completion.source_range().start <= offset_to_line + position.column as usize
@@ -1025,43 +1025,31 @@ impl SlashCommandCompletion {
             return None;
         }
 
-        let last_command_start = line.rfind('/')?;
-        if last_command_start >= line.len() {
-            return Some(Self::default());
-        }
-        if last_command_start > 0
-            && line
-                .chars()
-                .nth(last_command_start - 1)
-                .is_some_and(|c| !c.is_whitespace())
+        let (prefix, last_command) = line.rsplit_once('/')?;
+        if prefix.chars().last().is_some_and(|c| !c.is_whitespace())
+            || last_command.starts_with(char::is_whitespace)
         {
             return None;
         }
 
-        let rest_of_line = &line[last_command_start + 1..];
-
-        let mut command = None;
         let mut argument = None;
-        let mut end = last_command_start + 1;
-
-        if let Some(command_text) = rest_of_line.split_whitespace().next() {
-            command = Some(command_text.to_string());
-            end += command_text.len();
-
-            // Find the start of arguments after the command
-            if let Some(args_start) =
-                rest_of_line[command_text.len()..].find(|c: char| !c.is_whitespace())
-            {
-                let args = &rest_of_line[command_text.len() + args_start..].trim_end();
-                if !args.is_empty() {
-                    argument = Some(args.to_string());
-                    end += args.len() + 1;
-                }
+        let mut command = None;
+        if let Some((command_text, args)) = last_command.split_once(char::is_whitespace) {
+            if !args.is_empty() {
+                argument = Some(args.trim_end().to_string());
             }
-        }
+            command = Some(command_text.to_string());
+        } else if !last_command.is_empty() {
+            command = Some(last_command.to_string());
+        };
 
         Some(Self {
-            source_range: last_command_start + offset_to_line..end + offset_to_line,
+            source_range: prefix.len() + offset_to_line
+                ..line
+                    .rfind(|c: char| !c.is_whitespace())
+                    .unwrap_or_else(|| line.len())
+                    + 1
+                    + offset_to_line,
             command,
             argument,
         })
@@ -1078,13 +1066,21 @@ struct MentionCompletion {
 impl MentionCompletion {
     fn try_parse(allow_non_file_mentions: bool, line: &str, offset_to_line: usize) -> Option<Self> {
         let last_mention_start = line.rfind('@')?;
-        if last_mention_start >= line.len() {
-            return Some(Self::default());
+
+        // No whitespace immediately after '@'
+        if line[last_mention_start + 1..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_whitespace())
+        {
+            return None;
         }
+
+        //  Must be a word boundary before '@'
         if last_mention_start > 0
-            && line
+            && line[..last_mention_start]
                 .chars()
-                .nth(last_mention_start - 1)
+                .last()
                 .is_some_and(|c| !c.is_whitespace())
         {
             return None;
@@ -1097,7 +1093,9 @@ impl MentionCompletion {
 
         let mut parts = rest_of_line.split_whitespace();
         let mut end = last_mention_start + 1;
+
         if let Some(mode_text) = parts.next() {
+            // Safe since we check no leading whitespace above
             end += mode_text.len();
 
             if let Some(parsed_mode) = ContextPickerMode::try_from(mode_text).ok()
@@ -1110,6 +1108,12 @@ impl MentionCompletion {
             match rest_of_line[mode_text.len()..].find(|c: char| !c.is_whitespace()) {
                 Some(whitespace_count) => {
                     if let Some(argument_text) = parts.next() {
+                        // If mode wasn't recognized but we have an argument, don't suggest completions
+                        // (e.g. '@something word')
+                        if mode.is_none() && !argument_text.is_empty() {
+                            return None;
+                        }
+
                         argument = Some(argument_text.to_string());
                         end += whitespace_count + argument_text.len();
                     }
@@ -1180,6 +1184,15 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            SlashCommandCompletion::try_parse("/拿不到命令 拿不到命令 ", 0),
+            Some(SlashCommandCompletion {
+                source_range: 0..30,
+                command: Some("拿不到命令".to_string()),
+                argument: Some("拿不到命令".to_string()),
+            })
+        );
+
         assert_eq!(SlashCommandCompletion::try_parse("Lorem Ipsum", 0), None);
 
         assert_eq!(SlashCommandCompletion::try_parse("Lorem /", 0), None);
@@ -1187,6 +1200,8 @@ mod tests {
         assert_eq!(SlashCommandCompletion::try_parse("Lorem /help", 0), None);
 
         assert_eq!(SlashCommandCompletion::try_parse("Lorem/", 0), None);
+
+        assert_eq!(SlashCommandCompletion::try_parse("/ ", 0), None);
     }
 
     #[test]
@@ -1256,6 +1271,17 @@ mod tests {
             })
         );
 
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @main ", 0),
+            Some(MentionCompletion {
+                source_range: 6..12,
+                mode: None,
+                argument: Some("main".to_string()),
+            })
+        );
+
+        assert_eq!(MentionCompletion::try_parse(true, "Lorem @main m", 0), None);
+
         assert_eq!(MentionCompletion::try_parse(true, "test@", 0), None);
 
         // Allowed non-file mentions
@@ -1270,14 +1296,27 @@ mod tests {
         );
 
         // Disallowed non-file mentions
-
         assert_eq!(
             MentionCompletion::try_parse(false, "Lorem @symbol main", 0),
-            Some(MentionCompletion {
-                source_range: 6..18,
-                mode: None,
-                argument: Some("main".to_string()),
-            })
+            None
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem@symbol", 0),
+            None,
+            "Should not parse mention inside word"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "Lorem @ file", 0),
+            None,
+            "Should not parse with a space after @"
+        );
+
+        assert_eq!(
+            MentionCompletion::try_parse(true, "@ file", 0),
+            None,
+            "Should not parse with a space after @ at the start of the line"
         );
     }
 }

@@ -1,8 +1,9 @@
 use std::{
     alloc::{self, handle_alloc_error},
     cell::Cell,
+    num::NonZeroUsize,
     ops::{Deref, DerefMut},
-    ptr,
+    ptr::{self, NonNull},
     rc::Rc,
 };
 
@@ -30,23 +31,23 @@ impl Drop for Chunk {
     fn drop(&mut self) {
         unsafe {
             let chunk_size = self.end.offset_from_unsigned(self.start);
-            // this never fails as it succeeded during allocation
-            let layout = alloc::Layout::from_size_align(chunk_size, 1).unwrap();
+            // SAFETY: This succeeded during allocation.
+            let layout = alloc::Layout::from_size_align_unchecked(chunk_size, 1);
             alloc::dealloc(self.start, layout);
         }
     }
 }
 
 impl Chunk {
-    fn new(chunk_size: usize) -> Self {
+    fn new(chunk_size: NonZeroUsize) -> Self {
         unsafe {
             // this only fails if chunk_size is unreasonably huge
-            let layout = alloc::Layout::from_size_align(chunk_size, 1).unwrap();
+            let layout = alloc::Layout::from_size_align(chunk_size.get(), 1).unwrap();
             let start = alloc::alloc(layout);
             if start.is_null() {
                 handle_alloc_error(layout);
             }
-            let end = start.add(chunk_size);
+            let end = start.add(chunk_size.get());
             Self {
                 start,
                 end,
@@ -55,14 +56,14 @@ impl Chunk {
         }
     }
 
-    fn allocate(&mut self, layout: alloc::Layout) -> Option<*mut u8> {
+    fn allocate(&mut self, layout: alloc::Layout) -> Option<NonNull<u8>> {
         unsafe {
             let aligned = self.offset.add(self.offset.align_offset(layout.align()));
             let next = aligned.add(layout.size());
 
             if next <= self.end {
                 self.offset = next;
-                Some(aligned)
+                NonNull::new(aligned)
             } else {
                 None
             }
@@ -79,7 +80,7 @@ pub struct Arena {
     elements: Vec<ArenaElement>,
     valid: Rc<Cell<bool>>,
     current_chunk_index: usize,
-    chunk_size: usize,
+    chunk_size: NonZeroUsize,
 }
 
 impl Drop for Arena {
@@ -90,7 +91,7 @@ impl Drop for Arena {
 
 impl Arena {
     pub fn new(chunk_size: usize) -> Self {
-        assert!(chunk_size > 0);
+        let chunk_size = NonZeroUsize::try_from(chunk_size).unwrap();
         Self {
             chunks: vec![Chunk::new(chunk_size)],
             elements: Vec::new(),
@@ -101,7 +102,7 @@ impl Arena {
     }
 
     pub fn capacity(&self) -> usize {
-        self.chunks.len() * self.chunk_size
+        self.chunks.len() * self.chunk_size.get()
     }
 
     pub fn clear(&mut self) {
@@ -136,7 +137,7 @@ impl Arena {
             let layout = alloc::Layout::new::<T>();
             let mut current_chunk = &mut self.chunks[self.current_chunk_index];
             let ptr = if let Some(ptr) = current_chunk.allocate(layout) {
-                ptr
+                ptr.as_ptr()
             } else {
                 self.current_chunk_index += 1;
                 if self.current_chunk_index >= self.chunks.len() {
@@ -149,7 +150,7 @@ impl Arena {
                 }
                 current_chunk = &mut self.chunks[self.current_chunk_index];
                 if let Some(ptr) = current_chunk.allocate(layout) {
-                    ptr
+                    ptr.as_ptr()
                 } else {
                     panic!(
                         "Arena chunk_size of {} is too small to allocate {} bytes",

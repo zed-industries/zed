@@ -10,7 +10,7 @@ use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
 use std::{
@@ -118,13 +118,14 @@ struct AutoUpdateSetting(bool);
 /// Whether or not to automatically check for updates.
 ///
 /// Default: true
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi)]
-#[serde(transparent)]
-struct AutoUpdateSettingContent(bool);
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
+#[settings_key(None)]
+#[settings_ui(group = "Auto Update")]
+struct AutoUpdateSettingContent {
+    pub auto_update: Option<bool>,
+}
 
 impl Settings for AutoUpdateSetting {
-    const KEY: Option<&'static str> = Some("auto_update");
-
     type FileContent = AutoUpdateSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -135,17 +136,22 @@ impl Settings for AutoUpdateSetting {
             sources.user,
         ]
         .into_iter()
-        .find_map(|value| value.copied())
-        .unwrap_or(*sources.default);
+        .find_map(|value| value.and_then(|val| val.auto_update))
+        .or(sources.default.auto_update)
+        .ok_or_else(Self::missing_default)?;
 
-        Ok(Self(auto_update.0))
+        Ok(Self(auto_update))
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
         let mut cur = &mut Some(*current);
         vscode.enum_setting("update.mode", &mut cur, |s| match s {
-            "none" | "manual" => Some(AutoUpdateSettingContent(false)),
-            _ => Some(AutoUpdateSettingContent(true)),
+            "none" | "manual" => Some(AutoUpdateSettingContent {
+                auto_update: Some(false),
+            }),
+            _ => Some(AutoUpdateSettingContent {
+                auto_update: Some(true),
+            }),
         });
         *current = cur.unwrap();
     }
@@ -558,6 +564,7 @@ impl AutoUpdater {
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
+            log::info!("Auto Update: checking for updates");
             cx.notify();
         })?;
 

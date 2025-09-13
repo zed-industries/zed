@@ -15,7 +15,8 @@ use language_model::{
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, ResponseStreamEvent, list_models, stream_completion,
+    Model, ModelMode as OpenRouterModelMode, Provider, ResponseStreamEvent, list_models,
+    stream_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,7 @@ pub struct AvailableModel {
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
     pub mode: Option<ModelMode>,
+    pub provider: Option<Provider>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -92,7 +94,7 @@ pub struct State {
     api_key_from_env: bool,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
-    fetch_models_task: Option<Task<Result<()>>>,
+    fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
     settings: OpenRouterSettings,
     _subscription: Subscription,
 }
@@ -178,20 +180,35 @@ impl State {
         })
     }
 
-    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
+    fn fetch_models(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<(), LanguageModelCompletionError>> {
         let settings = &AllLanguageModelSettings::get_global(cx).open_router;
         let http_client = self.http_client.clone();
         let api_url = settings.api_url.clone();
-
+        let Some(api_key) = self.api_key.clone() else {
+            return Task::ready(Err(LanguageModelCompletionError::NoApiKey {
+                provider: PROVIDER_NAME,
+            }));
+        };
         cx.spawn(async move |this, cx| {
-            let models = list_models(http_client.as_ref(), &api_url)
+            let models = list_models(http_client.as_ref(), &api_url, &api_key)
                 .await
-                .map_err(|e| anyhow::anyhow!("OpenRouter error: {:?}", e))?;
+                .map_err(|e| {
+                    LanguageModelCompletionError::Other(anyhow::anyhow!(
+                        "OpenRouter error: {:?}",
+                        e
+                    ))
+                })?;
 
             this.update(cx, |this, cx| {
                 this.available_models = models;
                 cx.notify();
             })
+            .map_err(|e| LanguageModelCompletionError::Other(e))?;
+
+            Ok(())
         })
     }
 
@@ -281,6 +298,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
                 mode: model.mode.clone().unwrap_or_default().into(),
+                provider: model.provider.clone(),
             });
         }
 
@@ -569,6 +587,7 @@ pub fn into_open_router(
             LanguageModelToolChoice::Any => open_router::ToolChoice::Required,
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
+        provider: model.provider.clone(),
     }
 }
 
@@ -772,8 +791,11 @@ impl ConfigurationView {
     fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let api_key_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor
-                .set_placeholder_text("sk_or_000000000000000000000000000000000000000000000000", cx);
+            editor.set_placeholder_text(
+                "sk_or_000000000000000000000000000000000000000000000000",
+                window,
+                cx,
+            );
             editor
         });
 

@@ -424,14 +424,21 @@ impl AnthropicModel {
             return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
+        let beta_headers = self.model.beta_headers();
+
         async move {
             let Some(api_key) = api_key else {
                 return Err(LanguageModelCompletionError::NoApiKey {
                     provider: PROVIDER_NAME,
                 });
             };
-            let request =
-                anthropic::stream_completion(http_client.as_ref(), &api_url, &api_key, request);
+            let request = anthropic::stream_completion(
+                http_client.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                beta_headers,
+            );
             request.await.map_err(Into::into)
         }
         .boxed()
@@ -962,7 +969,7 @@ impl ConfigurationView {
         Self {
             api_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, window, cx);
                 editor
             }),
             state,

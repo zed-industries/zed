@@ -1358,12 +1358,7 @@ impl App {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(id)
-                .context("window not found")?
-                .take()
-                .context("window not found")?;
+            let mut window = cx.windows.get_mut(id)?.take()?;
 
             let root_view = window.root.clone().unwrap();
 
@@ -1380,15 +1375,14 @@ impl App {
                     true
                 });
             } else {
-                cx.windows
-                    .get_mut(id)
-                    .context("window not found")?
-                    .replace(window);
+                cx.windows.get_mut(id)?.replace(window);
             }
 
-            Ok(result)
+            Some(result)
         })
+        .context("window not found")
     }
+
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncApp {
@@ -2313,7 +2307,7 @@ pub struct AnyDrag {
 }
 
 /// Contains state associated with a tooltip. You'll only need this struct if you're implementing
-/// tooltip behavior on a custom element. Otherwise, use [Div::tooltip].
+/// tooltip behavior on a custom element. Otherwise, use [Div::tooltip](crate::Interactivity::tooltip).
 #[derive(Clone)]
 pub struct AnyTooltip {
     /// The view used to display the tooltip

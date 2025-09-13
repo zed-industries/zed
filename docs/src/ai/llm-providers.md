@@ -435,21 +435,24 @@ To do it via your `settings.json`, add the following snippet under `language_mod
 ```json
 {
   "language_models": {
-    "openai": {
-      "api_url": "https://api.together.xyz/v1", // Using Together AI as an example
-      "available_models": [
-        {
-          "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-          "display_name": "Together Mixtral 8x7B",
-          "max_tokens": 32768,
-          "capabilities": {
-            "tools": true,
-            "images": false,
-            "parallel_tool_calls": false,
-            "prompt_cache_key": false
+    "openai_compatible": {
+      // Using Together AI as an example
+      "Together AI": {
+        "api_url": "https://api.together.xyz/v1",
+        "available_models": [
+          {
+            "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "display_name": "Together Mixtral 8x7B",
+            "max_tokens": 32768,
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false
+            }
           }
-        }
-      ]
+        ]
+      }
     }
   }
 }
@@ -463,7 +466,7 @@ By default, OpenAI-compatible models inherit the following capabilities:
 - `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
 
 Note that LLM API keys aren't stored in your settings file.
-So, ensure you have it set in your environment variables (`OPENAI_API_KEY=<your api key>`) so your settings can pick it up.
+So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `TOGETHER_AI_API_KEY=<your api key>`.
 
 ### OpenRouter {#openrouter}
 
@@ -520,6 +523,53 @@ The available configuration options for each model are:
 You can find available models and their specifications on the [OpenRouter models page](https://openrouter.ai/models).
 
 Custom models will be listed in the model dropdown in the Agent Panel.
+
+#### Provider Routing
+
+You can optionally control how OpenRouter routes a given custom model request among underlying upstream providers via the `provider` object on each model entry.
+
+Supported fields (all optional):
+
+- `order`: Array of provider slugs to try first, in order (e.g. `["anthropic", "openai"]`)
+- `allow_fallbacks` (default: `true`): Whether fallback providers may be used if preferred ones are unavailable
+- `require_parameters` (default: `false`): Only use providers that support every parameter you supplied
+- `data_collection` (default: `allow`): `"allow"` or `"disallow"` (controls use of providers that may store data)
+- `only`: Whitelist of provider slugs allowed for this request
+- `ignore`: Provider slugs to skip
+- `quantizations`: Restrict to specific quantization variants (e.g. `["int4","int8"]`)
+- `sort`: Sort strategy for candidate providers (e.g. `"price"` or `"throughput"`)
+
+Example adding routing preferences to a model:
+
+```json
+{
+  "language_models": {
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1",
+      "available_models": [
+        {
+          "name": "openrouter/auto",
+          "display_name": "Auto Router (Tools Preferred)",
+          "max_tokens": 2000000,
+          "supports_tools": true,
+          "provider": {
+            "order": ["anthropic", "openai"],
+            "allow_fallbacks": true,
+            "require_parameters": true,
+            "only": ["anthropic", "openai", "google"],
+            "ignore": ["cohere"],
+            "quantizations": ["int8"],
+            "sort": "price",
+            "data_collection": "allow"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+These routing controls let you fine‑tune cost, capability, and reliability trade‑offs without changing the model name you select in the UI.
 
 ### Vercel v0 {#vercel-v0}
 

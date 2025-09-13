@@ -72,13 +72,15 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
+    toolchain_store::ToolchainStoreEvent,
 };
 use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::ConnectionIdentifier};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, update_settings_file};
+use settings::{Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1030,8 +1032,10 @@ pub enum Event {
     ItemAdded {
         item: Box<dyn ItemHandle>,
     },
-    ItemRemoved,
     ActiveItemChanged,
+    ItemRemoved {
+        item_id: EntityId,
+    },
     UserSavedItem {
         pane: WeakEntity<Pane>,
         item: Box<dyn WeakItemHandle>,
@@ -1046,7 +1050,6 @@ pub enum Event {
     },
     ZoomChanged,
     ModalOpened,
-    ClearActivityIndicator,
 }
 
 #[derive(Debug)]
@@ -1274,6 +1277,19 @@ impl Workspace {
             },
         )
         .detach();
+        if let Some(toolchain_store) = project.read(cx).toolchain_store() {
+            cx.subscribe_in(
+                &toolchain_store,
+                window,
+                |workspace, _, event, window, cx| match event {
+                    ToolchainStoreEvent::CustomToolchainsModified => {
+                        workspace.serialize_workspace(window, cx);
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+        }
 
         cx.on_focus_lost(window, |this, window, cx| {
             let focus_handle = this.focus_handle(cx);
@@ -1564,6 +1580,16 @@ impl Workspace {
                     })?
                     .await;
             }
+            if let Some(workspace) = serialized_workspace.as_ref() {
+                project_handle.update(cx, |this, cx| {
+                    for (scope, toolchains) in &workspace.user_toolchains {
+                        for toolchain in toolchains {
+                            this.add_toolchain(toolchain.clone(), scope.clone(), cx);
+                        }
+                    }
+                })?;
+            }
+
             let window = if let Some(window) = requesting_window {
                 let centered_layout = serialized_workspace
                     .as_ref()
@@ -3097,6 +3123,16 @@ impl Workspace {
         }
     }
 
+    pub fn close_panel<T: Panel>(&self, window: &mut Window, cx: &mut Context<Self>) {
+        for dock in self.all_docks().iter() {
+            dock.update(cx, |dock, cx| {
+                if dock.panel::<T>().is_some() {
+                    dock.set_open(false, window, cx)
+                }
+            })
+        }
+    }
+
     pub fn panel<T: Panel>(&self, cx: &App) -> Option<Entity<T>> {
         self.all_docks()
             .iter()
@@ -3898,8 +3934,15 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split(direction) => {
-                self.split_and_clone(pane.clone(), *direction, window, cx);
+            pane::Event::Split {
+                direction,
+                clone_active_item,
+            } => {
+                if *clone_active_item {
+                    self.split_and_clone(pane.clone(), *direction, window, cx);
+                } else {
+                    self.split_and_move(pane.clone(), *direction, window, cx);
+                }
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
@@ -3944,7 +3987,6 @@ impl Workspace {
                 }
                 serialize_workspace = false;
             }
-            pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(window, cx);
@@ -3953,6 +3995,9 @@ impl Workspace {
                 {
                     entry.remove();
                 }
+                cx.emit(Event::ItemRemoved {
+                    item_id: item.item_id(),
+                });
             }
             pane::Event::Focus => {
                 window.invalidate_character_coordinates();
@@ -4009,6 +4054,24 @@ impl Workspace {
             .unwrap();
         cx.notify();
         new_pane
+    }
+
+    pub fn split_and_move(
+        &mut self,
+        pane: Entity<Pane>,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx)) else {
+            return;
+        };
+        let new_pane = self.add_pane(window, cx);
+        new_pane.update(cx, |pane, cx| {
+            pane.add_item(item, true, true, None, window, cx)
+        });
+        self.center.split(&pane, &new_pane, direction).unwrap();
+        cx.notify();
     }
 
     pub fn split_and_clone(
@@ -4344,7 +4407,19 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
+        for (i, worktree) in project.worktrees(cx).enumerate() {
+            let name = {
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path: Path::new(""),
+                };
+
+                let settings = WorktreeSettings::get(Some(settings_location), cx);
+                match &settings.project_name {
+                    Some(name) => name.as_str(),
+                    None => worktree.read(cx).root_name(),
+                }
+            };
             if i > 0 {
                 title.push_str(", ");
             }
@@ -5232,10 +5307,16 @@ impl Workspace {
                         .read(cx)
                         .all_source_breakpoints(cx)
                 });
+                let user_toolchains = self
+                    .project
+                    .read(cx)
+                    .user_toolchains(cx)
+                    .unwrap_or_default();
 
                 let center_group = build_serialized_pane_group(&self.center.root, window, cx);
                 let docks = build_serialized_docks(self, window, cx);
                 let window_bounds = Some(SerializedWindowBounds(window.window_bounds()));
+
                 let serialized_workspace = SerializedWorkspace {
                     id: database_id,
                     location,
@@ -5248,6 +5329,7 @@ impl Workspace {
                     session_id: self.session_id.clone(),
                     breakpoints,
                     window_id: Some(window.window_handle().window_id().as_u64()),
+                    user_toolchains,
                 };
 
                 window.spawn(cx, async move |_| {
