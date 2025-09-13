@@ -23446,18 +23446,36 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        log::debug!(
+            "replace_text_in_range called with range_utf16: {:?}, text: {:?}",
+            range_utf16,
+            text
+        );
+
         if !self.input_enabled {
             cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
         }
 
+        let ime_active = self
+            .text_highlights::<InputComposition>(cx)
+            .is_some_and(|(_, ranges)| ranges.iter().any(|r| r.start != r.end));
+
+        log::debug!("IME active? {}", ime_active);
+
+        if ime_active && text != " " {
+            self.replace_and_mark_text_in_range(None, text, None, window, cx);
+            return;
+        }
+
+        if range_utf16.is_some() {
+            self.replace_and_mark_text_in_range(range_utf16, text, None, window, cx);
+            return;
+        }
+
         self.transact(window, cx, |this, window, cx| {
-            let new_selected_ranges = if let Some(range_utf16) = range_utf16 {
-                let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
-                Some(this.selection_replacement_ranges(range_utf16, cx))
-            } else {
-                this.marked_text_ranges(cx)
-            };
+            let marked = this.marked_text_ranges(cx);
+            let new_selected_ranges = if marked.is_some() { marked } else { None };
 
             let range_to_replace = new_selected_ranges.as_ref().and_then(|ranges_to_replace| {
                 let newest_selection_id = this.selections.newest_anchor().id;
@@ -23509,17 +23527,25 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        log::debug!(
+            "replace_and_mark_text_in_range called with range_utf16: {:?}, text: {:?}, new_selected_range_utf16: {:?}",
+            range_utf16,
+            text,
+            new_selected_range_utf16
+        );
+
         if !self.input_enabled {
             return;
         }
 
         let transaction = self.transact(window, cx, |this, window, cx| {
-            let ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx) {
+            let mut ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx)
+            {
                 let snapshot = this.buffer.read(cx).read(cx);
-                if let Some(relative_range_utf16) = range_utf16.as_ref() {
+                if let Some(relative) = range_utf16.as_ref() {
                     for marked_range in &mut marked_ranges {
-                        marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
-                        marked_range.start.0 += relative_range_utf16.start;
+                        marked_range.end.0 = marked_range.start.0 + relative.end;
+                        marked_range.start.0 += relative.start;
                         marked_range.start =
                             snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
                         marked_range.end =
@@ -23527,19 +23553,34 @@ impl EntityInputHandler for Editor {
                     }
                 }
                 Some(marked_ranges)
-            } else if let Some(range_utf16) = range_utf16 {
+            } else if let Some(ref range_utf16) = range_utf16 {
                 let range_utf16 = OffsetUtf16(range_utf16.start)..OffsetUtf16(range_utf16.end);
                 Some(this.selection_replacement_ranges(range_utf16, cx))
             } else {
                 None
             };
 
-            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
+            if range_utf16.is_some() && !text.is_empty() {
+                let text_len_utf16 = text.encode_utf16().count();
+                if let Some(ranges) = ranges_to_replace.as_mut() {
+                    for r in ranges.iter_mut() {
+                        if r.start.0 == r.end.0 {
+                            r.end.0 = r.start.0 + text_len_utf16;
+                        }
+                    }
+                } else if let Some(ref r) = range_utf16 {
+                    let start = OffsetUtf16(r.start);
+                    let end = OffsetUtf16(r.start + text_len_utf16);
+                    ranges_to_replace = Some(this.selection_replacement_ranges(start..end, cx));
+                }
+            }
+
+            let range_to_replace = ranges_to_replace.as_ref().and_then(|to_replace| {
                 let newest_selection_id = this.selections.newest_anchor().id;
                 this.selections
                     .all::<OffsetUtf16>(cx)
                     .iter()
-                    .zip(ranges_to_replace.iter())
+                    .zip(to_replace.iter())
                     .find_map(|(selection, range)| {
                         if selection.id == newest_selection_id {
                             Some(
@@ -23557,9 +23598,9 @@ impl EntityInputHandler for Editor {
                 text: text.into(),
             });
 
-            if let Some(ranges) = ranges_to_replace {
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_ranges(ranges)
+            if let Some(ranges) = ranges_to_replace.take() {
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(ranges)
                 });
             }
 
@@ -23577,26 +23618,31 @@ impl EntityInputHandler for Editor {
             if text.is_empty() {
                 this.unmark_text(window, cx);
             } else {
-                this.highlight_text::<InputComposition>(
-                    marked_ranges.clone(),
-                    HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: px(1.),
-                            color: None,
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                    cx,
-                );
+                if range_utf16.is_none() {
+                    this.highlight_text::<InputComposition>(
+                        marked_ranges.clone(),
+                        HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: px(1.),
+                                color: None,
+                                wavy: false,
+                            }),
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                } else {
+                    this.unmark_text(window, cx);
+                }
             }
 
-            // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
             let use_autoclose = this.use_autoclose;
             let use_auto_surround = this.use_auto_surround;
             this.set_use_autoclose(false);
             this.set_use_auto_surround(false);
+
             this.handle_input(text, window, cx);
+
             this.set_use_autoclose(use_autoclose);
             this.set_use_auto_surround(use_auto_surround);
 
