@@ -126,7 +126,7 @@ impl TestContextServer {
 /// Creates a fake context server for testing purposes
 pub fn create_fake_context_server(
     id: crate::ContextServerId,
-    tools: Vec<rmcp::model::Tool>,
+    _tools: Vec<rmcp::model::Tool>,
 ) -> std::sync::Arc<crate::ContextServer> {
     use crate::ContextServerCommand;
 

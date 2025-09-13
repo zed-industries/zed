@@ -1,12 +1,12 @@
 use anyhow::{Context as _, Result, anyhow};
 use assistant_slash_command::{
-    AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
-    SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use collections::HashMap;
 use context_server::ContextServerId;
 use gpui::{App, Entity, Task, WeakEntity, Window};
-use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
+use language::{BufferSnapshot, LspAdapterDelegate};
 use project::context_server_store::ContextServerStore;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -74,22 +74,15 @@ impl SlashCommand for ContextServerSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        arguments: &[String],
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakEntity<Workspace>>,
         _window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        let Ok((arg_name, arg_value)) = completion_argument(&self.prompt, arguments) else {
-            return Task::ready(Err(anyhow!("Failed to complete argument")));
-        };
-
-        let server_id = self.server_id.clone();
-        let prompt_name = self.prompt.name.clone();
-
-        // TODO: Implement argument completion with RMCP when available
-        // For now, return empty completions to allow basic functionality
-        Task::ready(Ok(vec![]))
+        // For now, return empty completions
+        // In the future, this could provide intelligent completions based on the tool/prompt schema
+        Task::ready(Ok(Vec::new()))
     }
 
     fn run(

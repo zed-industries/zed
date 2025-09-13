@@ -352,8 +352,8 @@ impl ContextServer {
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeService {
     tools: Vec<rmcp::model::Tool>,
-    prompts: Vec<rmcp::model::Prompt>,
-    resources: Vec<rmcp::model::Resource>,
+    _prompts: Vec<rmcp::model::Prompt>,
+    _resources: Vec<rmcp::model::Resource>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -361,8 +361,8 @@ impl FakeService {
     pub fn new() -> Self {
         Self {
             tools: Vec::new(),
-            prompts: Vec::new(),
-            resources: Vec::new(),
+            _prompts: Vec::new(),
+            _resources: Vec::new(),
         }
     }
 
