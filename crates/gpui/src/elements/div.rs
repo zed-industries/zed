@@ -2991,7 +2991,7 @@ struct ScrollHandleState {
     active_item: ActiveItem,
 }
 
-/// Tracking if a child item needs to be scrolled to 
+/// Tracking if a child item needs to be scrolled to
 /// Having it here ensures that [ScrollHandleState] is in sync
 #[derive(Default, Debug)]
 pub enum ActiveItem {
@@ -3092,13 +3092,9 @@ impl ScrollHandle {
                     }
                     ActiveItem::Current
                 }
-                None => {
-                    ActiveItem::Stale(ix)
-                }
+                None => ActiveItem::Stale(ix),
             },
-            ActiveItem::Current => {
-                ActiveItem::Current
-            }
+            ActiveItem::Current => ActiveItem::Current,
         };
         state.active_item = active_item;
     }

@@ -4069,7 +4069,7 @@ mod tests {
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
-    use util::{TryFutureExt};
+    use util::TryFutureExt;
 
     #[gpui::test]
     async fn test_add_item_capped_to_max_tabs(cx: &mut TestAppContext) {
@@ -6287,11 +6287,9 @@ mod tests {
 
         let project = Project::test(fs, None, cx).await;
         let (workspace, cx) =
-            cx.add_window_view(|window, cx| {
-                Workspace::test_new(project, window, cx)
-            });
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
-        
+
         cx.simulate_resize(size(px(300.), px(300.)));
 
         add_labeled_item(&pane, "untitled", false, cx);
@@ -6300,28 +6298,22 @@ mod tests {
         add_labeled_item(&pane, "untitled", false, cx);
         // Act: this should trigger a scroll
         add_labeled_item(&pane, "untitled", false, cx);
-        
         // Assert
-        let tab_bar_scroll_handle = pane.update_in(cx, |pane, _window, _cx| {
-            pane.tab_bar_scroll_handle.clone()
-        });
+        let tab_bar_scroll_handle =
+            pane.update_in(cx, |pane, _window, _cx| pane.tab_bar_scroll_handle.clone());
         assert_eq!(tab_bar_scroll_handle.children_count(), 6);
-        
         let tab_bounds = cx.debug_bounds("TAB-3").unwrap();
         let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
-        
         let scroll_bounds = tab_bar_scroll_handle.bounds();
         let scroll_offset = tab_bar_scroll_handle.offset();
-        
         assert!(tab_bounds.right() <= scroll_bounds.right() + scroll_offset.x);
         // -39.75 is the magic number for this setup
         assert_eq!(scroll_offset.x, px(-39.75));
         assert!(
             !tab_bounds.intersects(&new_tab_button_bounds),
-            "Tab should overlap with the new tab button, if this is failing check if there's been a redesign!"
+            "Tab should not overlap with the new tab button, if this is failing check if there's been a redesign!"
         );
     }
-
 
     #[gpui::test]
     async fn test_close_all_items_including_pinned(cx: &mut TestAppContext) {
