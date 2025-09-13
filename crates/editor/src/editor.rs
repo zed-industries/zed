@@ -2962,6 +2962,10 @@ impl Editor {
         self.auto_replace_emoji_shortcode = auto_replace;
     }
 
+    pub fn set_serialize_dirty_buffers(&mut self, serialize: bool) {
+        self.serialize_dirty_buffers = serialize;
+    }
+
     pub fn toggle_edit_predictions(
         &mut self,
         _: &ToggleEditPrediction,

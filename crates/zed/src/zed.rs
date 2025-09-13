@@ -1798,6 +1798,7 @@ fn open_bundled_file(
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project.clone()), window, cx);
                             editor.set_read_only(true);
+                            editor.set_serialize_dirty_buffers(false);
                             editor.set_breadcrumb_header(title.into());
                             editor
                         })),
