@@ -24,7 +24,7 @@ impl Settings for ReplSettings {
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> anyhow::Result<Self> {
-        let settings: ReplSettings = sources.json_merge()?;
+        let mut settings: ReplSettings = sources.json_merge()?;
         settings.validate()?;
         Ok(settings)
     }
