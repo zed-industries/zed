@@ -6410,7 +6410,7 @@ impl MultiBufferSnapshot {
     pub fn debug<V, R>(&self, value: V, range: &R)
     where
         V: std::fmt::Debug,
-        R: ToMultiBufferDebugRanges,
+        R: debug::ToMultiBufferDebugRanges,
     {
         self.debug_with_key(std::panic::Location::caller(), value, range);
     }
@@ -6423,7 +6423,7 @@ impl MultiBufferSnapshot {
     where
         K: std::hash::Hash + 'static,
         V: std::fmt::Debug,
-        R: ToMultiBufferDebugRanges,
+        R: debug::ToMultiBufferDebugRanges,
     {
         let caller = std::panic::Location::caller();
         let text_ranges = range
@@ -8024,60 +8024,77 @@ impl From<ExcerptId> for EntityId {
 }
 
 #[cfg(debug_assertions)]
-pub trait ToMultiBufferDebugRanges {
-    fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot) -> Vec<Range<usize>>;
-}
+pub mod debug {
+    use super::*;
 
-#[cfg(debug_assertions)]
-impl<T: ToOffset> ToMultiBufferDebugRanges for T {
-    fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot) -> Vec<Range<usize>> {
-        [self.to_offset(snapshot)].to_multi_buffer_debug_ranges(snapshot)
+    pub trait ToMultiBufferDebugRanges {
+        fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot)
+        -> Vec<Range<usize>>;
     }
-}
 
-#[cfg(debug_assertions)]
-impl<T: ToOffset> ToMultiBufferDebugRanges for Range<T> {
-    fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot) -> Vec<Range<usize>> {
-        [self.start.to_offset(snapshot)..self.end.to_offset(snapshot)]
-            .to_multi_buffer_debug_ranges(snapshot)
+    impl<T: ToOffset> ToMultiBufferDebugRanges for T {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            [self.to_offset(snapshot)].to_multi_buffer_debug_ranges(snapshot)
+        }
     }
-}
 
-#[cfg(debug_assertions)]
-impl<T: ToOffset> ToMultiBufferDebugRanges for Vec<T> {
-    fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot) -> Vec<Range<usize>> {
-        self.as_slice().to_multi_buffer_debug_ranges(snapshot)
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Range<T> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            [self.start.to_offset(snapshot)..self.end.to_offset(snapshot)]
+                .to_multi_buffer_debug_ranges(snapshot)
+        }
     }
-}
 
-#[cfg(debug_assertions)]
-impl<T: ToOffset> ToMultiBufferDebugRanges for Vec<Range<T>> {
-    fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot) -> Vec<Range<usize>> {
-        self.as_slice().to_multi_buffer_debug_ranges(snapshot)
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Vec<T> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.as_slice().to_multi_buffer_debug_ranges(snapshot)
+        }
     }
-}
 
-#[cfg(debug_assertions)]
-impl<T: ToOffset> ToMultiBufferDebugRanges for [T] {
-    fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot) -> Vec<Range<usize>> {
-        self.iter()
-            .map(|item| {
-                let offset = item.to_offset(snapshot);
-                offset..offset
-            })
-            .collect()
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Vec<Range<T>> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.as_slice().to_multi_buffer_debug_ranges(snapshot)
+        }
     }
-}
 
-#[cfg(debug_assertions)]
-impl<T: ToOffset> ToMultiBufferDebugRanges for [Range<T>] {
-    fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot) -> Vec<Range<usize>> {
-        self.iter()
-            .map(|range| {
-                let start = range.start.to_offset(snapshot);
-                let end = range.end.to_offset(snapshot);
-                start..end
-            })
-            .collect()
+    impl<T: ToOffset> ToMultiBufferDebugRanges for [T] {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.iter()
+                .map(|item| {
+                    let offset = item.to_offset(snapshot);
+                    offset..offset
+                })
+                .collect()
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for [Range<T>] {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.iter()
+                .map(|range| {
+                    let start = range.start.to_offset(snapshot);
+                    let end = range.end.to_offset(snapshot);
+                    start..end
+                })
+                .collect()
+        }
     }
 }
