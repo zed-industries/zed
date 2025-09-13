@@ -233,6 +233,7 @@ dependencies = [
  "ctor",
  "db",
  "editor",
+ "encoding_rs",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
@@ -979,6 +980,7 @@ dependencies = [
  "derive_more",
  "diffy",
  "editor",
+ "encoding_rs",
  "feature_flags",
  "fs",
  "futures 0.3.31",
@@ -3312,6 +3314,7 @@ dependencies = [
  "dashmap 6.1.0",
  "debugger_ui",
  "editor",
+ "encoding_rs",
  "envy",
  "extension",
  "file_finder",
@@ -3645,6 +3648,7 @@ dependencies = [
  "dirs 4.0.0",
  "edit_prediction",
  "editor",
+ "encoding_rs",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -5223,6 +5227,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "encodings"
+version = "0.1.0"
+dependencies = [
+ "editor",
+ "encoding_rs",
+ "fuzzy",
+ "gpui",
+ "language",
+ "picker",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "endi"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5565,6 +5586,7 @@ dependencies = [
  "criterion",
  "ctor",
  "dap",
+ "encoding_rs",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -6061,6 +6083,7 @@ dependencies = [
  "async-trait",
  "cocoa 0.26.0",
  "collections",
+ "encoding_rs",
  "fsevent",
  "futures 0.3.31",
  "git",
@@ -6482,6 +6505,7 @@ dependencies = [
  "ctor",
  "db",
  "editor",
+ "encoding_rs",
  "futures 0.3.31",
  "fuzzy",
  "git",
@@ -9062,6 +9086,7 @@ dependencies = [
  "ctor",
  "diffy",
  "ec4rs",
+ "encoding_rs",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -12626,6 +12651,7 @@ dependencies = [
  "context_server",
  "dap",
  "dap_adapters",
+ "encoding_rs",
  "extension",
  "fancy-regex 0.14.0",
  "fs",
@@ -13534,6 +13560,7 @@ dependencies = [
  "dap_adapters",
  "debug_adapter_extension",
  "editor",
+ "encoding_rs",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
@@ -19920,6 +19947,7 @@ dependencies = [
  "component",
  "dap",
  "db",
+ "encoding_rs",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -20153,6 +20181,7 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
+ "encoding_rs",
  "fs",
  "futures 0.3.31",
  "fuzzy",
@@ -20548,6 +20577,8 @@ dependencies = [
  "diagnostics",
  "edit_prediction_button",
  "editor",
+ "encoding_rs",
+ "encodings",
  "env_logger 0.11.8",
  "extension",
  "extension_host",
