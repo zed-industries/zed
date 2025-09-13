@@ -2598,29 +2598,32 @@ impl BufferSnapshot {
     /// `value` argument is an `Hsla` color for the highlight (alpha will be set to 0.25).
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug_range<V, R>(&self, value: V, range: &R)
+    pub fn debug<V, R>(&self, value: V, range: &R)
     where
         V: std::fmt::Debug,
-        R: debug::ToDebugRange,
+        R: debug::ToDebugRanges,
     {
-        self.debug_range_with_key(std::panic::Location::caller(), value, range);
+        self.debug_ranges_with_key(std::panic::Location::caller(), value, range);
     }
 
     /// Debugging helper to highlight a range. Replaces the highlights associated with the provided
     /// key. The `value` argument is an `Hsla` color for the highlight (alpha will be set to 0.25).
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug_range_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
+    pub fn debug_ranges_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
     where
         K: std::hash::Hash + 'static,
         V: std::fmt::Debug,
-        R: debug::ToDebugRange,
+        R: debug::ToDebugRanges,
     {
         let caller = std::panic::Location::caller();
-        let range = range.to_debug_range(self);
-        let range = self.anchor_after(range.start)..self.anchor_before(range.end);
+        let ranges = range
+            .to_debug_ranges(self)
+            .into_iter()
+            .map(|range| self.anchor_after(range.start)..self.anchor_before(range.end))
+            .collect();
         debug::GlobalDebugRanges::with_locked(|debug_ranges| {
-            debug_ranges.insert(key, format!("{value:?}").into(), vec![range], caller);
+            debug_ranges.insert(key, format!("{value:?}").into(), ranges, caller);
         });
     }
 }
@@ -3390,19 +3393,54 @@ pub mod debug {
         }
     }
 
-    pub trait ToDebugRange {
-        fn to_debug_range(&self, snapshot: &BufferSnapshot) -> Range<usize>;
+    pub trait ToDebugRanges {
+        fn to_debug_ranges(&self, snapshot: &BufferSnapshot) -> Vec<Range<usize>>;
     }
 
-    impl<T: ToOffset> ToDebugRange for T {
-        fn to_debug_range(&self, snapshot: &BufferSnapshot) -> Range<usize> {
-            self.to_offset(snapshot)..self.to_offset(snapshot)
+    impl<T: ToOffset> ToDebugRanges for T {
+        fn to_debug_ranges(&self, snapshot: &BufferSnapshot) -> Vec<Range<usize>> {
+            [self.to_offset(snapshot)].to_debug_ranges(snapshot)
         }
     }
 
-    impl<T: ToOffset> ToDebugRange for Range<T> {
-        fn to_debug_range(&self, snapshot: &BufferSnapshot) -> Range<usize> {
-            self.start.to_offset(snapshot)..self.end.to_offset(snapshot)
+    impl<T: ToOffset + Clone> ToDebugRanges for Range<T> {
+        fn to_debug_ranges(&self, snapshot: &BufferSnapshot) -> Vec<Range<usize>> {
+            [self.clone()].to_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToDebugRanges for Vec<T> {
+        fn to_debug_ranges(&self, snapshot: &BufferSnapshot) -> Vec<Range<usize>> {
+            self.as_slice().to_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToDebugRanges for Vec<Range<T>> {
+        fn to_debug_ranges(&self, snapshot: &BufferSnapshot) -> Vec<Range<usize>> {
+            self.as_slice().to_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToDebugRanges for [T] {
+        fn to_debug_ranges(&self, snapshot: &BufferSnapshot) -> Vec<Range<usize>> {
+            self.iter()
+                .map(|item| {
+                    let offset = item.to_offset(snapshot);
+                    offset..offset
+                })
+                .collect()
+        }
+    }
+
+    impl<T: ToOffset> ToDebugRanges for [Range<T>] {
+        fn to_debug_ranges(&self, snapshot: &BufferSnapshot) -> Vec<Range<usize>> {
+            self.iter()
+                .map(|range| {
+                    let start = range.start.to_offset(snapshot);
+                    let end = range.end.to_offset(snapshot);
+                    start..end
+                })
+                .collect()
         }
     }
 }
