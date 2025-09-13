@@ -24,7 +24,6 @@ pub struct GitPanelSettings {
     pub fallback_branch_name: String,
     pub sort_by_path: bool,
     pub collapse_untracked_diff: bool,
-    pub commit_history: bool,
 }
 
 impl ScrollbarVisibility for GitPanelSettings {

@@ -4287,9 +4287,7 @@ impl Render for GitPanel {
                     .when(!self.amend_pending, |this| {
                         this.children(self.render_previous_commit(cx))
                     })
-                    .when(GitPanelSettings::get_global(cx).commit_history, |this| {
-                        this.child(self.history.clone())
-                    })
+                    .child(self.history.clone())
                     .into_any_element(),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
