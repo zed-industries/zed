@@ -135,6 +135,10 @@ impl DebugPanel {
             .map(|session| session.read(cx).running_state().clone())
     }
 
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
+    }
+
     pub fn load(
         workspace: WeakEntity<Workspace>,
         cx: &mut AsyncWindowContext,
