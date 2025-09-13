@@ -1,8 +1,8 @@
 use crate::commit_view::CommitView;
 use git::{blame::ParsedCommitMessage, repository::CommitSummary};
 use gpui::{
-    App, Entity, ListScrollEvent, ListState, MouseButton, ParentElement, Render, ScrollHandle,
-    Stateful, Task, WeakEntity, list, prelude::*,
+    App, Entity, ListScrollEvent, ListState, ParentElement, Render, Task, WeakEntity, list,
+    prelude::*,
 };
 use itertools::Itertools;
 use project::{
