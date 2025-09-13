@@ -107,10 +107,22 @@ impl SlashCommand for ContextServerSlashCommand {
         if let Some(server) = store.get_running_server(&server_id) {
             cx.foreground_executor().spawn(async move {
                 let service = server.service().context("Context server not initialized")?;
+
+                // Convert HashMap<String, String> to serde_json::Map<String, serde_json::Value>
+                let json_args = if prompt_args.is_empty() {
+                    None
+                } else {
+                    let mut map = serde_json::Map::new();
+                    for (key, value) in prompt_args {
+                        map.insert(key, serde_json::Value::String(value));
+                    }
+                    Some(map)
+                };
+
                 let response = service
                     .get_prompt(rmcp::model::GetPromptRequestParam {
                         name: prompt_name.clone(),
-                        arguments: Some(rmcp::object!(prompt_args)),
+                        arguments: json_args,
                     })
                     .await?;
 
@@ -118,7 +130,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     response
                         .messages
                         .iter()
-                        .all(|msg| matches!(msg.role, rmcp::model::Role::User)),
+                        .all(|msg| matches!(msg.role, rmcp::model::PromptMessageRole::User)),
                     "Prompt contains non-user roles, which is not supported"
                 );
 
@@ -129,6 +141,8 @@ impl SlashCommand for ContextServerSlashCommand {
                     .filter_map(|msg| match &msg.content {
                         rmcp::model::PromptMessageContent::Text { text } => Some(text.clone()),
                         rmcp::model::PromptMessageContent::Image { .. } => None,
+                        rmcp::model::PromptMessageContent::Resource { .. } => None,
+                        rmcp::model::PromptMessageContent::ResourceLink { .. } => None,
                     })
                     .collect::<Vec<String>>()
                     .join("\n\n");
@@ -175,7 +189,10 @@ fn completion_argument(
     }
 }
 
-fn prompt_arguments(prompt: &Prompt, arguments: &[String]) -> Result<HashMap<String, String>> {
+fn prompt_arguments(
+    prompt: &rmcp::model::Prompt,
+    arguments: &[String],
+) -> Result<HashMap<String, String>> {
     match &prompt.arguments {
         Some(args) if args.len() > 1 => {
             anyhow::bail!("Prompt has more than one argument, which is not supported");
