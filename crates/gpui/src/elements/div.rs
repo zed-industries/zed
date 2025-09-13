@@ -2993,18 +2993,13 @@ struct ScrollHandleState {
 
 /// Tracking if a child item needs to be scrolled to 
 /// Having it here ensures that [ScrollHandleState] is in sync
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub enum ActiveItem {
     /// We don't need to scroll
+    #[default]
     Current,
     /// Active item is stale and we need to scroll to the new index
     Stale(usize),
-}
-
-impl Default for ActiveItem {
-    fn default() -> Self {
-        ActiveItem::Current
-    }
 }
 
 /// A handle to the scrollable aspects of an element.
@@ -3070,36 +3065,6 @@ impl ScrollHandle {
         state.active_item = ActiveItem::Stale(ix);
     }
 
-    /// scroll_to_item scrolls the minimal amount to ensure that the child is
-    /// fully visible
-    pub fn scroll_to_item(&self, ix: usize) {
-        let state = self.0.borrow();
-
-        let Some(bounds) = state.child_bounds.get(ix) else {
-            return;
-        };
-
-        dbg!(ix, state.child_bounds.len(), bounds, state.child_bounds.clone());
-
-        let mut scroll_offset = state.offset.borrow_mut();
-
-        if state.overflow.y == Overflow::Scroll {
-            if bounds.top() + scroll_offset.y < state.bounds.top() {
-                scroll_offset.y = state.bounds.top() - bounds.top();
-            } else if bounds.bottom() + scroll_offset.y > state.bounds.bottom() {
-                scroll_offset.y = state.bounds.bottom() - bounds.bottom();
-            }
-        }
-
-        if state.overflow.x == Overflow::Scroll {
-            if bounds.left() + scroll_offset.x < state.bounds.left() {
-                scroll_offset.x = state.bounds.left() - bounds.left();
-            } else if bounds.right() + scroll_offset.x >= state.bounds.size.width {
-                scroll_offset.x = state.bounds.size.width - bounds.right();
-            }
-        }
-    }
-
     /// Scrolls the minimal amount to ensure that the child is
     /// fully visible
     pub fn scroll_to_active_item(&self) {
@@ -3108,7 +3073,6 @@ impl ScrollHandle {
         let active_item = match state.active_item {
             ActiveItem::Stale(ix) => match state.child_bounds.get(ix) {
                 Some(bounds) => {
-                    dbg!("Stale update");
                     let mut scroll_offset = state.offset.borrow_mut();
 
                     if state.overflow.y == Overflow::Scroll {
@@ -3129,12 +3093,10 @@ impl ScrollHandle {
                     ActiveItem::Current
                 }
                 None => {
-                    dbg!("Stale");
                     ActiveItem::Stale(ix)
                 }
             },
             ActiveItem::Current => {
-                dbg!("Current");
                 ActiveItem::Current
             }
         };
@@ -3173,82 +3135,5 @@ impl ScrollHandle {
     /// Get the count of children for scrollable item.
     pub fn children_count(&self) -> usize {
         self.0.borrow().child_bounds.len()
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::{
-        self as gpui, AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render,
-        ScrollHandle, StatefulInteractiveElement, Styled, TestAppContext, Window, div, point, px,
-        size,
-    };
-    
-    #[gpui::test]
-    fn test_scroll_to_item_horizontal(cx: &mut TestAppContext) {
-        let cx = cx.add_empty_window();
-    
-        struct TestView {
-            scroll_handle: ScrollHandle,
-        }
-    
-        impl Render for TestView {
-            // simple horizontal flex grid with 5 boxes
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-                    .child(
-                        div()
-                            // create a parent div less wide than all the children
-                            .w(px(200.))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .id("unpinned tabs")
-                                    // make it scrollable
-                                    .overflow_x_scroll()
-                                    .w_full()
-                                    .track_scroll(&self.scroll_handle)
-                                    .children((0..5).map(|_| {
-                                        div()
-                                            .id("tab_bar_drop_target")
-                                            .min_w(px(60.))
-                                            .m(px(10.))
-                                            .child("")
-                                            .h_full()
-                                            .flex_grow()
-                                            .bg(gpui::blue())
-                                    })),
-                            ),
-                    )
-                    .into_element()
-            }
-        }
-    
-        let scrollable_handle = ScrollHandle::new();
-        let view = cx.new(|_| TestView {
-            scroll_handle: scrollable_handle.clone(),
-        });
-    
-        cx.draw(point(px(0.), px(0.)), size(px(200.), px(100.)), |_, _| view);
-    
-        // act: go to the third child which is already partially visible
-        scrollable_handle.scroll_to_item(2);
-        {
-            let state = scrollable_handle.0.borrow();
-            let scroll_offset = state.offset.borrow();
-            // assert: should now be completely visible
-            assert_eq!(scroll_offset.x, px(-30.));
-        }
-    
-        // act: first item is also partially visible but to the left this time
-        scrollable_handle.scroll_to_item(0);
-        {
-            let state = scrollable_handle.0.borrow();
-            let scroll_offset = state.offset.borrow();
-            // assert: we should now move the offset back to the left, not including the margin
-            assert_eq!(scroll_offset.x, px(-10.));
-        }
     }
 }
