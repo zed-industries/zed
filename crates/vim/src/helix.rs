@@ -53,6 +53,35 @@ impl Vim {
         self.helix_move_cursor(motion, times, window, cx);
     }
 
+    pub fn helix_select_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| {
+            let text_layout_details = editor.text_layout_details(window);
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let current_head = selection.head();
+
+                    let Some((new_head, goal)) = motion.move_point(
+                        map,
+                        current_head,
+                        selection.goal,
+                        times,
+                        &text_layout_details,
+                    ) else {
+                        return;
+                    };
+
+                    selection.set_head(new_head, goal);
+                })
+            });
+        });
+    }
+
     /// Updates all selections based on where the cursors are.
     fn helix_new_selections(
         &mut self,
@@ -1033,4 +1062,50 @@ mod test {
             Mode::HelixNormal,
         );
     }
+
+    #[gpui::test]
+    async fn test_helix_select_mode_motion(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        assert_eq!(cx.mode(), Mode::Normal);
+        cx.enable_helix();
+
+        cx.set_state("ˇhello", Mode::HelixNormal);
+        cx.simulate_keystrokes("l v l l");
+        cx.assert_state("h«ellˇ»o", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_mode_motion_multiple_cursors(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        assert_eq!(cx.mode(), Mode::Normal);
+        cx.enable_helix();
+
+        // Start with multiple cursors (no selections)
+        cx.set_state("ˇhello\nˇworld", Mode::HelixNormal);
+
+        // Enter select mode and move right twice
+        cx.simulate_keystrokes("v l l");
+
+        // Each cursor should independently create and extend its own selection
+        cx.assert_state("«helˇ»lo\n«worˇ»ld", Mode::HelixSelect);
+    }
+
+    #[gpui::test]
+    async fn test_helix_select_word_motions(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇone two", Mode::Normal);
+        cx.simulate_keystrokes("v w");
+        cx.assert_state("«one tˇ»wo", Mode::Visual);
+
+        // In Vim, this selects "t". In helix selections stops just before "t"
+
+        cx.enable_helix();
+        cx.set_state("ˇone two", Mode::HelixNormal);
+        cx.simulate_keystrokes("v w");
+        cx.assert_state("«one ˇ»two", Mode::HelixSelect);
+    }
+
 }
