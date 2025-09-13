@@ -300,6 +300,7 @@ impl ContextServerStore {
     }
 
     pub fn start_server(&mut self, server: Arc<ContextServer>, cx: &mut Context<Self>) {
+        log::info!("Starting context server: {}", server.id());
         cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Context server store dropped")?;
             let settings = this

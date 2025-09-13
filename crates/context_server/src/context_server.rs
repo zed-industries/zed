@@ -138,20 +138,22 @@ impl ContextServerCommand {
                 (path.clone(), args.clone(), env.clone())
             }
             ContextServerCommand::Http { url, headers, .. } => {
-                let args = vec!["mcp-remote".to_string(), url.clone()];
+                let mut args = vec!["mcp-remote".to_string()];
                 
-                // Add headers as environment variables if provided
-                let mut env = HashMap::default();
+                // Add headers as --header flags if provided
                 if let Some(headers) = headers {
                     for (key, value) in headers {
-                        env.insert(format!("MCP_HEADER_{}", key.to_uppercase()), value.clone());
+                        args.push("--header".to_string());
+                        args.push(format!("{}: {}", key, value));
                     }
                 }
+                
+                args.push(url.clone());
                 
                 (
                     PathBuf::from("npx"),
                     args,
-                    if env.is_empty() { None } else { Some(env) }
+                    None
                 )
             }
         }
@@ -375,8 +377,13 @@ mod tests {
         let cmd: ContextServerCommand = serde_json::from_str(remote_format_json).unwrap();
         let (path, args, env) = cmd.effective_command();
         assert_eq!(path, PathBuf::from("npx"));
-        assert_eq!(args, vec!["mcp-remote", "https://mcp.atlassian.com/v1/sse"]);
-        assert!(env.unwrap().contains_key("MCP_HEADER_AUTHORIZATION"));
+        assert_eq!(args, vec![
+            "mcp-remote",
+            "--header",
+            "Authorization: Bearer token",
+            "https://mcp.atlassian.com/v1/sse"
+        ]);
+        assert!(env.is_none());
     }
 
     #[test]

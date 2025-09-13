@@ -276,12 +276,10 @@ fn context_server_input_template(server_type: ServerType) -> String {
   "remote-mcp-server": {{
     /// Type of MCP server: "local" for command-based, "http" for remote
     "type": "http",
-    /// The URL of the remote MCP server (requires mcp-remote: npm install -g mcp-remote)
+    /// The URL of the remote MCP server
     "url": "https://mcp.example.com/v1/sse",
     /// Optional headers to send with requests
-    "headers": {{
-      "Authorization": "Bearer your-token-here"
-    }}
+    "headers": {{}}
   }}
 }}"#
             )
@@ -382,6 +380,7 @@ impl ConfigureContextServerModal {
         // Register handler for AddRemoteContextServer action
         workspace.register_action({
             move |_workspace, _: &AddRemoteContextServer, window, cx| {
+                log::info!("AddRemoteContextServer action triggered");
                 let workspace_handle = cx.weak_entity();
                 let language_registry = language_registry.clone();
                 window
@@ -537,7 +536,9 @@ impl ConfigureContextServerModal {
             ProjectSettings::get_global(cx).context_servers.get(&id.0) != Some(&settings);
 
         if settings_changed {
-            // When we write the settings to the file, the context server will be restarted.
+            // When we write the settings to the file, the context server will be restarted automatically.
+            // No need to manually start the server as the settings system will handle it.
+            log::info!("Settings changed, updating settings file for server: {}", id.0);
             workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
                 let original_server_id = self.original_server_id.clone();
