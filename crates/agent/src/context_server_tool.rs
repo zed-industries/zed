@@ -31,11 +31,17 @@ impl ContextServerTool {
 
 impl Tool for ContextServerTool {
     fn name(&self) -> String {
-        self.tool.name.clone()
+        // Convert Cow<str> to String
+        self.tool.name.to_string()
     }
 
     fn description(&self) -> String {
-        self.tool.description.clone().unwrap_or_default()
+        // Convert Option<Cow<str>> to String
+        self.tool
+            .description
+            .as_ref()
+            .map(|d| d.to_string())
+            .unwrap_or_default()
     }
 
     fn icon(&self) -> IconName {
@@ -57,14 +63,18 @@ impl Tool for ContextServerTool {
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
-        let mut schema = self.tool.input_schema.clone();
+        // Convert Arc<Map<String, Value>> to Value
+        let schema_value = serde_json::Value::Object((*self.tool.input_schema).clone());
+        let mut schema = schema_value.clone();
+
         assistant_tool::adapt_schema_to_format(&mut schema, format)?;
+
         Ok(match schema {
             serde_json::Value::Null => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
-            serde_json::Value::Object(map) if map.is_empty() => {
-                serde_json::json!({ "type": "object", "properties": [] })
+            serde_json::Value::Object(ref map) if map.is_empty() => {
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             _ => schema,
         })
@@ -111,19 +121,29 @@ impl Tool for ContextServerTool {
                     .await?;
 
                 let mut result = String::new();
-                for content in response.content {
-                    match content {
-                        rmcp::model::Content::Text(text_content) => {
-                            result.push_str(&text_content.text);
+
+                // Handle Annotated<RawContent> properly
+                for content_item in response.content {
+                    // Access the inner RawContent
+                    match &content_item.inner {
+                        rmcp::model::RawContent::Text { text } => {
+                            result.push_str(text);
                         }
-                        rmcp::model::Content::Image(_) => {
-                            log::warn!("Ignoring image content from tool response");
+                        rmcp::model::RawContent::Image { data, mime_type } => {
+                            log::warn!(
+                                "Ignoring image content from tool response (mime: {})",
+                                mime_type
+                            );
                         }
-                        rmcp::model::Content::EmbeddedResource(_) => {
-                            log::warn!("Ignoring embedded resource content from tool response");
+                        rmcp::model::RawContent::EmbeddedResource { resource } => {
+                            log::warn!(
+                                "Ignoring embedded resource content from tool response: {:?}",
+                                resource.uri
+                            );
                         }
                     }
                 }
+
                 Ok(result.into())
             })
             .into()
