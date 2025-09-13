@@ -628,15 +628,13 @@ fn render_markdown_code_block(
 }
 
 fn render_markdown_paragraph(parsed: &MarkdownParagraph, cx: &mut RenderContext) -> AnyElement {
-    cx.with_common_p(div())
+    cx.with_common_p(h_flex().flex_wrap())
         .children(render_markdown_text(parsed, cx))
-        .flex()
-        .flex_col()
         .into_any_element()
 }
 
 fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) -> Vec<AnyElement> {
-    let mut any_element = vec![];
+    let mut any_element = Vec::with_capacity(parsed_new.len());
     // these values are cloned in-order satisfy borrow checker
     let syntax_theme = cx.syntax_theme.clone();
     let workspace_clone = cx.workspace.clone();
