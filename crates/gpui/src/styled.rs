@@ -701,6 +701,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the column span of this element to auto.
+    fn col_span_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column = GridPlacement::Auto..GridPlacement::Auto;
+        self
+    }
+
     /// Sets the row start of this element.
     fn row_start(mut self, start: i16) -> Self {
         let grid_location = self.style().grid_location_mut();
@@ -722,6 +729,13 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets the row span to auto
+    fn row_span_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row = GridPlacement::Auto..GridPlacement::Auto;
+        self
+    }
+
     /// Sets the row end of this element to "auto"
     fn row_end_auto(mut self) -> Self {
         let grid_location = self.style().grid_location_mut();
@@ -740,6 +754,15 @@ pub trait Styled: Sized {
     fn row_span_full(mut self) -> Self {
         let grid_location = self.style().grid_location_mut();
         grid_location.row = GridPlacement::Line(1)..GridPlacement::Line(-1);
+        self
+    }
+
+    /// Sets the container name of this element.
+    fn container_name(mut self, name: SharedString) -> Self {
+        let container_name = &mut self.style().container_name;
+        if container_name.is_none() {
+            *container_name = Some(name);
+        } // todo! Add a debug assert here so there can only be one container name per element
         self
     }
 

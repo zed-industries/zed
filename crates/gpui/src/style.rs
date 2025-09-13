@@ -271,6 +271,9 @@ pub struct Style {
     /// The grid location of this element
     pub grid_location: Option<GridLocation>,
 
+    /// The container name (used for container queries)
+    pub container_name: Option<SharedString>,
+
     /// Whether to draw a red debugging outline around this element
     #[cfg(debug_assertions)]
     pub debug: bool,
@@ -778,6 +781,7 @@ impl Default for Style {
             grid_rows: None,
             grid_cols: None,
             grid_location: None,
+            container_name: None,
 
             #[cfg(debug_assertions)]
             debug: false,
