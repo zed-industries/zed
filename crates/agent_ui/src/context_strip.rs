@@ -12,16 +12,19 @@ use agent::{
 };
 use collections::HashSet;
 use editor::Editor;
-use file_icons::FileIcons;
 use gpui::{
     App, Bounds, ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, WeakEntity,
+    Subscription, Task, WeakEntity,
 };
 use itertools::Itertools;
 use project::ProjectItem;
-use std::{path::Path, rc::Rc};
+use rope::Point;
+use std::rc::Rc;
+use text::ToPoint as _;
 use ui::{PopoverMenu, PopoverMenuHandle, Tooltip, prelude::*};
+use util::ResultExt as _;
 use workspace::Workspace;
+use zed_actions::assistant::OpenRulesLibrary;
 
 pub struct ContextStrip {
     context_store: Entity<ContextStore>,
@@ -121,36 +124,8 @@ impl ContextStrip {
 
     fn suggested_context(&self, cx: &App) -> Option<SuggestedContext> {
         match self.suggest_context_kind {
-            SuggestContextKind::File => self.suggested_file(cx),
             SuggestContextKind::Thread => self.suggested_thread(cx),
         }
-    }
-
-    fn suggested_file(&self, cx: &App) -> Option<SuggestedContext> {
-        let workspace = self.workspace.upgrade()?;
-        let active_item = workspace.read(cx).active_item(cx)?;
-
-        let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
-        let active_buffer_entity = editor.buffer().read(cx).as_singleton()?;
-        let active_buffer = active_buffer_entity.read(cx);
-        let project_path = active_buffer.project_path(cx)?;
-
-        if self
-            .context_store
-            .read(cx)
-            .file_path_included(&project_path, cx)
-            .is_some()
-        {
-            return None;
-        }
-
-        let file_name = active_buffer.file()?.file_name(cx);
-        let icon_path = FileIcons::get_icon(Path::new(&file_name), cx);
-        Some(SuggestedContext::File {
-            name: file_name.to_string_lossy().into_owned().into(),
-            buffer: active_buffer_entity.downgrade(),
-            icon_path,
-        })
     }
 
     fn suggested_thread(&self, cx: &App) -> Option<SuggestedContext> {
@@ -161,24 +136,7 @@ impl ContextStrip {
         let workspace = self.workspace.upgrade()?;
         let panel = workspace.read(cx).panel::<AgentPanel>(cx)?.read(cx);
 
-        if let Some(active_thread) = panel.active_thread(cx) {
-            let weak_active_thread = active_thread.downgrade();
-
-            let active_thread = active_thread.read(cx);
-
-            if self
-                .context_store
-                .read(cx)
-                .includes_thread(active_thread.id())
-            {
-                return None;
-            }
-
-            Some(SuggestedContext::Thread {
-                name: active_thread.summary().or_default(),
-                thread: weak_active_thread,
-            })
-        } else if let Some(active_context_editor) = panel.active_context_editor() {
+        if let Some(active_context_editor) = panel.active_context_editor() {
             let context = active_context_editor.read(cx).context();
             let weak_context = context.downgrade();
             let context = context.read(cx);
@@ -328,7 +286,75 @@ impl ContextStrip {
             return;
         };
 
-        crate::active_thread::open_context(context, workspace, window, cx);
+        match context {
+            AgentContextHandle::File(file_context) => {
+                if let Some(project_path) = file_context.project_path(cx) {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace
+                            .open_path(project_path, None, true, window, cx)
+                            .detach_and_log_err(cx);
+                    });
+                }
+            }
+
+            AgentContextHandle::Directory(directory_context) => {
+                let entry_id = directory_context.entry_id;
+                workspace.update(cx, |workspace, cx| {
+                    workspace.project().update(cx, |_project, cx| {
+                        cx.emit(project::Event::RevealInProjectPanel(entry_id));
+                    })
+                })
+            }
+
+            AgentContextHandle::Symbol(symbol_context) => {
+                let buffer = symbol_context.buffer.read(cx);
+                if let Some(project_path) = buffer.project_path(cx) {
+                    let snapshot = buffer.snapshot();
+                    let target_position = symbol_context.range.start.to_point(&snapshot);
+                    open_editor_at_position(project_path, target_position, &workspace, window, cx)
+                        .detach();
+                }
+            }
+
+            AgentContextHandle::Selection(selection_context) => {
+                let buffer = selection_context.buffer.read(cx);
+                if let Some(project_path) = buffer.project_path(cx) {
+                    let snapshot = buffer.snapshot();
+                    let target_position = selection_context.range.start.to_point(&snapshot);
+
+                    open_editor_at_position(project_path, target_position, &workspace, window, cx)
+                        .detach();
+                }
+            }
+
+            AgentContextHandle::FetchedUrl(fetched_url_context) => {
+                cx.open_url(&fetched_url_context.url);
+            }
+
+            AgentContextHandle::Thread(_thread_context) => {}
+
+            AgentContextHandle::TextThread(text_thread_context) => {
+                workspace.update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        let context = text_thread_context.context.clone();
+                        window.defer(cx, move |window, cx| {
+                            panel.update(cx, |panel, cx| {
+                                panel.open_prompt_editor(context, window, cx)
+                            });
+                        });
+                    }
+                })
+            }
+
+            AgentContextHandle::Rules(rules_context) => window.dispatch_action(
+                Box::new(OpenRulesLibrary {
+                    prompt_to_select: Some(rules_context.prompt_id.0),
+                }),
+                cx,
+            ),
+
+            AgentContextHandle::Image(_) => {}
+        }
     }
 
     fn remove_focused_context(
@@ -569,6 +595,31 @@ pub enum ContextStripEvent {
 impl EventEmitter<ContextStripEvent> for ContextStrip {}
 
 pub enum SuggestContextKind {
-    File,
     Thread,
+}
+
+fn open_editor_at_position(
+    project_path: project::ProjectPath,
+    target_position: Point,
+    workspace: &Entity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<()> {
+    let open_task = workspace.update(cx, |workspace, cx| {
+        workspace.open_path(project_path, None, true, window, cx)
+    });
+    window.spawn(cx, async move |cx| {
+        if let Some(active_editor) = open_task
+            .await
+            .log_err()
+            .and_then(|item| item.downcast::<Editor>())
+        {
+            active_editor
+                .downgrade()
+                .update_in(cx, |editor, window, cx| {
+                    editor.go_to_singleton_buffer_point(target_position, window, cx);
+                })
+                .log_err();
+        }
+    })
 }

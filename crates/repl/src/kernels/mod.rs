@@ -11,7 +11,7 @@ use language::LanguageName;
 pub use native_kernel::*;
 
 mod remote_kernels;
-use project::{Project, ProjectPath, WorktreeId};
+use project::{Project, ProjectPath, Toolchains, WorktreeId};
 pub use remote_kernels::*;
 
 use anyhow::Result;
@@ -92,49 +92,58 @@ pub fn python_env_kernel_specifications(
     let background_executor = cx.background_executor().clone();
 
     async move {
-        let toolchains = if let Some((toolchains, _)) = toolchains.await {
-            toolchains
+        let (toolchains, user_toolchains) = if let Some(Toolchains {
+            toolchains,
+            root_path: _,
+            user_toolchains,
+        }) = toolchains.await
+        {
+            (toolchains, user_toolchains)
         } else {
             return Ok(Vec::new());
         };
 
-        let kernelspecs = toolchains.toolchains.into_iter().map(|toolchain| {
-            background_executor.spawn(async move {
-                let python_path = toolchain.path.to_string();
+        let kernelspecs = user_toolchains
+            .into_values()
+            .flatten()
+            .chain(toolchains.toolchains)
+            .map(|toolchain| {
+                background_executor.spawn(async move {
+                    let python_path = toolchain.path.to_string();
 
-                // Check if ipykernel is installed
-                let ipykernel_check = util::command::new_smol_command(&python_path)
-                    .args(&["-c", "import ipykernel"])
-                    .output()
-                    .await;
+                    // Check if ipykernel is installed
+                    let ipykernel_check = util::command::new_smol_command(&python_path)
+                        .args(&["-c", "import ipykernel"])
+                        .output()
+                        .await;
 
-                if ipykernel_check.is_ok() && ipykernel_check.unwrap().status.success() {
-                    // Create a default kernelspec for this environment
-                    let default_kernelspec = JupyterKernelspec {
-                        argv: vec![
-                            python_path.clone(),
-                            "-m".to_string(),
-                            "ipykernel_launcher".to_string(),
-                            "-f".to_string(),
-                            "{connection_file}".to_string(),
-                        ],
-                        display_name: toolchain.name.to_string(),
-                        language: "python".to_string(),
-                        interrupt_mode: None,
-                        metadata: None,
-                        env: None,
-                    };
+                    if ipykernel_check.is_ok() && ipykernel_check.unwrap().status.success() {
+                        // Create a default kernelspec for this environment
+                        let default_kernelspec = JupyterKernelspec {
+                            argv: vec![
+                                python_path.clone(),
+                                "-m".to_string(),
+                                "ipykernel_launcher".to_string(),
+                                "-f".to_string(),
+                                "{connection_file}".to_string(),
+                            ],
+                            display_name: toolchain.name.to_string(),
+                            language: "python".to_string(),
+                            interrupt_mode: None,
+                            metadata: None,
+                            env: None,
+                        };
 
-                    Some(KernelSpecification::PythonEnv(LocalKernelSpecification {
-                        name: toolchain.name.to_string(),
-                        path: PathBuf::from(&python_path),
-                        kernelspec: default_kernelspec,
-                    }))
-                } else {
-                    None
-                }
-            })
-        });
+                        Some(KernelSpecification::PythonEnv(LocalKernelSpecification {
+                            name: toolchain.name.to_string(),
+                            path: PathBuf::from(&python_path),
+                            kernelspec: default_kernelspec,
+                        }))
+                    } else {
+                        None
+                    }
+                })
+            });
 
         let kernel_specs = futures::future::join_all(kernelspecs)
             .await

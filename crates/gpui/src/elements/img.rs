@@ -332,20 +332,18 @@ impl Element for Img {
                                 state.started_loading = None;
                             }
 
-                            let image_size = data.size(frame_index);
-                            style.aspect_ratio =
-                                Some(image_size.width.0 as f32 / image_size.height.0 as f32);
+                            let image_size = data.render_size(frame_index);
+                            style.aspect_ratio = Some(image_size.width / image_size.height);
 
                             if let Length::Auto = style.size.width {
                                 style.size.width = match style.size.height {
                                     Length::Definite(DefiniteLength::Absolute(
                                         AbsoluteLength::Pixels(height),
                                     )) => Length::Definite(
-                                        px(image_size.width.0 as f32 * height.0
-                                            / image_size.height.0 as f32)
-                                        .into(),
+                                        px(image_size.width.0 * height.0 / image_size.height.0)
+                                            .into(),
                                     ),
-                                    _ => Length::Definite(px(image_size.width.0 as f32).into()),
+                                    _ => Length::Definite(image_size.width.into()),
                                 };
                             }
 
@@ -354,11 +352,10 @@ impl Element for Img {
                                     Length::Definite(DefiniteLength::Absolute(
                                         AbsoluteLength::Pixels(width),
                                     )) => Length::Definite(
-                                        px(image_size.height.0 as f32 * width.0
-                                            / image_size.width.0 as f32)
-                                        .into(),
+                                        px(image_size.height.0 * width.0 / image_size.width.0)
+                                            .into(),
                                     ),
-                                    _ => Length::Definite(px(image_size.height.0 as f32).into()),
+                                    _ => Length::Definite(image_size.height.into()),
                                 };
                             }
 
@@ -701,7 +698,9 @@ impl Asset for ImageAssetLoader {
                     swap_rgba_pa_to_bgra(pixel);
                 }
 
-                RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1))
+                let mut image = RenderImage::new(SmallVec::from_elem(Frame::new(buffer), 1));
+                image.scale_factor = SMOOTH_SVG_SCALE_FACTOR;
+                image
             };
 
             Ok(Arc::new(data))

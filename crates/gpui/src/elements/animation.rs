@@ -87,7 +87,7 @@ pub trait AnimationExt {
     }
 }
 
-impl<E> AnimationExt for E {}
+impl<E: IntoElement + 'static> AnimationExt for E {}
 
 /// A GPUI element that applies an animation to another element
 pub struct AnimationElement<E> {

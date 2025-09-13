@@ -145,7 +145,7 @@ impl AnyAgentTool for ContextServerTool {
         ToolKind::Other
     }
 
-    fn initial_title(&self, _input: serde_json::Value) -> SharedString {
+    fn initial_title(&self, _input: serde_json::Value, _cx: &mut App) -> SharedString {
         format!("Run MCP tool `{}`", self.tool.name).into()
     }
 
@@ -169,15 +169,18 @@ impl AnyAgentTool for ContextServerTool {
     fn run(
         self: Arc<Self>,
         input: serde_json::Value,
-        _event_stream: ToolCallEventStream,
+        event_stream: ToolCallEventStream,
         cx: &mut App,
     ) -> Task<Result<AgentToolOutput>> {
         let Some(server) = self.store.read(cx).get_running_server(&self.server_id) else {
             return Task::ready(Err(anyhow!("Context server not found")));
         };
         let tool_name = self.tool.name.clone();
+        let authorize = event_stream.authorize(self.initial_title(input.clone(), cx), cx);
 
         cx.spawn(async move |_cx| {
+            authorize.await?;
+
             let Some(protocol) = server.client() else {
                 bail!("Context server not initialized");
             };

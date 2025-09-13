@@ -34,6 +34,8 @@ pub struct ContextServerCommand {
     pub path: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+    /// Timeout for tool calls in milliseconds. Defaults to 60000 (60 seconds) if not specified.
+    pub timeout: Option<u64>,
 }
 
 impl std::fmt::Debug for ContextServerCommand {
@@ -123,6 +125,7 @@ impl ContextServer {
                     executable: Path::new(&command.path).to_path_buf(),
                     args: command.args.clone(),
                     env: command.env.clone(),
+                    timeout: command.timeout,
                 },
                 working_directory,
                 cx.clone(),
@@ -131,6 +134,7 @@ impl ContextServer {
                 client::ContextServerId(self.id.0.clone()),
                 self.id().0,
                 transport.clone(),
+                None,
                 cx.clone(),
             )?,
         })

@@ -118,7 +118,7 @@ impl TestDispatcher {
         }
 
         YieldNow {
-            count: self.state.lock().random.gen_range(0..10),
+            count: self.state.lock().random.random_range(0..10),
         }
     }
 
@@ -151,11 +151,11 @@ impl TestDispatcher {
             if deprioritized_background_len == 0 {
                 return false;
             }
-            let ix = state.random.gen_range(0..deprioritized_background_len);
+            let ix = state.random.random_range(0..deprioritized_background_len);
             main_thread = false;
             runnable = state.deprioritized_background.swap_remove(ix);
         } else {
-            main_thread = state.random.gen_ratio(
+            main_thread = state.random.random_ratio(
                 foreground_len as u32,
                 (foreground_len + background_len) as u32,
             );
@@ -170,7 +170,7 @@ impl TestDispatcher {
                     .pop_front()
                     .unwrap();
             } else {
-                let ix = state.random.gen_range(0..background_len);
+                let ix = state.random.random_range(0..background_len);
                 runnable = state.background.swap_remove(ix);
             };
         };
@@ -241,7 +241,7 @@ impl TestDispatcher {
     pub fn gen_block_on_ticks(&self) -> usize {
         let mut lock = self.state.lock();
         let block_on_ticks = lock.block_on_ticks.clone();
-        lock.random.gen_range(block_on_ticks)
+        lock.random.random_range(block_on_ticks)
     }
 }
 

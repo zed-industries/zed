@@ -13,7 +13,10 @@ use http_client::HttpClientWithUrl;
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, Symbol, WorktreeId};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, ProjectPath,
+    Symbol, WorktreeId,
+};
 use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
@@ -593,11 +596,12 @@ impl ContextPickerCompletionProvider {
             file_name.to_string()
         };
 
+        let path = Path::new(&full_path);
         let crease_icon_path = if is_directory {
-            FileIcons::get_folder_icon(false, cx).unwrap_or_else(|| IconName::Folder.path().into())
+            FileIcons::get_folder_icon(false, path, cx)
+                .unwrap_or_else(|| IconName::Folder.path().into())
         } else {
-            FileIcons::get_icon(Path::new(&full_path), cx)
-                .unwrap_or_else(|| IconName::File.path().into())
+            FileIcons::get_icon(path, cx).unwrap_or_else(|| IconName::File.path().into())
         };
         let completion_icon_path = if is_recent {
             IconName::HistoryRerun.path().into()
@@ -897,6 +901,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
             Ok(vec![CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 // Since this does its own filtering (see `filter_completions()` returns false),
                 // there is no benefit to computing whether this set of completions is incomplete.
                 is_incomplete: true,

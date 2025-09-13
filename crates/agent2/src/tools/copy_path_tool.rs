@@ -58,7 +58,11 @@ impl AgentTool for CopyPathTool {
         ToolKind::Move
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> ui::SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> ui::SharedString {
         if let Ok(input) = input {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);

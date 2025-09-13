@@ -212,7 +212,7 @@ impl Vim {
                         }
                     }
 
-                    Mode::HelixNormal => {
+                    Mode::HelixNormal | Mode::HelixSelect => {
                         if selection.is_empty() {
                             // Handle empty selection by operating on the whole word
                             let (word_range, _) = snapshot.surrounding_word(selection.start, false);

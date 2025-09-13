@@ -5,7 +5,8 @@ use agent_client_protocol as acp;
 use gpui::{Entity, FocusHandle};
 use picker::popover_menu::PickerPopoverMenu;
 use ui::{
-    ButtonLike, Context, IntoElement, PopoverMenuHandle, SharedString, Tooltip, Window, prelude::*,
+    ButtonLike, Context, IntoElement, PopoverMenuHandle, SharedString, TintColor, Tooltip, Window,
+    prelude::*,
 };
 use zed_actions::agent::ToggleModelSelector;
 
@@ -36,6 +37,14 @@ impl AcpModelSelectorPopover {
     pub fn toggle(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_handle.toggle(window, cx);
     }
+
+    pub fn active_model_name(&self, cx: &App) -> Option<SharedString> {
+        self.selector
+            .read(cx)
+            .delegate
+            .active_model()
+            .map(|model| model.name.clone())
+    }
 }
 
 impl Render for AcpModelSelectorPopover {
@@ -50,15 +59,22 @@ impl Render for AcpModelSelectorPopover {
 
         let focus_handle = self.focus_handle.clone();
 
+        let color = if self.menu_handle.is_deployed() {
+            Color::Accent
+        } else {
+            Color::Muted
+        };
+
         PickerPopoverMenu::new(
             self.selector.clone(),
             ButtonLike::new("active-model")
                 .when_some(model_icon, |this, icon| {
-                    this.child(Icon::new(icon).color(Color::Muted).size(IconSize::XSmall))
+                    this.child(Icon::new(icon).color(color).size(IconSize::XSmall))
                 })
+                .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                 .child(
                     Label::new(model_name)
-                        .color(Color::Muted)
+                        .color(color)
                         .size(LabelSize::Small)
                         .ml_0p5(),
                 )

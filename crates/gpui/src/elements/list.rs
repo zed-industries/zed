@@ -5,7 +5,7 @@
 //! In order to minimize re-renders, this element's state is stored intrusively
 //! on your own views, so that your code can coordinate directly with the list element's cached state.
 //!
-//! If all of your elements are the same height, see [`UniformList`] for a simpler API
+//! If all of your elements are the same height, see [`crate::UniformList`] for a simpler API
 
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
@@ -235,7 +235,7 @@ impl ListState {
     }
 
     /// Register with the list state that the items in `old_range` have been replaced
-    /// by new items. As opposed to [`splice`], this method allows an iterator of optional focus handles
+    /// by new items. As opposed to [`Self::splice`], this method allows an iterator of optional focus handles
     /// to be supplied to properly integrate with items in the list that can be focused. If a focused item
     /// is scrolled out of view, the list will continue to render it to allow keyboard interaction.
     pub fn splice_focusable(

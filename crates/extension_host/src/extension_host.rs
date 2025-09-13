@@ -43,7 +43,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::SshRemoteClient;
+use remote::{RemoteClient, RemoteConnectionOptions};
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -117,7 +117,7 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-    pub ssh_clients: HashMap<String, WeakEntity<SshRemoteClient>>,
+    pub remote_clients: HashMap<RemoteConnectionOptions, WeakEntity<RemoteClient>>,
     pub ssh_registered_tx: UnboundedSender<()>,
 }
 
@@ -270,7 +270,7 @@ impl ExtensionStore {
             reload_tx,
             tasks: Vec::new(),
 
-            ssh_clients: HashMap::default(),
+            remote_clients: HashMap::default(),
             ssh_registered_tx: connection_registered_tx,
         };
 
@@ -587,6 +587,10 @@ impl ExtensionStore {
     /// This can be used to make certain functionality provided by extensions
     /// available out-of-the-box.
     pub fn auto_install_extensions(&mut self, cx: &mut Context<Self>) {
+        if cfg!(test) {
+            return;
+        }
+
         let extension_settings = ExtensionSettings::get_global(cx);
 
         let extensions_to_install = extension_settings
@@ -934,10 +938,24 @@ impl ExtensionStore {
                 ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
 
+            if let Some(uninstall_task) = this
+                .update(cx, |this, cx| {
+                    this.extension_index
+                        .extensions
+                        .get(extension_id.as_ref())
+                        .is_some_and(|index_entry| !index_entry.dev)
+                        .then(|| this.uninstall_extension(extension_id.clone(), cx))
+                })
+                .ok()
+                .flatten()
+            {
+                uninstall_task.await.log_err();
+            }
+
             if !this.update(cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
                     btree_map::Entry::Occupied(_) => return false,
-                    btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Remove),
+                    btree_map::Entry::Vacant(e) => e.insert(ExtensionOperation::Install),
                 };
                 cx.notify();
                 true
@@ -982,7 +1000,7 @@ impl ExtensionStore {
                     )
                     .await?;
                 } else {
-                    bail!("extension {extension_id} is already installed");
+                    bail!("extension {extension_id} is still installed");
                 }
             }
 
@@ -1693,7 +1711,7 @@ impl ExtensionStore {
 
     async fn sync_extensions_over_ssh(
         this: &WeakEntity<Self>,
-        client: WeakEntity<SshRemoteClient>,
+        client: WeakEntity<RemoteClient>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         let extensions = this.update(cx, |this, _cx| {
@@ -1765,8 +1783,8 @@ impl ExtensionStore {
 
     pub async fn update_ssh_clients(this: &WeakEntity<Self>, cx: &mut AsyncApp) -> Result<()> {
         let clients = this.update(cx, |this, _cx| {
-            this.ssh_clients.retain(|_k, v| v.upgrade().is_some());
-            this.ssh_clients.values().cloned().collect::<Vec<_>>()
+            this.remote_clients.retain(|_k, v| v.upgrade().is_some());
+            this.remote_clients.values().cloned().collect::<Vec<_>>()
         })?;
 
         for client in clients {
@@ -1778,17 +1796,16 @@ impl ExtensionStore {
         anyhow::Ok(())
     }
 
-    pub fn register_ssh_client(&mut self, client: Entity<SshRemoteClient>, cx: &mut Context<Self>) {
-        let connection_options = client.read(cx).connection_options();
-        let ssh_url = connection_options.ssh_url();
+    pub fn register_remote_client(&mut self, client: Entity<RemoteClient>, cx: &mut Context<Self>) {
+        let options = client.read(cx).connection_options();
 
-        if let Some(existing_client) = self.ssh_clients.get(&ssh_url)
+        if let Some(existing_client) = self.remote_clients.get(&options)
             && existing_client.upgrade().is_some()
         {
             return;
         }
 
-        self.ssh_clients.insert(ssh_url, client.downgrade());
+        self.remote_clients.insert(options, client.downgrade());
         self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }

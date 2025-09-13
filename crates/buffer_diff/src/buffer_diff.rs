@@ -2044,10 +2044,10 @@ mod tests {
     #[gpui::test(iterations = 100)]
     async fn test_staging_and_unstaging_hunks(cx: &mut TestAppContext, mut rng: StdRng) {
         fn gen_line(rng: &mut StdRng) -> String {
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 "\n".to_owned()
             } else {
-                let c = rng.gen_range('A'..='Z');
+                let c = rng.random_range('A'..='Z');
                 format!("{c}{c}{c}\n")
             }
         }
@@ -2066,7 +2066,7 @@ mod tests {
                 old_lines.into_iter()
             };
             let mut result = String::new();
-            let unchanged_count = rng.gen_range(0..=old_lines.len());
+            let unchanged_count = rng.random_range(0..=old_lines.len());
             result +=
                 &old_lines
                     .by_ref()
@@ -2076,14 +2076,14 @@ mod tests {
                         s
                     });
             while old_lines.len() > 0 {
-                let deleted_count = rng.gen_range(0..=old_lines.len());
+                let deleted_count = rng.random_range(0..=old_lines.len());
                 let _advance = old_lines
                     .by_ref()
                     .take(deleted_count)
                     .map(|line| line.len() + 1)
                     .sum::<usize>();
                 let minimum_added = if deleted_count == 0 { 1 } else { 0 };
-                let added_count = rng.gen_range(minimum_added..=5);
+                let added_count = rng.random_range(minimum_added..=5);
                 let addition = (0..added_count).map(|_| gen_line(rng)).collect::<String>();
                 result += &addition;
 
@@ -2092,7 +2092,8 @@ mod tests {
                     if blank_lines == old_lines.len() {
                         break;
                     };
-                    let unchanged_count = rng.gen_range((blank_lines + 1).max(1)..=old_lines.len());
+                    let unchanged_count =
+                        rng.random_range((blank_lines + 1).max(1)..=old_lines.len());
                     result += &old_lines.by_ref().take(unchanged_count).fold(
                         String::new(),
                         |mut s, line| {
@@ -2149,7 +2150,7 @@ mod tests {
             )
         });
         let working_copy = working_copy.read_with(cx, |working_copy, _| working_copy.snapshot());
-        let mut index_text = if rng.r#gen() {
+        let mut index_text = if rng.random() {
             Rope::from(head_text.as_str())
         } else {
             working_copy.as_rope().clone()
@@ -2165,7 +2166,7 @@ mod tests {
         }
 
         for _ in 0..operations {
-            let i = rng.gen_range(0..hunks.len());
+            let i = rng.random_range(0..hunks.len());
             let hunk = &mut hunks[i];
             let hunk_to_change = hunk.clone();
             let stage = match hunk.secondary_status {

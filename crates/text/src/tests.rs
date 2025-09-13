@@ -36,14 +36,14 @@ fn test_random_edits(mut rng: StdRng) {
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let reference_string_len = rng.gen_range(0..3);
+    let reference_string_len = rng.random_range(0..3);
     let mut reference_string = RandomCharIter::new(&mut rng)
         .take(reference_string_len)
         .collect::<String>();
     let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), reference_string.clone());
     LineEnding::normalize(&mut reference_string);
 
-    buffer.set_group_interval(Duration::from_millis(rng.gen_range(0..=200)));
+    buffer.set_group_interval(Duration::from_millis(rng.random_range(0..=200)));
     let mut buffer_versions = Vec::new();
     log::info!(
         "buffer text {:?}, version: {:?}",
@@ -64,7 +64,7 @@ fn test_random_edits(mut rng: StdRng) {
             buffer.version()
         );
 
-        if rng.gen_bool(0.25) {
+        if rng.random_bool(0.25) {
             buffer.randomly_undo_redo(&mut rng);
             reference_string = buffer.text();
             log::info!(
@@ -82,7 +82,7 @@ fn test_random_edits(mut rng: StdRng) {
 
         buffer.check_invariants();
 
-        if rng.gen_bool(0.3) {
+        if rng.random_bool(0.3) {
             buffer_versions.push((buffer.clone(), buffer.subscribe()));
         }
     }
@@ -112,8 +112,9 @@ fn test_random_edits(mut rng: StdRng) {
         );
 
         for _ in 0..5 {
-            let end_ix = old_buffer.clip_offset(rng.gen_range(0..=old_buffer.len()), Bias::Right);
-            let start_ix = old_buffer.clip_offset(rng.gen_range(0..=end_ix), Bias::Left);
+            let end_ix =
+                old_buffer.clip_offset(rng.random_range(0..=old_buffer.len()), Bias::Right);
+            let start_ix = old_buffer.clip_offset(rng.random_range(0..=end_ix), Bias::Left);
             let range = old_buffer.anchor_before(start_ix)..old_buffer.anchor_after(end_ix);
             let mut old_text = old_buffer.text_for_range(range.clone()).collect::<String>();
             let edits = buffer
@@ -731,7 +732,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
         .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
         .unwrap_or(10);
 
-    let base_text_len = rng.gen_range(0..10);
+    let base_text_len = rng.random_range(0..10);
     let base_text = RandomCharIter::new(&mut rng)
         .take(base_text_len)
         .collect::<String>();
@@ -741,7 +742,7 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
 
     for i in 0..peers {
         let mut buffer = Buffer::new(i as ReplicaId, BufferId::new(1).unwrap(), base_text.clone());
-        buffer.history.group_interval = Duration::from_millis(rng.gen_range(0..=200));
+        buffer.history.group_interval = Duration::from_millis(rng.random_range(0..=200));
         buffers.push(buffer);
         replica_ids.push(i as u16);
         network.add_peer(i as u16);
@@ -751,10 +752,10 @@ fn test_random_concurrent_edits(mut rng: StdRng) {
 
     let mut mutation_count = operations;
     loop {
-        let replica_index = rng.gen_range(0..peers);
+        let replica_index = rng.random_range(0..peers);
         let replica_id = replica_ids[replica_index];
         let buffer = &mut buffers[replica_index];
-        match rng.gen_range(0..=100) {
+        match rng.random_range(0..=100) {
             0..=50 if mutation_count != 0 => {
                 let op = buffer.randomly_edit(&mut rng, 5).1;
                 network.broadcast(buffer.replica_id, vec![op]);

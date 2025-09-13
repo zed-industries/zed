@@ -419,7 +419,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
-    languages::init(languages.clone(), node_runtime.clone(), cx);
+    languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
     let stdout_is_a_pty = false;

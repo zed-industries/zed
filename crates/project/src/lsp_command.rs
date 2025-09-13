@@ -50,8 +50,8 @@ pub fn lsp_formatting_options(settings: &LanguageSettings) -> lsp::FormattingOpt
     }
 }
 
-pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Url> {
-    match lsp::Url::from_file_path(path) {
+pub fn file_path_to_lsp_url(path: &Path) -> Result<lsp::Uri> {
+    match lsp::Uri::from_file_path(path) {
         Ok(url) => Ok(url),
         Err(()) => anyhow::bail!("Invalid file path provided to LSP request: {path:?}"),
     }
@@ -3135,7 +3135,7 @@ impl InlayHints {
                                     Some(((uri, range), server_id)) => Some((
                                         LanguageServerId(server_id as usize),
                                         lsp::Location {
-                                            uri: lsp::Url::parse(&uri)
+                                            uri: lsp::Uri::from_str(&uri)
                                                 .context("invalid uri in hint part {part:?}")?,
                                             range: lsp::Range::new(
                                                 point_to_lsp(PointUtf16::new(
@@ -3733,7 +3733,7 @@ impl GetDocumentDiagnostics {
             .filter_map(|diagnostics| {
                 Some(LspPullDiagnostics::Response {
                     server_id: LanguageServerId::from_proto(diagnostics.server_id),
-                    uri: lsp::Url::from_str(diagnostics.uri.as_str()).log_err()?,
+                    uri: lsp::Uri::from_str(diagnostics.uri.as_str()).log_err()?,
                     diagnostics: if diagnostics.changed {
                         PulledDiagnostics::Unchanged {
                             result_id: diagnostics.result_id?,
@@ -3788,7 +3788,7 @@ impl GetDocumentDiagnostics {
                             start: point_to_lsp(PointUtf16::new(start.row, start.column)),
                             end: point_to_lsp(PointUtf16::new(end.row, end.column)),
                         },
-                        uri: lsp::Url::parse(&info.location_url.unwrap()).unwrap(),
+                        uri: lsp::Uri::from_str(&info.location_url.unwrap()).unwrap(),
                     },
                     message: info.message,
                 }
@@ -3821,7 +3821,7 @@ impl GetDocumentDiagnostics {
             code_description: diagnostic
                 .code_description
                 .map(|code_description| CodeDescription {
-                    href: Some(lsp::Url::parse(&code_description).unwrap()),
+                    href: Some(lsp::Uri::from_str(&code_description).unwrap()),
                 }),
             related_information: Some(related_information),
             tags: Some(tags),
@@ -3961,7 +3961,7 @@ pub struct WorkspaceLspPullDiagnostics {
 }
 
 fn process_full_workspace_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, WorkspaceLspPullDiagnostics>,
     server_id: LanguageServerId,
     report: lsp::WorkspaceFullDocumentDiagnosticReport,
 ) {
@@ -3984,7 +3984,7 @@ fn process_full_workspace_diagnostics_report(
 }
 
 fn process_unchanged_workspace_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, WorkspaceLspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, WorkspaceLspPullDiagnostics>,
     server_id: LanguageServerId,
     report: lsp::WorkspaceUnchangedDocumentDiagnosticReport,
 ) {
@@ -4343,9 +4343,9 @@ impl LspCommand for GetDocumentColor {
 }
 
 fn process_related_documents(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    documents: impl IntoIterator<Item = (lsp::Url, lsp::DocumentDiagnosticReportKind)>,
+    documents: impl IntoIterator<Item = (lsp::Uri, lsp::DocumentDiagnosticReportKind)>,
 ) {
     for (url, report_kind) in documents {
         match report_kind {
@@ -4360,9 +4360,9 @@ fn process_related_documents(
 }
 
 fn process_unchanged_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    uri: lsp::Url,
+    uri: lsp::Uri,
     report: lsp::UnchangedDocumentDiagnosticReport,
 ) {
     let result_id = report.result_id;
@@ -4404,9 +4404,9 @@ fn process_unchanged_diagnostics_report(
 }
 
 fn process_full_diagnostics_report(
-    diagnostics: &mut HashMap<lsp::Url, LspPullDiagnostics>,
+    diagnostics: &mut HashMap<lsp::Uri, LspPullDiagnostics>,
     server_id: LanguageServerId,
-    uri: lsp::Url,
+    uri: lsp::Uri,
     report: lsp::FullDocumentDiagnosticReport,
 ) {
     let result_id = report.result_id;
@@ -4540,7 +4540,7 @@ mod tests {
     fn test_related_information() {
         let related_info = lsp::DiagnosticRelatedInformation {
             location: lsp::Location {
-                uri: lsp::Url::parse("file:///test.rs").unwrap(),
+                uri: lsp::Uri::from_str("file:///test.rs").unwrap(),
                 range: lsp::Range {
                     start: lsp::Position::new(1, 1),
                     end: lsp::Position::new(1, 5),

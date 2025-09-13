@@ -4,7 +4,6 @@ use gpui::{
 };
 use itertools::Itertools;
 use serde_json::json;
-use settings::get_key_equivalents;
 use ui::{Button, ButtonStyle};
 use ui::{
     ButtonCommon, Clickable, Context, FluentBuilder, InteractiveElement, Label, LabelCommon,
@@ -169,7 +168,8 @@ impl Item for KeyContextView {
 impl Render for KeyContextView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         use itertools::Itertools;
-        let key_equivalents = get_key_equivalents(cx.keyboard_layout().id());
+
+        let key_equivalents = cx.keyboard_mapper().get_key_equivalents();
         v_flex()
             .id("key-context-view")
             .overflow_scroll()

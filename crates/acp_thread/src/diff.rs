@@ -1,6 +1,6 @@
 use anyhow::Result;
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
-use editor::{MultiBuffer, PathKey};
+use editor::{MultiBuffer, PathKey, multibuffer_context_lines};
 use gpui::{App, AppContext, AsyncApp, Context, Entity, Subscription, Task};
 use itertools::Itertools;
 use language::{
@@ -64,7 +64,7 @@ impl Diff {
                             PathKey::for_buffer(&buffer, cx),
                             buffer.clone(),
                             hunk_ranges,
-                            editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                            multibuffer_context_lines(cx),
                             cx,
                         );
                         multibuffer.add_diff(diff, cx);
@@ -279,7 +279,7 @@ impl PendingDiff {
                         path_key,
                         buffer,
                         ranges,
-                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                        multibuffer_context_lines(cx),
                         cx,
                     );
                     multibuffer.add_diff(buffer_diff.clone(), cx);
@@ -305,7 +305,7 @@ impl PendingDiff {
                 PathKey::for_buffer(&self.new_buffer, cx),
                 self.new_buffer.clone(),
                 ranges,
-                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                multibuffer_context_lines(cx),
                 cx,
             );
             let end = multibuffer.len(cx);

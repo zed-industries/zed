@@ -151,12 +151,12 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Model::ClaudeSonnet4 => "claude-4-sonnet",
-            Model::ClaudeSonnet4Thinking => "claude-4-sonnet-thinking",
-            Model::ClaudeOpus4 => "claude-4-opus",
-            Model::ClaudeOpus4_1 => "claude-4-opus-1",
-            Model::ClaudeOpus4Thinking => "claude-4-opus-thinking",
-            Model::ClaudeOpus4_1Thinking => "claude-4-opus-1-thinking",
+            Model::ClaudeSonnet4 => "claude-sonnet-4",
+            Model::ClaudeSonnet4Thinking => "claude-sonnet-4-thinking",
+            Model::ClaudeOpus4 => "claude-opus-4",
+            Model::ClaudeOpus4_1 => "claude-opus-4-1",
+            Model::ClaudeOpus4Thinking => "claude-opus-4-thinking",
+            Model::ClaudeOpus4_1Thinking => "claude-opus-4-1-thinking",
             Model::Claude3_5SonnetV2 => "claude-3-5-sonnet-v2",
             Model::Claude3_5Sonnet => "claude-3-5-sonnet",
             Model::Claude3Opus => "claude-3-opus",
@@ -359,14 +359,12 @@ impl Model {
     pub fn max_output_tokens(&self) -> u64 {
         match self {
             Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3_5Haiku => 4_096,
-            Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
-            | Self::ClaudeOpus4
-            | Model::ClaudeOpus4Thinking
+            Self::Claude3_7Sonnet | Self::Claude3_7SonnetThinking => 128_000,
+            Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => 64_000,
+            Self::ClaudeOpus4
+            | Self::ClaudeOpus4Thinking
             | Self::ClaudeOpus4_1
-            | Model::ClaudeOpus4_1Thinking => 128_000,
+            | Self::ClaudeOpus4_1Thinking => 32_000,
             Self::Claude3_5SonnetV2 | Self::PalmyraWriterX4 | Self::PalmyraWriterX5 => 8_192,
             Self::Custom {
                 max_output_tokens, ..
@@ -784,10 +782,10 @@ mod tests {
         );
 
         // Test thinking models have different friendly IDs but same request IDs
-        assert_eq!(Model::ClaudeSonnet4.id(), "claude-4-sonnet");
+        assert_eq!(Model::ClaudeSonnet4.id(), "claude-sonnet-4");
         assert_eq!(
             Model::ClaudeSonnet4Thinking.id(),
-            "claude-4-sonnet-thinking"
+            "claude-sonnet-4-thinking"
         );
         assert_eq!(
             Model::ClaudeSonnet4.request_id(),

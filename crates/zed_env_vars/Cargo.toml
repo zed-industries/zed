@@ -1,0 +1,18 @@
+[package]
+name = "zed_env_vars"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/zed_env_vars.rs"
+
+[features]
+default = []
+
+[dependencies]
+workspace-hack.workspace = true

@@ -32,6 +32,7 @@ use futures::{
     channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
 };
 
+use itertools::Itertools as _;
 use mappings::mouse::{
     alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
     scroll_report,
@@ -48,7 +49,7 @@ use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
-use util::{paths::home_dir, truncate_and_trailoff};
+use util::truncate_and_trailoff;
 
 use std::{
     borrow::Cow,
@@ -273,7 +274,9 @@ impl Dimensions for TerminalBounds {
 #[derive(Error, Debug)]
 pub struct TerminalError {
     pub directory: Option<PathBuf>,
-    pub shell: Shell,
+    pub program: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub title_override: Option<SharedString>,
     pub source: std::io::Error,
 }
 
@@ -291,30 +294,23 @@ impl TerminalError {
                     Err(s) => s,
                 }
             })
-            .unwrap_or_else(|| match dirs::home_dir() {
-                Some(dir) => format!(
-                    "<none specified, using home directory> {}",
-                    dir.into_os_string().to_string_lossy()
-                ),
-                None => "<none specified, could not find home directory>".to_string(),
-            })
+            .unwrap_or_else(|| "<none specified>".to_string())
     }
 
     pub fn fmt_shell(&self) -> String {
-        match &self.shell {
-            Shell::System => "<system defined shell>".to_string(),
-            Shell::Program(s) => s.to_string(),
-            Shell::WithArguments {
-                program,
-                args,
-                title_override,
-            } => {
-                if let Some(title_override) = title_override {
-                    format!("{} {} ({})", program, args.join(" "), title_override)
-                } else {
-                    format!("{} {}", program, args.join(" "))
-                }
-            }
+        if let Some(title_override) = &self.title_override {
+            format!(
+                "{} {} ({})",
+                self.program.as_deref().unwrap_or("<system defined shell>"),
+                self.args.as_ref().into_iter().flatten().format(" "),
+                title_override
+            )
+        } else {
+            format!(
+                "{} {}",
+                self.program.as_deref().unwrap_or("<system defined shell>"),
+                self.args.as_ref().into_iter().flatten().format(" ")
+            )
         }
     }
 }
@@ -344,7 +340,6 @@ pub struct TerminalBuilder {
 impl TerminalBuilder {
     pub fn new(
         working_directory: Option<PathBuf>,
-        python_venv_directory: Option<PathBuf>,
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
@@ -353,8 +348,9 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
         window_id: u64,
-        completion_tx: Sender<Option<ExitStatus>>,
+        completion_tx: Option<Sender<Option<ExitStatus>>>,
         cx: &App,
+        activation_script: Vec<String>,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
         // (As is the case when launched from a .app on MacOS),
@@ -418,22 +414,20 @@ impl TerminalBuilder {
         });
 
         let pty_options = {
-            let alac_shell = shell_params.map(|params| {
-                alacritty_terminal::tty::Shell::new(params.program, params.args.unwrap_or_default())
+            let alac_shell = shell_params.as_ref().map(|params| {
+                alacritty_terminal::tty::Shell::new(
+                    params.program.clone(),
+                    params.args.clone().unwrap_or_default(),
+                )
             });
 
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
-                working_directory: working_directory
-                    .clone()
-                    .or_else(|| Some(home_dir().to_path_buf())),
+                working_directory: working_directory.clone(),
                 drain_on_exit: true,
-                env: env.into_iter().collect(),
+                env: env.clone().into_iter().collect(),
             }
         };
-
-        // Setup Alacritty's env, which modifies the current process's environment
-        alacritty_terminal::tty::setup_env();
 
         let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
@@ -475,7 +469,9 @@ impl TerminalBuilder {
             Err(error) => {
                 bail!(TerminalError {
                     directory: working_directory,
-                    shell,
+                    program: shell_params.as_ref().map(|params| params.program.clone()),
+                    args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                    title_override: terminal_title_override,
                     source: error,
                 });
             }
@@ -496,7 +492,9 @@ impl TerminalBuilder {
         let pty_tx = event_loop.channel();
         let _io_thread = event_loop.spawn(); // DANGER
 
-        let terminal = Terminal {
+        let no_task = task.is_none();
+
+        let mut terminal = Terminal {
             task,
             pty_tx: Notifier(pty_tx),
             completion_tx,
@@ -517,12 +515,32 @@ impl TerminalBuilder {
             hyperlink_regex_searches: RegexSearches::new(),
             vi_mode_enabled: false,
             is_ssh_terminal,
-            python_venv_directory,
             last_mouse_move_time: Instant::now(),
             last_hyperlink_search_position: None,
             #[cfg(windows)]
             shell_program,
+            activation_script: activation_script.clone(),
+            template: CopyTemplate {
+                shell,
+                env,
+                cursor_shape,
+                alternate_scroll,
+                max_scroll_history_lines,
+                window_id,
+            },
         };
+
+        if !activation_script.is_empty() && no_task {
+            for activation_script in activation_script {
+                terminal.input(activation_script.into_bytes());
+                terminal.write_to_pty(if cfg!(windows) {
+                    &b"\r\n"[..]
+                } else {
+                    &b"\n"[..]
+                });
+            }
+            terminal.clear();
+        }
 
         Ok(TerminalBuilder {
             terminal,
@@ -683,7 +701,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
-    completion_tx: Sender<Option<ExitStatus>>,
+    completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
     events: VecDeque<InternalEvent>,
@@ -695,7 +713,6 @@ pub struct Terminal {
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
-    pub python_venv_directory: Option<PathBuf>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -707,6 +724,17 @@ pub struct Terminal {
     last_hyperlink_search_position: Option<Point<Pixels>>,
     #[cfg(windows)]
     shell_program: Option<String>,
+    template: CopyTemplate,
+    activation_script: Vec<String>,
+}
+
+struct CopyTemplate {
+    shell: Shell,
+    env: HashMap<String, String>,
+    cursor_shape: CursorShape,
+    alternate_scroll: AlternateScroll,
+    max_scroll_history_lines: Option<usize>,
+    window_id: u64,
 }
 
 pub struct TaskState {
@@ -1114,11 +1142,6 @@ impl Terminal {
                     .push_back(InternalEvent::ScrollToAlacPoint(*search_match.start()));
             }
         }
-    }
-
-    pub fn clear_matches(&mut self) {
-        self.matches.clear();
-        self.set_selection(None);
     }
 
     pub fn select_matches(&mut self, matches: &[RangeInclusive<AlacPoint>]) {
@@ -1895,7 +1918,9 @@ impl Terminal {
             }
         });
 
-        self.completion_tx.try_send(e).ok();
+        if let Some(tx) = &self.completion_tx {
+            tx.try_send(e).ok();
+        }
         let task = match &mut self.task {
             Some(task) => task,
             None => {
@@ -1949,6 +1974,28 @@ impl Terminal {
 
     pub fn vi_mode_enabled(&self) -> bool {
         self.vi_mode_enabled
+    }
+
+    pub fn clone_builder(
+        &self,
+        cx: &App,
+        cwd: impl FnOnce() -> Option<PathBuf>,
+    ) -> Result<TerminalBuilder> {
+        let working_directory = self.working_directory().or_else(cwd);
+        TerminalBuilder::new(
+            working_directory,
+            None,
+            self.template.shell.clone(),
+            self.template.env.clone(),
+            self.template.cursor_shape,
+            self.template.alternate_scroll,
+            self.template.max_scroll_history_lines,
+            self.is_ssh_terminal,
+            self.template.window_id,
+            None,
+            cx,
+            self.activation_script.clone(),
+        )
     }
 }
 
@@ -2113,11 +2160,12 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
 }
 
 /// Generates the RGB channels in [0, 5] for a given index into the 6x6x6 ANSI color cube.
+///
 /// See: [8 bit ANSI color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
 ///
 /// Wikipedia gives a formula for calculating the index for a given color:
 ///
-/// ```
+/// ```text
 /// index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
 /// ```
 ///
@@ -2154,22 +2202,23 @@ mod tests {
     };
     use collections::HashMap;
     use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
-    use rand::{Rng, distributions::Alphanumeric, rngs::ThreadRng, thread_rng};
+    use rand::{Rng, distr, rngs::ThreadRng};
+    use task::ShellBuilder;
 
-    #[ignore = "Test is flaky on macOS, and doesn't run on Windows"]
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(None, &Shell::System)
+            .build(Some("echo".to_owned()), &["hello".to_owned()]);
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
                 None,
                 None,
-                None,
                 task::Shell::WithArguments {
-                    program: "echo".into(),
-                    args: vec!["hello".into()],
+                    program,
+                    args,
                     title_override: None,
                 },
                 HashMap::default(),
@@ -2178,8 +2227,9 @@ mod tests {
                 None,
                 false,
                 0,
-                completion_tx,
+                Some(completion_tx),
                 cx,
+                vec![],
             )
             .unwrap()
             .subscribe(cx)
@@ -2205,13 +2255,14 @@ mod tests {
 
     #[test]
     fn test_mouse_to_cell_test() {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         const ITERATIONS: usize = 10;
         const PRECISION: usize = 1000;
 
         for _ in 0..ITERATIONS {
-            let viewport_cells = rng.gen_range(15..20);
-            let cell_size = rng.gen_range(5 * PRECISION..20 * PRECISION) as f32 / PRECISION as f32;
+            let viewport_cells = rng.random_range(15..20);
+            let cell_size =
+                rng.random_range(5 * PRECISION..20 * PRECISION) as f32 / PRECISION as f32;
 
             let size = crate::TerminalBounds {
                 cell_width: Pixels::from(cell_size),
@@ -2233,8 +2284,8 @@ mod tests {
                 for col in 0..(viewport_cells - 1) {
                     let col = col as usize;
 
-                    let row_offset = rng.gen_range(0..PRECISION) as f32 / PRECISION as f32;
-                    let col_offset = rng.gen_range(0..PRECISION) as f32 / PRECISION as f32;
+                    let row_offset = rng.random_range(0..PRECISION) as f32 / PRECISION as f32;
+                    let col_offset = rng.random_range(0..PRECISION) as f32 / PRECISION as f32;
 
                     let mouse_pos = point(
                         Pixels::from(col as f32 * cell_size + col_offset),
@@ -2254,7 +2305,7 @@ mod tests {
 
     #[test]
     fn test_mouse_to_cell_clamp() {
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
 
         let size = crate::TerminalBounds {
             cell_width: Pixels::from(10.),
@@ -2292,7 +2343,7 @@ mod tests {
         for _ in 0..((size.height() / size.line_height()) as usize) {
             let mut row_vec = Vec::new();
             for _ in 0..((size.width() / size.cell_width()) as usize) {
-                let cell_char = rng.sample(Alphanumeric) as char;
+                let cell_char = rng.sample(distr::Alphanumeric) as char;
                 row_vec.push(cell_char)
             }
             cells.push(row_vec)

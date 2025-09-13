@@ -25,7 +25,7 @@ use crate::{
 };
 
 const JSON_RPC_VERSION: &str = "2.0";
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 // Standard JSON-RPC error codes
 pub const PARSE_ERROR: i32 = -32700;
@@ -60,6 +60,7 @@ pub(crate) struct Client {
     executor: BackgroundExecutor,
     #[allow(dead_code)]
     transport: Arc<dyn Transport>,
+    request_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -143,6 +144,7 @@ pub struct ModelContextServerBinary {
     pub executable: PathBuf,
     pub args: Vec<String>,
     pub env: Option<HashMap<String, String>>,
+    pub timeout: Option<u64>,
 }
 
 impl Client {
@@ -169,8 +171,9 @@ impl Client {
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(String::new);
 
+        let timeout = binary.timeout.map(Duration::from_millis);
         let transport = Arc::new(StdioTransport::new(binary, working_directory, &cx)?);
-        Self::new(server_id, server_name.into(), transport, cx)
+        Self::new(server_id, server_name.into(), transport, timeout, cx)
     }
 
     /// Creates a new Client instance for a context server.
@@ -178,6 +181,7 @@ impl Client {
         server_id: ContextServerId,
         server_name: Arc<str>,
         transport: Arc<dyn Transport>,
+        request_timeout: Option<Duration>,
         cx: AsyncApp,
     ) -> Result<Self> {
         let (outbound_tx, outbound_rx) = channel::unbounded::<String>();
@@ -237,6 +241,7 @@ impl Client {
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             transport,
+            request_timeout,
         })
     }
 
@@ -327,8 +332,13 @@ impl Client {
         method: &str,
         params: impl Serialize,
     ) -> Result<T> {
-        self.request_with(method, params, None, Some(REQUEST_TIMEOUT))
-            .await
+        self.request_with(
+            method,
+            params,
+            None,
+            self.request_timeout.or(Some(DEFAULT_REQUEST_TIMEOUT)),
+        )
+        .await
     }
 
     pub async fn request_with<T: DeserializeOwned>(

@@ -51,7 +51,7 @@ To configure, use
 
 ```json5
 "project_panel": {
-  "diagnostics": "all",
+  "show_diagnostics": "all",
 }
 ```
 

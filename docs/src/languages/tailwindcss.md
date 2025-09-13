@@ -6,9 +6,21 @@ Zed has built-in support for Tailwind CSS autocomplete, linting, and hover previ
 
 ## Configuration
 
-<!--
-TBD: Document Tailwind CSS Configuration
--->
+To configure the Tailwind CSS language server, refer [to the extension settings](https://github.com/tailwindlabs/tailwindcss-intellisense?tab=readme-ov-file#extension-settings) and add them to the `lsp` section of your `settings.json`:
+
+```jsonc
+{
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "experimental": {
+          "classRegex": ["[cls|className]\\s\\:\\=\\s\"([^\"]*)"],
+        },
+      },
+    },
+  },
+}
+```
 
 Languages which can be used with Tailwind CSS in Zed:
 

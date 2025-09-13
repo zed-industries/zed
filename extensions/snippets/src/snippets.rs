@@ -120,7 +120,9 @@ impl zed::Extension for SnippetExtension {
                     "snippets_first": true,
                     "feature_words": false,
                     "feature_snippets": true,
-                    "feature_paths": true
+                    // We disable `feature_paths` by default, because it's bad UX to assume that any `/` that is typed
+                    // is the start of a path.
+                    "feature_paths": false
                 })
             });
         Ok(Some(settings))

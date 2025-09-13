@@ -102,7 +102,7 @@ pub struct GetCompletionsDocument {
     pub tab_size: u32,
     pub indent_size: u32,
     pub insert_spaces: bool,
-    pub uri: lsp::Url,
+    pub uri: lsp::Uri,
     pub relative_path: String,
     pub position: lsp::Position,
     pub version: usize,

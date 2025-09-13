@@ -9,14 +9,14 @@
     "start": "node main.js"
   },
   "dependencies": {
-    "@octokit/rest": "^21.1.0",
-    "@slack/webhook": "^7.0.4",
+    "@octokit/rest": "^21.1.1",
+    "@slack/webhook": "^7.0.6",
     "date-fns": "^4.1.0",
-    "octokit": "^4.1.1"
+    "octokit": "^4.1.4"
   },
   "devDependencies": {
-    "@octokit/types": "^13.8.0",
-    "@slack/types": "^2.14.0",
+    "@octokit/types": "^13.10.0",
+    "@slack/types": "^2.16.0",
     "@tsconfig/node20": "20.1.5",
     "@tsconfig/strictest": "2.0.5",
     "typescript": "5.7.3"

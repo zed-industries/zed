@@ -175,6 +175,7 @@ impl GitCommitList {
     ) -> impl IntoElement {
         let commit_summary = CommitSummary {
             sha: commit.sha.clone(),
+            author_name: commit.author_name,
             subject: commit
                 .message
                 .as_ref()

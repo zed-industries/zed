@@ -22,7 +22,7 @@ pub const LEVEL_ENABLED_MAX_DEFAULT: log::LevelFilter = log::LevelFilter::Info;
 /// crate that the max level is everything, so that we can dynamically enable
 /// logs that are more verbose than this level without the `log` crate throwing
 /// them away before we see them
-static mut LEVEL_ENABLED_MAX_STATIC: log::LevelFilter = LEVEL_ENABLED_MAX_DEFAULT;
+static LEVEL_ENABLED_MAX_STATIC: AtomicU8 = AtomicU8::new(LEVEL_ENABLED_MAX_DEFAULT as u8);
 
 /// A cache of the true maximum log level that _could_ be printed. This is based
 /// on the maximally verbose level that is configured by the user, and is used
@@ -46,7 +46,7 @@ const DEFAULT_FILTERS: &[(&str, log::LevelFilter)] = &[
 
 pub fn init_env_filter(filter: env_config::EnvFilter) {
     if let Some(level_max) = filter.level_global {
-        unsafe { LEVEL_ENABLED_MAX_STATIC = level_max }
+        LEVEL_ENABLED_MAX_STATIC.store(level_max as u8, Ordering::Release)
     }
     if ENV_FILTER.set(filter).is_err() {
         panic!("Environment filter cannot be initialized twice");
@@ -54,7 +54,7 @@ pub fn init_env_filter(filter: env_config::EnvFilter) {
 }
 
 pub fn is_possibly_enabled_level(level: log::Level) -> bool {
-    level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Relaxed)
+    level as u8 <= LEVEL_ENABLED_MAX_CONFIG.load(Ordering::Acquire)
 }
 
 pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Level) -> bool {
@@ -66,7 +66,7 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
         // scope map
         return false;
     }
-    let is_enabled_by_default = level <= unsafe { LEVEL_ENABLED_MAX_STATIC };
+    let is_enabled_by_default = level as u8 <= LEVEL_ENABLED_MAX_STATIC.load(Ordering::Acquire);
     let global_scope_map = SCOPE_MAP.read().unwrap_or_else(|err| {
         SCOPE_MAP.clear_poison();
         err.into_inner()
@@ -92,13 +92,13 @@ pub fn is_scope_enabled(scope: &Scope, module_path: Option<&str>, level: log::Le
 pub fn refresh_from_settings(settings: &HashMap<String, String>) {
     let env_config = ENV_FILTER.get();
     let map_new = ScopeMap::new_from_settings_and_env(settings, env_config, DEFAULT_FILTERS);
-    let mut level_enabled_max = unsafe { LEVEL_ENABLED_MAX_STATIC };
+    let mut level_enabled_max = LEVEL_ENABLED_MAX_STATIC.load(Ordering::Acquire);
     for entry in &map_new.entries {
         if let Some(level) = entry.enabled {
-            level_enabled_max = level_enabled_max.max(level);
+            level_enabled_max = level_enabled_max.max(level as u8);
         }
     }
-    LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max as u8, Ordering::Release);
+    LEVEL_ENABLED_MAX_CONFIG.store(level_enabled_max, Ordering::Release);
 
     {
         let mut global_map = SCOPE_MAP.write().unwrap_or_else(|err| {

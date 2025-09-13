@@ -1,8 +1,12 @@
 use crate::connection::Connection;
 
 pub trait Domain: 'static {
-    fn name() -> &'static str;
-    fn migrations() -> &'static [&'static str];
+    const NAME: &str;
+    const MIGRATIONS: &[&str];
+
+    fn should_allow_migration_change(_index: usize, _old: &str, _new: &str) -> bool {
+        false
+    }
 }
 
 pub trait Migrator: 'static {
@@ -17,7 +21,11 @@ impl Migrator for () {
 
 impl<D: Domain> Migrator for D {
     fn migrate(connection: &Connection) -> anyhow::Result<()> {
-        connection.migrate(Self::name(), Self::migrations())
+        connection.migrate(
+            Self::NAME,
+            Self::MIGRATIONS,
+            Self::should_allow_migration_change,
+        )
     }
 }
 

@@ -17,4 +17,9 @@ commit = "8432ffe32ccd360534837256747beb5b1c82fca1"
 [[capabilities]]
 kind = "process:exec"
 command = "echo"
-args = ["hello!"]
+args = ["hello from a child process!"]
+
+[[capabilities]]
+kind = "process:exec"
+command = "cmd"
+args = ["/C", "echo", "hello from a child process!"]

@@ -771,7 +771,7 @@ mod tests {
     }
 
     fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {
-        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let chunk_count = rng.random_range(1..=cmp::min(input.len(), 50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
         chunk_indices.push(input.len());

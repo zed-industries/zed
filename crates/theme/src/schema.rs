@@ -38,6 +38,10 @@ fn ensure_non_opaque(color: Hsla) -> Hsla {
     }
 }
 
+fn ensure_opaque(color: Hsla) -> Hsla {
+    Hsla { a: 1.0, ..color }
+}
+
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AppearanceContent {
@@ -872,12 +876,15 @@ impl ThemeColorsContent {
                 .panel_overlay_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok())
-                .or(panel_background),
+                .or(panel_background.map(ensure_opaque)),
             panel_overlay_hover: self
                 .panel_overlay_hover
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok())
-                .or(element_hover),
+                .or(panel_background
+                    .zip(element_hover)
+                    .map(|(panel_bg, hover_bg)| panel_bg.blend(hover_bg))
+                    .map(ensure_opaque)),
             pane_focused_border: self
                 .pane_focused_border
                 .as_ref()

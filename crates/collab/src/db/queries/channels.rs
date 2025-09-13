@@ -618,14 +618,8 @@ impl Database {
         }
         drop(rows);
 
-        let latest_channel_messages = self.latest_channel_messages(&channel_ids, tx).await?;
-
         let observed_buffer_versions = self
             .observed_channel_buffer_changes(&channel_ids_by_buffer_id, user_id, tx)
-            .await?;
-
-        let observed_channel_messages = self
-            .observed_channel_messages(&channel_ids, user_id, tx)
             .await?;
 
         Ok(ChannelsForUser {
@@ -634,9 +628,7 @@ impl Database {
             invited_channels,
             channel_participants,
             latest_buffer_versions,
-            latest_channel_messages,
             observed_buffer_versions,
-            observed_channel_messages,
         })
     }
 

@@ -7,17 +7,18 @@ use gpui::{AnyElement, IntoElement, ParentElement, Styled};
 /// # Usage Example
 ///
 /// ```
-/// use ui::{Banner};
+/// use ui::prelude::*;
+/// use ui::{Banner, Button, IconName, IconPosition, IconSize, Label, Severity};
 ///
-///    Banner::new()
+/// Banner::new()
 ///     .severity(Severity::Success)
-///     .children(Label::new("This is a success message"))
+///     .children([Label::new("This is a success message")])
 ///     .action_slot(
 ///         Button::new("learn-more", "Learn More")
 ///             .icon(IconName::ArrowUpRight)
 ///             .icon_size(IconSize::Small)
-///             .icon_position(IconPosition::End),
-///     )
+///             .icon_position(IconPosition::End)
+///     );
 /// ```
 #[derive(IntoElement, RegisterComponent)]
 pub struct Banner {

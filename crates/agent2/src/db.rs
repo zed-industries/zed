@@ -18,6 +18,7 @@ use sqlez::{
 };
 use std::sync::Arc;
 use ui::{App, SharedString};
+use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
 pub type DbSummary = DetailedSummaryState;
@@ -201,9 +202,6 @@ impl DbThread {
     }
 }
 
-pub static ZED_STATELESS: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
     #[serde(rename = "json")]
@@ -266,8 +264,19 @@ impl ThreadsDatabase {
     }
 
     pub fn new(executor: BackgroundExecutor) -> Result<Self> {
-        let connection = if *ZED_STATELESS || cfg!(any(feature = "test-support", test)) {
+        let connection = if *ZED_STATELESS {
             Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else if cfg!(any(feature = "test-support", test)) {
+            // rust stores the name of the test on the current thread.
+            // We use this to automatically create a database that will
+            // be shared within the test (for the test_retrieve_old_thread)
+            // but not with concurrent tests.
+            let thread = std::thread::current();
+            let test_name = thread.name();
+            Connection::open_memory(Some(&format!(
+                "THREAD_FALLBACK_{}",
+                test_name.unwrap_or_default()
+            )))
         } else {
             let threads_dir = paths::data_dir().join("threads");
             std::fs::create_dir_all(&threads_dir)?;
@@ -419,7 +428,9 @@ mod tests {
     use http_client::FakeHttpClient;
     use language_model::Role;
     use project::Project;
+    use serde_json::json;
     use settings::SettingsStore;
+    use util::test::TempTree;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -440,6 +451,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_retrieving_old_thread(cx: &mut TestAppContext) {
+        let tree = TempTree::new(json!({}));
+        util::paths::set_home_dir(tree.path().into());
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;

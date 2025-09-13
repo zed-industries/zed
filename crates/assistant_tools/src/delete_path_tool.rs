@@ -35,7 +35,7 @@ impl Tool for DeletePathTool {
     }
 
     fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
-        false
+        true
     }
 
     fn may_perform_edits(&self) -> bool {

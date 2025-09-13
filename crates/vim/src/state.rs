@@ -7,8 +7,10 @@ use crate::{motion::Motion, object::Object};
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::{CommandPaletteFilter, CommandPaletteInterceptor};
-use db::define_connection;
-use db::sqlez_macros::sql;
+use db::{
+    sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+    sqlez_macros::sql,
+};
 use editor::display_map::{is_invisible, replacement};
 use editor::{Anchor, ClipboardSelection, Editor, MultiBuffer, ToPoint as EditorToPoint};
 use gpui::{
@@ -44,6 +46,7 @@ pub enum Mode {
     VisualLine,
     VisualBlock,
     HelixNormal,
+    HelixSelect,
 }
 
 impl Display for Mode {
@@ -56,6 +59,7 @@ impl Display for Mode {
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
             Mode::HelixNormal => write!(f, "HELIX NORMAL"),
+            Mode::HelixSelect => write!(f, "HELIX SELECT"),
         }
     }
 }
@@ -63,7 +67,7 @@ impl Display for Mode {
 impl Mode {
     pub fn is_visual(&self) -> bool {
         match self {
-            Self::Visual | Self::VisualLine | Self::VisualBlock => true,
+            Self::Visual | Self::VisualLine | Self::VisualBlock | Self::HelixSelect => true,
             Self::Normal | Self::Insert | Self::Replace | Self::HelixNormal => false,
         }
     }
@@ -132,6 +136,13 @@ pub enum Operator {
     ToggleComments,
     ReplaceWithRegister,
     Exchange,
+    HelixMatch,
+    HelixNext {
+        around: bool,
+    },
+    HelixPrevious {
+        around: bool,
+    },
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1018,6 +1029,9 @@ impl Operator {
             Operator::RecordRegister => "q",
             Operator::ReplayRegister => "@",
             Operator::ToggleComments => "gc",
+            Operator::HelixMatch => "helix_m",
+            Operator::HelixNext { .. } => "helix_next",
+            Operator::HelixPrevious { .. } => "helix_previous",
         }
     }
 
@@ -1039,6 +1053,9 @@ impl Operator {
             } => format!("^V{}", make_visible(prefix)),
             Operator::AutoIndent => "=".to_string(),
             Operator::ShellCommand => "=".to_string(),
+            Operator::HelixMatch => "m".to_string(),
+            Operator::HelixNext { .. } => "]".to_string(),
+            Operator::HelixPrevious { .. } => "[".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -1077,7 +1094,10 @@ impl Operator {
             | Operator::Object { .. }
             | Operator::ChangeSurrounds { target: None }
             | Operator::OppositeCase
-            | Operator::ToggleComments => false,
+            | Operator::ToggleComments
+            | Operator::HelixMatch
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => false,
         }
     }
 
@@ -1101,7 +1121,9 @@ impl Operator {
             | Operator::AddSurrounds { target: None }
             | Operator::ChangeSurrounds { target: None }
             | Operator::DeleteSurrounds
-            | Operator::Exchange => true,
+            | Operator::Exchange
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => true,
             Operator::Yank
             | Operator::Object { .. }
             | Operator::FindForward { .. }
@@ -1116,7 +1138,8 @@ impl Operator {
             | Operator::Jump { .. }
             | Operator::Register
             | Operator::RecordRegister
-            | Operator::ReplayRegister => false,
+            | Operator::ReplayRegister
+            | Operator::HelixMatch => false,
         }
     }
 }
@@ -1171,10 +1194,7 @@ impl PickerDelegate for RegistersViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let register_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let register_match = self.matches.get(ix)?;
 
         let mut output = String::new();
         let mut runs = Vec::new();
@@ -1563,10 +1583,7 @@ impl PickerDelegate for MarksViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mark_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let mark_match = self.matches.get(ix)?;
 
         let mut left_output = String::new();
         let mut left_runs = Vec::new();
@@ -1668,8 +1685,12 @@ impl MarksView {
     }
 }
 
-define_connection! (
-    pub static ref DB: VimDb<WorkspaceDb> = &[
+pub struct VimDb(ThreadSafeConnection);
+
+impl Domain for VimDb {
+    const NAME: &str = stringify!(VimDb);
+
+    const MIGRATIONS: &[&str] = &[
         sql! (
             CREATE TABLE vim_marks (
               workspace_id INTEGER,
@@ -1689,7 +1710,9 @@ define_connection! (
             ON vim_global_marks_paths(workspace_id, mark_name);
         ),
     ];
-);
+}
+
+db::static_connection!(DB, VimDb, [WorkspaceDb]);
 
 struct SerializedMark {
     path: Arc<Path>,

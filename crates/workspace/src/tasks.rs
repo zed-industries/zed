@@ -20,7 +20,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match self.project.read(cx).ssh_connection_state(cx) {
+        match self.project.read(cx).remote_connection_state(cx) {
             None | Some(ConnectionState::Connected) => {}
             Some(
                 ConnectionState::Connecting

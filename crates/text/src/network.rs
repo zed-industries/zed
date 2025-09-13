@@ -65,8 +65,8 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
                 for message in &messages {
                     // Insert one or more duplicates of this message, potentially *before* the previous
                     // message sent by this peer to simulate out-of-order delivery.
-                    for _ in 0..self.rng.gen_range(1..4) {
-                        let insertion_index = self.rng.gen_range(0..inbox.len() + 1);
+                    for _ in 0..self.rng.random_range(1..4) {
+                        let insertion_index = self.rng.random_range(0..inbox.len() + 1);
                         inbox.insert(
                             insertion_index,
                             Envelope {
@@ -85,7 +85,7 @@ impl<T: Clone, R: rand::Rng> Network<T, R> {
 
     pub fn receive(&mut self, receiver: ReplicaId) -> Vec<T> {
         let inbox = self.inboxes.get_mut(&receiver).unwrap();
-        let count = self.rng.gen_range(0..inbox.len() + 1);
+        let count = self.rng.random_range(0..inbox.len() + 1);
         inbox
             .drain(0..count)
             .map(|envelope| envelope.message)

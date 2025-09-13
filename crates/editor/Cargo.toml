@@ -94,6 +94,7 @@ zed_actions.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 ctor.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
@@ -119,3 +120,12 @@ util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+
+
+[[bench]]
+name = "editor_render"
+harness = false
+
+[[bench]]
+name = "display_map"
+harness = false

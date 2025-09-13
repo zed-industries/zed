@@ -351,7 +351,7 @@ impl WindowTextSystem {
     ///
     /// Note that this method can only shape a single line of text. It will panic
     /// if the text contains newlines. If you need to shape multiple lines of text,
-    /// use `TextLayout::shape_text` instead.
+    /// use [`Self::shape_text`] instead.
     pub fn shape_line(
         &self,
         text: SharedString,
@@ -517,7 +517,7 @@ impl WindowTextSystem {
 
     /// Layout the given line of text, at the given font_size.
     /// Subsets of the line can be styled independently with the `runs` parameter.
-    /// Generally, you should prefer to use `TextLayout::shape_line` instead, which
+    /// Generally, you should prefer to use [`Self::shape_line`] instead, which
     /// can be painted directly.
     pub fn layout_line<Text>(
         &self,
@@ -668,7 +668,7 @@ impl Display for FontStyle {
     }
 }
 
-/// A styled run of text, for use in [`TextLayout`].
+/// A styled run of text, for use in [`crate::TextLayout`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextRun {
     /// A number of utf8 bytes
@@ -694,7 +694,7 @@ impl TextRun {
     }
 }
 
-/// An identifier for a specific glyph, as returned by [`TextSystem::layout_line`].
+/// An identifier for a specific glyph, as returned by [`WindowTextSystem::layout_line`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct GlyphId(pub(crate) u32);

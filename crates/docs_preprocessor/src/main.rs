@@ -19,6 +19,10 @@ static KEYMAP_LINUX: LazyLock<KeymapFile> = LazyLock::new(|| {
     load_keymap("keymaps/default-linux.json").expect("Failed to load Linux keymap")
 });
 
+static KEYMAP_WINDOWS: LazyLock<KeymapFile> = LazyLock::new(|| {
+    load_keymap("keymaps/default-windows.json").expect("Failed to load Windows keymap")
+});
+
 static ALL_ACTIONS: LazyLock<Vec<ActionDef>> = LazyLock::new(dump_all_gpui_actions);
 
 const FRONT_MATTER_COMMENT: &str = "<!-- ZED_META {} -->";
@@ -216,6 +220,7 @@ fn find_binding(os: &str, action: &str) -> Option<String> {
     let keymap = match os {
         "macos" => &KEYMAP_MACOS,
         "linux" | "freebsd" => &KEYMAP_LINUX,
+        "windows" => &KEYMAP_WINDOWS,
         _ => unreachable!("Not a valid OS: {}", os),
     };
 

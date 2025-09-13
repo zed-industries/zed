@@ -1315,17 +1315,17 @@ mod tests {
 
     #[gpui::test(iterations = 100)]
     async fn test_random_indents(mut rng: StdRng) {
-        let len = rng.gen_range(1..=100);
+        let len = rng.random_range(1..=100);
         let new_text = util::RandomCharIter::new(&mut rng)
             .with_simple_text()
             .take(len)
             .collect::<String>();
         let new_text = new_text
             .split('\n')
-            .map(|line| format!("{}{}", " ".repeat(rng.gen_range(0..=8)), line))
+            .map(|line| format!("{}{}", " ".repeat(rng.random_range(0..=8)), line))
             .collect::<Vec<_>>()
             .join("\n");
-        let delta = IndentDelta::Spaces(rng.gen_range(-4..=4));
+        let delta = IndentDelta::Spaces(rng.random_range(-4i8..=4i8) as isize);
 
         let chunks = to_random_chunks(&mut rng, &new_text);
         let new_text_chunks = stream::iter(chunks.iter().enumerate().map(|(index, chunk)| {
@@ -1357,7 +1357,7 @@ mod tests {
     }
 
     fn to_random_chunks(rng: &mut StdRng, input: &str) -> Vec<String> {
-        let chunk_count = rng.gen_range(1..=cmp::min(input.len(), 50));
+        let chunk_count = rng.random_range(1..=cmp::min(input.len(), 50));
         let mut chunk_indices = (0..input.len()).choose_multiple(rng, chunk_count);
         chunk_indices.sort();
         chunk_indices.push(input.len());

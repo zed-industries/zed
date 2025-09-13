@@ -99,9 +99,9 @@ impl<T: Future> Future for WithTimeout<T> {
     fn poll(self: Pin<&mut Self>, cx: &mut task::Context) -> task::Poll<Self::Output> {
         // SAFETY: the fields of Timeout are private and we never move the future ourselves
         // And its already pinned since we are being polled (all futures need to be pinned to be polled)
-        let this = unsafe { self.get_unchecked_mut() };
-        let future = unsafe { Pin::new_unchecked(&mut this.future) };
-        let timer = unsafe { Pin::new_unchecked(&mut this.timer) };
+        let this = unsafe { &raw mut *self.get_unchecked_mut() };
+        let future = unsafe { Pin::new_unchecked(&mut (*this).future) };
+        let timer = unsafe { Pin::new_unchecked(&mut (*this).timer) };
 
         if let task::Poll::Ready(output) = future.poll(cx) {
             task::Poll::Ready(Ok(output))

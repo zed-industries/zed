@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
 use paths::{cursor_settings_file_paths, vscode_settings_file_paths};
 use serde_json::{Map, Value};
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VsCodeSettingsSource {
@@ -21,7 +21,7 @@ impl std::fmt::Display for VsCodeSettingsSource {
 
 pub struct VsCodeSettings {
     pub source: VsCodeSettingsSource,
-    pub path: Rc<Path>,
+    pub path: Arc<Path>,
     content: Map<String, Value>,
 }
 

@@ -13,14 +13,15 @@ pub enum BorderPosition {
 /// # Usage Example
 ///
 /// ```
-/// use ui::{Callout};
+/// use ui::prelude::*;
+/// use ui::{Button, Callout, IconName, Label, Severity};
 ///
-/// Callout::new()
+/// let callout = Callout::new()
 ///     .severity(Severity::Warning)
 ///     .icon(IconName::Warning)
-///     .title(Label::new("Be aware of your subscription!"))
-///     .description(Label::new("Your subscription is about to expire. Renew now!"))
-///     .actions_slot(Button::new("renew", "Renew Now"))
+///     .title("Be aware of your subscription!")
+///     .description("Your subscription is about to expire. Renew now!")
+///     .actions_slot(Button::new("renew", "Renew Now"));
 /// ```
 ///
 #[derive(IntoElement, RegisterComponent)]
@@ -132,6 +133,7 @@ impl RenderOnce for Callout {
 
         h_flex()
             .min_w_0()
+            .w_full()
             .p_2()
             .gap_2()
             .items_start()

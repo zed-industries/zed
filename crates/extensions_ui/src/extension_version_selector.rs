@@ -207,8 +207,8 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let version_match = &self.matches[ix];
-        let extension_version = &self.extension_versions[version_match.candidate_id];
+        let version_match = &self.matches.get(ix)?;
+        let extension_version = &self.extension_versions.get(version_match.candidate_id)?;
 
         let is_version_compatible =
             extension_host::is_version_compatible(ReleaseChannel::global(cx), extension_version);

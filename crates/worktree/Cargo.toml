@@ -55,6 +55,7 @@ collections = { workspace = true, features = ["test-support"] }
 git2.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client.workspace = true
+paths = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 rand.workspace = true
 rpc = { workspace = true, features = ["test-support"] }

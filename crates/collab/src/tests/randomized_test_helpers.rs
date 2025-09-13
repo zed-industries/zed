@@ -208,9 +208,9 @@ pub fn save_randomized_test_plan() {
 
 impl<T: RandomizedTest> TestPlan<T> {
     pub async fn new(server: &mut TestServer, mut rng: StdRng) -> Arc<Mutex<Self>> {
-        let allow_server_restarts = rng.gen_bool(0.7);
-        let allow_client_reconnection = rng.gen_bool(0.7);
-        let allow_client_disconnection = rng.gen_bool(0.1);
+        let allow_server_restarts = rng.random_bool(0.7);
+        let allow_client_reconnection = rng.random_bool(0.7);
+        let allow_client_disconnection = rng.random_bool(0.1);
 
         let mut users = Vec::new();
         for ix in 0..max_peers() {
@@ -407,7 +407,7 @@ impl<T: RandomizedTest> TestPlan<T> {
         }
 
         Some(loop {
-            break match self.rng.gen_range(0..100) {
+            break match self.rng.random_range(0..100) {
                 0..=29 if clients.len() < self.users.len() => {
                     let user = self
                         .users
@@ -421,13 +421,13 @@ impl<T: RandomizedTest> TestPlan<T> {
                     }
                 }
                 30..=34 if clients.len() > 1 && self.allow_client_disconnection => {
-                    let (client, cx) = &clients[self.rng.gen_range(0..clients.len())];
+                    let (client, cx) = &clients[self.rng.random_range(0..clients.len())];
                     let user_id = client.current_user_id(cx);
                     self.operation_ix += 1;
                     ServerOperation::RemoveConnection { user_id }
                 }
                 35..=39 if clients.len() > 1 && self.allow_client_reconnection => {
-                    let (client, cx) = &clients[self.rng.gen_range(0..clients.len())];
+                    let (client, cx) = &clients[self.rng.random_range(0..clients.len())];
                     let user_id = client.current_user_id(cx);
                     self.operation_ix += 1;
                     ServerOperation::BounceConnection { user_id }
@@ -439,12 +439,12 @@ impl<T: RandomizedTest> TestPlan<T> {
                 _ if !clients.is_empty() => {
                     let count = self
                         .rng
-                        .gen_range(1..10)
+                        .random_range(1..10)
                         .min(self.max_operations - self.operation_ix);
                     let batch_id = util::post_inc(&mut self.next_batch_id);
                     let mut user_ids = (0..count)
                         .map(|_| {
-                            let ix = self.rng.gen_range(0..clients.len());
+                            let ix = self.rng.random_range(0..clients.len());
                             let (client, cx) = &clients[ix];
                             client.current_user_id(cx)
                         })
@@ -453,7 +453,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                     ServerOperation::MutateClients {
                         user_ids,
                         batch_id,
-                        quiesce: self.rng.gen_bool(0.7),
+                        quiesce: self.rng.random_bool(0.7),
                     }
                 }
                 _ => continue,

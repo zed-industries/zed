@@ -48,7 +48,11 @@ impl AgentTool for WebSearchTool {
         acp::ToolKind::Fetch
     }
 
-    fn initial_title(&self, _input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        _input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         "Searching the Web".into()
     }
 
@@ -118,6 +122,7 @@ fn emit_update(response: &WebSearchResponse, event_stream: &ToolCallEventStream)
                         mime_type: None,
                         annotations: None,
                         size: None,
+                        meta: None,
                     }),
                 })
                 .collect(),

@@ -594,9 +594,10 @@ impl project::ProjectItem for NotebookItem {
                 };
 
                 let id = project
-                    .update(cx, |project, cx| project.entry_for_path(&path, cx))?
-                    .context("Entry not found")?
-                    .id;
+                    .update(cx, |project, cx| {
+                        project.entry_for_path(&path, cx).map(|entry| entry.id)
+                    })?
+                    .context("Entry not found")?;
 
                 cx.new(|_| NotebookItem {
                     path: abs_path,

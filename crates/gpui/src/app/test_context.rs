@@ -144,7 +144,7 @@ impl TestAppContext {
 
     /// Create a single TestAppContext, for non-multi-client tests
     pub fn single() -> Self {
-        let dispatcher = TestDispatcher::new(StdRng::from_entropy());
+        let dispatcher = TestDispatcher::new(StdRng::seed_from_u64(0));
         Self::build(dispatcher, None)
     }
 

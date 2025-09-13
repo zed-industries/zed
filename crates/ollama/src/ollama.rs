@@ -46,19 +46,19 @@ fn get_max_tokens(name: &str) -> u64 {
     /// Default context length for unknown models.
     const DEFAULT_TOKENS: u64 = 4096;
     /// Magic number. Lets many Ollama models work with ~16GB of ram.
+    /// Models that support context beyond 16k such as codestral (32k) or devstral (128k) will be clamped down to 16k
     const MAXIMUM_TOKENS: u64 = 16384;
 
     match name.split(':').next().unwrap() {
-        "phi" | "tinyllama" | "granite-code" => 2048,
-        "llama2" | "yi" | "vicuna" | "stablelm2" => 4096,
-        "llama3" | "gemma2" | "gemma" | "codegemma" | "starcoder" | "aya" => 8192,
+        "granite-code" | "phi" | "tinyllama" => 2048,
+        "llama2" | "stablelm2" | "vicuna" | "yi" => 4096,
+        "aya" | "codegemma" | "gemma" | "gemma2" | "llama3" | "starcoder" => 8192,
         "codellama" | "starcoder2" => 16384,
-        "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "qwen2.5-coder"
-        | "dolphin-mixtral" => 32768,
-        "magistral" => 40000,
-        "llama3.1" | "llama3.2" | "llama3.3" | "phi3" | "phi3.5" | "phi4" | "command-r"
-        | "qwen3" | "gemma3" | "deepseek-coder-v2" | "deepseek-v3" | "deepseek-r1" | "yi-coder"
-        | "devstral" | "gpt-oss" => 128000,
+        "codestral" | "dolphin-mixtral" | "llava" | "magistral" | "mistral" | "mixstral"
+        | "qwen2" | "qwen2.5-coder" => 32768,
+        "cogito" | "command-r" | "deepseek-coder-v2" | "deepseek-r1" | "deepseek-v3"
+        | "devstral" | "gemma3" | "gpt-oss" | "granite3.3" | "llama3.1" | "llama3.2"
+        | "llama3.3" | "mistral-nemo" | "phi3" | "phi3.5" | "phi4" | "qwen3" | "yi-coder" => 128000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
@@ -115,6 +115,10 @@ pub enum ChatMessage {
         images: Option<Vec<String>>,
     },
     System {
+        content: String,
+    },
+    Tool {
+        tool_name: String,
         content: String,
     },
 }

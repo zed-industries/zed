@@ -1,5 +1,6 @@
 use std::{
     env,
+    num::NonZero,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::Duration,
@@ -83,8 +84,12 @@ fn write_out(
             .expect("Stream has ended, callback cant hold the lock"),
     );
     let samples: Vec<f32> = SampleTypeConverter::<_, f32>::new(samples.into_iter()).collect();
-    let mut samples = SamplesBuffer::new(config.channels(), config.sample_rate().0, samples);
-    match rodio::output_to_wav(&mut samples, path) {
+    let mut samples = SamplesBuffer::new(
+        NonZero::new(config.channels()).expect("config channel is never zero"),
+        NonZero::new(config.sample_rate().0).expect("config sample_rate is never zero"),
+        samples,
+    );
+    match rodio::wav_to_file(&mut samples, path) {
         Ok(_) => Ok(()),
         Err(e) => Err(anyhow::anyhow!("Failed to write wav file: {}", e)),
     }

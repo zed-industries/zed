@@ -2,9 +2,7 @@ pub mod running;
 
 use crate::{StackTraceView, persistence::SerializedLayout, session::running::DebugTerminal};
 use dap::client::SessionId;
-use gpui::{
-    App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity,
-};
+use gpui::{App, Axis, Entity, EventEmitter, FocusHandle, Focusable, Task, WeakEntity};
 use project::debugger::session::Session;
 use project::worktree_store::WorktreeStore;
 use project::{Project, debugger::session::SessionQuirks};
@@ -24,13 +22,6 @@ pub struct DebugSession {
     stack_trace_view: OnceCell<Entity<StackTraceView>>,
     _worktree_store: WeakEntity<WorktreeStore>,
     workspace: WeakEntity<Workspace>,
-    _subscriptions: [Subscription; 1],
-}
-
-#[derive(Debug)]
-pub enum DebugPanelItemEvent {
-    Close,
-    Stopped { go_to_stack_frame: bool },
 }
 
 impl DebugSession {
@@ -59,9 +50,6 @@ impl DebugSession {
         let quirks = session.read(cx).quirks();
 
         cx.new(|cx| Self {
-            _subscriptions: [cx.subscribe(&running_state, |_, _, _, cx| {
-                cx.notify();
-            })],
             remote_id: None,
             running_state,
             quirks,
@@ -133,7 +121,7 @@ impl DebugSession {
     }
 }
 
-impl EventEmitter<DebugPanelItemEvent> for DebugSession {}
+impl EventEmitter<()> for DebugSession {}
 
 impl Focusable for DebugSession {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -142,7 +130,7 @@ impl Focusable for DebugSession {
 }
 
 impl Item for DebugSession {
-    type Event = DebugPanelItemEvent;
+    type Event = ();
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
         "Debugger".into()
     }

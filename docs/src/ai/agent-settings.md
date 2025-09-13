@@ -131,7 +131,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "always_allow_tool_actions": "true"
+    "always_allow_tool_actions": true
   }
 }
 ```
@@ -146,7 +146,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "single_file_review": "true"
+    "single_file_review": true
   }
 }
 ```
@@ -163,7 +163,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "play_sound_when_agent_done": "true"
+    "play_sound_when_agent_done": true
   }
 }
 ```
@@ -179,7 +179,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "use_modifier_to_send": "true"
+    "use_modifier_to_send": true
   }
 }
 ```
@@ -194,7 +194,7 @@ It is set to `true` by default, but if set to false, the card's height is capped
 ```json
 {
   "agent": {
-    "expand_edit_card": "false"
+    "expand_edit_card": false
   }
 }
 ```
@@ -207,7 +207,7 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 ```json
 {
   "agent": {
-    "expand_terminal_card": "false"
+    "expand_terminal_card": false
   }
 }
 ```
@@ -220,7 +220,7 @@ The default value is `true`.
 ```json
 {
   "agent": {
-    "enable_feedback": "false"
+    "enable_feedback": false
   }
 }
 ```

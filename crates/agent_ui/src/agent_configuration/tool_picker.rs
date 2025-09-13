@@ -318,7 +318,7 @@ impl PickerDelegate for ToolPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let item = &self.filtered_items[ix];
+        let item = &self.filtered_items.get(ix)?;
         match item {
             PickerItem::ContextServer { server_id, .. } => Some(
                 div()

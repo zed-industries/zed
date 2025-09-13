@@ -187,7 +187,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
             );
 
             update_settings_file::<BaseKeymap>(self.fs.clone(), cx, move |setting, _| {
-                *setting = Some(base_keymap)
+                setting.base_keymap = Some(base_keymap)
             });
         }
 
@@ -213,7 +213,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let keymap_match = &self.matches[ix];
+        let keymap_match = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)

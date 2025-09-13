@@ -171,9 +171,9 @@ impl TerminalOutput {
     ///
     /// Then append_text will be called twice, with the following arguments:
     ///
-    /// ```rust
-    /// terminal_output.append_text("Hello,")
-    /// terminal_output.append_text(" world!")
+    /// ```ignore
+    /// terminal_output.append_text("Hello,");
+    /// terminal_output.append_text(" world!");
     /// ```
     /// Resulting in a single output of "Hello, world!".
     ///

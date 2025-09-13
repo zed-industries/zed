@@ -298,6 +298,19 @@ impl ThemeRegistry {
             let mut file_suffixes = default_icon_theme.file_suffixes.clone();
             file_suffixes.extend(icon_theme.file_suffixes);
 
+            let mut named_directory_icons = default_icon_theme.named_directory_icons.clone();
+            named_directory_icons.extend(icon_theme.named_directory_icons.into_iter().map(
+                |(key, value)| {
+                    (
+                        key,
+                        DirectoryIcons {
+                            collapsed: value.collapsed.map(resolve_icon_path),
+                            expanded: value.expanded.map(resolve_icon_path),
+                        },
+                    )
+                },
+            ));
+
             let icon_theme = IconTheme {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: icon_theme.name.into(),
@@ -309,6 +322,7 @@ impl ThemeRegistry {
                     collapsed: icon_theme.directory_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.directory_icons.expanded.map(resolve_icon_path),
                 },
+                named_directory_icons,
                 chevron_icons: ChevronIcons {
                     collapsed: icon_theme.chevron_icons.collapsed.map(resolve_icon_path),
                     expanded: icon_theme.chevron_icons.expanded.map(resolve_icon_path),

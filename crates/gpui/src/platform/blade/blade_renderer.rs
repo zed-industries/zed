@@ -371,7 +371,7 @@ impl BladeRenderer {
             .or_else(|| {
                 [4, 2, 1]
                     .into_iter()
-                    .find(|count| context.gpu.supports_texture_sample_count(*count))
+                    .find(|&n| (context.gpu.capabilities().sample_count_mask & n) != 0)
             })
             .unwrap_or(1);
         let pipelines = BladePipelines::new(&context.gpu, surface.info(), path_sample_count);

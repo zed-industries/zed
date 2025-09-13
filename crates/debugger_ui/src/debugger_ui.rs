@@ -85,6 +85,10 @@ actions!(
         Rerun,
         /// Toggles expansion of the selected item in the debugger UI.
         ToggleExpandItem,
+        /// Toggle the user frame filter in the stack frame list
+        /// When toggled on, only frames from the user's code are shown
+        /// When toggled off, all frames are shown
+        ToggleUserFrames,
     ]
 );
 
@@ -272,10 +276,23 @@ pub fn init(cx: &mut App) {
                     }
                 })
                 .on_action({
+                    let active_item = active_item.clone();
                     move |_: &ToggleIgnoreBreakpoints, _, cx| {
                         active_item
                             .update(cx, |item, cx| item.toggle_ignore_breakpoints(cx))
                             .ok();
+                    }
+                })
+                .on_action(move |_: &ToggleUserFrames, _, cx| {
+                    if let Some((thread_status, stack_frame_list)) = active_item
+                        .read_with(cx, |item, cx| {
+                            (item.thread_status(cx), item.stack_frame_list().clone())
+                        })
+                        .ok()
+                    {
+                        stack_frame_list.update(cx, |stack_frame_list, cx| {
+                            stack_frame_list.toggle_frame_filter(thread_status, cx);
+                        })
                     }
                 })
             });

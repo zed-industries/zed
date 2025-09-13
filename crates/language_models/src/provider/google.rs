@@ -842,7 +842,7 @@ impl ConfigurationView {
         Self {
             api_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("AIzaSy...", cx);
+                editor.set_placeholder_text("AIzaSy...", window, cx);
                 editor
             }),
             target_agent,
@@ -921,9 +921,9 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match self.target_agent {
-                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Google AI",
-                    ConfigurationViewTargetAgent::Other(agent) => agent,
+                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match &self.target_agent {
+                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Google AI".into(),
+                    ConfigurationViewTargetAgent::Other(agent) => agent.clone(),
                 })))
                 .child(
                     List::new()

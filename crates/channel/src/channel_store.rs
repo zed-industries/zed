@@ -1,6 +1,6 @@
 mod channel_index;
 
-use crate::{ChannelMessage, channel_buffer::ChannelBuffer, channel_chat::ChannelChat};
+use crate::channel_buffer::ChannelBuffer;
 use anyhow::{Context as _, Result, anyhow};
 use channel_index::ChannelIndex;
 use client::{ChannelId, Client, ClientSettings, Subscription, User, UserId, UserStore};
@@ -41,7 +41,6 @@ pub struct ChannelStore {
     outgoing_invites: HashSet<(ChannelId, UserId)>,
     update_channels_tx: mpsc::UnboundedSender<proto::UpdateChannels>,
     opened_buffers: HashMap<ChannelId, OpenEntityHandle<ChannelBuffer>>,
-    opened_chats: HashMap<ChannelId, OpenEntityHandle<ChannelChat>>,
     client: Arc<Client>,
     did_subscribe: bool,
     channels_loaded: (watch::Sender<bool>, watch::Receiver<bool>),
@@ -63,10 +62,8 @@ pub struct Channel {
 
 #[derive(Default, Debug)]
 pub struct ChannelState {
-    latest_chat_message: Option<u64>,
     latest_notes_version: NotesVersion,
     observed_notes_version: NotesVersion,
-    observed_chat_message: Option<u64>,
     role: Option<ChannelRole>,
 }
 
@@ -196,7 +193,6 @@ impl ChannelStore {
             channel_participants: Default::default(),
             outgoing_invites: Default::default(),
             opened_buffers: Default::default(),
-            opened_chats: Default::default(),
             update_channels_tx,
             client,
             user_store,
@@ -362,87 +358,10 @@ impl ChannelStore {
         )
     }
 
-    pub fn fetch_channel_messages(
-        &self,
-        message_ids: Vec<u64>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Vec<ChannelMessage>>> {
-        let request = if message_ids.is_empty() {
-            None
-        } else {
-            Some(
-                self.client
-                    .request(proto::GetChannelMessagesById { message_ids }),
-            )
-        };
-        cx.spawn(async move |this, cx| {
-            if let Some(request) = request {
-                let response = request.await?;
-                let this = this.upgrade().context("channel store dropped")?;
-                let user_store = this.read_with(cx, |this, _| this.user_store.clone())?;
-                ChannelMessage::from_proto_vec(response.messages, &user_store, cx).await
-            } else {
-                Ok(Vec::new())
-            }
-        })
-    }
-
     pub fn has_channel_buffer_changed(&self, channel_id: ChannelId) -> bool {
         self.channel_states
             .get(&channel_id)
             .is_some_and(|state| state.has_channel_buffer_changed())
-    }
-
-    pub fn has_new_messages(&self, channel_id: ChannelId) -> bool {
-        self.channel_states
-            .get(&channel_id)
-            .is_some_and(|state| state.has_new_messages())
-    }
-
-    pub fn set_acknowledged_message_id(&mut self, channel_id: ChannelId, message_id: Option<u64>) {
-        if let Some(state) = self.channel_states.get_mut(&channel_id) {
-            state.latest_chat_message = message_id;
-        }
-    }
-
-    pub fn last_acknowledge_message_id(&self, channel_id: ChannelId) -> Option<u64> {
-        self.channel_states.get(&channel_id).and_then(|state| {
-            if let Some(last_message_id) = state.latest_chat_message
-                && state
-                    .last_acknowledged_message_id()
-                    .is_some_and(|id| id < last_message_id)
-            {
-                return state.last_acknowledged_message_id();
-            }
-
-            None
-        })
-    }
-
-    pub fn acknowledge_message_id(
-        &mut self,
-        channel_id: ChannelId,
-        message_id: u64,
-        cx: &mut Context<Self>,
-    ) {
-        self.channel_states
-            .entry(channel_id)
-            .or_default()
-            .acknowledge_message_id(message_id);
-        cx.notify();
-    }
-
-    pub fn update_latest_message_id(
-        &mut self,
-        channel_id: ChannelId,
-        message_id: u64,
-        cx: &mut Context<Self>,
-    ) {
-        self.channel_states
-            .entry(channel_id)
-            .or_default()
-            .update_latest_message_id(message_id);
-        cx.notify();
     }
 
     pub fn acknowledge_notes_version(
@@ -471,23 +390,6 @@ impl ChannelStore {
             .or_default()
             .update_latest_notes_version(epoch, version);
         cx.notify()
-    }
-
-    pub fn open_channel_chat(
-        &mut self,
-        channel_id: ChannelId,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<ChannelChat>>> {
-        let client = self.client.clone();
-        let user_store = self.user_store.clone();
-        let this = cx.entity();
-        self.open_channel_resource(
-            channel_id,
-            "chat",
-            |this| &mut this.opened_chats,
-            async move |channel, cx| ChannelChat::new(channel, this, user_store, client, cx).await,
-            cx,
-        )
     }
 
     /// Asynchronously open a given resource associated with a channel.
@@ -931,13 +833,6 @@ impl ChannelStore {
                     cx,
                 );
             }
-            for message_id in message.payload.observed_channel_message_id {
-                this.acknowledge_message_id(
-                    ChannelId(message_id.channel_id),
-                    message_id.message_id,
-                    cx,
-                );
-            }
             for membership in message.payload.channel_memberships {
                 if let Some(role) = ChannelRole::from_i32(membership.role) {
                     this.channel_states
@@ -956,16 +851,6 @@ impl ChannelStore {
         self.channel_index.clear();
         self.outgoing_invites.clear();
         self.disconnect_channel_buffers_task.take();
-
-        for chat in self.opened_chats.values() {
-            if let OpenEntityHandle::Open(chat) = chat
-                && let Some(chat) = chat.upgrade()
-            {
-                chat.update(cx, |chat, cx| {
-                    chat.rejoin(cx);
-                });
-            }
-        }
 
         let mut buffer_versions = Vec::new();
         for buffer in self.opened_buffers.values() {
@@ -1094,7 +979,6 @@ impl ChannelStore {
         self.channel_participants.clear();
         self.outgoing_invites.clear();
         self.opened_buffers.clear();
-        self.opened_chats.clear();
         self.disconnect_channel_buffers_task = None;
         self.channel_states.clear();
     }
@@ -1131,7 +1015,6 @@ impl ChannelStore {
 
         let channels_changed = !payload.channels.is_empty()
             || !payload.delete_channels.is_empty()
-            || !payload.latest_channel_message_ids.is_empty()
             || !payload.latest_channel_buffer_versions.is_empty();
 
         if channels_changed {
@@ -1179,13 +1062,6 @@ impl ChannelStore {
                     .entry(ChannelId(latest_buffer_version.channel_id))
                     .or_default()
                     .update_latest_notes_version(latest_buffer_version.epoch, &version)
-            }
-
-            for latest_channel_message in payload.latest_channel_message_ids {
-                self.channel_states
-                    .entry(ChannelId(latest_channel_message.channel_id))
-                    .or_default()
-                    .update_latest_message_id(latest_channel_message.message_id);
             }
 
             self.channels_loaded.0.try_send(true).log_err();
@@ -1249,29 +1125,6 @@ impl ChannelState {
                     .latest_notes_version
                     .version
                     .changed_since(&self.observed_notes_version.version))
-    }
-
-    fn has_new_messages(&self) -> bool {
-        let latest_message_id = self.latest_chat_message;
-        let observed_message_id = self.observed_chat_message;
-
-        latest_message_id.is_some_and(|latest_message_id| {
-            latest_message_id > observed_message_id.unwrap_or_default()
-        })
-    }
-
-    fn last_acknowledged_message_id(&self) -> Option<u64> {
-        self.observed_chat_message
-    }
-
-    fn acknowledge_message_id(&mut self, message_id: u64) {
-        let observed = self.observed_chat_message.get_or_insert(message_id);
-        *observed = (*observed).max(message_id);
-    }
-
-    fn update_latest_message_id(&mut self, message_id: u64) {
-        self.latest_chat_message =
-            Some(message_id.max(self.latest_chat_message.unwrap_or_default()));
     }
 
     fn acknowledge_notes_version(&mut self, epoch: u64, version: &clock::Global) {

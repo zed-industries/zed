@@ -43,7 +43,7 @@ If you wanted to only search Markdown files add `*.md` to the "Include" search f
 
 ### Case insensitive matching
 
-Globs in Zed are case-sensitive, so `*.c` will not match `main.C` (even on case-insensitive filesystems like HFS+/APFS on MacOS). Instead use brackets to match characters. So instead of `*.c` use `*.[cC]`.
+Globs in Zed are case-sensitive, so `*.c` will not match `main.C` (even on case-insensitive filesystems like HFS+/APFS on macOS). Instead use brackets to match characters. So instead of `*.c` use `*.[cC]`.
 
 ### Matching directories
 
@@ -70,7 +70,7 @@ Alternatively, if in your Zed settings you wanted a [`file_types`](./configuring
 
 While globs in Zed are implemented as described above, when writing code using globs in other languages, please reference your platform's glob documentation:
 
-- [MacOS fnmatch](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/fnmatch.3.html) (BSD C Standard Library)
+- [macOS fnmatch](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/fnmatch.3.html) (BSD C Standard Library)
 - [Linux fnmatch](https://www.gnu.org/software/libc/manual/html_node/Wildcard-Matching.html) (GNU C Standard Library)
 - [POSIX fnmatch](https://pubs.opengroup.org/onlinepubs/9699919799/functions/fnmatch.html) (POSIX Specification)
 - [node-glob](https://github.com/isaacs/node-glob) (Node.js `glob` package)

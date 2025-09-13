@@ -37,6 +37,7 @@ use std::{
     sync::Arc,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use util::paths::SanitizedPath;
 use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
@@ -607,7 +608,6 @@ impl WasmHost {
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
-
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
@@ -666,19 +666,19 @@ impl WasmHost {
 
         let file_perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
+        let path = SanitizedPath::new(&extension_work_dir).to_string();
+        #[cfg(target_os = "windows")]
+        let path = path.replace('\\', "/");
 
-        Ok(wasi::WasiCtxBuilder::new()
-            .inherit_stdio()
-            .preopened_dir(&extension_work_dir, ".", dir_perms, file_perms)?
-            .preopened_dir(
-                &extension_work_dir,
-                extension_work_dir.to_string_lossy(),
-                dir_perms,
-                file_perms,
-            )?
-            .env("PWD", extension_work_dir.to_string_lossy())
-            .env("RUST_BACKTRACE", "full")
-            .build())
+        let mut ctx = wasi::WasiCtxBuilder::new();
+        ctx.inherit_stdio()
+            .env("PWD", &path)
+            .env("RUST_BACKTRACE", "full");
+
+        ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
+        ctx.preopened_dir(&path, &path, dir_perms, file_perms)?;
+
+        Ok(ctx.build())
     }
 
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {

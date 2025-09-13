@@ -1139,7 +1139,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
@@ -1208,7 +1208,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;
@@ -1277,7 +1277,7 @@ mod tests {
         );
         while !new_text.is_empty() {
             let max_len = cmp::min(new_text.len(), 10);
-            let len = rng.gen_range(1..=max_len);
+            let len = rng.random_range(1..=max_len);
             let (chunk, suffix) = new_text.split_at(len);
             chunks_tx.unbounded_send(chunk.to_string()).unwrap();
             new_text = suffix;

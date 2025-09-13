@@ -764,7 +764,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let network = Arc::new(Mutex::new(Network::new(rng.clone())));
     let mut contexts = Vec::new();
 
-    let num_peers = rng.gen_range(min_peers..=max_peers);
+    let num_peers = rng.random_range(min_peers..=max_peers);
     let context_id = ContextId::new();
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     for i in 0..num_peers {
@@ -806,10 +806,10 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
         || !network.lock().is_idle()
         || network.lock().contains_disconnected_peers()
     {
-        let context_index = rng.gen_range(0..contexts.len());
+        let context_index = rng.random_range(0..contexts.len());
         let context = &contexts[context_index];
 
-        match rng.gen_range(0..100) {
+        match rng.random_range(0..100) {
             0..=29 if mutation_count > 0 => {
                 log::info!("Context {}: edit buffer", context_index);
                 context.update(cx, |context, cx| {
@@ -874,10 +874,10 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         merge_same_roles: true,
                     })];
 
-                    let num_sections = rng.gen_range(0..=3);
+                    let num_sections = rng.random_range(0..=3);
                     let mut section_start = 0;
                     for _ in 0..num_sections {
-                        let mut section_end = rng.gen_range(section_start..=output_text.len());
+                        let mut section_end = rng.random_range(section_start..=output_text.len());
                         while !output_text.is_char_boundary(section_end) {
                             section_end += 1;
                         }
@@ -924,7 +924,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
             75..=84 if mutation_count > 0 => {
                 context.update(cx, |context, cx| {
                     if let Some(message) = context.messages(cx).choose(&mut rng) {
-                        let new_status = match rng.gen_range(0..3) {
+                        let new_status = match rng.random_range(0..3) {
                             0 => MessageStatus::Done,
                             1 => MessageStatus::Pending,
                             _ => MessageStatus::Error(SharedString::from("Random error")),
@@ -971,7 +971,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 
                     network.lock().broadcast(replica_id, ops_to_send);
                     context.update(cx, |context, cx| context.apply_ops(ops_to_receive, cx));
-                } else if rng.gen_bool(0.1) && replica_id != 0 {
+                } else if rng.random_bool(0.1) && replica_id != 0 {
                     log::info!("Context {}: disconnecting", context_index);
                     network.lock().disconnect_peer(replica_id);
                 } else if network.lock().has_unreceived(replica_id) {

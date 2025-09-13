@@ -13,11 +13,8 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
-use dap::{
-    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
-    client::SessionId, debugger_settings::DebuggerSettings,
-};
 use dap::{DapRegistry, StartDebuggingRequestArguments};
+use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::Editor;
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
@@ -45,23 +42,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::ToggleFocus;
-
-pub enum DebugPanelEvent {
-    Exited(SessionId),
-    Terminated(SessionId),
-    Stopped {
-        client_id: SessionId,
-        event: StoppedEvent,
-        go_to_stack_frame: bool,
-    },
-    Thread((SessionId, ThreadEvent)),
-    Continued((SessionId, ContinuedEvent)),
-    Output((SessionId, OutputEvent)),
-    Module((SessionId, ModuleEvent)),
-    LoadedSource((SessionId, LoadedSourceEvent)),
-    ClientShutdown(SessionId),
-    CapabilitiesChanged(SessionId),
-}
 
 pub struct DebugPanel {
     size: Pixels,
@@ -1407,7 +1387,6 @@ async fn register_session_inner(
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
-impl EventEmitter<DebugPanelEvent> for DebugPanel {}
 
 impl Focusable for DebugPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {

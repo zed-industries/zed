@@ -92,91 +92,97 @@ impl Connection {
         let mut remaining_sql = sql.as_c_str();
         let sql_start = remaining_sql.as_ptr();
 
-        unsafe {
-            let mut alter_table = None;
-            while {
-                let remaining_sql_str = remaining_sql.to_str().unwrap().trim();
-                let any_remaining_sql = remaining_sql_str != ";" && !remaining_sql_str.is_empty();
-                if any_remaining_sql {
-                    alter_table = parse_alter_table(remaining_sql_str);
-                }
-                any_remaining_sql
-            } {
-                let mut raw_statement = ptr::null_mut::<sqlite3_stmt>();
-                let mut remaining_sql_ptr = ptr::null();
-
-                let (res, offset, message, _conn) =
-                    if let Some((table_to_alter, column)) = alter_table {
-                        // ALTER TABLE is a weird statement. When preparing the statement the table's
-                        // existence is checked *before* syntax checking any other part of the statement.
-                        // Therefore, we need to make sure that the table has been created before calling
-                        // prepare. As we don't want to trash whatever database this is connected to, we
-                        // create a new in-memory DB to test.
-
-                        let temp_connection = Connection::open_memory(None);
-                        //This should always succeed, if it doesn't then you really should know about it
-                        temp_connection
-                            .exec(&format!("CREATE TABLE {table_to_alter}({column})"))
-                            .unwrap()()
-                        .unwrap();
-
-                        sqlite3_prepare_v2(
-                            temp_connection.sqlite3,
-                            remaining_sql.as_ptr(),
-                            -1,
-                            &mut raw_statement,
-                            &mut remaining_sql_ptr,
-                        );
-
-                        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-                        let offset = sqlite3_error_offset(temp_connection.sqlite3);
-
-                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                        let offset = 0;
-
-                        (
-                            sqlite3_errcode(temp_connection.sqlite3),
-                            offset,
-                            sqlite3_errmsg(temp_connection.sqlite3),
-                            Some(temp_connection),
-                        )
-                    } else {
-                        sqlite3_prepare_v2(
-                            self.sqlite3,
-                            remaining_sql.as_ptr(),
-                            -1,
-                            &mut raw_statement,
-                            &mut remaining_sql_ptr,
-                        );
-
-                        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-                        let offset = sqlite3_error_offset(self.sqlite3);
-
-                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-                        let offset = 0;
-
-                        (
-                            sqlite3_errcode(self.sqlite3),
-                            offset,
-                            sqlite3_errmsg(self.sqlite3),
-                            None,
-                        )
-                    };
-
-                sqlite3_finalize(raw_statement);
-
-                if res == 1 && offset >= 0 {
-                    let sub_statement_correction =
-                        remaining_sql.as_ptr() as usize - sql_start as usize;
-                    let err_msg =
-                        String::from_utf8_lossy(CStr::from_ptr(message as *const _).to_bytes())
-                            .into_owned();
-
-                    return Some((err_msg, offset as usize + sub_statement_correction));
-                }
-                remaining_sql = CStr::from_ptr(remaining_sql_ptr);
-                alter_table = None;
+        let mut alter_table = None;
+        while {
+            let remaining_sql_str = remaining_sql.to_str().unwrap().trim();
+            let any_remaining_sql = remaining_sql_str != ";" && !remaining_sql_str.is_empty();
+            if any_remaining_sql {
+                alter_table = parse_alter_table(remaining_sql_str);
             }
+            any_remaining_sql
+        } {
+            let mut raw_statement = ptr::null_mut::<sqlite3_stmt>();
+            let mut remaining_sql_ptr = ptr::null();
+
+            let (res, offset, message, _conn) = if let Some((table_to_alter, column)) = alter_table
+            {
+                // ALTER TABLE is a weird statement. When preparing the statement the table's
+                // existence is checked *before* syntax checking any other part of the statement.
+                // Therefore, we need to make sure that the table has been created before calling
+                // prepare. As we don't want to trash whatever database this is connected to, we
+                // create a new in-memory DB to test.
+
+                let temp_connection = Connection::open_memory(None);
+                //This should always succeed, if it doesn't then you really should know about it
+                temp_connection
+                    .exec(&format!("CREATE TABLE {table_to_alter}({column})"))
+                    .unwrap()()
+                .unwrap();
+
+                unsafe {
+                    sqlite3_prepare_v2(
+                        temp_connection.sqlite3,
+                        remaining_sql.as_ptr(),
+                        -1,
+                        &mut raw_statement,
+                        &mut remaining_sql_ptr,
+                    )
+                };
+
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                let offset = unsafe { sqlite3_error_offset(temp_connection.sqlite3) };
+
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                let offset = 0;
+
+                unsafe {
+                    (
+                        sqlite3_errcode(temp_connection.sqlite3),
+                        offset,
+                        sqlite3_errmsg(temp_connection.sqlite3),
+                        Some(temp_connection),
+                    )
+                }
+            } else {
+                unsafe {
+                    sqlite3_prepare_v2(
+                        self.sqlite3,
+                        remaining_sql.as_ptr(),
+                        -1,
+                        &mut raw_statement,
+                        &mut remaining_sql_ptr,
+                    )
+                };
+
+                #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+                let offset = unsafe { sqlite3_error_offset(self.sqlite3) };
+
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+                let offset = 0;
+
+                unsafe {
+                    (
+                        sqlite3_errcode(self.sqlite3),
+                        offset,
+                        sqlite3_errmsg(self.sqlite3),
+                        None,
+                    )
+                }
+            };
+
+            unsafe { sqlite3_finalize(raw_statement) };
+
+            if res == 1 && offset >= 0 {
+                let sub_statement_correction = remaining_sql.as_ptr() as usize - sql_start as usize;
+                let err_msg = String::from_utf8_lossy(unsafe {
+                    CStr::from_ptr(message as *const _).to_bytes()
+                })
+                .into_owned();
+
+                return Some((err_msg, offset as usize + sub_statement_correction));
+            }
+            remaining_sql = unsafe { CStr::from_ptr(remaining_sql_ptr) };
+            alter_table = None;
         }
         None
     }

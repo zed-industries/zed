@@ -251,7 +251,7 @@ You can toggle language server support globally or per-language:
   }
 ```
 
-This disables the language server for Markdown files, which can be useful for performance in large documentation projects. You can configure this globally in your `~/.zed/settings.json` or inside a `.zed/settings.json` in your project directory.
+This disables the language server for Markdown files, which can be useful for performance in large documentation projects. You can configure this globally in your `~/.config/zed/settings.json` or inside a `.zed/settings.json` in your project directory.
 
 ## Formatting and Linting
 
@@ -439,7 +439,7 @@ When renaming a symbol that spans multiple files, Zed will open a preview in a m
 
 ### Hover Information
 
-Use the `editor: Show Hover` command to display information about the symbol under the cursor. This often includes type information, documentation, and links to relevant resources.
+Use the `editor: Hover` command to display information about the symbol under the cursor. This often includes type information, documentation, and links to relevant resources.
 
 ### Workspace Symbol Search
 

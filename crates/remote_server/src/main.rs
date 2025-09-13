@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
+use remote_server::Commands;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -21,105 +22,34 @@ struct Cli {
     printenv: bool,
 }
 
-#[derive(Subcommand)]
-enum Commands {
-    Run {
-        #[arg(long)]
-        log_file: PathBuf,
-        #[arg(long)]
-        pid_file: PathBuf,
-        #[arg(long)]
-        stdin_socket: PathBuf,
-        #[arg(long)]
-        stdout_socket: PathBuf,
-        #[arg(long)]
-        stderr_socket: PathBuf,
-    },
-    Proxy {
-        #[arg(long)]
-        reconnect: bool,
-        #[arg(long)]
-        identifier: String,
-    },
-    Version,
-}
-
 #[cfg(windows)]
 fn main() {
     unimplemented!()
 }
 
 #[cfg(not(windows))]
-fn main() {
-    use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
-    use remote::proxy::ProxyLaunchError;
-    use remote_server::unix::{execute_proxy, execute_run};
-
+fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     if let Some(socket_path) = &cli.askpass {
         askpass::main(socket_path);
-        return;
+        return Ok(());
     }
 
     if let Some(socket) = &cli.crash_handler {
         crashes::crash_server(socket.as_path());
-        return;
+        return Ok(());
     }
 
     if cli.printenv {
         util::shell_env::print_env();
-        return;
+        return Ok(());
     }
 
-    let result = match cli.command {
-        Some(Commands::Run {
-            log_file,
-            pid_file,
-            stdin_socket,
-            stdout_socket,
-            stderr_socket,
-        }) => execute_run(
-            log_file,
-            pid_file,
-            stdin_socket,
-            stdout_socket,
-            stderr_socket,
-        ),
-        Some(Commands::Proxy {
-            identifier,
-            reconnect,
-        }) => match execute_proxy(identifier, reconnect) {
-            Ok(_) => Ok(()),
-            Err(err) => {
-                if let Some(err) = err.downcast_ref::<ProxyLaunchError>() {
-                    std::process::exit(err.to_exit_code());
-                }
-                Err(err)
-            }
-        },
-        Some(Commands::Version) => {
-            let release_channel = *RELEASE_CHANNEL;
-            match release_channel {
-                ReleaseChannel::Stable | ReleaseChannel::Preview => {
-                    println!("{}", env!("ZED_PKG_VERSION"))
-                }
-                ReleaseChannel::Nightly | ReleaseChannel::Dev => {
-                    println!(
-                        "{}",
-                        option_env!("ZED_COMMIT_SHA").unwrap_or(release_channel.dev_name())
-                    )
-                }
-            };
-            std::process::exit(0);
-        }
-        None => {
-            eprintln!("usage: remote <run|proxy|version>");
-            std::process::exit(1);
-        }
-    };
-    if let Err(error) = result {
-        log::error!("exiting due to error: {}", error);
+    if let Some(command) = cli.command {
+        remote_server::run(command)
+    } else {
+        eprintln!("usage: remote <run|proxy|version>");
         std::process::exit(1);
     }
 }

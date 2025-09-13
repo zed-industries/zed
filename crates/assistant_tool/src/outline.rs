@@ -1,10 +1,11 @@
 use action_log::ActionLog;
 use anyhow::{Context as _, Result};
 use gpui::{AsyncApp, Entity};
-use language::{OutlineItem, ParseStatus};
+use language::{Buffer, OutlineItem, ParseStatus};
 use project::Project;
 use regex::Regex;
 use std::fmt::Write;
+use std::path::Path;
 use text::Point;
 
 /// For files over this size, instead of reading them (or including them in context),
@@ -41,9 +42,7 @@ pub async fn file_outline(
     }
 
     let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-    let outline = snapshot
-        .outline(None)
-        .context("No outline information available for this file at path {path}")?;
+    let outline = snapshot.outline(None);
 
     render_outline(
         outline
@@ -129,4 +128,68 @@ fn render_entries(
     }
 
     entries_rendered
+}
+
+/// Result of getting buffer content, which can be either full content or an outline.
+pub struct BufferContent {
+    /// The actual content (either full text or outline)
+    pub text: String,
+    /// Whether this is an outline (true) or full content (false)
+    pub is_outline: bool,
+}
+
+/// Returns either the full content of a buffer or its outline, depending on size.
+/// For files larger than AUTO_OUTLINE_SIZE, returns an outline with a header.
+/// For smaller files, returns the full content.
+pub async fn get_buffer_content_or_outline(
+    buffer: Entity<Buffer>,
+    path: Option<&Path>,
+    cx: &AsyncApp,
+) -> Result<BufferContent> {
+    let file_size = buffer.read_with(cx, |buffer, _| buffer.text().len())?;
+
+    if file_size > AUTO_OUTLINE_SIZE {
+        // For large files, use outline instead of full content
+        // Wait until the buffer has been fully parsed, so we can read its outline
+        let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
+        while *parse_status.borrow() != ParseStatus::Idle {
+            parse_status.changed().await?;
+        }
+
+        let outline_items = buffer.read_with(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            snapshot
+                .outline(None)
+                .items
+                .into_iter()
+                .map(|item| item.to_point(&snapshot))
+                .collect::<Vec<_>>()
+        })?;
+
+        let outline_text = render_outline(outline_items, None, 0, usize::MAX).await?;
+
+        let text = if let Some(path) = path {
+            format!(
+                "# File outline for {} (file too large to show full content)\n\n{}",
+                path.display(),
+                outline_text
+            )
+        } else {
+            format!(
+                "# File outline (file too large to show full content)\n\n{}",
+                outline_text
+            )
+        };
+        Ok(BufferContent {
+            text,
+            is_outline: true,
+        })
+    } else {
+        // File is small enough, return full content
+        let text = buffer.read_with(cx, |buffer, _| buffer.text())?;
+        Ok(BufferContent {
+            text,
+            is_outline: false,
+        })
+    }
 }

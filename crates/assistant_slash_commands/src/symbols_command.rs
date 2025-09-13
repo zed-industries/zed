@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -70,9 +70,7 @@ impl SlashCommand for OutlineSlashCommand {
             let path = snapshot.resolve_file_path(cx, true);
 
             cx.background_spawn(async move {
-                let outline = snapshot
-                    .outline(None)
-                    .context("no symbols for active tab")?;
+                let outline = snapshot.outline(None);
 
                 let path = path.as_deref().unwrap_or(Path::new("untitled"));
                 let mut outline_text = format!("Symbols for {}:\n", path.display());
