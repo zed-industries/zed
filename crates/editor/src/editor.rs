@@ -23446,7 +23446,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        log::info!(
+        log::debug!(
             "replace_text_in_range called with range_utf16: {:?}, text: {:?}",
             range_utf16,
             text
@@ -23460,9 +23460,10 @@ impl EntityInputHandler for Editor {
         let ime_active = self
             .text_highlights::<InputComposition>(cx)
             .is_some_and(|(_, ranges)| ranges.iter().any(|r| r.start != r.end));
-        log::info!("IME active? {}", ime_active);
 
-        if ime_active {
+        log::debug!("IME active? {}", ime_active);
+
+        if ime_active && text != " " {
             self.replace_and_mark_text_in_range(None, text, None, window, cx);
             return;
         }
@@ -23526,7 +23527,7 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        log::info!(
+        log::debug!(
             "replace_and_mark_text_in_range called with range_utf16: {:?}, text: {:?}, new_selected_range_utf16: {:?}",
             range_utf16,
             text,
@@ -23569,47 +23570,6 @@ impl EntityInputHandler for Editor {
                     let start = OffsetUtf16(r.start);
                     let end = OffsetUtf16(r.start + text_len_utf16);
                     ranges_to_replace = Some(this.selection_replacement_ranges(start..end, cx));
-                }
-            }
-
-            let is_single_space = text == " ";
-            if is_single_space {
-                if let Some(rs) = &ranges_to_replace {
-                    let any_non_empty = rs.iter().any(|r| r.start.0 != r.end.0);
-                    if any_non_empty {
-                        let newest_id = this.selections.newest_anchor().id;
-                        let selections_utf16 = this.selections.all::<OffsetUtf16>(cx);
-                        let mut end_utf16: Option<OffsetUtf16> = None;
-                        for (sel, r) in selections_utf16.iter().zip(rs.iter()) {
-                            if sel.id == newest_id {
-                                end_utf16 = Some(r.end);
-                                break;
-                            }
-                        }
-
-                        if let Some(end_utf16) = end_utf16 {
-                            let caret_offset_usize = {
-                                let snap = this.buffer.read(cx).read(cx);
-                                let caret_utf16 = snap.clip_offset_utf16(end_utf16, Bias::Right);
-                                caret_utf16.0
-                            };
-
-                            this.change_selections(
-                                SelectionEffects::no_scroll(),
-                                window,
-                                cx,
-                                |s| {
-                                    s.select_ranges([caret_offset_usize..caret_offset_usize]);
-                                },
-                            );
-
-                            this.clear_highlights::<InputComposition>(cx);
-
-                            this.handle_input(text, window, cx);
-
-                            return;
-                        }
-                    }
                 }
             }
 
@@ -23656,18 +23616,22 @@ impl EntityInputHandler for Editor {
             if text.is_empty() {
                 this.unmark_text(window, cx);
             } else {
-                this.highlight_text::<InputComposition>(
-                    marked_ranges.clone(),
-                    HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: px(1.),
-                            color: None,
-                            wavy: false,
-                        }),
-                        ..Default::default()
-                    },
-                    cx,
-                );
+                if range_utf16.is_none() {
+                    this.highlight_text::<InputComposition>(
+                        marked_ranges.clone(),
+                        HighlightStyle {
+                            underline: Some(UnderlineStyle {
+                                thickness: px(1.),
+                                color: None,
+                                wavy: false,
+                            }),
+                            ..Default::default()
+                        },
+                        cx,
+                    );
+                } else {
+                    this.unmark_text(window, cx);
+                }
             }
 
             let use_autoclose = this.use_autoclose;
