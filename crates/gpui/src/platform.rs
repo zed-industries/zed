@@ -957,6 +957,9 @@ impl PlatformInputHandler {
     }
 
     pub fn selected_bounds(&mut self, window: &mut Window, cx: &mut App) -> Option<Bounds<Pixels>> {
+        if self.handler.marked_text_range(window, cx).is_none() {
+            return None;
+        }
         let selection = self.handler.selected_text_range(true, window, cx)?;
         self.handler.bounds_for_range(
             if selection.reversed {
