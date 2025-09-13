@@ -726,7 +726,7 @@ impl Vim {
                 self.visual_motion(motion, count, window, cx)
             }
 
-            Mode::HelixNormal => self.helix_normal_motion(motion, count, window, cx)
+            Mode::HelixNormal => self.helix_normal_motion(motion, count, window, cx),
             Mode::HelixSelect => self.helix_select_motion(motion, count, window, cx)
         }
         self.clear_operator(window, cx);
