@@ -33,6 +33,10 @@ impl Settings for ReplSettings {
 
 const DEFAULT_NUM_LINES: usize = 32;
 const DEFAULT_NUM_COLUMNS: usize = 128;
+const DEFAULT_MIN_NUM_LINES: usize = 4;
+const DEFAULT_MIN_NUM_COLUMNS: usize = 20;
+const DEFAULT_MAX_NUM_LINES: usize = 256;
+const DEFAULT_MAX_NUM_COLUMNS: usize = 512;
 
 fn default_max_number_of_lines() -> usize {
     DEFAULT_NUM_LINES
@@ -53,36 +57,46 @@ impl Default for ReplSettings {
 
 impl ReplSettings {
     /// Validates the settings to ensure no unreasonable values are set.
-    pub fn validate(&self) -> anyhow::Result<()> {
-        if self.max_number_of_lines == 0 || self.max_number_of_lines > 256 {
-            anyhow::bail!(
-                "Invalid max_number_of_lines: {}. It must be between 1 and 256.",
-                self.max_number_of_lines
-            );
-        }
+    pub fn validate(&mut self) -> anyhow::Result<()> {
+        self.max_number_of_lines = self.validate_range(
+            self.max_number_of_lines,
+            DEFAULT_MIN_NUM_LINES,
+            DEFAULT_MAX_NUM_LINES,
+            "max_number_of_lines",
+        );
 
-        if self.max_number_of_columns == 0 || self.max_number_of_columns > 512 {
-            anyhow::bail!(
-                "Invalid max_number_of_columns: {}. It must be between 1 and 512.",
-                self.max_number_of_columns
-            );
-        }
-
-        // Ensure minimum usable sizes for a functional REPL
-        if self.max_number_of_lines < 4 {
-            anyhow::bail!(
-                "max_number_of_lines too small: {}. Minimum recommended value is 4.",
-                self.max_number_of_lines
-            );
-        }
-
-        if self.max_number_of_columns < 20 {
-            anyhow::bail!(
-                "max_number_of_columns too small: {}. Minimum recommended value is 20.",
-                self.max_number_of_columns
-            );
-        }
+        self.max_number_of_columns = self.validate_range(
+            self.max_number_of_columns,
+            DEFAULT_MIN_NUM_COLUMNS,
+            DEFAULT_MAX_NUM_COLUMNS,
+            "max_number_of_columns",
+        );
 
         Ok(())
+    }
+
+    /// Helper function to validate and adjust a value within a range.
+    fn validate_range(&self, value: usize, min: usize, max: usize, field_name: &str) -> usize {
+        if value < min {
+            log::warn!(
+                "{} too small: {}. Minimum recommended value is {}. Defaulting to {}.",
+                field_name,
+                value,
+                min,
+                min
+            );
+            min
+        } else if value > max {
+            log::warn!(
+                "{} too large: {}. Maximum allowed value is {}. Defaulting to {}.",
+                field_name,
+                value,
+                max,
+                max
+            );
+            max
+        } else {
+            value
+        }
     }
 }
