@@ -4028,14 +4028,18 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 ## REPL
 
-- Description: Configuration for the REPL. Currently, this only includes the maximum number of columns and lines to keep in the REPL's scrollback buffer. If `max_number_of_lines` exceeds 256, a warning will be logged, and the value will default to 256.
+- Description: Repl settings.
 - Setting: `repl`
 - Default:
 
 ```json
 "repl": {
-  max_number_of_columns: 128,
-  max_number_of_lines: 32
+  // Maximum number of columns to keep in REPL's scrollback buffer.
+  // Clamped with [20, 512] range.
+  "max_columns": 128,
+  // Maximum number of lines to keep in REPL's scrollback buffer.
+  // Clamped with [4, 256] range.
+  "max_lines": 32
 },
 ```
 

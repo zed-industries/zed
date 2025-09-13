@@ -97,8 +97,8 @@ pub fn terminal_size(window: &mut Window, cx: &mut App) -> terminal::TerminalBou
         .unwrap()
         .width;
 
-    let num_lines = ReplSettings::get_global(cx).max_number_of_lines;
-    let columns = ReplSettings::get_global(cx).max_number_of_columns;
+    let num_lines = ReplSettings::get_global(cx).max_lines;
+    let columns = ReplSettings::get_global(cx).max_columns;
 
     // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;
