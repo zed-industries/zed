@@ -26,14 +26,20 @@ fn main() {
         // Register the `quit` function so it can be referenced by the `MenuItem::action` in the menu bar
         cx.on_action(quit);
         // Add menu items
-        cx.set_menus(vec![Menu {
-            name: "set_menus".into(),
-            items: vec![
-                MenuItem::os_submenu("Services", SystemMenuType::Services),
-                MenuItem::separator(),
-                MenuItem::action("Quit", Quit),
-            ],
-        }]);
+        cx.set_menus(vec![
+            Menu {
+                name: "set_menus".into(),
+                items: vec![
+                    MenuItem::os_submenu("Services", SystemMenuType::Services),
+                    MenuItem::separator(),
+                    MenuItem::action("Quit", Quit),
+                ],
+            },
+            Menu {
+                name: "Window".into(),
+                items: vec![MenuItem::os_submenu("", SystemMenuType::Window)],
+            },
+        ]);
         cx.open_window(WindowOptions::default(), |_, cx| cx.new(|_| SetMenus {}))
             .unwrap();
     });
