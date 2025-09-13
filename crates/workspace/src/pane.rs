@@ -4065,11 +4065,11 @@ mod tests {
 
     use super::*;
     use crate::item::test::{TestItem, TestProjectItem};
-    use gpui::{TestAppContext, VisualTestContext, size, ScrollWheelEvent, point, ScrollDelta};
+    use gpui::{TestAppContext, VisualTestContext, size};
     use project::FakeFs;
     use settings::SettingsStore;
     use theme::LoadThemes;
-    use util::{default, TryFutureExt};
+    use util::{TryFutureExt};
 
     #[gpui::test]
     async fn test_add_item_capped_to_max_tabs(cx: &mut TestAppContext) {
@@ -6302,7 +6302,7 @@ mod tests {
         add_labeled_item(&pane, "untitled", false, cx);
         
         // Assert
-        let mut tab_bar_scroll_handle = pane.update_in(cx, |pane, window, cx| {
+        let tab_bar_scroll_handle = pane.update_in(cx, |pane, _window, _cx| {
             pane.tab_bar_scroll_handle.clone()
         });
         assert_eq!(tab_bar_scroll_handle.children_count(), 6);
