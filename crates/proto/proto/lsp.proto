@@ -931,33 +931,6 @@ message PullWorkspaceDiagnostics {
     uint64 server_id = 2;
 }
 
-// todo(lsp) remove after Zed Stable hits v0.204.x
-message MultiLspQuery {
-    uint64 project_id = 1;
-    uint64 buffer_id = 2;
-    repeated VectorClockEntry version = 3;
-    oneof strategy {
-        AllLanguageServers all = 4;
-    }
-    oneof request {
-        GetHover get_hover = 5;
-        GetCodeActions get_code_actions = 6;
-        GetSignatureHelp get_signature_help = 7;
-        GetCodeLens get_code_lens = 8;
-        GetDocumentDiagnostics get_document_diagnostics = 9;
-        GetDocumentColor get_document_color = 10;
-        GetDefinition get_definition = 11;
-        GetDeclaration get_declaration = 12;
-        GetTypeDefinition get_type_definition = 13;
-        GetImplementation get_implementation = 14;
-        GetReferences get_references = 15;
-    }
-}
-
-message MultiLspQueryResponse {
-    repeated LspResponse responses = 1;
-}
-
 message ToggleLspLogs {
     uint64 project_id = 1;
     LogType log_type = 2;

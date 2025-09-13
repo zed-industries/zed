@@ -5,17 +5,17 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
+use language::{LanguageToolchainStore, LspAdapterDelegate, LspInstaller};
 use lsp::{LanguageServerBinary, LanguageServerName};
-use project::Fs;
+
 use regex::Regex;
 use serde_json::json;
 use smol::fs;
 use std::{
-    any::Any,
     borrow::Cow,
     ffi::{OsStr, OsString},
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Output,
     str,
     sync::{
@@ -50,17 +50,32 @@ const BINARY: &str = if cfg!(target_os = "windows") {
     "gopls"
 };
 
-#[async_trait(?Send)]
-impl super::LspAdapter for GoLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME
-    }
+impl LspInstaller for GoLspAdapter {
+    type BinaryVersion = Option<String>;
 
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+        _: bool,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<String>> {
+        static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
+
+        const NOTIFICATION_MESSAGE: &str =
+            "Could not install the Go language server `gopls`, because `go` was not found.";
+
+        if delegate.which("go".as_ref()).await.is_none() {
+            if DID_SHOW_NOTIFICATION
+                .compare_exchange(false, true, SeqCst, SeqCst)
+                .is_ok()
+            {
+                cx.update(|cx| {
+                    delegate.show_notification(NOTIFICATION_MESSAGE, cx);
+                })?
+            }
+            anyhow::bail!("cannot install gopls");
+        }
+
         let release =
             latest_github_release("golang/tools", false, false, delegate.http_client()).await?;
         let version: Option<String> = release.tag_name.strip_prefix("gopls/v").map(str::to_string);
@@ -70,7 +85,7 @@ impl super::LspAdapter for GoLspAdapter {
                 release.tag_name
             );
         }
-        Ok(Box::new(version) as Box<_>)
+        Ok(version)
     }
 
     async fn check_if_user_installed(
@@ -87,36 +102,9 @@ impl super::LspAdapter for GoLspAdapter {
         })
     }
 
-    fn will_fetch_server(
-        &self,
-        delegate: &Arc<dyn LspAdapterDelegate>,
-        cx: &mut AsyncApp,
-    ) -> Option<Task<Result<()>>> {
-        static DID_SHOW_NOTIFICATION: AtomicBool = AtomicBool::new(false);
-
-        const NOTIFICATION_MESSAGE: &str =
-            "Could not install the Go language server `gopls`, because `go` was not found.";
-
-        let delegate = delegate.clone();
-        Some(cx.spawn(async move |cx| {
-            if delegate.which("go".as_ref()).await.is_none() {
-                if DID_SHOW_NOTIFICATION
-                    .compare_exchange(false, true, SeqCst, SeqCst)
-                    .is_ok()
-                {
-                    cx.update(|cx| {
-                        delegate.show_notification(NOTIFICATION_MESSAGE, cx);
-                    })?
-                }
-                anyhow::bail!("cannot install gopls");
-            }
-            Ok(())
-        }))
-    }
-
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        version: Option<String>,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
@@ -127,10 +115,8 @@ impl super::LspAdapter for GoLspAdapter {
             .await
             .context("failed to get go version via `go version` command`")?;
         let go_version = parse_version_output(&go_version_output)?;
-        let version = version.downcast::<Option<String>>().unwrap();
-        let this = *self;
 
-        if let Some(version) = *version {
+        if let Some(version) = version {
             let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
             if let Ok(metadata) = fs::metadata(&binary_path).await
                 && metadata.is_file()
@@ -146,10 +132,7 @@ impl super::LspAdapter for GoLspAdapter {
                     env: None,
                 });
             }
-        } else if let Some(path) = this
-            .cached_server_binary(container_dir.clone(), delegate)
-            .await
-        {
+        } else if let Some(path) = get_cached_server_binary(&container_dir).await {
             return Ok(path);
         }
 
@@ -195,12 +178,18 @@ impl super::LspAdapter for GoLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir).await
+        get_cached_server_binary(&container_dir).await
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for GoLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
     }
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -443,10 +432,10 @@ fn parse_version_output(output: &Output) -> Result<&str> {
     Ok(version)
 }
 
-async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {
+async fn get_cached_server_binary(container_dir: &Path) -> Option<LanguageServerBinary> {
     maybe!(async {
         let mut last_binary_path = None;
-        let mut entries = fs::read_dir(&container_dir).await?;
+        let mut entries = fs::read_dir(container_dir).await?;
         while let Some(entry) = entries.next().await {
             let entry = entry?;
             if entry.file_type().await?.is_file()
@@ -568,12 +557,7 @@ impl ContextProvider for GoContextProvider {
         )))
     }
 
-    fn associated_tasks(
-        &self,
-        _: Arc<dyn Fs>,
-        _: Option<Arc<dyn File>>,
-        _: &App,
-    ) -> Task<Option<TaskTemplates>> {
+    fn associated_tasks(&self, _: Option<Arc<dyn File>>, _: &App) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {

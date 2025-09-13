@@ -1,4 +1,5 @@
 use crate::commit::parse_git_diff_name_status;
+use crate::stash::GitStash;
 use crate::status::{GitStatus, StatusCode};
 use crate::{Oid, SHORT_SHA_LENGTH};
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -339,6 +340,8 @@ pub trait GitRepository: Send + Sync {
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Task<Result<GitStatus>>;
 
+    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>>;
+
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>>;
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
@@ -400,7 +403,23 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
-    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>>;
+    fn stash_pop(
+        &self,
+        index: Option<usize>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn stash_apply(
+        &self,
+        index: Option<usize>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    fn stash_drop(
+        &self,
+        index: Option<usize>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>>;
 
     fn push(
         &self,
@@ -975,6 +994,26 @@ impl GitRepository for RealGitRepository {
         })
     }
 
+    fn stash_entries(&self) -> BoxFuture<'_, Result<GitStash>> {
+        let git_binary_path = self.git_binary_path.clone();
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let output = new_std_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(&["stash", "list", "--pretty=format:%gd%x00%H%x00%ct%x00%s"])
+                    .output()?;
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    stdout.parse()
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git status failed: {stderr}");
+                }
+            })
+            .boxed()
+    }
+
     fn branches(&self) -> BoxFuture<'_, Result<Vec<Branch>>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
@@ -1229,20 +1268,86 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn stash_pop(&self, env: Arc<HashMap<String, String>>) -> BoxFuture<'_, Result<()>> {
+    fn stash_pop(
+        &self,
+        index: Option<usize>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
         let working_directory = self.working_directory();
         self.executor
             .spawn(async move {
                 let mut cmd = new_smol_command("git");
+                let mut args = vec!["stash".to_string(), "pop".to_string()];
+                if let Some(index) = index {
+                    args.push(format!("stash@{{{}}}", index));
+                }
                 cmd.current_dir(&working_directory?)
                     .envs(env.iter())
-                    .args(["stash", "pop"]);
+                    .args(args);
 
                 let output = cmd.output().await?;
 
                 anyhow::ensure!(
                     output.status.success(),
                     "Failed to stash pop:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn stash_apply(
+        &self,
+        index: Option<usize>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                let mut args = vec!["stash".to_string(), "apply".to_string()];
+                if let Some(index) = index {
+                    args.push(format!("stash@{{{}}}", index));
+                }
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(args);
+
+                let output = cmd.output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to apply stash:\n{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                Ok(())
+            })
+            .boxed()
+    }
+
+    fn stash_drop(
+        &self,
+        index: Option<usize>,
+        env: Arc<HashMap<String, String>>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let working_directory = self.working_directory();
+        self.executor
+            .spawn(async move {
+                let mut cmd = new_smol_command("git");
+                let mut args = vec!["stash".to_string(), "drop".to_string()];
+                if let Some(index) = index {
+                    args.push(format!("stash@{{{}}}", index));
+                }
+                cmd.current_dir(&working_directory?)
+                    .envs(env.iter())
+                    .args(args);
+
+                let output = cmd.output().await?;
+
+                anyhow::ensure!(
+                    output.status.success(),
+                    "Failed to stash drop:\n{}",
                     String::from_utf8_lossy(&output.stderr)
                 );
                 Ok(())

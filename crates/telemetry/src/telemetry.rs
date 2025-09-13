@@ -12,6 +12,7 @@ pub use telemetry_events::FlexibleEvent as Event;
 /// The properties can be any value that implements serde::Serialize.
 ///
 /// ```
+/// # let url = "https://example.com";
 /// telemetry::event!("Keymap Changed", version = "1.0.0");
 /// telemetry::event!("Documentation Viewed", url, source = "Extension Upsell");
 /// ```

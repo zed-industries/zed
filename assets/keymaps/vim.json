@@ -326,6 +326,27 @@
     }
   },
   {
+    "context": "vim_mode == helix_select",
+    "bindings": {
+      "escape": "vim::NormalBefore",
+      ";": "vim::HelixCollapseSelection",
+      "~": "vim::ChangeCase",
+      "ctrl-a": "vim::Increment",
+      "ctrl-x": "vim::Decrement",
+      "shift-j": "vim::JoinLines",
+      "i": "vim::InsertBefore",
+      "a": "vim::InsertAfter",
+      "p": "vim::Paste",
+      "u": "vim::Undo",
+      "r": "vim::PushReplace",
+      "s": "vim::Substitute",
+      "ctrl-pageup": "pane::ActivatePreviousItem",
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      ".": "vim::Repeat",
+      "alt-.": "vim::RepeatFind"
+    }
+  },
+  {
     "context": "vim_mode == insert",
     "bindings": {
       "ctrl-c": "vim::NormalBefore",
@@ -396,7 +417,12 @@
     "bindings": {
       "i": "vim::HelixInsert",
       "a": "vim::HelixAppend",
-      "ctrl-[": "editor::Cancel",
+      "ctrl-[": "editor::Cancel"
+    }
+  },
+  {
+    "context": "(vim_mode == helix_normal || vim_mode == helix_select) && !menu",
+    "bindings": {
       ";": "vim::HelixCollapseSelection",
       ":": "command_palette::Toggle",
       "m": "vim::PushHelixMatch",
