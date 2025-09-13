@@ -14136,6 +14136,16 @@ impl Editor {
         }
     }
 
+    pub fn reduce_selections(
+        &mut self,
+        _: &KeepNewestSelection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let newest = self.selections.newest::<usize>(cx);
+        self.change_selections(Default::default(), window, cx, |s| s.select(vec![newest]));
+    }
+
     fn select_match_ranges(
         &mut self,
         range: Range<usize>,

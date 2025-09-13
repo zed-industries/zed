@@ -497,8 +497,9 @@
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
       "c": "vim::Substitute",
-      "shift-c": "editor::AddSelectionBelow",
-      "alt-shift-c": "editor::AddSelectionAbove"
+      "shift-c": "vim::HelixDuplicateBelow",
+      "alt-shift-c": "vim::HelixDuplicateAbove",
+      ",": "editor::KeepNewestSelection"
     }
   },
   {
