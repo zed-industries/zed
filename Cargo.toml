@@ -115,6 +115,7 @@ members = [
     "crates/node_runtime",
     "crates/notifications",
     "crates/ollama",
+    "crates/ollama_edit_predictions",
     "crates/onboarding",
     "crates/open_ai",
     "crates/open_router",
@@ -344,6 +345,7 @@ net = { path = "crates/net" }
 node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
+ollama_edit_predictions = { path = "crates/ollama_edit_predictions" }
 onboarding = { path = "crates/onboarding" }
 open_ai = { path = "crates/open_ai" }
 open_router = { path = "crates/open_router", features = ["schemars"] }
