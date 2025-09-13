@@ -25,7 +25,7 @@ use std::{
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
     Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
-    IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
@@ -251,7 +251,6 @@ impl Render for EditPredictionButton {
 
                     return div().child(
                         IconButton::new("zed-predict-pending-button", zeta_icon)
-                            .shape(IconButtonShape::Square)
                             .indicator(Indicator::dot().color(Color::Muted))
                             .indicator_border_color(Some(cx.theme().colors().status_bar_background))
                             .tooltip(move |window, cx| {
@@ -289,7 +288,6 @@ impl Render for EditPredictionButton {
                 let show_editor_predictions = self.editor_show_predictions;
 
                 let icon_button = IconButton::new("zed-predict-pending-button", zeta_icon)
-                    .shape(IconButtonShape::Square)
                     .when(
                         enabled && (!show_editor_predictions || over_limit),
                         |this| {

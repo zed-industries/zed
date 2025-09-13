@@ -910,7 +910,6 @@ impl Render for PanelButtons {
                         .attach(menu_attach)
                         .trigger(move |is_active, _window, _cx| {
                             IconButton::new(name, icon)
-                                .icon_size(IconSize::Small)
                                 .toggle_state(is_active_button)
                                 .on_click({
                                     let action = action.boxed_clone();

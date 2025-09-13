@@ -4,7 +4,7 @@ use editor::SearchSettings;
 use gpui::{Action, App, ClickEvent, FocusHandle, IntoElement, actions};
 use project::search::SearchQuery;
 pub use project_search::ProjectSearchView;
-use ui::{ButtonStyle, IconButton, IconButtonShape};
+use ui::{ButtonStyle, IconButton};
 use ui::{Tooltip, prelude::*};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
@@ -156,7 +156,6 @@ impl SearchOption {
             }
         })
         .style(ButtonStyle::Subtle)
-        .shape(IconButtonShape::Square)
         .toggle_state(active.contains(self.as_options()))
         .tooltip({
             move |window, cx| Tooltip::for_action_in(label, action, &focus_handle, window, cx)

@@ -56,9 +56,7 @@ impl CellControl {
     fn new(id: impl Into<SharedString>, control_type: CellControlType) -> Self {
         let icon_name = control_type.icon_name();
         let id = id.into();
-        let button = IconButton::new(id, icon_name)
-            .icon_size(IconSize::Small)
-            .shape(IconButtonShape::Square);
+        let button = IconButton::new(id, icon_name).icon_size(IconSize::Small);
         Self { button }
     }
 }

@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::utils::WithRemSize;
-use ui::{IconButtonShape, KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{KeyBinding, PopoverMenuHandle, Tooltip, prelude::*};
 use workspace::Workspace;
 use zed_actions::agent::ToggleModelSelector;
 
@@ -468,7 +468,6 @@ impl<T: 'static> PromptEditor<T> {
             CodegenStatus::Pending => vec![
                 IconButton::new("stop", IconName::Stop)
                     .icon_color(Color::Error)
-                    .shape(IconButtonShape::Square)
                     .tooltip(move |window, cx| {
                         Tooltip::with_meta(
                             mode.tooltip_interrupt(),
@@ -487,7 +486,6 @@ impl<T: 'static> PromptEditor<T> {
                     vec![
                         IconButton::new("restart", IconName::RotateCw)
                             .icon_color(Color::Info)
-                            .shape(IconButtonShape::Square)
                             .tooltip(move |window, cx| {
                                 Tooltip::with_meta(
                                     mode.tooltip_restart(),
@@ -505,7 +503,6 @@ impl<T: 'static> PromptEditor<T> {
                 } else {
                     let accept = IconButton::new("accept", IconName::Check)
                         .icon_color(Color::Info)
-                        .shape(IconButtonShape::Square)
                         .tooltip(move |window, cx| {
                             Tooltip::for_action(mode.tooltip_accept(), &menu::Confirm, window, cx)
                         })
@@ -519,7 +516,6 @@ impl<T: 'static> PromptEditor<T> {
                             accept,
                             IconButton::new("confirm", IconName::PlayFilled)
                                 .icon_color(Color::Info)
-                                .shape(IconButtonShape::Square)
                                 .tooltip(|window, cx| {
                                     Tooltip::for_action(
                                         "Execute Generated Command",
@@ -570,7 +566,6 @@ impl<T: 'static> PromptEditor<T> {
     fn render_close_button(&self, cx: &mut Context<Self>) -> AnyElement {
         IconButton::new("cancel", IconName::Close)
             .icon_color(Color::Muted)
-            .shape(IconButtonShape::Square)
             .tooltip(Tooltip::text("Close Assistant"))
             .on_click(cx.listener(|_, _, _, cx| cx.emit(PromptEditorEvent::CancelRequested)))
             .into_any_element()
@@ -613,7 +608,6 @@ impl<T: 'static> PromptEditor<T> {
                 IconButton::new("previous", IconName::ChevronLeft)
                     .icon_color(Color::Muted)
                     .disabled(disabled || current_index == 0)
-                    .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
@@ -655,7 +649,6 @@ impl<T: 'static> PromptEditor<T> {
                 IconButton::new("next", IconName::ChevronRight)
                     .icon_color(Color::Muted)
                     .disabled(disabled || current_index == total_models - 1)
-                    .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {

@@ -46,9 +46,8 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     ButtonSize, Color, ContextMenu, ContextMenuEntry, ContextMenuItem, DecoratedIcon, IconButton,
-    IconButtonShape, IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label,
-    PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
-    right_click_menu,
+    IconDecoration, IconDecorationKind, IconName, IconSize, Indicator, Label, PopoverMenu,
+    PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*, right_click_menu,
 };
 use util::{ResultExt, debug_panic, maybe, truncate_and_remove_front};
 
@@ -2631,10 +2630,9 @@ impl Pane {
                     end_slot_action = &TogglePinTab;
                     end_slot_tooltip_text = "Unpin Tab";
                     IconButton::new("unpin tab", IconName::Pin)
-                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, window, cx| {
                             pane.unpin_tab_at(ix, window, cx);
                         }))
@@ -2651,10 +2649,9 @@ impl Pane {
                         }
                         ShowCloseButton::Hidden => return this,
                     }
-                    .shape(IconButtonShape::Square)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::None)
-                    .icon_size(IconSize::Small)
+                    .icon_size(IconSize::XSmall)
                     .on_click(cx.listener(move |pane, _, window, cx| {
                         pane.close_item_by_id(item_id, SaveIntent::Close, window, cx)
                             .detach_and_log_err(cx);

@@ -11,10 +11,7 @@ use gpui::{
 use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
-use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tooltip, WithScrollbar,
-    prelude::*,
-};
+use ui::{HighlightedLabel, ListItem, ListItemSpacing, Tooltip, WithScrollbar, prelude::*};
 
 pub struct AcpThreadHistory {
     pub(crate) history_store: Entity<HistoryStore>,
@@ -423,7 +420,6 @@ impl AcpThreadHistory {
                     .end_slot::<IconButton>(if hovered {
                         Some(
                             IconButton::new("delete", IconName::Trash)
-                                .shape(IconButtonShape::Square)
                                 .icon_size(IconSize::XSmall)
                                 .icon_color(Color::Muted)
                                 .tooltip(move |window, cx| {
@@ -591,7 +587,6 @@ impl RenderOnce for AcpHistoryEntryElement {
             .end_slot::<IconButton>(if self.hovered || self.selected {
                 Some(
                     IconButton::new("delete", IconName::Trash)
-                        .shape(IconButtonShape::Square)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .tooltip(move |window, cx| {
