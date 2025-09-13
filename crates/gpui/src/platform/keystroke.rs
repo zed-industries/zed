@@ -79,7 +79,7 @@ impl Keystroke {
     ///
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
-    pub fn should_match(&self, target: &KeybindingKeystroke) -> bool {
+    pub fn should_match(&self, target: &impl AsKeystroke) -> bool {
         #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
             .key_char
@@ -92,7 +92,9 @@ impl Keystroke {
                 ..Default::default()
             };
 
-            if &target.inner.key == key_char && target.inner.modifiers == ime_modifiers {
+            if &target.as_keystroke().key == key_char
+                && target.as_keystroke().modifiers == ime_modifiers
+            {
                 return true;
             }
         }
@@ -109,7 +111,7 @@ impl Keystroke {
             }
         }
 
-        target.inner.modifiers == self.modifiers && target.inner.key == self.key
+        target.as_keystroke().modifiers == self.modifiers && target.as_keystroke().key == self.key
     }
 
     /// key syntax is:
