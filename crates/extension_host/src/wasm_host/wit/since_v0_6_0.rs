@@ -961,14 +961,17 @@ impl ExtensionImports for WasmState {
                             project::project_settings::ContextServerSettings::Custom {
                                 enabled: _,
                                 command,
-                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
-                                command: Some(settings::CommandSettings {
-                                    path: command.path.to_str().map(|path| path.to_string()),
-                                    arguments: Some(command.args),
-                                    env: command.env.map(|env| env.into_iter().collect()),
-                                }),
-                                settings: None,
-                            })?),
+                            } => {
+                                let (path, args, env) = command.effective_command();
+                                Ok(serde_json::to_string(&settings::ContextServerSettings {
+                                    command: Some(settings::CommandSettings {
+                                        path: path.to_str().map(|path| path.to_string()),
+                                        arguments: Some(args),
+                                        env: env.map(|env| env.into_iter().collect()),
+                                    }),
+                                    settings: None,
+                                })?)
+                            }
                             project::project_settings::ContextServerSettings::Extension {
                                 enabled: _,
                                 settings,
