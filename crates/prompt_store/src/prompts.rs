@@ -26,13 +26,20 @@ pub struct ProjectContext {
     pub user_rules: Vec<UserRulesContext>,
     /// `!user_rules.is_empty()` - provided as a field because handlebars can't do this.
     pub has_user_rules: bool,
+    pub profile_rules: Vec<UserRulesContext>,
+    /// `!profile_rules.is_empty()` - provided as a field because handlebars can't do this.
+    pub has_profile_rules: bool,
     pub os: String,
     pub arch: String,
     pub shell: String,
 }
 
 impl ProjectContext {
-    pub fn new(worktrees: Vec<WorktreeContext>, default_user_rules: Vec<UserRulesContext>) -> Self {
+    pub fn new(
+        worktrees: Vec<WorktreeContext>,
+        default_user_rules: Vec<UserRulesContext>,
+        profile_rules: Vec<UserRulesContext>,
+    ) -> Self {
         let has_rules = worktrees
             .iter()
             .any(|worktree| worktree.rules_file.is_some());
@@ -41,6 +48,8 @@ impl ProjectContext {
             has_rules,
             has_user_rules: !default_user_rules.is_empty(),
             user_rules: default_user_rules,
+            profile_rules: profile_rules.clone(),
+            has_profile_rules: !profile_rules.is_empty(),
             os: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
             shell: get_system_shell(),
@@ -465,7 +474,7 @@ mod test {
             title: Some("Rules title".into()),
             contents: "Rules contents".into(),
         }];
-        let project_context = ProjectContext::new(worktrees, default_user_rules);
+        let project_context = ProjectContext::new(worktrees, default_user_rules, Vec::new());
         let model_context = ModelContext {
             available_tools: ["grep".into()].to_vec(),
         };
@@ -487,7 +496,7 @@ mod test {
             rules_file: None,
         }];
         let default_user_rules = vec![];
-        let project_context = ProjectContext::new(worktrees, default_user_rules);
+        let project_context = ProjectContext::new(worktrees, default_user_rules, Vec::new());
         let prompt_builder = PromptBuilder::new(None).unwrap();
 
         // When the `grep` tool is enabled, it should be mentioned in the prompt

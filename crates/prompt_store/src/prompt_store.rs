@@ -66,6 +66,13 @@ impl PromptId {
     pub fn is_built_in(&self) -> bool {
         !matches!(self, PromptId::User { .. })
     }
+
+    pub fn from_string(s: &str) -> Result<PromptId, anyhow::Error> {
+        let uuid = Uuid::parse_str(s).with_context(|| format!("Failed to parse rule ID: {}", s))?;
+        Ok(PromptId::User {
+            uuid: UserPromptId(uuid),
+        })
+    }
 }
 
 impl From<UserPromptId> for PromptId {

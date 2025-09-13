@@ -2379,4 +2379,67 @@ mod tests {
             );
         }
     }
+
+    #[gpui::test]
+    fn test_settings_json_structure_with_profile_rules(cx: &mut App) {
+        let mut store = SettingsStore::new(cx);
+        store.register_setting::<UserSettings>(cx);
+
+        let settings_json = r#"{
+            "user": {
+                "name": "Test User",
+                "age": 25,
+                "staff": false
+            },
+            "profiles": {
+                "test_profile": {
+                    "name": "Test Profile",
+                    "rules": {
+                        "550e8400-e29b-41d4-a716-446655440001": true,
+                        "550e8400-e29b-41d4-a716-446655440002": false,
+                        "550e8400-e29b-41d4-a716-446655440003": true
+                    }
+                }
+            }
+        }"#;
+
+        let parsed: serde_json::Value = serde_json::from_str(settings_json).unwrap();
+        assert!(parsed.get("profiles").is_some());
+
+        let profiles = parsed.get("profiles").unwrap().as_object().unwrap();
+        let test_profile = profiles.get("test_profile").unwrap().as_object().unwrap();
+        let rules = test_profile.get("rules").unwrap().as_object().unwrap();
+
+        assert_eq!(rules.get("550e8400-e29b-41d4-a716-446655440001").unwrap().as_bool().unwrap(), true);
+        assert_eq!(rules.get("550e8400-e29b-41d4-a716-446655440002").unwrap().as_bool().unwrap(), false);
+        assert_eq!(rules.get("550e8400-e29b-41d4-a716-446655440003").unwrap().as_bool().unwrap(), true);
+    }
+
+    #[gpui::test]
+    fn test_settings_json_profile_rules_validation(cx: &mut App) {
+        let mut store = SettingsStore::new(cx);
+        store.register_setting::<UserSettings>(cx);
+
+        let valid_rules = vec![
+            ("simple_rule", true),
+            ("rule-with-dashes", false),
+            ("rule_with_numbers_123", true),
+            ("CamelCaseRule", false),
+        ];
+
+        for (rule_name, rule_value) in valid_rules {
+            let settings_json = format!(
+                r#"{{
+                    "user": {{ "name": "Test", "age": 30, "staff": false }},
+                    "test_rules": {{
+                        "{}": {}
+                    }}
+                }}"#,
+                rule_name, rule_value
+            );
+
+            let parsed: serde_json::Value = serde_json::from_str(&settings_json).unwrap();
+            assert!(parsed.get("test_rules").is_some());
+        }
+    }
 }

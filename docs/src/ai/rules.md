@@ -1,7 +1,7 @@
 # Using Rules {#using-rules}
 
 A rule is essentially a prompt that is inserted at the beginning of each interaction with the Agent.
-Currently, Zed supports `.rules` files at the directory's root and the Rules Library, which allows you to store multiple rules for on-demand usage.
+Currently, Zed supports several types of rules: project-level `.rules` files, default rules from the Rules Library, and profile-specific rules that are automatically applied based on your active agent profile.
 
 ## `.rules` files
 
@@ -56,6 +56,77 @@ Or to be more precise, it uses a series of rules that are combined to form the d
 
 Default rules are included in the context of every new thread automatically.
 You can also manually add other rules (that are not flagged as default) as context using the `@rule` command.
+
+## Profile Rules {#profile-rules}
+
+In addition to default rules, Zed supports profile-specific rules that are automatically included when using a particular agent profile. These rules work alongside your default rules to provide specialized behavior for different use cases.
+
+### How Profile Rules Work
+
+When you start a conversation with the Agent Panel, Zed includes rules in this order of precedence:
+
+1. **Project Rules**: `.rules` files from your project directory (always included)
+2. **Default Rules**: Rules marked as default in your Rules Library (always included)
+3. **Profile Rules**: Rules specifically enabled for your current profile (only when that profile is active)
+
+This layered approach allows you to have:
+
+- General rules that apply to all conversations
+- Project-specific rules for the current codebase
+- Profile-specific rules for specialized tasks
+
+### Configuring Profile Rules
+
+To set up profile rules:
+
+1. Open the Agent Panel
+2. Click on the profile selector dropdown
+3. Choose `Configure Profiles...`
+4. Select the profile you want to customize
+5. Click `Configure Profile Rules`
+6. Toggle the rules you want active for this profile
+
+### Example Use Cases
+
+Profile rules are particularly useful for specialized workflows:
+
+**Code Review Profile**:
+
+- Enable rules for security best practices
+- Include rules for performance considerations
+- Add rules for code documentation standards
+
+**Testing Profile**:
+
+- Enable rules for comprehensive test coverage
+- Include rules for edge case testing
+- Add rules for test naming conventions
+
+**Refactoring Profile**:
+
+- Enable rules for maintaining backward compatibility
+- Include rules for incremental changes
+- Add rules for code safety checks
+
+### Viewing Active Rules
+
+You can see which rules are currently active in your thread:
+
+- **Thread View**: Look for the rules indicator that shows "Using X default rules" and "Using Y profile rules"
+- **Rules Library**: Click on a rule to see if it's enabled for specific profiles
+- **Profile Configuration**: View all rules enabled for each profile in the configuration interface
+
+### Managing Profile Rules
+
+Profile rules are stored in your Zed settings and can be managed through:
+
+- **UI Configuration**: Use the profile configuration interface for easy toggling (recommended)
+- **Settings File**: Edit the `assistant.profiles` section in your `settings.json`
+- **Rules Library**: Create and edit rules that can be used across profiles
+
+Rules enabled for profiles will show a profile indicator in the Rules Library, making it easy to see which rules are being used where.
+
+> **Note**: When editing profile rules in your settings file, rules are referenced by their unique IDs (UUIDs for user-created rules, specific identifiers for built-in rules). It's recommended to use the UI configuration interface rather than editing these IDs manually, as the UI handles the ID mapping automatically and shows human-readable rule names.
 
 ## Migrating from Prompt Library
 
