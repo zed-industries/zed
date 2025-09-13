@@ -156,11 +156,12 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
         command.arg("--user").arg(user);
     }
 
+    // NOTE: due to the nature of this wslpath, when running cli.exe in WSL, ~ will expand to the home directory of whichever filesystem it is run in (e.g. /mnt/c/Users/username or /home/username)
     let output = command
         .arg("--distribution")
         .arg(distro_name)
         .arg("wslpath")
-        .arg("-au")
+        .arg("-au") // -a make output absolute -u convert windows path to wsl path (even if running the .exe from wsl the arg will always be a windows path)
         .arg(source)
         .output()?;
 
