@@ -5,6 +5,7 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
+use itertools::Itertools as _;
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
@@ -18,7 +19,7 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::merge_json_value_into;
@@ -511,9 +512,9 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn replace_test_name_parameters(test_name: &str) -> String {
-    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
-
-    regex::escape(&pattern.replace_all(test_name, "(.+?)"))
+    static PATTERN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap());
+    PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
 pub struct TypeScriptLspAdapter {
@@ -1015,7 +1016,9 @@ mod tests {
     use unindent::Unindent;
     use util::path;
 
-    use crate::typescript::{PackageJsonData, TypeScriptContextProvider};
+    use crate::typescript::{
+        PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+    };
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
@@ -1225,6 +1228,27 @@ mod tests {
                     Some(path!("/root/sub").into())
                 ),
             ]
+        );
+    }
+    #[test]
+    fn test_escaping_name() {
+        assert_eq!(
+            replace_test_name_parameters("plain test name"),
+            "plain test name"
+        );
+        assert_eq!(
+            replace_test_name_parameters(
+                "should fail to track entity as %s if there is already tracked entity with similar id"
+            ),
+            "should fail to track entity as (.+?) if there is already tracked entity with similar id"
+        );
+        assert_eq!(
+            replace_test_name_parameters("(Test name in parens)"),
+            "\\(Test name in parens\\)"
+        );
+        assert_eq!(
+            replace_test_name_parameters("(Test name in parens with %d placeholder)"),
+            "\\(Test name in parens with (.+?) placeholder\\)"
         );
     }
 }
