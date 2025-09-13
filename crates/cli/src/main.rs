@@ -160,18 +160,15 @@ fn parse_path_in_wsl(source: &str, wsl: &str) -> Result<String> {
         .arg("--distribution")
         .arg(distro_name)
         .arg("wslpath")
-        .arg("-m")
+        .arg("-au")
         .arg(source)
         .output()?;
 
     let result = String::from_utf8_lossy(&output.stdout);
+    let result = result.strip_suffix("\\").unwrap_or(&result).trim();
     let prefix = format!("//wsl.localhost/{}", distro_name);
 
-    Ok(result
-        .trim()
-        .strip_prefix(&prefix)
-        .unwrap_or(&result)
-        .to_string())
+    Ok(result.strip_prefix(&prefix).unwrap_or(&result).to_string())
 }
 
 fn main() -> Result<()> {
