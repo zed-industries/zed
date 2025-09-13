@@ -214,11 +214,10 @@ impl Vim {
 
                     Mode::HelixNormal | Mode::HelixSelect => {
                         if selection.is_empty() {
-                            // Handle empty selection by operating on the whole word
-                            let (word_range, _) = snapshot.surrounding_word(selection.start, false);
-                            let word_start = snapshot.offset_to_point(word_range.start);
-                            let word_end = snapshot.offset_to_point(word_range.end);
-                            ranges.push(word_start..word_end);
+                            // Handle empty selection by operating on single character
+                            let start = selection.start;
+                            let end = snapshot.clip_point(start + Point::new(0, 1), Bias::Right);
+                            ranges.push(start..end);
                             cursor_positions.push(selection.start..selection.start);
                         } else {
                             ranges.push(selection.start..selection.end);
@@ -448,7 +447,7 @@ mod test {
         // Cursor-only (empty) selection
         cx.set_state("The ˇquick brown", Mode::HelixNormal);
         cx.simulate_keystrokes("~");
-        cx.assert_state("The ˇQUICK brown", Mode::HelixNormal);
+        cx.assert_state("The ˇQuick brown", Mode::HelixNormal);
 
         // With `e` motion (which extends selection to end of word in Helix)
         cx.set_state("The ˇquick brown fox", Mode::HelixNormal);
