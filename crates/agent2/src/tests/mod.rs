@@ -975,10 +975,17 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         vec![rmcp::model::Tool {
             name: "echo".into(),
             description: None,
-            input_schema: serde_json::to_value(
-                EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
-            )
-            .unwrap(),
+            input_schema: Arc::new(
+                serde_json::to_value(
+                    EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
+                )
+                .unwrap()
+                .as_object()
+                .cloned()
+                .unwrap_or_default(),
+            ),
+            output_schema: None,
+            annotations: None,
         }],
         &context_server_store,
         cx,
@@ -1006,13 +1013,21 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
 
     let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
     assert_eq!(tool_call_params.name, "echo");
-    assert_eq!(tool_call_params.arguments, Some(json!({"text": "test"})));
+    assert_eq!(
+        tool_call_params.arguments,
+        Some(json!({"text": "mcp"}).as_object().cloned().unwrap())
+    );
     tool_call_response
         .send(rmcp::model::CallToolResult {
-            content: vec![rmcp::model::Content::Text(rmcp::model::TextContent {
-                text: "test".into(),
-            })],
+            content: vec![rmcp::model::Content {
+                raw: rmcp::model::RawContent::Text {
+                    text: "test".into(),
+                },
+                annotations: None,
+            }],
             is_error: Some(false),
+            structured_content: None,
+            meta: None,
         })
         .unwrap();
     cx.run_until_parked();
@@ -1056,13 +1071,21 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
 
     let (tool_call_params, tool_call_response) = mcp_tool_calls.next().await.unwrap();
     assert_eq!(tool_call_params.name, "echo");
-    assert_eq!(tool_call_params.arguments, Some(json!({"text": "mcp"})));
+    assert_eq!(
+        tool_call_params.arguments,
+        Some(json!({"text": "mcp"}).as_object().cloned().unwrap())
+    );
     tool_call_response
         .send(rmcp::model::CallToolResult {
-            content: vec![rmcp::model::Content::Text(rmcp::model::TextContent {
-                text: "mcp".into(),
-            })],
+            content: vec![rmcp::model::Content {
+                raw: rmcp::model::RawContent::Text {
+                    text: "test".into(),
+                },
+                annotations: None,
+            }],
             is_error: Some(false),
+            structured_content: None,
+            meta: None,
         })
         .unwrap();
     cx.run_until_parked();
@@ -1175,10 +1198,17 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
             rmcp::model::Tool {
                 name: "echo".into(), // Also conflicts with native EchoTool
                 description: None,
-                input_schema: serde_json::to_value(
-                    EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
-                )
-                .unwrap(),
+                input_schema: Arc::new(
+                    serde_json::to_value(
+                        EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
+                    )
+                    .unwrap()
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+                ),
+                output_schema: None,
+                annotations: None,
             },
             rmcp::model::Tool {
                 name: "unique_tool_2".into(),
@@ -1191,11 +1221,15 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
                 name: "a".repeat(MAX_TOOL_NAME_LENGTH - 2),
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
             },
             rmcp::model::Tool {
                 name: "b".repeat(MAX_TOOL_NAME_LENGTH - 1),
                 description: None,
                 input_schema: json!({"type": "object", "properties": {}}),
+                output_schema: None,
+                annotations: None,
             },
         ],
         &context_server_store,
