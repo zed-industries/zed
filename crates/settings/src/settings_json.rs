@@ -140,8 +140,9 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
 
         let found_key = text
             .get(key_range.clone())
-            .and_then(|key_text| {
-                serde_json::to_string(key_path[depth].as_ref())
+            .zip(key_path.get(depth))
+            .and_then(|(key_text, key_path_value)| {
+                serde_json::to_string(key_path_value.as_ref())
                     .ok()
                     .map(|key_path| depth < key_path.len() && key_text == key_path)
             })
@@ -155,6 +156,18 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
 
             if depth == key_path.len() {
                 break;
+            }
+
+            if let Some(array_replacement) = handle_possible_array_value(
+                &mat.captures[0].node,
+                &mat.captures[1].node,
+                text,
+                &key_path[depth..],
+                new_value,
+                replace_key,
+                tab_size,
+            ) {
+                return array_replacement;
             }
 
             first_key_start = None;
@@ -227,17 +240,12 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
             (removal_start..removal_end, String::new())
         }
     } else {
-        // We have key paths, construct the sub objects
-        let new_key = key_path[depth].as_ref();
-
-        // We don't have the key, construct the nested objects
-        let mut new_value =
-            serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
-        for key in key_path[(depth + 1)..].iter().rev() {
-            new_value = serde_json::json!({ key.as_ref().to_string(): new_value });
-        }
-
         if let Some(first_key_start) = first_key_start {
+            // We have key paths, construct the sub objects
+            let new_key = key_path[depth].as_ref();
+            // We don't have the key, construct the nested objects
+            let new_value = construct_json_value(&key_path[(depth + 1)..], new_value);
+
             let mut row = 0;
             let mut column = 0;
             for (ix, char) in text.char_indices() {
@@ -265,7 +273,8 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
                 (first_key_start..first_key_start, content)
             }
         } else {
-            new_value = serde_json::json!({ new_key.to_string(): new_value });
+            // We don't have the key, construct the nested objects
+            let new_value = construct_json_value(&key_path[depth..], new_value);
             let indent_prefix_len = 4 * depth;
             let mut new_val = to_pretty_json(&new_value, 4, indent_prefix_len);
             if depth == 0 {
@@ -297,35 +306,124 @@ pub fn replace_value_in_json_text<T: AsRef<str>>(
     }
 }
 
+fn construct_json_value(
+    key_path: &[impl AsRef<str>],
+    new_value: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut new_value =
+        serde_json::to_value(new_value.unwrap_or(&serde_json::Value::Null)).unwrap();
+    for key in key_path.iter().rev() {
+        if parse_index_key(key.as_ref()).is_some() {
+            new_value = serde_json::json!([new_value]);
+        } else {
+            new_value = serde_json::json!({ key.as_ref().to_string(): new_value });
+        }
+    }
+    return new_value;
+}
+
+fn parse_index_key(index_key: &str) -> Option<usize> {
+    index_key.strip_prefix('#')?.parse().ok()
+}
+
+fn handle_possible_array_value(
+    key_node: &tree_sitter::Node,
+    value_node: &tree_sitter::Node,
+    text: &str,
+    remaining_key_path: &[impl AsRef<str>],
+    new_value: Option<&Value>,
+    replace_key: Option<&str>,
+    tab_size: usize,
+) -> Option<(Range<usize>, String)> {
+    if remaining_key_path.is_empty() {
+        return None;
+    }
+    let key_path = remaining_key_path;
+    let index = parse_index_key(key_path[0].as_ref())?;
+
+    let value_is_array = value_node.kind() == TS_ARRAY_KIND;
+
+    let array_str = if value_is_array {
+        &text[value_node.byte_range()]
+    } else {
+        ""
+    };
+
+    let (mut replace_range, mut replace_value) = replace_top_level_array_value_in_json_text(
+        array_str,
+        &key_path[1..],
+        new_value,
+        replace_key,
+        index,
+        tab_size,
+    );
+
+    if value_is_array {
+        replace_range.start += value_node.start_byte();
+        replace_range.end += value_node.start_byte();
+    } else {
+        // replace the full value if it wasn't an array
+        replace_range = value_node.byte_range();
+    }
+    let non_whitespace_char_count = replace_value.len()
+        - replace_value
+            .chars()
+            .filter(char::is_ascii_whitespace)
+            .count();
+    let needs_indent = replace_value.ends_with('\n')
+        || (replace_value
+            .chars()
+            .zip(replace_value.chars().skip(1))
+            .any(|(c, next_c)| c == '\n' && !next_c.is_ascii_whitespace()));
+    let contains_comment = (replace_value.contains("//") && replace_value.contains('\n'))
+        || (replace_value.contains("/*") && replace_value.contains("*/"));
+    if needs_indent {
+        let indent_width = key_node.start_position().column;
+        let increased_indent = format!("\n{space:width$}", space = ' ', width = indent_width);
+        replace_value = replace_value.replace('\n', &increased_indent);
+    } else if non_whitespace_char_count < 32 && !contains_comment {
+        // remove indentation
+        while let Some(idx) = replace_value.find("\n ") {
+            replace_value.remove(idx);
+        }
+        while let Some(idx) = replace_value.find("  ") {
+            replace_value.remove(idx);
+        }
+    }
+    return Some((replace_range, replace_value));
+}
+
 const TS_DOCUMENT_KIND: &str = "document";
 const TS_ARRAY_KIND: &str = "array";
 const TS_COMMENT_KIND: &str = "comment";
 
 pub fn replace_top_level_array_value_in_json_text(
     text: &str,
-    key_path: &[&str],
+    key_path: &[impl AsRef<str>],
     new_value: Option<&Value>,
     replace_key: Option<&str>,
     array_index: usize,
     tab_size: usize,
-) -> Result<(Range<usize>, String)> {
+) -> (Range<usize>, String) {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
         .unwrap();
+
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = syntax_tree.walk();
 
     if cursor.node().kind() == TS_DOCUMENT_KIND {
-        anyhow::ensure!(
-            cursor.goto_first_child(),
-            "Document empty - No top level array"
-        );
+        cursor.goto_first_child();
     }
 
     while cursor.node().kind() != TS_ARRAY_KIND {
-        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
+        if !cursor.goto_next_sibling() {
+            let json_value = construct_json_value(key_path, new_value);
+            let json_value = serde_json::json!([json_value]);
+            return (0..text.len(), to_pretty_json(&json_value, tab_size, 0));
+        }
     }
 
     // false if no children
@@ -350,7 +448,7 @@ pub fn replace_top_level_array_value_in_json_text(
             if let Some(new_value) = new_value {
                 return append_top_level_array_value_in_json_text(text, new_value, tab_size);
             } else {
-                return Ok((0..0, String::new()));
+                return (0..0, String::new());
             }
         }
     }
@@ -386,8 +484,19 @@ pub fn replace_top_level_array_value_in_json_text(
                 remove_range.start = cursor.node().range().start_byte;
             }
         }
-        Ok((remove_range, String::new()))
+        (remove_range, String::new())
     } else {
+        if let Some(array_replacement) = handle_possible_array_value(
+            &cursor.node(),
+            &cursor.node(),
+            text,
+            key_path,
+            new_value,
+            replace_key,
+            tab_size,
+        ) {
+            return array_replacement;
+        }
         let (mut replace_range, mut replace_value) =
             replace_value_in_json_text(value_str, key_path, tab_size, new_value, replace_key);
 
@@ -397,7 +506,6 @@ pub fn replace_top_level_array_value_in_json_text(
         if needs_indent {
             let increased_indent = format!("\n{space:width$}", space = ' ', width = indent_width);
             replace_value = replace_value.replace('\n', &increased_indent);
-            // replace_value.push('\n');
         } else {
             while let Some(idx) = replace_value.find("\n ") {
                 replace_value.remove(idx + 1);
@@ -407,7 +515,7 @@ pub fn replace_top_level_array_value_in_json_text(
             }
         }
 
-        Ok((replace_range, replace_value))
+        (replace_range, replace_value)
     }
 }
 
@@ -415,7 +523,7 @@ pub fn append_top_level_array_value_in_json_text(
     text: &str,
     new_value: &Value,
     tab_size: usize,
-) -> Result<(Range<usize>, String)> {
+) -> (Range<usize>, String) {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_json::LANGUAGE.into())
@@ -425,21 +533,21 @@ pub fn append_top_level_array_value_in_json_text(
     let mut cursor = syntax_tree.walk();
 
     if cursor.node().kind() == TS_DOCUMENT_KIND {
-        anyhow::ensure!(
-            cursor.goto_first_child(),
-            "Document empty - No top level array"
-        );
+        cursor.goto_first_child();
     }
 
     while cursor.node().kind() != TS_ARRAY_KIND {
-        anyhow::ensure!(cursor.goto_next_sibling(), "EOF - No top level array");
+        if !cursor.goto_next_sibling() {
+            let json_value = serde_json::json!([new_value]);
+            return (0..text.len(), to_pretty_json(&json_value, tab_size, 0));
+        }
     }
 
-    anyhow::ensure!(
-        cursor.goto_last_child(),
+    let went_to_last_child = cursor.goto_last_child();
+    debug_assert!(
+        went_to_last_child && cursor.node().kind() == "]",
         "Malformed JSON syntax tree, expected `]` at end of array"
     );
-    debug_assert_eq!(cursor.node().kind(), "]");
     let close_bracket_start = cursor.node().start_byte();
     while cursor.goto_previous_sibling()
         && (cursor.node().is_extra() || cursor.node().is_missing())
@@ -508,7 +616,7 @@ pub fn append_top_level_array_value_in_json_text(
         if comma_range.is_none() {
             replace_value.insert(0, ',');
         }
-    } else {
+    } else if replace_value.contains('\n') || text.contains('\n') {
         if let Some(prev_newline) = text[..replace_range.start].rfind('\n')
             && text[prev_newline..replace_range.start].trim().is_empty()
         {
@@ -519,7 +627,7 @@ pub fn append_top_level_array_value_in_json_text(
         replace_value.insert_str(0, &indent);
         replace_value.push('\n');
     }
-    return Ok((replace_range, replace_value));
+    return (replace_range, replace_value);
 
     fn is_error_of_kind(cursor: &mut tree_sitter::TreeCursor<'_>, kind: &str) -> bool {
         if cursor.node().kind() != "ERROR" {
@@ -1046,6 +1154,689 @@ mod tests {
     }
 
     #[test]
+    fn object_replace_array() {
+        // Tests replacing values within arrays that are nested inside objects.
+        // Uses "#N" syntax in key paths to indicate array indices.
+        #[track_caller]
+        fn check_object_replace_array(
+            input: String,
+            key_path: &[&str],
+            value: Option<Value>,
+            expected: String,
+        ) {
+            let result = replace_value_in_json_text(&input, key_path, 4, value.as_ref(), None);
+            let mut result_str = input;
+            result_str.replace_range(result.0, &result.1);
+            pretty_assertions::assert_eq!(expected, result_str);
+        }
+
+        // Basic array element replacement
+        check_object_replace_array(
+            r#"{
+                "a": [1, 3],
+            }"#
+            .unindent(),
+            &["a", "#1"],
+            Some(json!(2)),
+            r#"{
+                "a": [1, 2],
+            }"#
+            .unindent(),
+        );
+
+        // Replace first element
+        check_object_replace_array(
+            r#"{
+                "items": [1, 2, 3]
+            }"#
+            .unindent(),
+            &["items", "#0"],
+            Some(json!(10)),
+            r#"{
+                "items": [10, 2, 3]
+            }"#
+            .unindent(),
+        );
+
+        // Replace last element
+        check_object_replace_array(
+            r#"{
+                "items": [1, 2, 3]
+            }"#
+            .unindent(),
+            &["items", "#2"],
+            Some(json!(30)),
+            r#"{
+                "items": [1, 2, 30]
+            }"#
+            .unindent(),
+        );
+
+        // Replace string in array
+        check_object_replace_array(
+            r#"{
+                "names": ["alice", "bob", "charlie"]
+            }"#
+            .unindent(),
+            &["names", "#1"],
+            Some(json!("robert")),
+            r#"{
+                "names": ["alice", "robert", "charlie"]
+            }"#
+            .unindent(),
+        );
+
+        // Replace boolean
+        check_object_replace_array(
+            r#"{
+                "flags": [true, false, true]
+            }"#
+            .unindent(),
+            &["flags", "#0"],
+            Some(json!(false)),
+            r#"{
+                "flags": [false, false, true]
+            }"#
+            .unindent(),
+        );
+
+        // Replace null with value
+        check_object_replace_array(
+            r#"{
+                "values": [null, 2, null]
+            }"#
+            .unindent(),
+            &["values", "#0"],
+            Some(json!(1)),
+            r#"{
+                "values": [1, 2, null]
+            }"#
+            .unindent(),
+        );
+
+        // Replace value with null
+        check_object_replace_array(
+            r#"{
+                "data": [1, 2, 3]
+            }"#
+            .unindent(),
+            &["data", "#1"],
+            Some(json!(null)),
+            r#"{
+                "data": [1, null, 3]
+            }"#
+            .unindent(),
+        );
+
+        // Replace simple value with object
+        check_object_replace_array(
+            r#"{
+                "list": [1, 2, 3]
+            }"#
+            .unindent(),
+            &["list", "#1"],
+            Some(json!({"value": 2, "label": "two"})),
+            r#"{
+                "list": [1, { "value": 2, "label": "two" }, 3]
+            }"#
+            .unindent(),
+        );
+
+        // Replace simple value with nested array
+        check_object_replace_array(
+            r#"{
+                "matrix": [1, 2, 3]
+            }"#
+            .unindent(),
+            &["matrix", "#1"],
+            Some(json!([20, 21, 22])),
+            r#"{
+                "matrix": [1, [ 20, 21, 22 ], 3]
+            }"#
+            .unindent(),
+        );
+
+        // Replace object in array
+        check_object_replace_array(
+            r#"{
+                "users": [
+                    {"name": "alice"},
+                    {"name": "bob"},
+                    {"name": "charlie"}
+                ]
+            }"#
+            .unindent(),
+            &["users", "#1"],
+            Some(json!({"name": "robert", "age": 30})),
+            r#"{
+                "users": [
+                    {"name": "alice"},
+                    { "name": "robert", "age": 30 },
+                    {"name": "charlie"}
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Replace property within object in array
+        check_object_replace_array(
+            r#"{
+                "users": [
+                    {"name": "alice", "age": 25},
+                    {"name": "bob", "age": 30},
+                    {"name": "charlie", "age": 35}
+                ]
+            }"#
+            .unindent(),
+            &["users", "#1", "age"],
+            Some(json!(31)),
+            r#"{
+                "users": [
+                    {"name": "alice", "age": 25},
+                    {"name": "bob", "age": 31},
+                    {"name": "charlie", "age": 35}
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Add new property to object in array
+        check_object_replace_array(
+            r#"{
+                "items": [
+                    {"id": 1},
+                    {"id": 2},
+                    {"id": 3}
+                ]
+            }"#
+            .unindent(),
+            &["items", "#1", "name"],
+            Some(json!("Item Two")),
+            r#"{
+                "items": [
+                    {"id": 1},
+                    {"name": "Item Two", "id": 2},
+                    {"id": 3}
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Remove property from object in array
+        check_object_replace_array(
+            r#"{
+                "items": [
+                    {"id": 1, "name": "one"},
+                    {"id": 2, "name": "two"},
+                    {"id": 3, "name": "three"}
+                ]
+            }"#
+            .unindent(),
+            &["items", "#1", "name"],
+            None,
+            r#"{
+                "items": [
+                    {"id": 1, "name": "one"},
+                    {"id": 2},
+                    {"id": 3, "name": "three"}
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Deeply nested: array in object in array
+        check_object_replace_array(
+            r#"{
+                "data": [
+                    {
+                        "values": [1, 2, 3]
+                    },
+                    {
+                        "values": [4, 5, 6]
+                    }
+                ]
+            }"#
+            .unindent(),
+            &["data", "#0", "values", "#1"],
+            Some(json!(20)),
+            r#"{
+                "data": [
+                    {
+                        "values": [1, 20, 3]
+                    },
+                    {
+                        "values": [4, 5, 6]
+                    }
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Multiple levels of nesting
+        check_object_replace_array(
+            r#"{
+                "root": {
+                    "level1": [
+                        {
+                            "level2": {
+                                "level3": [10, 20, 30]
+                            }
+                        }
+                    ]
+                }
+            }"#
+            .unindent(),
+            &["root", "level1", "#0", "level2", "level3", "#2"],
+            Some(json!(300)),
+            r#"{
+                "root": {
+                    "level1": [
+                        {
+                            "level2": {
+                                "level3": [10, 20, 300]
+                            }
+                        }
+                    ]
+                }
+            }"#
+            .unindent(),
+        );
+
+        // Array with mixed types
+        check_object_replace_array(
+            r#"{
+                "mixed": [1, "two", true, null, {"five": 5}]
+            }"#
+            .unindent(),
+            &["mixed", "#3"],
+            Some(json!({"four": 4})),
+            r#"{
+                "mixed": [1, "two", true, { "four": 4 }, {"five": 5}]
+            }"#
+            .unindent(),
+        );
+
+        // Replace with complex object
+        check_object_replace_array(
+            r#"{
+                "config": [
+                    "simple",
+                    "values"
+                ]
+            }"#
+            .unindent(),
+            &["config", "#0"],
+            Some(json!({
+                "type": "complex",
+                "settings": {
+                    "enabled": true,
+                    "level": 5
+                }
+            })),
+            r#"{
+                "config": [
+                    {
+                        "type": "complex",
+                        "settings": {
+                            "enabled": true,
+                            "level": 5
+                        }
+                    },
+                    "values"
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Array with trailing comma
+        check_object_replace_array(
+            r#"{
+                "items": [
+                    1,
+                    2,
+                    3,
+                ]
+            }"#
+            .unindent(),
+            &["items", "#1"],
+            Some(json!(20)),
+            r#"{
+                "items": [
+                    1,
+                    20,
+                    3,
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Array with comments
+        check_object_replace_array(
+            r#"{
+                "items": [
+                    1, // first item
+                    2, // second item
+                    3  // third item
+                ]
+            }"#
+            .unindent(),
+            &["items", "#1"],
+            Some(json!(20)),
+            r#"{
+                "items": [
+                    1, // first item
+                    20, // second item
+                    3  // third item
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Multiple arrays in object
+        check_object_replace_array(
+            r#"{
+                "first": [1, 2, 3],
+                "second": [4, 5, 6],
+                "third": [7, 8, 9]
+            }"#
+            .unindent(),
+            &["second", "#1"],
+            Some(json!(50)),
+            r#"{
+                "first": [1, 2, 3],
+                "second": [4, 50, 6],
+                "third": [7, 8, 9]
+            }"#
+            .unindent(),
+        );
+
+        // Empty array - add first element
+        check_object_replace_array(
+            r#"{
+                "empty": []
+            }"#
+            .unindent(),
+            &["empty", "#0"],
+            Some(json!("first")),
+            r#"{
+                "empty": ["first"]
+            }"#
+            .unindent(),
+        );
+
+        // Array of arrays
+        check_object_replace_array(
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [3, 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+            &["matrix", "#1", "#0"],
+            Some(json!(30)),
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [30, 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Replace nested object property in array element
+        check_object_replace_array(
+            r#"{
+                "users": [
+                    {
+                        "name": "alice",
+                        "address": {
+                            "city": "NYC",
+                            "zip": "10001"
+                        }
+                    }
+                ]
+            }"#
+            .unindent(),
+            &["users", "#0", "address", "city"],
+            Some(json!("Boston")),
+            r#"{
+                "users": [
+                    {
+                        "name": "alice",
+                        "address": {
+                            "city": "Boston",
+                            "zip": "10001"
+                        }
+                    }
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Add element past end of array
+        check_object_replace_array(
+            r#"{
+                "items": [1, 2]
+            }"#
+            .unindent(),
+            &["items", "#5"],
+            Some(json!(6)),
+            r#"{
+                "items": [1, 2, 6]
+            }"#
+            .unindent(),
+        );
+
+        // Complex nested structure
+        check_object_replace_array(
+            r#"{
+                "app": {
+                    "modules": [
+                        {
+                            "name": "auth",
+                            "routes": [
+                                {"path": "/login", "method": "POST"},
+                                {"path": "/logout", "method": "POST"}
+                            ]
+                        },
+                        {
+                            "name": "api",
+                            "routes": [
+                                {"path": "/users", "method": "GET"},
+                                {"path": "/users", "method": "POST"}
+                            ]
+                        }
+                    ]
+                }
+            }"#
+            .unindent(),
+            &["app", "modules", "#1", "routes", "#0", "method"],
+            Some(json!("PUT")),
+            r#"{
+                "app": {
+                    "modules": [
+                        {
+                            "name": "auth",
+                            "routes": [
+                                {"path": "/login", "method": "POST"},
+                                {"path": "/logout", "method": "POST"}
+                            ]
+                        },
+                        {
+                            "name": "api",
+                            "routes": [
+                                {"path": "/users", "method": "PUT"},
+                                {"path": "/users", "method": "POST"}
+                            ]
+                        }
+                    ]
+                }
+            }"#
+            .unindent(),
+        );
+
+        // Escaped strings in array
+        check_object_replace_array(
+            r#"{
+                "messages": ["hello", "world"]
+            }"#
+            .unindent(),
+            &["messages", "#0"],
+            Some(json!("hello \"quoted\" world")),
+            r#"{
+                "messages": ["hello \"quoted\" world", "world"]
+            }"#
+            .unindent(),
+        );
+
+        // Block comments
+        check_object_replace_array(
+            r#"{
+                "data": [
+                    /* first */ 1,
+                    /* second */ 2,
+                    /* third */ 3
+                ]
+            }"#
+            .unindent(),
+            &["data", "#1"],
+            Some(json!(20)),
+            r#"{
+                "data": [
+                    /* first */ 1,
+                    /* second */ 20,
+                    /* third */ 3
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Inline array
+        check_object_replace_array(
+            r#"{"items": [1, 2, 3], "count": 3}"#.to_string(),
+            &["items", "#1"],
+            Some(json!(20)),
+            r#"{"items": [1, 20, 3], "count": 3}"#.to_string(),
+        );
+
+        // Single element array
+        check_object_replace_array(
+            r#"{
+                "single": [42]
+            }"#
+            .unindent(),
+            &["single", "#0"],
+            Some(json!(100)),
+            r#"{
+                "single": [100]
+            }"#
+            .unindent(),
+        );
+
+        // Inconsistent formatting
+        check_object_replace_array(
+            r#"{
+                "messy": [1,
+                    2,
+                        3,
+                4]
+            }"#
+            .unindent(),
+            &["messy", "#2"],
+            Some(json!(30)),
+            r#"{
+                "messy": [1,
+                    2,
+                        30,
+                4]
+            }"#
+            .unindent(),
+        );
+
+        // Creates array if has numbered key
+        check_object_replace_array(
+            r#"{
+                "array": {"foo": "bar"}
+            }"#
+            .unindent(),
+            &["array", "#3"],
+            Some(json!(4)),
+            r#"{
+                "array": [
+                    4
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Replace non-array element within array with array
+        check_object_replace_array(
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [3, 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+            &["matrix", "#1", "#0"],
+            Some(json!(["foo", "bar"])),
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [[ "foo", "bar" ], 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+        );
+        // Replace non-array element within array with array
+        check_object_replace_array(
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [3, 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+            &["matrix", "#1", "#0", "#3"],
+            Some(json!(["foo", "bar"])),
+            r#"{
+                "matrix": [
+                    [1, 2],
+                    [[ [ "foo", "bar" ] ], 4],
+                    [5, 6]
+                ]
+            }"#
+            .unindent(),
+        );
+
+        // Create array in key that doesn't exist
+        check_object_replace_array(
+            r#"{
+                "foo": {}
+            }"#
+            .unindent(),
+            &["foo", "bar", "#0"],
+            Some(json!({"is_object": true})),
+            r#"{
+                "foo": {
+                    "bar": [
+                        {
+                            "is_object": true
+                        }
+                    ]
+                }
+            }"#
+            .unindent(),
+        );
+    }
+
+    #[test]
     fn array_replace() {
         #[track_caller]
         fn check_array_replace(
@@ -1063,8 +1854,7 @@ mod tests {
                 None,
                 index,
                 4,
-            )
-            .expect("replace succeeded");
+            );
             let mut result_str = input;
             result_str.replace_range(result.0, &result.1);
             pretty_assertions::assert_eq!(expected.to_string(), result_str);
@@ -1228,10 +2018,7 @@ mod tests {
             0,
             &[],
             Some(json!("first")),
-            r#"[
-                "first"
-            ]"#
-            .unindent(),
+            r#"["first"]"#.unindent(),
         );
 
         // Test array with leading comments
@@ -1411,6 +2198,32 @@ mod tests {
             ]"#
             .unindent(),
         );
+
+        check_array_replace(
+            r#""#,
+            2,
+            &[],
+            Some(json!(42)),
+            r#"[
+                42
+            ]"#
+            .unindent(),
+        );
+
+        check_array_replace(
+            r#""#,
+            2,
+            &["foo", "bar"],
+            Some(json!(42)),
+            r#"[
+                {
+                    "foo": {
+                        "bar": 42
+                    }
+                }
+            ]"#
+            .unindent(),
+        );
     }
 
     #[test]
@@ -1418,8 +2231,7 @@ mod tests {
         #[track_caller]
         fn check_array_append(input: impl ToString, value: Value, expected: impl ToString) {
             let input = input.to_string();
-            let result = append_top_level_array_value_in_json_text(&input, &value, 4)
-                .expect("append succeeded");
+            let result = append_top_level_array_value_in_json_text(&input, &value, 4);
             let mut result_str = input;
             result_str.replace_range(result.0, &result.1);
             pretty_assertions::assert_eq!(expected.to_string(), result_str);
@@ -1677,5 +2489,14 @@ mod tests {
             ]"#
             .unindent(),
         );
+
+        check_array_append(
+            r#""#,
+            json!(42),
+            r#"[
+                42
+            ]"#
+            .unindent(),
+        )
     }
 }
