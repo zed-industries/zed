@@ -3,9 +3,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
+#[derive(Copy, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleBarVisibility {
+    Always,
+    Never,
+    HideInFullScreen,
+}
+
 #[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TitleBarSettings {
-    pub show: bool,
+    pub show: TitleBarVisibility,
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
     pub show_user_picture: bool,
@@ -21,10 +29,10 @@ pub struct TitleBarSettings {
 #[settings_ui(group = "Title Bar")]
 #[settings_key(key = "title_bar")]
 pub struct TitleBarSettingsContent {
-    /// Whether to show the title bar at all.
+    /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
     ///
-    /// Default: true
-    pub show: Option<bool>,
+    /// Default: "always"
+    pub show: Option<TitleBarVisibility>,
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
     /// Default: false
