@@ -13451,6 +13451,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // If the user has Vim mode enabled, we'll update the
+        // `clip_at_line_ends` field to `false`, as Vim mode can set this to
+        // `true` when in NORMAL mode, which makes it so that , without this
+        // call, the selection ends up being until the penultimate character of
+        // the line, instead of the last.
+        if vim_enabled(cx) {
+            self.set_clip_at_line_ends(false, cx);
+        };
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| {
