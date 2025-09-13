@@ -122,23 +122,40 @@ impl Tool for ContextServerTool {
 
                 let mut result = String::new();
 
-                // Handle Annotated<RawContent> properly
+                // Handle Annotated<RawContent> properly - access the 'raw' field
                 for content_item in response.content {
-                    // Access the inner RawContent
-                    match &content_item.inner {
-                        rmcp::model::RawContent::Text { text } => {
-                            result.push_str(text);
+                    // Access the raw field and match on tuple variants
+                    match &content_item.raw {
+                        rmcp::model::RawContent::Text(text_content) => {
+                            // Text is a tuple variant containing a TextContent struct
+                            result.push_str(&text_content.text);
                         }
-                        rmcp::model::RawContent::Image { data, mime_type } => {
+                        rmcp::model::RawContent::Image(image_content) => {
+                            // Image is a tuple variant containing an ImageContent struct
                             log::warn!(
                                 "Ignoring image content from tool response (mime: {})",
-                                mime_type
+                                image_content.mime_type
                             );
                         }
-                        rmcp::model::RawContent::EmbeddedResource { resource } => {
+                        rmcp::model::RawContent::Resource(resource_content) => {
+                            // EmbeddedResource is a tuple variant containing an EmbeddedResourceContent struct
                             log::warn!(
                                 "Ignoring embedded resource content from tool response: {:?}",
-                                resource.uri
+                                resource_content.resource
+                            );
+                        }
+                        rmcp::model::RawContent::ResourceLink(resource_link_content) => {
+                            // EmbeddedResource is a tuple variant containing an EmbeddedResourceContent struct
+                            log::warn!(
+                                "Ignoring embedded resource content from tool response: {:?}",
+                                resource_link_content.uri
+                            );
+                        }
+                        rmcp::model::RawContent::Audio(audio_content) => {
+                            // EmbeddedResource is a tuple variant containing an EmbeddedResourceContent struct
+                            log::warn!(
+                                "Ignoring audio content from tool response (mime: {})",
+                                audio_content.mime_type
                             );
                         }
                     }

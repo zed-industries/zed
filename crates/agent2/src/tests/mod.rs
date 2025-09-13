@@ -1143,12 +1143,19 @@ async fn test_mcp_tool_truncation(cx: &mut TestAppContext) {
         "xxx",
         vec![
             rmcp::model::Tool {
-                name: "echo".into(), // Conflicts with native EchoTool
+                name: "echo".into(),
                 description: None,
-                input_schema: serde_json::to_value(
-                    EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
-                )
-                .unwrap(),
+                input_schema: Arc::new(
+                    serde_json::to_value(
+                        EchoTool.input_schema(LanguageModelToolSchemaFormat::JsonSchema),
+                    )
+                    .unwrap()
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+                ),
+                output_schema: None,
+                annotations: None,
             },
             rmcp::model::Tool {
                 name: "unique_tool_1".into(),

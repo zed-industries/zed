@@ -172,7 +172,7 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 }
 
-fn completion_argument(
+fn _completion_argument(
     prompt: &rmcp::model::Prompt,
     arguments: &[String],
 ) -> Result<(String, String)> {

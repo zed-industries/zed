@@ -148,14 +148,14 @@ impl AnyAgentTool for ContextServerTool {
         &self,
         format: language_model::LanguageModelToolSchemaFormat,
     ) -> Result<serde_json::Value> {
-        let mut schema = self.tool.input_schema.clone();
+        let mut schema = serde_json::Value::Object((*self.tool.input_schema).clone());
         assistant_tool::adapt_schema_to_format(&mut schema, format)?;
         Ok(match schema {
             serde_json::Value::Null => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             serde_json::Value::Object(map) if map.is_empty() => {
-                serde_json::json!({ "type": "object", "properties": [] })
+                serde_json::json!({ "type": "object", "properties": {} })
             }
             _ => schema,
         })
@@ -200,15 +200,39 @@ impl AnyAgentTool for ContextServerTool {
 
             let mut result = String::new();
             for content in response.content {
-                match content {
-                    rmcp::model::Content::Text(text_content) => {
+                // Access the raw field and match on tuple variants
+                match &content.raw {
+                    rmcp::model::RawContent::Text(text_content) => {
+                        // Text is a tuple variant containing a TextContent struct
                         result.push_str(&text_content.text);
                     }
-                    rmcp::model::Content::Image(_) => {
-                        log::warn!("Ignoring image content from tool response");
+                    rmcp::model::RawContent::Image(image_content) => {
+                        // Image is a tuple variant containing an ImageContent struct
+                        log::warn!(
+                            "Ignoring image content from tool response (mime: {})",
+                            image_content.mime_type
+                        );
                     }
-                    rmcp::model::Content::EmbeddedResource(_) => {
-                        log::warn!("Ignoring embedded resource content from tool response");
+                    rmcp::model::RawContent::Resource(resource_content) => {
+                        // EmbeddedResource is a tuple variant containing an EmbeddedResourceContent struct
+                        log::warn!(
+                            "Ignoring embedded resource content from tool response: {:?}",
+                            resource_content.resource
+                        );
+                    }
+                    rmcp::model::RawContent::ResourceLink(resource_link_content) => {
+                        // EmbeddedResource is a tuple variant containing an EmbeddedResourceContent struct
+                        log::warn!(
+                            "Ignoring embedded resource content from tool response: {:?}",
+                            resource_link_content.uri
+                        );
+                    }
+                    rmcp::model::RawContent::Audio(audio_content) => {
+                        // EmbeddedResource is a tuple variant containing an EmbeddedResourceContent struct
+                        log::warn!(
+                            "Ignoring audio content from tool response (mime: {})",
+                            audio_content.mime_type
+                        );
                     }
                 }
             }
