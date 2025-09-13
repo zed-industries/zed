@@ -3431,11 +3431,7 @@ pub mod debug {
     impl<T: ToOffset> ToDebugRanges for [Range<T>] {
         fn to_debug_ranges(&self, snapshot: &BufferSnapshot) -> Vec<Range<usize>> {
             self.iter()
-                .map(|range| {
-                    let start = range.start.to_offset(snapshot);
-                    let end = range.end.to_offset(snapshot);
-                    start..end
-                })
+                .map(|range| range.start.to_offset(snapshot)..range.end.to_offset(snapshot))
                 .collect()
         }
     }

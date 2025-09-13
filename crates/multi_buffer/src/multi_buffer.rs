@@ -8089,11 +8089,7 @@ pub mod debug {
             snapshot: &MultiBufferSnapshot,
         ) -> Vec<Range<usize>> {
             self.iter()
-                .map(|range| {
-                    let start = range.start.to_offset(snapshot);
-                    let end = range.end.to_offset(snapshot);
-                    start..end
-                })
+                .map(|range| range.start.to_offset(snapshot)..range.end.to_offset(snapshot))
                 .collect()
         }
     }
