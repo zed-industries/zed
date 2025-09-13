@@ -50,6 +50,7 @@ parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
 prompt_store.workspace = true
+rmcp.workspace = true
 rust-embed.workspace = true
 schemars.workspace = true
 serde.workspace = true

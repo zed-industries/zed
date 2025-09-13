@@ -39,6 +39,7 @@ project.workspace = true
 prompt_store.workspace = true
 proto.workspace = true
 regex.workspace = true
+rmcp.workspace = true
 rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true

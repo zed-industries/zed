@@ -30,6 +30,7 @@ http_client.workspace = true
 language.workspace = true
 project.workspace = true
 prompt_store.workspace = true
+rmcp.workspace = true
 rope.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -41,15 +42,6 @@ util.workspace = true
 workspace.workspace = true
 worktree.workspace = true
 workspace-hack.workspace = true
-rmcp = { version = "0.6.2", features = [
-    "client",
-    "transport-sse-client-reqwest",
-    "reqwest",
-    "transport-streamable-http-client-reqwest",
-    "transport-child-process",
-    "tower",
-    "auth"
-] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true

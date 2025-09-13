@@ -576,6 +576,15 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "951c77
     "socks",
     "stream",
 ] }
+rmcp = { version = "0.6.2", features = [
+    "client",
+    "transport-sse-client-reqwest",
+    "reqwest",
+    "transport-streamable-http-client-reqwest",
+    "transport-child-process",
+    "tower",
+    "auth"
+] }
 rsa = "0.9.6"
 runtimelib = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c804216b6914355d15d0b91ea91f6babd734", default-features = false, features = [
     "async-dispatcher-runtime",

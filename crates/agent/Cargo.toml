@@ -49,6 +49,7 @@ project.workspace = true
 prompt_store.workspace = true
 ref-cast.workspace = true
 rope.workspace = true
+rmcp.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -65,15 +66,6 @@ uuid.workspace = true
 workspace-hack.workspace = true
 zed_env_vars.workspace = true
 zstd.workspace = true
-rmcp = { version = "0.6.2", features = [
-    "client",
-    "transport-sse-client-reqwest",
-    "reqwest",
-    "transport-streamable-http-client-reqwest",
-    "transport-child-process",
-    "tower",
-    "auth"
-] }
 
 [dev-dependencies]
 assistant_tools.workspace = true
