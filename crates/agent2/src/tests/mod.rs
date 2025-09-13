@@ -1020,7 +1020,10 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
     tool_call_response
         .send(rmcp::model::CallToolResult {
             content: vec![rmcp::model::Content {
-                raw: rmcp::model::RawContent::Text("test".into()),
+                raw: rmcp::model::RawContent::Text(rmcp::model::RawTextContent {
+                    text: "test".into(),
+                    meta: None,
+                }),
                 annotations: None,
             }],
             is_error: Some(false),
@@ -1076,9 +1079,10 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
     tool_call_response
         .send(rmcp::model::CallToolResult {
             content: vec![rmcp::model::Content {
-                raw: rmcp::model::RawContent::Text {
+                raw: rmcp::model::RawContent::Text(rmcp::model::RawTextContent {
                     text: "test".into(),
-                },
+                    meta: None,
+                }),
                 annotations: None,
             }],
             is_error: Some(false),
