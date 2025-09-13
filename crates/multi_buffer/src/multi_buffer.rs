@@ -6426,7 +6426,6 @@ impl MultiBufferSnapshot {
         R: debug::ToMultiBufferDebugRanges,
         V: std::fmt::Debug,
     {
-        let caller = std::panic::Location::caller();
         let text_ranges = ranges
             .to_multi_buffer_debug_ranges(self)
             .into_iter()
@@ -6439,7 +6438,7 @@ impl MultiBufferSnapshot {
             })
             .collect();
         text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
-            debug_ranges.insert(key, text_ranges, format!("{value:?}").into(), caller)
+            debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
         });
     }
 }

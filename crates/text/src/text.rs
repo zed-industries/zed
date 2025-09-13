@@ -2610,21 +2610,19 @@ impl BufferSnapshot {
     /// debug annotations with the same key will be removed. The key is also used to determine the
     /// annotation's color.
     #[cfg(debug_assertions)]
-    #[track_caller]
     pub fn debug_with_key<K, R, V>(&self, key: &K, ranges: &R, value: V)
     where
         K: std::hash::Hash + 'static,
         R: debug::ToDebugRanges,
         V: std::fmt::Debug,
     {
-        let caller = std::panic::Location::caller();
         let ranges = ranges
             .to_debug_ranges(self)
             .into_iter()
             .map(|range| self.anchor_after(range.start)..self.anchor_before(range.end))
             .collect();
         debug::GlobalDebugRanges::with_locked(|debug_ranges| {
-            debug_ranges.insert(key, ranges, format!("{value:?}").into(), caller);
+            debug_ranges.insert(key, ranges, format!("{value:?}").into());
         });
     }
 }
@@ -3301,7 +3299,6 @@ pub mod debug {
         key: Key,
         pub ranges: Vec<Range<Anchor>>,
         pub value: Arc<str>,
-        pub caller: &'static std::panic::Location<'static>,
         pub occurrence_index: usize,
     }
 
@@ -3333,7 +3330,6 @@ pub mod debug {
             key: &K,
             ranges: Vec<Range<Anchor>>,
             value: Arc<str>,
-            caller: &'static std::panic::Location<'static>,
         ) {
             let occurrence_index = *self
                 .key_to_occurrence_index
@@ -3356,7 +3352,6 @@ pub mod debug {
                 ranges,
                 key,
                 value,
-                caller,
                 occurrence_index,
             });
         }
