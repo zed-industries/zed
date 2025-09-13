@@ -393,6 +393,8 @@
   "title_bar": {
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
+    // Whether to show the git status indicator in the titlebar.
+    "show_branch_status": false,
     // Whether to show the branch name button in the titlebar.
     "show_branch_name": true,
     // Whether to show the project host and name in the titlebar.
