@@ -2598,12 +2598,12 @@ impl BufferSnapshot {
     /// callsite of this function is used as a key - previous annotations will be removed.
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug<V, R>(&self, value: V, range: &R)
+    pub fn debug<R, V>(&self, range: &R, value: V)
     where
-        V: std::fmt::Debug,
         R: debug::ToDebugRanges,
+        V: std::fmt::Debug,
     {
-        self.debug_with_key(std::panic::Location::caller(), value, range);
+        self.debug_with_key(std::panic::Location::caller(), range, value);
     }
 
     /// Visually annotates a position or range with the `Debug` representation of a value. Previous
@@ -2611,11 +2611,11 @@ impl BufferSnapshot {
     /// annotation's color.
     #[cfg(debug_assertions)]
     #[track_caller]
-    pub fn debug_with_key<K, V, R>(&self, key: &K, value: V, range: &R)
+    pub fn debug_with_key<K, R, V>(&self, key: &K, range: &R, value: V)
     where
         K: std::hash::Hash + 'static,
-        V: std::fmt::Debug,
         R: debug::ToDebugRanges,
+        V: std::fmt::Debug,
     {
         let caller = std::panic::Location::caller();
         let ranges = range
@@ -2624,7 +2624,7 @@ impl BufferSnapshot {
             .map(|range| self.anchor_after(range.start)..self.anchor_before(range.end))
             .collect();
         debug::GlobalDebugRanges::with_locked(|debug_ranges| {
-            debug_ranges.insert(key, format!("{value:?}").into(), ranges, caller);
+            debug_ranges.insert(key, ranges, format!("{value:?}").into(), caller);
         });
     }
 }
@@ -3298,8 +3298,8 @@ pub mod debug {
     }
 
     pub struct DebugRange {
-        pub ranges: Vec<Range<Anchor>>,
         key: Key,
+        pub ranges: Vec<Range<Anchor>>,
         pub value: Arc<str>,
         pub caller: &'static std::panic::Location<'static>,
         pub occurrence_index: usize,
@@ -3331,8 +3331,8 @@ pub mod debug {
         pub fn insert<K: Hash + 'static>(
             &mut self,
             key: &K,
-            value: Arc<str>,
             ranges: Vec<Range<Anchor>>,
+            value: Arc<str>,
             caller: &'static std::panic::Location<'static>,
         ) {
             let occurrence_index = *self
