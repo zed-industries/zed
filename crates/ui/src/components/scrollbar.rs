@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Debug, marker::PhantomData, ops::Not, time::Duration};
+use std::{any::Any, fmt::Debug, ops::Not, time::Duration};
 
 use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
@@ -68,20 +68,8 @@ pub mod scrollbars {
         }
     }
 
-    impl GlobalSetting for ShowScrollbar {
-        fn get_value(_cx: &App) -> &Self {
-            &ShowScrollbar::Always
-        }
-    }
-
     pub trait ScrollbarVisibility: GlobalSetting + 'static {
         fn visibility(&self, cx: &App) -> ShowScrollbar;
-    }
-
-    impl ScrollbarVisibility for ShowScrollbar {
-        fn visibility(&self, cx: &App) -> ShowScrollbar {
-            *ShowScrollbar::get_value(cx)
-        }
     }
 
     #[derive(Default)]
@@ -96,14 +84,13 @@ pub mod scrollbars {
     impl Global for ScrollbarAutoHide {}
 }
 
-fn get_scrollbar_state<S, T>(
-    mut config: Scrollbars<S, T>,
+fn get_scrollbar_state<T>(
+    mut config: Scrollbars<T>,
     caller_location: &'static std::panic::Location,
     window: &mut Window,
     cx: &mut App,
-) -> Entity<ScrollbarStateWrapper<S, T>>
+) -> Entity<ScrollbarStateWrapper<T>>
 where
-    S: ScrollbarVisibility,
     T: ScrollableHandle,
 {
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
@@ -119,14 +106,13 @@ where
 pub trait WithScrollbar: Sized {
     type Output;
 
-    fn custom_scrollbars<S, T>(
+    fn custom_scrollbars<T>(
         self,
-        config: Scrollbars<S, T>,
+        config: Scrollbars<T>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::Output
     where
-        S: ScrollbarVisibility,
         T: ScrollableHandle;
 
     #[track_caller]
@@ -168,14 +154,13 @@ impl WithScrollbar for Stateful<Div> {
     type Output = Self;
 
     #[track_caller]
-    fn custom_scrollbars<S, T>(
+    fn custom_scrollbars<T>(
         self,
-        config: Scrollbars<S, T>,
+        config: Scrollbars<T>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::Output
     where
-        S: ScrollbarVisibility,
         T: ScrollableHandle,
     {
         render_scrollbar(
@@ -190,14 +175,13 @@ impl WithScrollbar for Div {
     type Output = Stateful<Div>;
 
     #[track_caller]
-    fn custom_scrollbars<S, T>(
+    fn custom_scrollbars<T>(
         self,
-        config: Scrollbars<S, T>,
+        config: Scrollbars<T>,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::Output
     where
-        S: ScrollbarVisibility,
         T: ScrollableHandle,
     {
         let scrollbar = get_scrollbar_state(config, std::panic::Location::caller(), window, cx);
@@ -213,13 +197,12 @@ impl WithScrollbar for Div {
     }
 }
 
-fn render_scrollbar<S, T>(
-    scrollbar: Entity<ScrollbarStateWrapper<S, T>>,
+fn render_scrollbar<T>(
+    scrollbar: Entity<ScrollbarStateWrapper<T>>,
     div: Stateful<Div>,
     cx: &App,
 ) -> Stateful<Div>
 where
-    S: ScrollbarVisibility,
     T: ScrollableHandle,
 {
     let state = &scrollbar.read(cx).0;
@@ -247,9 +230,7 @@ where
     .child(state.clone())
 }
 
-impl<S: ScrollbarVisibility, T: ScrollableHandle> UniformListDecoration
-    for ScrollbarStateWrapper<S, T>
-{
+impl<T: ScrollableHandle> UniformListDecoration for ScrollbarStateWrapper<T> {
     fn compute(
         &self,
         _visible_range: Range<usize>,
@@ -334,7 +315,7 @@ impl ReservedSpace {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 enum ScrollbarWidth {
     #[default]
     Normal,
@@ -352,11 +333,12 @@ impl ScrollbarWidth {
     }
 }
 
-pub struct Scrollbars<S: ScrollbarVisibility = ShowScrollbar, T: ScrollableHandle = ScrollHandle> {
+#[derive(Clone)]
+pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     id: Option<ElementId>,
-    tracked_setting: PhantomData<S>,
+    get_visibility: fn(&App) -> ShowScrollbar,
     tracked_entity: Option<Option<EntityId>>,
-    scrollable_handle: Box<dyn FnOnce() -> T>,
+    scrollable_handle: T,
     handle_was_added: bool,
     visibility: Point<ReservedSpace>,
     scrollbar_width: ScrollbarWidth,
@@ -364,21 +346,21 @@ pub struct Scrollbars<S: ScrollbarVisibility = ShowScrollbar, T: ScrollableHandl
 
 impl Scrollbars {
     pub fn new(show_along: ScrollAxes) -> Self {
-        Self::new_with_setting(show_along)
+        Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
     }
 
-    pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars<S> {
-        Scrollbars::<S>::new_with_setting(ScrollAxes::Both)
+    pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
+        Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::get_value(cx).visibility(cx))
     }
 }
 
-impl<S: ScrollbarVisibility> Scrollbars<S> {
-    fn new_with_setting(show_along: ScrollAxes) -> Self {
+impl Scrollbars {
+    fn new_with_setting(show_along: ScrollAxes, get_visibility: fn(&App) -> ShowScrollbar) -> Self {
         Self {
             id: None,
-            tracked_setting: PhantomData,
+            get_visibility,
             handle_was_added: false,
-            scrollable_handle: Box::new(ScrollHandle::new),
+            scrollable_handle: ScrollHandle::new(),
             tracked_entity: None,
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
             scrollbar_width: ScrollbarWidth::Normal,
@@ -386,9 +368,7 @@ impl<S: ScrollbarVisibility> Scrollbars<S> {
     }
 }
 
-impl<Setting: ScrollbarVisibility, ScrollHandle: ScrollableHandle>
-    Scrollbars<Setting, ScrollHandle>
-{
+impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
     pub fn id(mut self, id: impl Into<ElementId>) -> Self {
         self.id = Some(id.into());
         self
@@ -416,24 +396,24 @@ impl<Setting: ScrollbarVisibility, ScrollHandle: ScrollableHandle>
     pub fn tracked_scroll_handle<TrackedHandle: ScrollableHandle>(
         self,
         tracked_scroll_handle: TrackedHandle,
-    ) -> Scrollbars<Setting, TrackedHandle> {
+    ) -> Scrollbars<TrackedHandle> {
         let Self {
             id,
-            tracked_setting,
             tracked_entity: tracked_entity_id,
             scrollbar_width,
             visibility,
+            get_visibility,
             ..
         } = self;
 
         Scrollbars {
             handle_was_added: true,
-            scrollable_handle: Box::new(|| tracked_scroll_handle),
+            scrollable_handle: tracked_scroll_handle,
             id,
-            tracked_setting,
             tracked_entity: tracked_entity_id,
             visibility,
             scrollbar_width,
+            get_visibility,
         }
     }
 
@@ -491,19 +471,17 @@ enum ParentHovered {
 
 /// This is used to ensure notifies within the state do not notify the parent
 /// unintentionally.
-struct ScrollbarStateWrapper<S: ScrollbarVisibility, T: ScrollableHandle>(
-    Entity<ScrollbarState<S, T>>,
-);
+struct ScrollbarStateWrapper<T: ScrollableHandle>(Entity<ScrollbarState<T>>);
 
 /// A scrollbar state that should be persisted across frames.
-struct ScrollbarState<S: ScrollbarVisibility, T: ScrollableHandle = ScrollHandle> {
+struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     thumb_state: ThumbState,
     notify_id: Option<EntityId>,
     manually_added: bool,
     scroll_handle: T,
     width: ScrollbarWidth,
-    tracked_setting: PhantomData<S>,
     show_setting: ShowScrollbar,
+    get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
     show_state: VisibilityState,
     mouse_in_parent: bool,
@@ -511,9 +489,9 @@ struct ScrollbarState<S: ScrollbarVisibility, T: ScrollableHandle = ScrollHandle
     _auto_hide_task: Option<Task<()>>,
 }
 
-impl<S: ScrollbarVisibility, T: ScrollableHandle> ScrollbarState<S, T> {
+impl<T: ScrollableHandle> ScrollbarState<T> {
     fn new_from_config(
-        config: Scrollbars<S, T>,
+        config: Scrollbars<T>,
         parent_id: EntityId,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -521,16 +499,16 @@ impl<S: ScrollbarVisibility, T: ScrollableHandle> ScrollbarState<S, T> {
         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed)
             .detach();
 
-        let show_setting = S::get_value(cx).visibility(cx);
+        let show_setting = (config.get_visibility)(cx);
         ScrollbarState {
             thumb_state: Default::default(),
             notify_id: config.tracked_entity.map(|id| id.unwrap_or(parent_id)),
             manually_added: config.handle_was_added,
-            scroll_handle: (config.scrollable_handle)(),
+            scroll_handle: config.scrollable_handle,
             width: config.scrollbar_width,
             visibility: config.visibility,
-            tracked_setting: PhantomData,
             show_setting,
+            get_visibility: config.get_visibility,
             show_state: VisibilityState::from_show_setting(show_setting),
             mouse_in_parent: true,
             last_prepaint_state: None,
@@ -539,7 +517,7 @@ impl<S: ScrollbarVisibility, T: ScrollableHandle> ScrollbarState<S, T> {
     }
 
     fn settings_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.set_show_scrollbar(S::get_value(cx).visibility(cx), window, cx);
+        self.set_show_scrollbar((self.get_visibility)(cx), window, cx);
     }
 
     /// Schedules a scrollbar auto hide if no auto hide is currently in progress yet.
@@ -754,7 +732,7 @@ impl<S: ScrollbarVisibility, T: ScrollableHandle> ScrollbarState<S, T> {
     }
 }
 
-impl<S: ScrollbarVisibility, T: ScrollableHandle> Render for ScrollbarState<S, T> {
+impl<T: ScrollableHandle> Render for ScrollbarState<T> {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         ScrollbarElement {
             state: cx.entity(),
@@ -763,9 +741,9 @@ impl<S: ScrollbarVisibility, T: ScrollableHandle> Render for ScrollbarState<S, T
     }
 }
 
-struct ScrollbarElement<S: ScrollbarVisibility, T: ScrollableHandle> {
+struct ScrollbarElement<T: ScrollableHandle> {
     origin: Point<Pixels>,
-    state: Entity<ScrollbarState<S, T>>,
+    state: Entity<ScrollbarState<T>>,
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -945,7 +923,7 @@ impl PartialEq for ScrollbarPrepaintState {
     }
 }
 
-impl<S: ScrollbarVisibility, T: ScrollableHandle> Element for ScrollbarElement<S, T> {
+impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
     type RequestLayoutState = ();
     type PrepaintState = Option<ScrollbarPrepaintState>;
 
@@ -1266,7 +1244,7 @@ impl<S: ScrollbarVisibility, T: ScrollableHandle> Element for ScrollbarElement<S
     }
 }
 
-impl<S: ScrollbarVisibility, T: ScrollableHandle> IntoElement for ScrollbarElement<S, T> {
+impl<T: ScrollableHandle> IntoElement for ScrollbarElement<T> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {

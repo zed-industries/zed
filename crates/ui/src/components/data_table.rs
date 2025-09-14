@@ -1,14 +1,12 @@
 use std::{ops::Range, rc::Rc};
 
-use editor::EditorSettings;
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
     FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, Point, Stateful,
     UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
 };
 
-use itertools::intersperse_with;
-use ui::{
+use crate::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
@@ -16,6 +14,7 @@ use ui::{
     StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex, px,
     single_example, v_flex,
 };
+use itertools::intersperse_with;
 
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
@@ -56,14 +55,21 @@ impl<const COLS: usize> TableContents<COLS> {
 pub struct TableInteractionState {
     pub focus_handle: FocusHandle,
     pub scroll_handle: UniformListScrollHandle,
+    pub custom_scrollbar: Option<Scrollbars>,
 }
 
 impl TableInteractionState {
-    pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self {
+    pub fn new(cx: &mut App) -> Self {
+        Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
-        })
+            custom_scrollbar: None,
+        }
+    }
+
+    pub fn with_custom_scrollbar(mut self, custom_scrollbar: Scrollbars) -> Self {
+        self.custom_scrollbar = Some(custom_scrollbar);
+        self
     }
 
     pub fn scroll_offset(&self) -> Point<Pixels> {
@@ -87,9 +93,9 @@ impl TableInteractionState {
     fn render_resize_handles<const COLS: usize>(
         &self,
         column_widths: &[Length; COLS],
-        resizable_columns: &[ResizeBehavior; COLS],
+        resizable_columns: &[TableResizeBehavior; COLS],
         initial_sizes: [DefiniteLength; COLS],
-        columns: Option<Entity<ColumnWidths<COLS>>>,
+        columns: Option<Entity<TableColumnWidths<COLS>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -121,7 +127,7 @@ impl TableInteractionState {
 
                 if resizable_columns
                     .next()
-                    .is_some_and(ResizeBehavior::is_resizable)
+                    .is_some_and(TableResizeBehavior::is_resizable)
                 {
                     let hovered = window.use_state(cx, |_window, _cx| false);
 
@@ -169,34 +175,34 @@ impl TableInteractionState {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum ResizeBehavior {
+pub enum TableResizeBehavior {
     None,
     Resizable,
     MinSize(f32),
 }
 
-impl ResizeBehavior {
+impl TableResizeBehavior {
     pub fn is_resizable(&self) -> bool {
-        *self != ResizeBehavior::None
+        *self != TableResizeBehavior::None
     }
 
     pub fn min_size(&self) -> Option<f32> {
         match self {
-            ResizeBehavior::None => None,
-            ResizeBehavior::Resizable => Some(0.05),
-            ResizeBehavior::MinSize(min_size) => Some(*min_size),
+            TableResizeBehavior::None => None,
+            TableResizeBehavior::Resizable => Some(0.05),
+            TableResizeBehavior::MinSize(min_size) => Some(*min_size),
         }
     }
 }
 
-pub struct ColumnWidths<const COLS: usize> {
+pub struct TableColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
     visible_widths: [DefiniteLength; COLS],
     cached_bounds_width: Pixels,
     initialized: bool,
 }
 
-impl<const COLS: usize> ColumnWidths<COLS> {
+impl<const COLS: usize> TableColumnWidths<COLS> {
     pub fn new(_: &mut App) -> Self {
         Self {
             widths: [DefiniteLength::default(); COLS],
@@ -220,7 +226,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         &mut self,
         double_click_position: usize,
         initial_sizes: &[DefiniteLength; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
         window: &mut Window,
     ) {
         let bounds_width = self.cached_bounds_width;
@@ -245,7 +251,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         col_idx: usize,
         mut widths: [f32; COLS],
         initial_sizes: [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
     ) -> [f32; COLS] {
         // RESET:
         // Part 1:
@@ -331,7 +337,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -376,7 +382,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         diff: f32,
         col_idx: usize,
         widths: &mut [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
     ) {
         // if diff > 0.0 then go right
         if diff > 0.0 {
@@ -390,7 +396,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         diff: f32,
         col_idx: usize,
         widths: &mut [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
         direction: i8,
     ) -> f32 {
         let mut diff_remaining = diff;
@@ -446,8 +452,8 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
 pub struct TableWidths<const COLS: usize> {
     initial: [DefiniteLength; COLS],
-    current: Option<Entity<ColumnWidths<COLS>>>,
-    resizable: [ResizeBehavior; COLS],
+    current: Option<Entity<TableColumnWidths<COLS>>>,
+    resizable: [TableResizeBehavior; COLS],
 }
 
 impl<const COLS: usize> TableWidths<COLS> {
@@ -457,7 +463,7 @@ impl<const COLS: usize> TableWidths<COLS> {
         TableWidths {
             initial: widths,
             current: None,
-            resizable: [ResizeBehavior::None; COLS],
+            resizable: [TableResizeBehavior::None; COLS],
         }
     }
 
@@ -563,8 +569,8 @@ impl<const COLS: usize> Table<COLS> {
 
     pub fn resizable_columns(
         mut self,
-        resizable: [ResizeBehavior; COLS],
-        column_widths: &Entity<ColumnWidths<COLS>>,
+        resizable: [TableResizeBehavior; COLS],
+        column_widths: &Entity<TableColumnWidths<COLS>>,
         cx: &mut App,
     ) -> Self {
         if let Some(table_widths) = self.col_widths.as_mut() {
@@ -616,7 +622,7 @@ fn base_cell_style_text(width: Option<Length>, cx: &App) -> Div {
     base_cell_style(width).text_ui(cx)
 }
 
-pub fn render_row<const COLS: usize>(
+pub fn render_table_row<const COLS: usize>(
     row_index: usize,
     items: [impl IntoElement; COLS],
     table_context: TableRenderContext<COLS>,
@@ -663,12 +669,12 @@ pub fn render_row<const COLS: usize>(
     div().size_full().child(row).into_any_element()
 }
 
-pub fn render_header<const COLS: usize>(
+pub fn render_table_header<const COLS: usize>(
     headers: [impl IntoElement; COLS],
     table_context: TableRenderContext<COLS>,
     columns_widths: Option<(
-        WeakEntity<ColumnWidths<COLS>>,
-        [ResizeBehavior; COLS],
+        WeakEntity<TableColumnWidths<COLS>>,
+        [TableResizeBehavior; COLS],
         [DefiniteLength; COLS],
     )>,
     entity_id: Option<EntityId>,
@@ -771,7 +777,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .h_full()
             .v_flex()
             .when_some(self.headers.take(), |this, headers| {
-                this.child(render_header(
+                this.child(render_table_header(
                     headers,
                     table_context.clone(),
                     current_widths_with_initial_sizes,
@@ -822,7 +828,13 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     .map(|parent| match self.rows {
                         TableContents::Vec(items) => {
                             parent.children(items.into_iter().enumerate().map(|(index, row)| {
-                                render_row(index, row, table_context.clone(), window, cx)
+                                div().child(render_table_row(
+                                    index,
+                                    row,
+                                    table_context.clone(),
+                                    window,
+                                    cx,
+                                ))
                             }))
                         }
                         TableContents::UniformList(uniform_list_data) => parent.child(
@@ -837,7 +849,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                             .into_iter()
                                             .zip(range)
                                             .map(|(row, row_index)| {
-                                                render_row(
+                                                render_table_row(
                                                     row_index,
                                                     row,
                                                     table_context.clone(),
@@ -888,10 +900,14 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     );
 
                 if let Some(state) = interaction_state.as_ref() {
+                    let scrollbars = state
+                        .read(cx)
+                        .custom_scrollbar
+                        .clone()
+                        .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
                     content
                         .custom_scrollbars(
-                            Scrollbars::for_settings::<EditorSettings>()
-                                .tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
+                            scrollbars.tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
                             window,
                             cx,
                         )
@@ -1055,14 +1071,15 @@ mod test {
     fn parse_resize_behavior<const COLS: usize>(
         input: &str,
         total_size: f32,
-    ) -> [ResizeBehavior; COLS] {
-        let mut resize_behavior = [ResizeBehavior::None; COLS];
+    ) -> [TableResizeBehavior; COLS] {
+        let mut resize_behavior = [TableResizeBehavior::None; COLS];
         let mut max_index = 0;
         for (index, col) in input.split('|').enumerate() {
             if col.starts_with('X') || col.is_empty() {
-                resize_behavior[index] = ResizeBehavior::None;
+                resize_behavior[index] = TableResizeBehavior::None;
             } else if col.starts_with('*') {
-                resize_behavior[index] = ResizeBehavior::MinSize(col.len() as f32 / total_size);
+                resize_behavior[index] =
+                    TableResizeBehavior::MinSize(col.len() as f32 / total_size);
             } else {
                 panic!("invalid test input: unrecognized resize behavior: {}", col);
             }
@@ -1123,7 +1140,7 @@ mod test {
                 "invalid test input: total width not the same"
             );
             let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
-            let result = ColumnWidths::reset_to_initial_size(
+            let result = TableColumnWidths::reset_to_initial_size(
                 column_index,
                 widths,
                 initial_sizes,
@@ -1301,7 +1318,7 @@ mod test {
 
             let distance = distance as f32 / total_1;
 
-            let result = ColumnWidths::drag_column_handle(
+            let result = TableColumnWidths::drag_column_handle(
                 distance,
                 column_index,
                 &mut widths,
