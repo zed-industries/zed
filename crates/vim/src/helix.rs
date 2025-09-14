@@ -346,6 +346,9 @@ impl Vim {
                 );
             }
         });
+
+        // Drop back to normal mode after yanking
+        self.switch_mode(Mode::HelixNormal, true, window, cx);
     }
 
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
@@ -842,7 +845,16 @@ mod test {
         cx.simulate_keystrokes("y");
         cx.shared_clipboard().assert_eq("worl");
         cx.assert_state("hello «worlˇ»d", Mode::HelixNormal);
+
+        // Test yanking in select mode character by character
+        cx.set_state("hello ˇworld", Mode::HelixNormal);
+        cx.simulate_keystroke("v");
+        cx.assert_state("hello «wˇ»orld", Mode::HelixSelect);
+        cx.simulate_keystroke("y");
+        cx.assert_state("hello «wˇ»orld", Mode::HelixNormal);
+        cx.shared_clipboard().assert_eq("w");
     }
+
     #[gpui::test]
     async fn test_shift_r_paste(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
