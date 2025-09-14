@@ -20140,7 +20140,6 @@ dependencies = [
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
  "windows-sys 0.59.0",
- "windows-sys 0.60.2",
  "winnow",
  "zeroize",
  "zvariant",
