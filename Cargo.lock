@@ -2646,7 +2646,6 @@ dependencies = [
  "project",
  "schemars",
  "serde",
- "serde_derive",
  "settings",
  "telemetry",
  "util",
@@ -3357,7 +3356,6 @@ dependencies = [
  "semantic_version",
  "semver",
  "serde",
- "serde_derive",
  "serde_json",
  "session",
  "settings",
@@ -3413,7 +3411,6 @@ dependencies = [
  "rpc",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "smallvec",
@@ -4826,7 +4823,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.0",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5783,7 +5780,6 @@ dependencies = [
  "schemars",
  "search",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "text",
@@ -6503,7 +6499,6 @@ dependencies = [
  "project",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "strum 0.27.1",
@@ -7474,7 +7469,6 @@ dependencies = [
  "seahash",
  "semantic_version",
  "serde",
- "serde_derive",
  "serde_json",
  "slotmap",
  "smallvec",
@@ -12706,7 +12700,6 @@ dependencies = [
  "schemars",
  "search",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "smallvec",
@@ -13623,7 +13616,6 @@ dependencies = [
  "runtimelib",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "smol",
@@ -14730,18 +14722,28 @@ dependencies = [
 
 [[package]]
 name = "serde"
-version = "1.0.219"
+version = "1.0.221"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f0e2c6ed6606019b4e29e69dbaba95b11854410e5347d525002456dbbb786b6"
+checksum = "341877e04a22458705eb4e131a1508483c877dca2792b3781d4e5d8a6019ec43"
+dependencies = [
+ "serde_core",
+ "serde_derive",
+]
+
+[[package]]
+name = "serde_core"
+version = "1.0.221"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c459bc0a14c840cb403fc14b148620de1e0778c96ecd6e0c8c3cacb6d8d00fe"
 dependencies = [
  "serde_derive",
 ]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.219"
+version = "1.0.221"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b0276cf7f2c73365f7157c8123c21cd9a50fbbd844757af28ca1f5925fc2a00"
+checksum = "d6185cf75117e20e62b1ff867b9518577271e58abe0037c40bb4794969355ab0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -14770,15 +14772,15 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.140"
+version = "1.0.144"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20068b6e96dc6c9bd23e01df8827e6c7e1f2fddd43c21810382803c136b99373"
+checksum = "56177480b00303e689183f110b4e727bb4211d692c62d4fcd16d02be93077d40"
 dependencies = [
  "indexmap",
  "itoa",
  "memchr",
  "ryu",
- "serde",
+ "serde_core",
 ]
 
 [[package]]
@@ -14878,7 +14880,6 @@ dependencies = [
  "rust-embed",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "serde_json_lenient",
  "serde_path_to_error",
@@ -16465,7 +16466,6 @@ dependencies = [
  "release_channel",
  "schemars",
  "serde",
- "serde_derive",
  "settings",
  "smol",
  "sysinfo",
@@ -16568,7 +16568,6 @@ dependencies = [
  "refineable",
  "schemars",
  "serde",
- "serde_derive",
  "serde_json",
  "serde_json_lenient",
  "serde_repr",
@@ -18068,7 +18067,6 @@ dependencies = [
  "schemars",
  "search",
  "serde",
- "serde_derive",
  "serde_json",
  "settings",
  "task",

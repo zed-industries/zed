@@ -38,7 +38,7 @@ use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_derive::Serialize;
+use serde::Serialize;
 use settings::{
     Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi, update_settings_file,
 };
