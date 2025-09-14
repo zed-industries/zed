@@ -521,6 +521,7 @@ impl<S: ScrollbarVisibility, T: ScrollableHandle> ScrollbarState<S, T> {
         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed)
             .detach();
 
+        let show_setting = S::get_value(cx).visibility(cx);
         ScrollbarState {
             thumb_state: Default::default(),
             notify_id: config.tracked_entity.map(|id| id.unwrap_or(parent_id)),
@@ -529,8 +530,8 @@ impl<S: ScrollbarVisibility, T: ScrollableHandle> ScrollbarState<S, T> {
             width: config.scrollbar_width,
             visibility: config.visibility,
             tracked_setting: PhantomData,
-            show_setting: S::get_value(cx).visibility(cx),
-            show_state: VisibilityState::Visible,
+            show_setting,
+            show_state: VisibilityState::from_show_setting(show_setting),
             mouse_in_parent: true,
             last_prepaint_state: None,
             _auto_hide_task: None,
