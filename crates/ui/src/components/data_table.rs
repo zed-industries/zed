@@ -822,7 +822,13 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     .map(|parent| match self.rows {
                         TableContents::Vec(items) => {
                             parent.children(items.into_iter().enumerate().map(|(index, row)| {
-                                render_row(index, row, table_context.clone(), window, cx)
+                                div().child(render_row(
+                                    index,
+                                    row,
+                                    table_context.clone(),
+                                    window,
+                                    cx,
+                                ))
                             }))
                         }
                         TableContents::UniformList(uniform_list_data) => parent.child(
