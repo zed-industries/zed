@@ -378,7 +378,7 @@ If the model is tagged with `vision` in the Ollama catalog, set this option and 
 
 #### Ollama Authentication
 
-In addition to running Ollama on your own hardware, which generally does not require authentication, Zed also supports connecting to Ollama API Keys are required for authentication.
+In addition to running Ollama on your own hardware, which generally does not require authentication, Zed also supports connecting to remote Ollama instances. API keys are required for authentication.
 
 One such service is [Ollama Turbo])(https://ollama.com/turbo). To configure Zed to use Ollama turbo:
 
