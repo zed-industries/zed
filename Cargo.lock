@@ -20679,6 +20679,7 @@ dependencies = [
 name = "zed_env_vars"
 version = "0.1.0"
 dependencies = [
+ "gpui",
  "workspace-hack",
 ]
 

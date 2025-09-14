@@ -59,7 +59,7 @@ impl ApiKeyState {
         let api_key = self.api_key.as_ref()?;
         if url == api_key.url.as_str() {
             Some(api_key.key.clone())
-        } else if let ApiKeySource::EnvVar(var_name) = api_key.source {
+        } else if let ApiKeySource::EnvVar(var_name) = &api_key.source {
             log::warn!(
                 "{} is now being used with URL {}, when initially it was used with URL {}",
                 var_name,
@@ -113,7 +113,7 @@ impl ApiKeyState {
     pub fn handle_url_change<Ent: 'static>(
         &mut self,
         url: SharedString,
-        env_var: &'static EnvVar,
+        env_var: &EnvVar,
         get_this: impl Fn(&mut Ent) -> &mut Self + 'static,
         cx: &mut Context<Ent>,
     ) {
@@ -136,7 +136,7 @@ impl ApiKeyState {
     pub fn load_if_needed<Ent: 'static>(
         &mut self,
         url: SharedString,
-        env_var: &'static EnvVar,
+        env_var: &EnvVar,
         get_this: impl Fn(&mut Ent) -> &mut Self + 'static,
         cx: &mut Context<Ent>,
     ) -> Task<Result<(), AuthenticateError>> {
@@ -149,7 +149,7 @@ impl ApiKeyState {
         if let Some(key) = &env_var.value
             && !key.is_empty()
         {
-            let api_key = ApiKey::from_env(env_var.name, key, url);
+            let api_key = ApiKey::from_env(env_var.name.clone(), key, url);
             self.api_key = Some(api_key);
             cx.notify();
             return Task::ready(Ok(()));
@@ -196,7 +196,7 @@ impl ApiKeyState {
 }
 
 impl ApiKey {
-    pub fn from_env(env_var_name: &'static str, key: &str, url: SharedString) -> Self {
+    pub fn from_env(env_var_name: SharedString, key: &str, url: SharedString) -> Self {
         Self {
             source: ApiKeySource::EnvVar(env_var_name),
             url,
@@ -227,9 +227,9 @@ impl ApiKey {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 enum ApiKeySource {
-    EnvVar(&'static str),
+    EnvVar(SharedString),
     SystemKeychain,
 }
 

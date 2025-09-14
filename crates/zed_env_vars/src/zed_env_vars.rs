@@ -1,3 +1,4 @@
+use gpui::SharedString;
 use std::sync::LazyLock;
 
 /// Whether Zed is running in stateless mode.
@@ -5,14 +6,14 @@ use std::sync::LazyLock;
 pub static ZED_STATELESS: LazyLock<bool> = bool_env_var!("ZED_STATELESS");
 
 pub struct EnvVar {
-    pub name: &'static str,
+    pub name: SharedString,
     /// Value of the environment variable. Also `None` when set to an empty string.
     pub value: Option<String>,
 }
 
 impl EnvVar {
-    pub fn new(name: &'static str) -> Self {
-        let value = std::env::var(name).ok();
+    pub fn new(name: SharedString) -> Self {
+        let value = std::env::var(name.as_str()).ok();
         if value.as_ref().is_some_and(|v| v.is_empty()) {
             Self { name, value: None }
         } else {
@@ -29,7 +30,7 @@ impl EnvVar {
 #[macro_export]
 macro_rules! env_var {
     ($name:expr) => {
-        LazyLock::new(|| $crate::EnvVar::new($name))
+        LazyLock::new(|| $crate::EnvVar::new(($name).into()))
     };
 }
 
@@ -38,6 +39,6 @@ macro_rules! env_var {
 #[macro_export]
 macro_rules! bool_env_var {
     ($name:expr) => {
-        LazyLock::new(|| $crate::EnvVar::new($name).value.is_some())
+        LazyLock::new(|| $crate::EnvVar::new(($name).into()).value.is_some())
     };
 }

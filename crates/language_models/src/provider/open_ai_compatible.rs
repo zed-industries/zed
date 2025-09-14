@@ -1,9 +1,7 @@
-use anyhow::{Context as _, Result, anyhow};
-use credentials_provider::CredentialsProvider;
-
+use anyhow::Result;
 use convert_case::{Case, Casing};
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, Window};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -17,13 +15,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt;
+use zed_env_vars::EnvVar;
 
-use crate::AllLanguageModelSettings;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+use crate::{AllLanguageModelSettings, api_key::ApiKeyState};
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
@@ -70,82 +68,30 @@ pub struct OpenAiCompatibleLanguageModelProvider {
 
 pub struct State {
     id: Arc<str>,
-    env_var_name: Arc<str>,
-    api_key: Option<String>,
-    api_key_from_env: bool,
+    api_key_env_var: EnvVar,
+    api_key_state: ApiKeyState,
     settings: OpenAiCompatibleSettings,
-    _subscription: Subscription,
 }
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        self.api_key.is_some()
+        self.api_key_state.has_key()
     }
 
-    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
+    fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let api_url = self.settings.api_url.clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .delete_credentials(&api_url, cx)
-                .await
-                .log_err();
-            this.update(cx, |this, cx| {
-                this.api_key = None;
-                this.api_key_from_env = false;
-                cx.notify();
-            })
-        })
+        self.api_key_state
+            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
 
-    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = self.settings.api_url.clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
-                .await
-                .log_err();
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                cx.notify();
-            })
-        })
-    }
-
-    fn get_api_key(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let env_var_name = self.env_var_name.clone();
-        let api_url = self.settings.api_url.clone();
-        cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(env_var_name.as_ref()) {
-                (api_key, true)
-            } else {
-                let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, cx)
-                    .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
-                (
-                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
-                    false,
-                )
-            };
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                this.api_key_from_env = from_env;
-                cx.notify();
-            })?;
-
-            Ok(())
-        })
-    }
-
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
-        self.get_api_key(cx)
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let api_url = SharedString::new(self.settings.api_url.clone());
+        self.api_key_state.load_if_needed(
+            api_url,
+            &self.api_key_env_var,
+            |this| &mut this.api_key_state,
+            cx,
+        )
     }
 }
 
@@ -157,37 +103,33 @@ impl OpenAiCompatibleLanguageModelProvider {
                 .get(id)
         }
 
-        let state = cx.new(|cx| State {
-            id: id.clone(),
-            env_var_name: format!("{}_API_KEY", id).to_case(Case::Constant).into(),
-            settings: resolve_settings(&id, cx).cloned().unwrap_or_default(),
-            api_key: None,
-            api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+        let api_key_env_var_name = format!("{}_API_KEY", id).to_case(Case::UpperSnake).into();
+        let state = cx.new(|cx| {
+            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
                 let Some(settings) = resolve_settings(&this.id, cx).cloned() else {
                     return;
                 };
                 if &this.settings != &settings {
-                    if settings.api_url != this.settings.api_url && !this.api_key_from_env {
-                        let spawn_task = cx.spawn(async move |handle, cx| {
-                            if let Ok(task) = handle.update(cx, |this, cx| this.get_api_key(cx)) {
-                                if let Err(_) = task.await {
-                                    handle
-                                        .update(cx, |this, _| {
-                                            this.api_key = None;
-                                            this.api_key_from_env = false;
-                                        })
-                                        .ok();
-                                }
-                            }
-                        });
-                        spawn_task.detach();
+                    if settings.api_url != this.settings.api_url {
+                        let api_url = settings.api_url.clone().into();
+                        this.api_key_state.handle_url_change(
+                            api_url,
+                            &this.api_key_env_var,
+                            |this| &mut this.api_key_state,
+                            cx,
+                        );
                     }
-
                     this.settings = settings;
                     cx.notify();
                 }
-            }),
+            })
+            .detach();
+            State {
+                id: id.clone(),
+                api_key_env_var: EnvVar::new(api_key_env_var_name),
+                api_key_state: ApiKeyState::new(),
+                settings: resolve_settings(&id, cx).cloned().unwrap_or_default(),
+            }
         });
 
         Self {
@@ -274,7 +216,8 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_api_key(cx))
+        self.state
+            .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 }
 
@@ -296,10 +239,17 @@ impl OpenAiCompatibleLanguageModel {
     ) -> BoxFuture<'static, Result<futures::stream::BoxStream<'static, Result<ResponseStreamEvent>>>>
     {
         let http_client = self.http_client.clone();
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, _| {
-            (state.api_key.clone(), state.settings.api_url.clone())
-        }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+
+        let api_key_and_url = self.state.read_with(cx, |state, _cx| {
+            let api_url = &state.settings.api_url;
+            let api_key = state.api_key_state.key(api_url);
+            (api_key, state.settings.api_url.clone())
+        });
+        let (api_key, api_url) = match api_key_and_url {
+            Ok(api_key_and_url) => api_key_and_url,
+            Err(err) => {
+                return futures::future::ready(Err(err)).boxed();
+            }
         };
 
         let provider = self.provider_name.clone();
@@ -469,29 +419,18 @@ impl ConfigurationView {
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self
-            .api_key_editor
-            .read(cx)
-            .editor()
-            .read(cx)
-            .text(cx)
-            .trim()
-            .to_string();
-
-        // Don't proceed if no API key is provided and we're not authenticated
-        if api_key.is_empty() && !self.state.read(cx).is_authenticated() {
+        let api_key = self.api_key_editor.read(cx).text(cx).trim().to_string();
+        if api_key.is_empty() {
             return;
         }
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
                 .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -503,22 +442,23 @@ impl ConfigurationView {
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
-            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
+            state
+                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
     }
 
-    fn should_render_editor(&self, cx: &mut Context<Self>) -> bool {
+    fn should_render_editor(&self, cx: &Context<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).api_key_from_env;
-        let env_var_name = self.state.read(cx).env_var_name.clone();
+        let state = self.state.read(cx);
+        let env_var_set = state.api_key_state.is_from_env_var();
+        let env_var_name = &state.api_key_env_var.name;
 
         let api_key_section = if self.should_render_editor(cx) {
             v_flex()

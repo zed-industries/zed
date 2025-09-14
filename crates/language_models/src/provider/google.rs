@@ -100,7 +100,7 @@ const GOOGLE_AI_API_KEY_VAR_NAME: &str = "GOOGLE_AI_API_KEY";
 
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = LazyLock::new(|| {
     // Try GEMINI_API_KEY first as primary, fallback to GOOGLE_AI_API_KEY
-    EnvVar::new(GEMINI_API_KEY_VAR_NAME).or(EnvVar::new(GOOGLE_AI_API_KEY_VAR_NAME))
+    EnvVar::new(GEMINI_API_KEY_VAR_NAME.into()).or(EnvVar::new(GOOGLE_AI_API_KEY_VAR_NAME.into()))
 });
 
 impl State {
