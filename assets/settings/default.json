@@ -1844,7 +1844,7 @@
     //    "typescript": "deno"
     // }
   },
-  // Repl settings.
+  // REPL settings.
   "repl": {
     // Maximum number of columns to keep in REPL's scrollback buffer.
     // Clamped with [20, 512] range.
