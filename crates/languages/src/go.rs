@@ -479,6 +479,8 @@ const GO_SUBTEST_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("GO_SUBTEST_NAME"));
 const GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("GO_TABLE_TEST_CASE_NAME"));
+const GO_SUITE_NAME_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("GO_SUITE_NAME"));
 
 impl ContextProvider for GoContextProvider {
     fn build_context(
@@ -537,19 +539,26 @@ impl ContextProvider for GoContextProvider {
         let go_subtest_variable = extract_subtest_name(_subtest_name.unwrap_or(""))
             .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
 
-        let table_test_case_name = variables.get(&VariableName::Custom(Cow::Borrowed(
+        let _table_test_case_name = variables.get(&VariableName::Custom(Cow::Borrowed(
             "_table_test_case_name",
         )));
 
-        let go_table_test_case_variable = table_test_case_name
+        let go_table_test_case_variable = _table_test_case_name
             .and_then(extract_subtest_name)
             .map(|case_name| (GO_TABLE_TEST_CASE_NAME_TASK_VARIABLE.clone(), case_name));
+
+        let _suite_name = variables.get(&VariableName::Custom(Cow::Borrowed("_suite_name")));
+
+        let go_suite_variable = _suite_name
+            .and_then(extract_subtest_name)
+            .map(|suite_name| (GO_SUITE_NAME_TASK_VARIABLE.clone(), suite_name));
 
         Task::ready(Ok(TaskVariables::from_iter(
             [
                 go_package_variable,
                 go_subtest_variable,
                 go_table_test_case_variable,
+                go_suite_variable,
                 go_module_root_variable,
             ]
             .into_iter()
@@ -566,6 +575,28 @@ impl ContextProvider for GoContextProvider {
         let module_cwd = Some(GO_MODULE_ROOT_TASK_VARIABLE.template_value());
 
         Task::ready(Some(TaskTemplates(vec![
+            TaskTemplate {
+                label: format!(
+                    "go test {} -v -run {}/{}",
+                    GO_PACKAGE_TASK_VARIABLE.template_value(),
+                    GO_SUITE_NAME_TASK_VARIABLE.template_value(),
+                    VariableName::Symbol.template_value(),
+                ),
+                command: "go".into(),
+                args: vec![
+                    "test".into(),
+                    "-v".into(),
+                    "-run".into(),
+                    format!(
+                        "\\^{}\\$/\\^{}\\$",
+                        GO_SUITE_NAME_TASK_VARIABLE.template_value(),
+                        VariableName::Symbol.template_value(),
+                    ),
+                ],
+                cwd: package_cwd.clone(),
+                tags: vec!["go-testify-suite".to_owned()],
+                ..TaskTemplate::default()
+            },
             TaskTemplate {
                 label: format!(
                     "go test {} -v -run {}/{}",
