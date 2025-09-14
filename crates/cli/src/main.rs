@@ -61,7 +61,7 @@ struct Args {
     /// Create a new workspace
     #[arg(short, long, overrides_with_all = ["add", "reuse"])]
     new: bool,
-    /// Reuse the last opened window, replacing its workspace
+    /// Reuse an existing window, replacing its workspace
     #[arg(short, long, overrides_with_all = ["add", "new"])]
     reuse: bool,
     /// Sets a custom directory for all user data (e.g., database, extensions, logs).
