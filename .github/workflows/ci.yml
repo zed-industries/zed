@@ -373,6 +373,46 @@ jobs:
         if: always()
         run: rm -rf ./../.cargo
 
+  doctests:
+    # Nextest currently doesn't support doctests, so run them separately and in parallel.
+    timeout-minutes: 60
+    name: (Linux) Run doctests
+    needs: [job_spec]
+    if: |
+      github.repository_owner == 'zed-industries' &&
+      needs.job_spec.outputs.run_tests == 'true'
+    runs-on:
+      - namespace-profile-16x32-ubuntu-2204
+    steps:
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Checkout repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          clean: false
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # cache-provider: "buildjet"
+
+      - name: Install Linux dependencies
+        run: ./script/linux
+
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
+      - name: Run doctests
+        run: cargo test --workspace --doc --no-fail-fast
+
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
+
   build_remote_server:
     timeout-minutes: 60
     name: (Linux) Build Remote Server
