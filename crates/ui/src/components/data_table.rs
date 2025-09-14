@@ -1,6 +1,5 @@
 use std::{ops::Range, rc::Rc};
 
-use editor::EditorSettings;
 use gpui::{
     AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
     FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, Point, Stateful,
@@ -56,6 +55,7 @@ impl<const COLS: usize> TableContents<COLS> {
 pub struct TableInteractionState {
     pub focus_handle: FocusHandle,
     pub scroll_handle: UniformListScrollHandle,
+    // todo! add custom scrollbars so editor settings can be used
 }
 
 impl TableInteractionState {
@@ -894,14 +894,15 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     );
 
                 if let Some(state) = interaction_state.as_ref() {
-                    content
-                        .custom_scrollbars(
-                            Scrollbars::for_settings::<EditorSettings>()
-                                .tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
-                            window,
-                            cx,
-                        )
-                        .into_any_element()
+                    todo!()
+                    // content
+                    //     .custom_scrollbars(
+                    //         Scrollbars::for_settings::<EditorSettings>()
+                    //             .tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
+                    //         window,
+                    //         cx,
+                    //     )
+                    //     .into_any_element()
                 } else {
                     content.into_any_element()
                 }
