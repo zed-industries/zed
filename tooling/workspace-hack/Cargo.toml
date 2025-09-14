@@ -114,6 +114,7 @@ sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", 
 sea-query-binder = { version = "0.7", default-features = false, features = ["postgres-array", "sqlx-postgres", "sqlx-sqlite", "with-bigdecimal", "with-chrono", "with-json", "with-rust_decimal", "with-time", "with-uuid"] }
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
+serde_core = { version = "1", default-features = false, features = ["alloc", "rc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc", "preserve_order", "raw_value", "unbounded_depth"] }
 sha1 = { version = "0.10", features = ["compress"] }
 simd-adler32 = { version = "0.3" }
@@ -249,7 +250,7 @@ sea-orm = { version = "1", features = ["runtime-tokio-rustls", "sqlx-postgres", 
 sea-query-binder = { version = "0.7", default-features = false, features = ["postgres-array", "sqlx-postgres", "sqlx-sqlite", "with-bigdecimal", "with-chrono", "with-json", "with-rust_decimal", "with-time", "with-uuid"] }
 semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
-serde_derive = { version = "1", features = ["deserialize_in_place"] }
+serde_core = { version = "1", default-features = false, features = ["alloc", "rc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc", "preserve_order", "raw_value", "unbounded_depth"] }
 sha1 = { version = "0.10", features = ["compress"] }
 simd-adler32 = { version = "0.3" }

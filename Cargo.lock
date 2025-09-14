@@ -20096,7 +20096,7 @@ dependencies = [
  "security-framework-sys",
  "semver",
  "serde",
- "serde_derive",
+ "serde_core",
  "serde_json",
  "sha1",
  "simd-adler32",
