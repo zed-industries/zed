@@ -1,6 +1,6 @@
 use anyhow::Result;
 use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
