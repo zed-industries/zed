@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Debug, ops::Not, rc::Rc, time::Duration};
+use std::{any::Any, fmt::Debug, ops::Not, time::Duration};
 
 use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
@@ -16,7 +16,7 @@ use util::ResultExt;
 
 use std::ops::Range;
 
-use crate::scrollbars::{GlobalSetting, ScrollbarVisibility, ShowScrollbar};
+use crate::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_millis(1500);
 const SCROLLBAR_PADDING: Pixels = px(4.);
@@ -68,20 +68,8 @@ pub mod scrollbars {
         }
     }
 
-    impl GlobalSetting for ShowScrollbar {
-        fn get_value(_cx: &App) -> &Self {
-            &ShowScrollbar::Always
-        }
-    }
-
     pub trait ScrollbarVisibility: GlobalSetting + 'static {
         fn visibility(&self, cx: &App) -> ShowScrollbar;
-    }
-
-    impl ScrollbarVisibility for ShowScrollbar {
-        fn visibility(&self, cx: &App) -> ShowScrollbar {
-            *ShowScrollbar::get_value(cx)
-        }
     }
 
     #[derive(Default)]
@@ -348,7 +336,7 @@ impl ScrollbarWidth {
 #[derive(Clone)]
 pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     id: Option<ElementId>,
-    get_visibility: Rc<dyn Fn(&App) -> ShowScrollbar>,
+    get_visibility: fn(&App) -> ShowScrollbar,
     tracked_entity: Option<Option<EntityId>>,
     scrollable_handle: T,
     handle_was_added: bool,
@@ -358,25 +346,16 @@ pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
 
 impl Scrollbars {
     pub fn new(show_along: ScrollAxes) -> Self {
-        Self::new_with_setting(
-            show_along,
-            Rc::new(|cx| <ShowScrollbar as GlobalSetting>::get_value(cx).visibility(cx)),
-        )
+        Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
     }
 
     pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
-        Scrollbars::new_with_setting(
-            ScrollAxes::Both,
-            Rc::new(|cx| S::get_value(cx).visibility(cx)),
-        )
+        Scrollbars::new_with_setting(ScrollAxes::Both, |cx| S::get_value(cx).visibility(cx))
     }
 }
 
 impl Scrollbars {
-    fn new_with_setting(
-        show_along: ScrollAxes,
-        get_visibility: Rc<dyn Fn(&App) -> ShowScrollbar>,
-    ) -> Self {
+    fn new_with_setting(show_along: ScrollAxes, get_visibility: fn(&App) -> ShowScrollbar) -> Self {
         Self {
             id: None,
             get_visibility,
@@ -502,7 +481,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     scroll_handle: T,
     width: ScrollbarWidth,
     show_setting: ShowScrollbar,
-    get_visibility: Rc<dyn Fn(&App) -> ShowScrollbar>,
+    get_visibility: fn(&App) -> ShowScrollbar,
     visibility: Point<ReservedSpace>,
     show_state: VisibilityState,
     mouse_in_parent: bool,
