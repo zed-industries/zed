@@ -33,8 +33,8 @@ use std::{
     },
 };
 use ui::{
-    IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Section, Tooltip, WithScrollbar, prelude::*,
+    List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry, Section, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -962,7 +962,6 @@ impl RemoteServerProjects {
                                     // Right-margin to offset it from the Scrollbar
                                     IconButton::new("remove-remote-project", IconName::Trash)
                                         .icon_size(IconSize::Small)
-                                        .shape(IconButtonShape::Square)
                                         .size(ButtonSize::Large)
                                         .tooltip(Tooltip::text("Delete Remote Project"))
                                         .on_click(cx.listener(move |this, _, _, cx| {

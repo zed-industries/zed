@@ -15,7 +15,7 @@ use std::hash::Hash;
 use theme::ThemeSettings;
 use time::{OffsetDateTime, UtcOffset};
 use time_format::format_local_timestamp;
-use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
+use ui::{Avatar, Divider, prelude::*, tooltip_container};
 use workspace::Workspace;
 
 #[derive(Clone, Debug)]
@@ -322,7 +322,6 @@ impl Render for CommitTooltip {
                                         )
                                         .child(
                                             IconButton::new("copy-sha-button", IconName::Copy)
-                                                .shape(IconButtonShape::Square)
                                                 .icon_size(IconSize::Small)
                                                 .icon_color(Color::Muted)
                                                 .on_click(move |_, _, cx| {

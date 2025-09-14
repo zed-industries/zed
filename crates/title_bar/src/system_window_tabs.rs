@@ -7,8 +7,8 @@ use gpui::{
 
 use theme::ThemeSettings;
 use ui::{
-    Color, ContextMenu, DynamicSpacing, IconButton, IconButtonShape, IconName, IconSize, Label,
-    LabelSize, Tab, h_flex, prelude::*, right_click_menu,
+    Color, ContextMenu, DynamicSpacing, IconButton, IconName, IconSize, Label, LabelSize, Tab,
+    h_flex, prelude::*, right_click_menu,
 };
 use workspace::{
     CloseWindow, ItemSettings, Workspace, WorkspaceSettings,
@@ -242,7 +242,6 @@ impl SystemWindowTabs {
                         })
                         .child(
                             IconButton::new("close", IconName::Close)
-                                .shape(IconButtonShape::Square)
                                 .icon_color(Color::Muted)
                                 .icon_size(IconSize::XSmall)
                                 .on_click({
@@ -470,7 +469,6 @@ impl Render for SystemWindowTabs {
                     .border_color(cx.theme().colors().border)
                     .child(
                         IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
                             .icon_color(Color::Muted)
                             .on_click(|_event, window, cx| {
                                 window.dispatch_action(

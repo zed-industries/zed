@@ -154,7 +154,7 @@ impl TerminalPanel {
                     .child(
                         PopoverMenu::new("terminal-tab-bar-popover-menu")
                             .trigger_with_tooltip(
-                                IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
+                                IconButton::new("plus", IconName::Plus),
                                 Tooltip::text("New…"),
                             )
                             .anchor(Corner::TopRight)
@@ -183,8 +183,7 @@ impl TerminalPanel {
                     .child(
                         PopoverMenu::new("terminal-pane-tab-bar-split")
                             .trigger_with_tooltip(
-                                IconButton::new("terminal-pane-split", IconName::Split)
-                                    .icon_size(IconSize::Small),
+                                IconButton::new("terminal-pane-split", IconName::Split),
                                 Tooltip::text("Split Pane"),
                             )
                             .anchor(Corner::TopRight)
@@ -208,7 +207,6 @@ impl TerminalPanel {
                     .child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
-                            .icon_size(IconSize::Small)
                             .toggle_state(zoomed)
                             .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, window, cx| {
@@ -1584,7 +1582,6 @@ impl Render for InlineAssistTabBarButton {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
-            .icon_size(IconSize::Small)
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(InlineAssist::default().boxed_clone(), cx);
             }))

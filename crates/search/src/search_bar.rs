@@ -2,7 +2,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{Action, Entity, FocusHandle, Hsla, IntoElement, TextStyle};
 use settings::Settings;
 use theme::ThemeSettings;
-use ui::{IconButton, IconButtonShape};
+use ui::IconButton;
 use ui::{Tooltip, prelude::*};
 
 pub(super) enum ActionButtonState {
@@ -22,7 +22,6 @@ pub(super) fn render_action_button(
         SharedString::from(format!("{id_prefix}-{}", action.name())),
         icon,
     )
-    .shape(IconButtonShape::Square)
     .on_click({
         let focus_handle = focus_handle.clone();
         move |_, window, cx| {

@@ -193,7 +193,6 @@ impl Render for QuickActionBar {
             v_flex()
                 .child(
                     IconButton::new("toggle_code_actions_icon", IconName::BoltOutlined)
-                        .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .disabled(!has_available_code_actions)
                         .toggle_state(is_deployed)
@@ -251,7 +250,6 @@ impl Render for QuickActionBar {
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger_with_tooltip(
                     IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
-                        .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_selections_handle.is_deployed()),
                     Tooltip::text("Selection Controls"),
@@ -306,7 +304,6 @@ impl Render for QuickActionBar {
             PopoverMenu::new("editor-settings")
                 .trigger_with_tooltip(
                     IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
-                        .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_settings_handle.is_deployed()),
                     Tooltip::text("Editor Controls"),
@@ -649,7 +646,6 @@ impl RenderOnce for QuickActionBarButton {
         let action = self.action.boxed_clone();
 
         IconButton::new(self.id.clone(), self.icon)
-            .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .toggle_state(self.toggled)
             .tooltip(move |window, cx| {

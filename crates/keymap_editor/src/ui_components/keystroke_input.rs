@@ -3,8 +3,8 @@ use gpui::{
     KeybindingKeystroke, Keystroke, Modifiers, ModifiersChangedEvent, Subscription, Task, actions,
 };
 use ui::{
-    ActiveTheme as _, Color, IconButton, IconButtonShape, IconName, IconSize, Label, LabelSize,
-    ParentElement as _, Render, Styled as _, Tooltip, Window, prelude::*,
+    ActiveTheme as _, Color, IconButton, IconName, IconSize, Label, LabelSize, ParentElement as _,
+    Render, Styled as _, Tooltip, Window, prelude::*,
 };
 
 actions!(
@@ -599,7 +599,6 @@ impl Render for KeystrokeInput {
                         if is_recording {
                             this.child(
                                 IconButton::new("stop-record-btn", IconName::Stop)
-                                    .shape(IconButtonShape::Square)
                                     .map(|this| {
                                         this.tooltip(Tooltip::for_action_title(
                                             if self.search {
@@ -618,7 +617,6 @@ impl Render for KeystrokeInput {
                         } else {
                             this.child(
                                 IconButton::new("record-btn", record_icon)
-                                    .shape(IconButtonShape::Square)
                                     .map(|this| {
                                         this.tooltip(Tooltip::for_action_title(
                                             if self.search {
@@ -638,7 +636,6 @@ impl Render for KeystrokeInput {
                     })
                     .child(
                         IconButton::new("clear-btn", IconName::Backspace)
-                            .shape(IconButtonShape::Square)
                             .tooltip(Tooltip::for_action_title(
                                 "Clear Keystrokes",
                                 &ClearKeystrokes,
