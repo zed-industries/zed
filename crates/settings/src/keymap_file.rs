@@ -660,8 +660,7 @@ impl KeymapFile {
                 None,
                 index,
                 tab_size,
-            )
-            .context("Failed to remove keybinding")?;
+            );
             keymap_contents.replace_range(replace_range, &replace_value);
             return Ok(keymap_contents);
         }
@@ -681,16 +680,14 @@ impl KeymapFile {
                     // if we are only changing the keybinding (common case)
                     // not the context, etc. Then just update the binding in place
 
-                    let (replace_range, replace_value) =
-                        replace_top_level_array_value_in_json_text(
-                            &keymap_contents,
-                            &["bindings", keystrokes_str],
-                            Some(&source_action_value),
-                            Some(&source.keystrokes_unparsed()),
-                            index,
-                            tab_size,
-                        )
-                        .context("Failed to replace keybinding")?;
+                    let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                        &keymap_contents,
+                        &["bindings", keystrokes_str],
+                        Some(&source_action_value),
+                        Some(&source.keystrokes_unparsed()),
+                        index,
+                        tab_size,
+                    );
                     keymap_contents.replace_range(replace_range, &replace_value);
 
                     return Ok(keymap_contents);
@@ -703,28 +700,24 @@ impl KeymapFile {
                     // just update the section in place, updating the context
                     // and the binding
 
-                    let (replace_range, replace_value) =
-                        replace_top_level_array_value_in_json_text(
-                            &keymap_contents,
-                            &["bindings", keystrokes_str],
-                            Some(&source_action_value),
-                            Some(&source.keystrokes_unparsed()),
-                            index,
-                            tab_size,
-                        )
-                        .context("Failed to replace keybinding")?;
+                    let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                        &keymap_contents,
+                        &["bindings", keystrokes_str],
+                        Some(&source_action_value),
+                        Some(&source.keystrokes_unparsed()),
+                        index,
+                        tab_size,
+                    );
                     keymap_contents.replace_range(replace_range, &replace_value);
 
-                    let (replace_range, replace_value) =
-                        replace_top_level_array_value_in_json_text(
-                            &keymap_contents,
-                            &["context"],
-                            source.context.map(Into::into).as_ref(),
-                            None,
-                            index,
-                            tab_size,
-                        )
-                        .context("Failed to replace keybinding")?;
+                    let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                        &keymap_contents,
+                        &["context"],
+                        source.context.map(Into::into).as_ref(),
+                        None,
+                        index,
+                        tab_size,
+                    );
                     keymap_contents.replace_range(replace_range, &replace_value);
                     return Ok(keymap_contents);
                 } else {
@@ -733,16 +726,14 @@ impl KeymapFile {
                     // section, then treat this operation as an add operation of the
                     // new binding with the updated context.
 
-                    let (replace_range, replace_value) =
-                        replace_top_level_array_value_in_json_text(
-                            &keymap_contents,
-                            &["bindings", keystrokes_str],
-                            None,
-                            None,
-                            index,
-                            tab_size,
-                        )
-                        .context("Failed to replace keybinding")?;
+                    let (replace_range, replace_value) = replace_top_level_array_value_in_json_text(
+                        &keymap_contents,
+                        &["bindings", keystrokes_str],
+                        None,
+                        None,
+                        index,
+                        tab_size,
+                    );
                     keymap_contents.replace_range(replace_range, &replace_value);
                     operation = KeybindUpdateOperation::Add {
                         source,
@@ -793,7 +784,7 @@ impl KeymapFile {
                 &keymap_contents,
                 &value.into(),
                 tab_size,
-            )?;
+            );
             keymap_contents.replace_range(replace_range, &replace_value);
         }
         return Ok(keymap_contents);
