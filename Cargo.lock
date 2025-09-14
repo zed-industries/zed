@@ -9151,6 +9151,7 @@ dependencies = [
  "icons",
  "image",
  "log",
+ "open_ai",
  "open_router",
  "parking_lot",
  "proto",
@@ -11246,6 +11247,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.27.1",
+ "thiserror 2.0.12",
  "workspace-hack",
 ]
 

@@ -348,6 +348,27 @@ impl From<anthropic::ApiError> for LanguageModelCompletionError {
     }
 }
 
+impl From<open_ai::RequestError> for LanguageModelCompletionError {
+    fn from(error: open_ai::RequestError) -> Self {
+        match error {
+            open_ai::RequestError::HttpResponseError {
+                provider,
+                status_code,
+                body,
+                headers,
+            } => {
+                let retry_after = headers
+                    .get(http::header::RETRY_AFTER)
+                    .and_then(|val| val.to_str().ok()?.parse::<u64>().ok())
+                    .map(Duration::from_secs);
+
+                Self::from_http_status(provider.into(), status_code, body, retry_after)
+            }
+            open_ai::RequestError::Other(e) => Self::Other(e),
+        }
+    }
+}
+
 impl From<OpenRouterError> for LanguageModelCompletionError {
     fn from(error: OpenRouterError) -> Self {
         let provider = LanguageModelProviderName::new("OpenRouter");
