@@ -345,10 +345,10 @@ impl Vim {
                     cx,
                 );
             }
-
-            // Drop back to normal mode after yanking
-            vim.mode = Mode::HelixNormal;
         });
+
+        // Drop back to normal mode after yanking
+        self.switch_mode(Mode::HelixNormal, true, window, cx);
     }
 
     fn helix_insert(&mut self, _: &HelixInsert, window: &mut Window, cx: &mut Context<Self>) {
