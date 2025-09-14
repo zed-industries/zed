@@ -1,6 +1,7 @@
 use crate::{
     Anchor, Editor, EditorSettings, EditorSnapshot, FindAllReferences, GoToDefinition,
-    GoToTypeDefinition, GotoDefinitionKind, InlayId, Navigated, PointForPosition, SelectPhase,
+    GoToDefinitionSplit, GoToTypeDefinition, GoToTypeDefinitionSplit, GotoDefinitionKind, InlayId,
+    Navigated, PointForPosition, SelectPhase,
     editor_settings::GoToDefinitionFallback,
     hover_popover::{self, InlayHover},
     scroll::ScrollAmount,
@@ -266,10 +267,13 @@ impl Editor {
         );
 
         let navigate_task = if point.as_valid().is_some() {
-            if modifiers.shift {
-                self.go_to_type_definition(&GoToTypeDefinition, window, cx)
-            } else {
-                self.go_to_definition(&GoToDefinition, window, cx)
+            match (modifiers.shift, modifiers.alt) {
+                (true, true) => {
+                    self.go_to_type_definition_split(&GoToTypeDefinitionSplit, window, cx)
+                }
+                (true, false) => self.go_to_type_definition(&GoToTypeDefinition, window, cx),
+                (false, true) => self.go_to_definition_split(&GoToDefinitionSplit, window, cx),
+                (false, false) => self.go_to_definition(&GoToDefinition, window, cx),
             }
         } else {
             Task::ready(Ok(Navigated::No))
