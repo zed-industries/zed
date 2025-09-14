@@ -56,7 +56,15 @@ pub struct SupermavenDownloadResponse {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SupermavenUser {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     id: String,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     email: String,
     api_key: String,
 }
