@@ -1080,7 +1080,8 @@
   {
     "context": "StashList || (StashList > Picker > Editor)",
     "bindings": {
-      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+      "ctrl-shift-backspace": "stash_picker::DropStashItem",
+      "ctrl-shift-v": "stash_picker::ShowStashItem"
     }
   },
   {

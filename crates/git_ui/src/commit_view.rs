@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
-use git::repository::{CommitDetails, CommitDiff, CommitSummary, RepoPath};
+use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
     AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
     FocusHandle, Focusable, IntoElement, Render, WeakEntity, Window,
@@ -48,17 +48,18 @@ const FILE_NAMESPACE: u64 = 1;
 
 impl CommitView {
     pub fn open(
-        commit: CommitSummary,
+        commit_sha: String,
         repo: WeakEntity<Repository>,
         workspace: WeakEntity<Workspace>,
+        _stash_view: bool,
         window: &mut Window,
         cx: &mut App,
     ) {
         let commit_diff = repo
-            .update(cx, |repo, _| repo.load_commit_diff(commit.sha.to_string()))
+            .update(cx, |repo, _| repo.load_commit_diff(commit_sha.clone()))
             .ok();
         let commit_details = repo
-            .update(cx, |repo, _| repo.show(commit.sha.to_string()))
+            .update(cx, |repo, _| repo.show(commit_sha.clone()))
             .ok();
 
         window
@@ -86,8 +87,9 @@ impl CommitView {
                         pane.update(cx, |pane, cx| {
                             let ix = pane.items().position(|item| {
                                 let commit_view = item.downcast::<CommitView>();
-                                commit_view
-                                    .is_some_and(|view| view.read(cx).commit.sha == commit.sha)
+                                commit_view.is_some_and(|view| {
+                                    view.read(cx).commit.sha == commit_sha.clone()
+                                })
                             });
                             if let Some(ix) = ix {
                                 pane.activate_item(ix, true, true, window, cx);
