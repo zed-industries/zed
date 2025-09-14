@@ -14076,6 +14076,21 @@ impl Editor {
         );
     }
 
+    fn navigation_data(&self, cursor_anchor: Anchor, cx: &App) -> NavigationData {
+        let buffer = self.buffer.read(cx).read(cx);
+        let cursor_position = cursor_anchor.to_point(&buffer);
+        let scroll_anchor = self.scroll_manager.anchor();
+        let scroll_top_row = scroll_anchor.top_row(&buffer);
+        drop(buffer);
+
+        NavigationData {
+            cursor_anchor,
+            cursor_position,
+            scroll_anchor,
+            scroll_top_row,
+        }
+    }
+
     fn push_to_nav_history(
         &mut self,
         cursor_anchor: Anchor,
@@ -14084,29 +14099,16 @@ impl Editor {
         always: bool,
         cx: &mut Context<Self>,
     ) {
+        let data = self.navigation_data(cursor_anchor, cx);
         if let Some(nav_history) = self.nav_history.as_mut() {
-            let buffer = self.buffer.read(cx).read(cx);
-            let cursor_position = cursor_anchor.to_point(&buffer);
-            let scroll_state = self.scroll_manager.anchor();
-            let scroll_top_row = scroll_state.top_row(&buffer);
-            drop(buffer);
-
-            if let Some(new_position) = new_position {
-                let row_delta = (new_position.row as i64 - cursor_position.row as i64).abs();
-                if row_delta == 0 || (row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA && !always) {
+            if !always && let Some(new_position) = new_position {
+                let row_delta = (new_position.row as i64 - data.cursor_position.row as i64).abs();
+                if row_delta < MIN_NAVIGATION_HISTORY_ROW_DELTA {
                     return;
                 }
             }
 
-            nav_history.push(
-                Some(NavigationData {
-                    cursor_anchor,
-                    cursor_position,
-                    scroll_anchor: scroll_state,
-                    scroll_top_row,
-                }),
-                cx,
-            );
+            nav_history.push(Some(data), cx);
             cx.emit(EditorEvent::PushedToNavHistory {
                 anchor: cursor_anchor,
                 is_deactivate,
