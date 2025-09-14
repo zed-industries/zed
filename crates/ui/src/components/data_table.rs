@@ -7,8 +7,7 @@ use gpui::{
     UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
 };
 
-use itertools::intersperse_with;
-use ui::{
+use crate::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
@@ -16,6 +15,7 @@ use ui::{
     StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex, px,
     single_example, v_flex,
 };
+use itertools::intersperse_with;
 
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
