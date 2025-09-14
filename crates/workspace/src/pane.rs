@@ -265,6 +265,7 @@ impl DeploySearch {
 }
 
 const MAX_NAVIGATION_HISTORY_LEN: usize = 1024;
+const MAX_TAG_STACK_LEN: usize = 32;
 
 pub enum Event {
     AddItem {
@@ -4056,6 +4057,17 @@ impl ItemNavHistory {
         }
     }
 
+    pub fn push_tag<D: 'static + Any + Send>(&mut self, tag: Option<String>, data: Option<D>) {
+        if self
+            .item
+            .upgrade()
+            .is_some_and(|item| item.include_in_nav_history())
+        {
+            self.history
+                .push_tag(tag, data, self.item.clone(), self.is_preview);
+        }
+    }
+
     pub fn pop_backward(&mut self, cx: &mut App) -> Option<NavigationEntry> {
         self.history.pop_backward(cx)
     }
@@ -4158,6 +4170,38 @@ impl NavHistory {
             }
         }
         state.did_update(cx);
+    }
+
+    pub fn push_tag<D: 'static + Any + Send>(
+        &mut self,
+        tag: Option<String>,
+        data: Option<D>,
+        item: Arc<dyn WeakItemHandle>,
+        is_preview: bool,
+    ) {
+        let mut state = self.0.lock();
+        let Some(src) = state.backward_stack.back().cloned() else {
+            return;
+        };
+        let dst = NavigationEntry {
+            item,
+            data: data.map(|item| Arc::new(item) as Arc<dyn Any + Send>),
+            timestamp: src.timestamp,
+            is_preview,
+            is_deleted: false,
+        };
+        state.truncate_tag_stack();
+        if state.tag_stack.len() >= MAX_TAG_STACK_LEN {
+            state.tag_stack.pop_front();
+        }
+        let current = state.current_offset();
+        state.tag_stack.push_back(TagStackEntry {
+            tag,
+            src_entry: src,
+            dst_entry: dst,
+            src_number: Some(current - 1),
+            dst_number: Some(current),
+        });
     }
 
     pub fn remove_item(&mut self, item_id: EntityId) {
@@ -4409,6 +4453,19 @@ impl NavHistoryState {
             }
         }
         (prev, next)
+    }
+    pub fn truncate_tag_stack(&mut self) {
+        loop {
+            let Some(back) = self.tag_stack.back() else {
+                break;
+            };
+            if let Some(dst_number) = back.dst_number
+                && dst_number <= self.current_offset()
+            {
+                break;
+            }
+            self.tag_stack.pop_back();
+        }
     }
 }
 
