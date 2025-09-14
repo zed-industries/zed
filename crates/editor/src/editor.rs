@@ -13854,6 +13854,15 @@ impl Editor {
         }
     }
 
+    pub fn create_tag_stack_entry(&self, tag: Option<String>, cx: &App) {
+        let Some(mut history) = self.nav_history.clone() else {
+            return;
+        };
+        let anchor = self.selections.newest_anchor().head();
+        let nav_data = self.navigation_data(anchor, cx);
+        history.push_tag(tag, Some(nav_data));
+    }
+
     fn push_to_nav_history(
         &mut self,
         cursor_anchor: Anchor,
@@ -16321,7 +16330,7 @@ impl Editor {
         let definitions: Vec<_> = definitions
             .into_iter()
             .filter_map(|def| match def {
-                HoverLink::Text(link) => Some(Task::ready(anyhow::Ok(Some(link.target)))),
+                HoverLink::Text(link) => Some(Task::ready(anyhow::Ok(Some(link)))),
                 HoverLink::InlayHint(lsp_location, server_id) => {
                     let computation =
                         self.compute_target_location(lsp_location, server_id, window, cx);
@@ -16338,10 +16347,15 @@ impl Editor {
             })
             .collect();
 
+        // Always push a nav history entry with the editor state prior to
+        // jumping away. This allows users to always return to the exact spot
+        // they jumped from, not e.g., a nearby spot
+        self.create_nav_history_entry(cx);
+
         let workspace = self.workspace();
 
         cx.spawn_in(window, async move |editor, acx| {
-            let mut locations: Vec<Location> = future::join_all(definitions)
+            let mut locations: Vec<LocationLink> = future::join_all(definitions)
                 .await
                 .into_iter()
                 .filter_map(|location| location.transpose())
@@ -16365,9 +16379,10 @@ impl Editor {
                             .iter()
                             .map(|location| {
                                 location
+                                    .target
                                     .buffer
                                     .read(cx)
-                                    .text_for_range(location.range.clone())
+                                    .text_for_range(location.target.range.clone())
                                     .collect::<String>()
                             })
                             .filter(|text| !text.contains('\n'))
@@ -16382,21 +16397,31 @@ impl Editor {
                     })
                     .context("buffer title")?;
 
-                let opened = workspace
-                    .update_in(acx, |workspace, window, cx| {
-                        Self::open_locations_in_multibuffer(
-                            workspace,
-                            locations,
-                            title,
-                            split,
-                            MultibufferSelectionMode::First,
-                            window,
-                            cx,
-                        )
-                    })
-                    .is_ok();
-
-                anyhow::Ok(Navigated::from_bool(opened))
+                workspace.update_in(acx, |workspace, window, cx| {
+                    let tag = locations.iter().find_map(|loc_link| {
+                        loc_link.origin.as_ref().map(|origin| {
+                            origin.buffer.read_with(cx, |buffer, _cx| {
+                                let snapshot = buffer.snapshot();
+                                snapshot
+                                    .text_for_range(origin.range.clone())
+                                    .collect::<String>()
+                            })
+                        })
+                    });
+                    let Some(ed) = Self::open_locations_in_multibuffer(
+                        workspace,
+                        locations.iter().map(|item| item.target.clone()).collect(),
+                        title,
+                        split,
+                        MultibufferSelectionMode::First,
+                        window,
+                        cx,
+                    ) else {
+                        return Navigated::No;
+                    };
+                    ed.read(cx).create_tag_stack_entry(tag, cx);
+                    Navigated::Yes
+                })
             } else if locations.is_empty() {
                 // If there is one url or file, open it directly
                 match first_url_or_file {
@@ -16423,16 +16448,27 @@ impl Editor {
                     return Ok(Navigated::No);
                 };
 
-                let target = locations.pop().unwrap();
+                let location = locations.pop().unwrap();
+                let target = location.target;
                 editor.update_in(acx, |editor, window, cx| {
                     let range = target.range.to_point(target.buffer.read(cx));
                     let range = editor.range_for_match(&range);
                     let range = collapse_multiline_range(range);
 
+                    let tag = location.origin.map(|origin| {
+                        origin.buffer.read_with(cx, |buffer, _cx| {
+                            let snapshot = buffer.snapshot();
+                            snapshot
+                                .text_for_range(origin.range.clone())
+                                .collect::<String>()
+                        })
+                    });
+
                     if !split
                         && Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
                         editor.go_to_singleton_buffer_range(range, window, cx);
+                        editor.create_tag_stack_entry(tag, cx);
                     } else {
                         let pane = workspace.read(cx).active_pane().clone();
                         window.defer(cx, move |window, cx| {
@@ -16459,6 +16495,7 @@ impl Editor {
                                 pane.update(cx, |pane, _| pane.disable_history());
                                 target_editor.go_to_singleton_buffer_range(range, window, cx);
                                 pane.update(cx, |pane, _| pane.enable_history());
+                                target_editor.create_tag_stack_entry(tag, cx);
                             });
                         });
                     }
@@ -16474,7 +16511,7 @@ impl Editor {
         server_id: LanguageServerId,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<anyhow::Result<Option<Location>>> {
+    ) -> Task<anyhow::Result<Option<LocationLink>>> {
         let Some(project) = self.project.clone() else {
             return Task::ready(Ok(None));
         };
@@ -16495,9 +16532,12 @@ impl Editor {
                     target_buffer.anchor_after(target_start)
                         ..target_buffer.anchor_before(target_end)
                 })?;
-                Location {
-                    buffer: target_buffer_handle,
-                    range,
+                LocationLink {
+                    origin: None,
+                    target: Location {
+                        buffer: target_buffer_handle,
+                        range,
+                    },
                 }
             });
             Ok(location)
@@ -16602,10 +16642,10 @@ impl Editor {
         multibuffer_selection_mode: MultibufferSelectionMode,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) {
+    ) -> Option<Entity<Editor>> {
         if locations.is_empty() {
             log::error!("bug: open_locations_in_multibuffer called with empty list of locations");
-            return;
+            return None;
         }
 
         locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
@@ -16711,7 +16751,7 @@ impl Editor {
             editor.register_buffers_with_language_servers(cx);
         });
 
-        let item = Box::new(editor);
+        let item = Box::new(editor.clone());
         let item_id = item.item_id();
 
         if split {
@@ -16733,8 +16773,12 @@ impl Editor {
             workspace.add_item_to_active_pane(item, None, true, window, cx);
         }
         workspace.active_pane().update(cx, |pane, cx| {
+            let nav_history = pane.nav_history_for_item(&editor);
+            editor.update(cx, |ed, _cx| ed.set_nav_history(Some(nav_history)));
             pane.set_preview_item_id(Some(item_id), cx);
         });
+
+        Some(editor)
     }
 
     pub fn rename(
