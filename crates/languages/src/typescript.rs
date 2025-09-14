@@ -510,7 +510,7 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 fn replace_test_name_parameters(test_name: &str) -> String {
     static PATTERN: LazyLock<regex::Regex> =
-        LazyLock::new(|| regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap());
+        LazyLock::new(|| regex::Regex::new(r"(\$([A-Za-z0-9_\.]+|[\#])|%[psdifjo#\$%])").unwrap());
     PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
@@ -1220,23 +1220,35 @@ mod tests {
     }
     #[test]
     fn test_escaping_name() {
-        assert_eq!(
-            replace_test_name_parameters("plain test name"),
-            "plain test name"
-        );
-        assert_eq!(
-            replace_test_name_parameters(
-                "should fail to track entity as %s if there is already tracked entity with similar id"
+        let cases = [
+            ("plain test name", "plain test name"),
+            ("test name with $param_name", "test name with (.+?)"),
+            ("test name with $nested.param.name", "test name with (.+?)"),
+            ("test name with $#", "test name with (.+?)"),
+            ("test name with $##", "test name with (.+?)\\#"),
+            ("test name with %p", "test name with (.+?)"),
+            ("test name with %s", "test name with (.+?)"),
+            ("test name with %d", "test name with (.+?)"),
+            ("test name with %i", "test name with (.+?)"),
+            ("test name with %f", "test name with (.+?)"),
+            ("test name with %j", "test name with (.+?)"),
+            ("test name with %o", "test name with (.+?)"),
+            ("test name with %#", "test name with (.+?)"),
+            ("test name with %$", "test name with (.+?)"),
+            ("test name with %%", "test name with (.+?)"),
+            ("test name with %q", "test name with %q"),
+            (
+                "test name with regex chars .*+?^${}()|[]\\",
+                "test name with regex chars \\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\",
             ),
-            "should fail to track entity as (.+?) if there is already tracked entity with similar id"
-        );
-        assert_eq!(
-            replace_test_name_parameters("(Test name in parens)"),
-            "\\(Test name in parens\\)"
-        );
-        assert_eq!(
-            replace_test_name_parameters("(Test name in parens with %d placeholder)"),
-            "\\(Test name in parens with (.+?) placeholder\\)"
-        );
+            (
+                "test name with multiple $params and %pretty and %b and (.+?)",
+                "test name with multiple (.+?) and (.+?)retty and %b and \\(\\.\\+\\?\\)",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(replace_test_name_parameters(input), expected);
+        }
     }
 }
