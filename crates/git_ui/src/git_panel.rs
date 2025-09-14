@@ -3551,9 +3551,10 @@ impl GitPanel {
                             let repo = active_repository.downgrade();
                             move |_, window, cx| {
                                 CommitView::open(
-                                    commit.clone(),
+                                    commit.sha.to_string(),
                                     repo.clone(),
                                     workspace.clone(),
+                                    false,
                                     window,
                                     cx,
                                 );
