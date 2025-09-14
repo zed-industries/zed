@@ -7,8 +7,8 @@ use std::time::Duration;
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
-    code_context_menus::CodeContextMenu, display_map::DisplayRow,
+    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, SelectionEffects,
+    actions::DeleteLine, code_context_menus::CodeContextMenu, display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
@@ -16,6 +16,7 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
+use text::SelectionGoal;
 use ui::Pixels;
 use util::test::marked_text_ranges;
 pub use vim_test_context::*;
@@ -2184,6 +2185,56 @@ async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
         wow wow wow
 
         woˇw woˇw woˇw
+        "
+        },
+        Mode::Normal,
+    );
+}
+
+#[gpui::test]
+async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(
+        indoc! {
+        "
+        ˇverylongline
+        andsomelinebelow
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("v e");
+    cx.assert_state(
+        indoc! {
+        "
+        «verylonglineˇ»
+        andsomelinebelow
+        "
+        },
+        Mode::Visual,
+    );
+
+    // Updating the selections in the editor will eventually trigger the method
+    // in vim mode that automatically updates the mode from visual to normal,
+    // which will correctly handle clipping the cursor position.
+    // There might be a better way to mimic the actual mouse click, but this
+    // approach seems enough for now.
+    cx.update_editor(|editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selection| {
+            selection.move_with(|_map, selection| {
+                selection.set_head(DisplayPoint::new(DisplayRow(0), 12), SelectionGoal::None);
+                selection.set_tail(DisplayPoint::new(DisplayRow(0), 12), SelectionGoal::None);
+            })
+        })
+    });
+
+    cx.assert_state(
+        indoc! {
+        "
+        verylonglinˇe
+        andsomelinebelow
         "
         },
         Mode::Normal,
