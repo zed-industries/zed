@@ -9218,6 +9218,7 @@ dependencies = [
  "vercel",
  "workspace-hack",
  "x_ai",
+ "zed_env_vars",
 ]
 
 [[package]]
