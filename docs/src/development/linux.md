@@ -20,6 +20,22 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
+### Linkers {#linker}
+
+On most Linux distributions, the default linker is GNU ld. Newer linkers, especially [Wild](https://github.com/davidlattimore/wild) and [Mold](https://github.com/rui314/mold) can significantly improve clean and incremental build time.
+
+At present Zed uses Mold in CI because it's more mature. For local development Wild is recommended because it's 5-20% faster.
+
+These linkers can be installed with `script/install-mold` and `script/install-wild`.
+
+To use Wild as your default, add these lines to your `~/.cargo/config.toml`:
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=--ld-path=wild"]
+```
+
 ## Building from source
 
 Once the dependencies are installed, you can build Zed using [Cargo](https://doc.rust-lang.org/cargo/).
