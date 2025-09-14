@@ -5203,14 +5203,6 @@ impl Render for ProjectPanel {
                         this.refresh_drag_cursor_style(&event.modifiers, window, cx);
                     },
                 ))
-                .on_click(cx.listener(|this, event, _, cx| {
-                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
-                        return;
-                    }
-                    cx.stop_propagation();
-                    this.selection = None;
-                    this.marked_entries.clear();
-                }))
                 .key_context(self.dispatch_context(window, cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_previous))
@@ -5280,16 +5272,6 @@ impl Render for ProjectPanel {
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                 })
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        // When deploying the context menu anywhere below the last project entry,
-                        // act as if the user clicked the root of the last worktree.
-                        if let Some(entry_id) = this.last_worktree_root_id {
-                            this.deploy_context_menu(event.position, entry_id, window, cx);
-                        }
-                    }),
-                )
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
@@ -5507,6 +5489,7 @@ impl Render for ProjectPanel {
                         )
                         .child(
                             div()
+                                .id("project-panel-blank-area")
                                 .block_mouse_except_scroll()
                                 .flex_grow()
                                 .when(
@@ -5588,7 +5571,30 @@ impl Render for ProjectPanel {
                                         }
                                         cx.stop_propagation();
                                     },
-                                )),
+                                ))
+                                .on_click(cx.listener(|this, event, _, cx| {
+                                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                                        return;
+                                    }
+                                    cx.stop_propagation();
+                                    this.selection = None;
+                                    this.marked_entries.clear();
+                                }))
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                        // When deploying the context menu anywhere below the last project entry,
+                                        // act as if the user clicked the root of the last worktree.
+                                        if let Some(entry_id) = this.last_worktree_root_id {
+                                            this.deploy_context_menu(
+                                                event.position,
+                                                entry_id,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    }),
+                                ),
                         )
                         .size_full(),
                 )
