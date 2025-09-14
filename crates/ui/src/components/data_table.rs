@@ -55,15 +55,21 @@ impl<const COLS: usize> TableContents<COLS> {
 pub struct TableInteractionState {
     pub focus_handle: FocusHandle,
     pub scroll_handle: UniformListScrollHandle,
-    // todo! add custom scrollbars so editor settings can be used
+    pub custom_scrollbar: Option<Scrollbars>,
 }
 
 impl TableInteractionState {
-    pub fn new(cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self {
+    pub fn new(cx: &mut App) -> Self {
+        Self {
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
-        })
+            custom_scrollbar: None,
+        }
+    }
+
+    pub fn with_custom_scrollbar(mut self, custom_scrollbar: Scrollbars) -> Self {
+        self.custom_scrollbar = Some(custom_scrollbar);
+        self
     }
 
     pub fn scroll_offset(&self) -> Point<Pixels> {
@@ -894,15 +900,18 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     );
 
                 if let Some(state) = interaction_state.as_ref() {
-                    todo!()
-                    // content
-                    //     .custom_scrollbars(
-                    //         Scrollbars::for_settings::<EditorSettings>()
-                    //             .tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
-                    //         window,
-                    //         cx,
-                    //     )
-                    //     .into_any_element()
+                    let scrollbars = state
+                        .read(cx)
+                        .custom_scrollbar
+                        .clone()
+                        .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
+                    content
+                        .custom_scrollbars(
+                            scrollbars.tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
                 } else {
                     content.into_any_element()
                 }

@@ -1,4 +1,4 @@
-use std::{any::Any, fmt::Debug, ops::Not, time::Duration};
+use std::{any::Any, fmt::Debug, ops::Not, rc::Rc, time::Duration};
 
 use gpui::{
     Along, App, AppContext as _, Axis as ScrollbarAxis, BorderStyle, Bounds, ContentMask, Context,
@@ -327,7 +327,7 @@ impl ReservedSpace {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 enum ScrollbarWidth {
     #[default]
     Normal,
@@ -345,11 +345,12 @@ impl ScrollbarWidth {
     }
 }
 
+#[derive(Clone)]
 pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     id: Option<ElementId>,
-    get_visibility: Box<dyn Fn(&App) -> ShowScrollbar>,
+    get_visibility: Rc<dyn Fn(&App) -> ShowScrollbar>,
     tracked_entity: Option<Option<EntityId>>,
-    scrollable_handle: Box<dyn FnOnce() -> T>,
+    scrollable_handle: T,
     handle_was_added: bool,
     visibility: Point<ReservedSpace>,
     scrollbar_width: ScrollbarWidth,
@@ -359,14 +360,14 @@ impl Scrollbars {
     pub fn new(show_along: ScrollAxes) -> Self {
         Self::new_with_setting(
             show_along,
-            Box::new(|cx| <ShowScrollbar as GlobalSetting>::get_value(cx).visibility(cx)),
+            Rc::new(|cx| <ShowScrollbar as GlobalSetting>::get_value(cx).visibility(cx)),
         )
     }
 
     pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
         Scrollbars::new_with_setting(
             ScrollAxes::Both,
-            Box::new(|cx| S::get_value(cx).visibility(cx)),
+            Rc::new(|cx| S::get_value(cx).visibility(cx)),
         )
     }
 }
@@ -374,13 +375,13 @@ impl Scrollbars {
 impl Scrollbars {
     fn new_with_setting(
         show_along: ScrollAxes,
-        get_visibility: Box<dyn Fn(&App) -> ShowScrollbar>,
+        get_visibility: Rc<dyn Fn(&App) -> ShowScrollbar>,
     ) -> Self {
         Self {
             id: None,
             get_visibility,
             handle_was_added: false,
-            scrollable_handle: Box::new(ScrollHandle::new),
+            scrollable_handle: ScrollHandle::new(),
             tracked_entity: None,
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
             scrollbar_width: ScrollbarWidth::Normal,
@@ -428,7 +429,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
 
         Scrollbars {
             handle_was_added: true,
-            scrollable_handle: Box::new(|| tracked_scroll_handle),
+            scrollable_handle: tracked_scroll_handle,
             id,
             tracked_entity: tracked_entity_id,
             visibility,
@@ -501,7 +502,7 @@ struct ScrollbarState<T: ScrollableHandle = ScrollHandle> {
     scroll_handle: T,
     width: ScrollbarWidth,
     show_setting: ShowScrollbar,
-    get_visibility: Box<dyn Fn(&App) -> ShowScrollbar>,
+    get_visibility: Rc<dyn Fn(&App) -> ShowScrollbar>,
     visibility: Point<ReservedSpace>,
     show_state: VisibilityState,
     mouse_in_parent: bool,
@@ -524,7 +525,7 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             thumb_state: Default::default(),
             notify_id: config.tracked_entity.map(|id| id.unwrap_or(parent_id)),
             manually_added: config.handle_was_added,
-            scroll_handle: (config.scrollable_handle)(),
+            scroll_handle: config.scrollable_handle,
             width: config.scrollbar_width,
             visibility: config.visibility,
             show_setting,
