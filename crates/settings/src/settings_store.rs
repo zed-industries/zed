@@ -2232,7 +2232,9 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     struct JournalSettings {
+        #[expect(unused)]
         pub path: String,
+        #[expect(unused)]
         pub hour_format: HourFormat,
     }
 
