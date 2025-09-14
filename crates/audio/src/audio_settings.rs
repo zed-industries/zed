@@ -59,6 +59,7 @@ impl Settings for AudioSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
+/// See docs on [LIVE_SETTINGS]
 pub(crate) struct LiveSettings {
     pub(crate) control_input_volume: AtomicBool,
     pub(crate) control_output_volume: AtomicBool,
@@ -89,7 +90,9 @@ impl LiveSettings {
 }
 
 /// Allows access to settings from the audio thread. Updated by
-/// observer of SettingsStore.
+/// observer of SettingsStore. Needed because audio playback and recording are
+/// real time and must each run in a dedicated OS thread, therefore we can not
+/// use the background executor.
 pub(crate) static LIVE_SETTINGS: LiveSettings = LiveSettings {
     control_input_volume: AtomicBool::new(true),
     control_output_volume: AtomicBool::new(true),

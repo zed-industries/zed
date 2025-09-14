@@ -134,7 +134,6 @@ pub trait Fs: Send + Sync {
         Arc<dyn Watcher>,
     );
 
-    fn home_dir(&self) -> Option<PathBuf>;
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
     fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
@@ -343,7 +342,19 @@ impl Fs for RealFs {
 
         #[cfg(windows)]
         if smol::fs::metadata(&target).await?.is_dir() {
-            smol::fs::windows::symlink_dir(target, path).await?
+            let status = smol::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .args([path, target.as_path()])
+                .status()
+                .await?;
+
+            if !status.success() {
+                return Err(anyhow::anyhow!(
+                    "Failed to create junction from {:?} to {:?}",
+                    path,
+                    target
+                ));
+            }
         } else {
             smol::fs::windows::symlink_file(target, path).await?
         }
@@ -904,10 +915,6 @@ impl Fs for RealFs {
         temp_dir.close()?;
         case_sensitive
     }
-
-    fn home_dir(&self) -> Option<PathBuf> {
-        Some(paths::home_dir().clone())
-    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
@@ -942,7 +949,6 @@ struct FakeFsState {
     read_dir_call_count: usize,
     path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
-    home_dir: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1227,7 +1233,6 @@ impl FakeFs {
                 metadata_call_count: 0,
                 path_write_counts: Default::default(),
                 moves: Default::default(),
-                home_dir: None,
             })),
         });
 
@@ -1890,10 +1895,6 @@ impl FakeFs {
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
     }
-
-    pub fn set_home_dir(&self, home_dir: PathBuf) {
-        self.state.lock().home_dir = Some(home_dir);
-    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -2486,10 +2487,6 @@ impl Fs for FakeFs {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
-    }
-
-    fn home_dir(&self) -> Option<PathBuf> {
-        self.state.lock().home_dir.clone()
     }
 }
 

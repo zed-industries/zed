@@ -16,7 +16,10 @@ use settings::{
     SettingsValue,
 };
 use smallvec::SmallVec;
-use ui::{NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple, prelude::*};
+use ui::{
+    ContextMenu, DropdownMenu, NumericStepper, SwitchField, ToggleButtonGroup, ToggleButtonSimple,
+    prelude::*,
+};
 use workspace::{
     Workspace,
     item::{Item, ItemEvent},
@@ -33,14 +36,14 @@ impl FeatureFlag for SettingsUiFeatureFlag {
 actions!(
     zed,
     [
-        /// Opens the settings editor.
-        OpenSettingsEditor
+        /// Opens settings UI.
+        OpenSettingsUi
     ]
 );
 
 pub fn open_settings_editor(
     workspace: &mut Workspace,
-    _: &OpenSettingsEditor,
+    _: &OpenSettingsUi,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
@@ -62,7 +65,7 @@ pub fn open_settings_editor(
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action_renderer(|div, _, _, cx| {
-            let settings_ui_actions = [std::any::TypeId::of::<OpenSettingsEditor>()];
+            let settings_ui_actions = [std::any::TypeId::of::<OpenSettingsUi>()];
             let has_flag = cx.has_flag::<SettingsUiFeatureFlag>();
             command_palette_hooks::CommandPaletteFilter::update_global(cx, |filter, _| {
                 if has_flag {
@@ -635,8 +638,8 @@ fn render_item_single(
             variants: values,
             labels: titles,
         } => render_toggle_button_group(settings_value, values, titles, window, cx),
-        SettingsUiItemSingle::DropDown { .. } => {
-            unimplemented!("This")
+        SettingsUiItemSingle::DropDown { variants, labels } => {
+            render_dropdown(settings_value, variants, labels, window, cx)
         }
         SettingsUiItemSingle::TextField => render_text_field(settings_value, window, cx),
     }
@@ -894,6 +897,41 @@ fn render_toggle_button_group(
             );
         }
     });
+}
+
+fn render_dropdown(
+    value: SettingsValue<serde_json::Value>,
+    variants: &'static [&'static str],
+    labels: &'static [&'static str],
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let value = downcast_any_item::<String>(value);
+    let id = element_id_from_path(&value.path);
+
+    let menu = window.use_keyed_state(id.clone(), cx, |window, cx| {
+        let path = value.path.clone();
+        let handler = Rc::new(move |variant: &'static str, cx: &mut App| {
+            SettingsValue::write_value(&path, serde_json::Value::String(variant.to_string()), cx);
+        });
+
+        ContextMenu::build(window, cx, |mut menu, _, _| {
+            for (label, variant) in labels.iter().zip(variants) {
+                menu = menu.entry(*label, None, {
+                    let handler = handler.clone();
+                    move |_, cx| {
+                        handler(variant, cx);
+                    }
+                });
+            }
+
+            menu
+        })
+    });
+
+    DropdownMenu::new(id, value.read(), menu.read(cx).clone())
+        .style(ui::DropdownStyle::Outlined)
+        .into_any_element()
 }
 
 fn render_toggle_button_group_inner(

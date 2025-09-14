@@ -25,6 +25,7 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smol.workspace = true
+thiserror.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 

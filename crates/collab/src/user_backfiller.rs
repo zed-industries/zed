@@ -157,5 +157,9 @@ impl UserBackfiller {
 struct GithubUser {
     id: i32,
     created_at: DateTime<Utc>,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     name: Option<String>,
 }

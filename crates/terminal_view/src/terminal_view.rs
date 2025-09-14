@@ -7,12 +7,11 @@ mod terminal_slash_command;
 pub mod terminal_tab_tooltip;
 
 use assistant_slash_command::SlashCommandRegistry;
-use editor::{EditorSettings, actions::SelectAll, scroll::ScrollbarAutoHide};
+use editor::{EditorSettings, actions::SelectAll};
 use gpui::{
     Action, AnyElement, App, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     KeyContext, KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, Pixels, Render,
-    ScrollWheelEvent, Stateful, Styled, Subscription, Task, WeakEntity, actions, anchored,
-    deferred, div,
+    ScrollWheelEvent, Styled, Subscription, Task, WeakEntity, actions, anchored, deferred, div,
 };
 use persistence::TERMINAL_DB;
 use project::{Project, search::SearchQuery};
@@ -35,7 +34,9 @@ use terminal_scrollbar::TerminalScrollHandle;
 use terminal_slash_command::TerminalSlashCommand;
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{
-    ContextMenu, Icon, IconName, Label, Scrollbar, ScrollbarState, Tooltip, h_flex, prelude::*,
+    ContextMenu, Icon, IconName, Label, ScrollAxes, Scrollbars, Tooltip, WithScrollbar, h_flex,
+    prelude::*,
+    scrollbars::{self, GlobalSetting, ScrollbarVisibility},
 };
 use util::ResultExt;
 use workspace::{
@@ -68,7 +69,6 @@ struct ImeState {
 }
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
-const TERMINAL_SCROLLBAR_WIDTH: Pixels = px(12.);
 
 /// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -139,10 +139,7 @@ pub struct TerminalView {
     show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
-    scrollbar_state: ScrollbarState,
     scroll_handle: TerminalScrollHandle,
-    show_scrollbar: bool,
-    hide_scrollbar_task: Option<Task<()>>,
     ime_state: Option<ImeState>,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
@@ -262,10 +259,7 @@ impl TerminalView {
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
-            scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
             scroll_handle,
-            show_scrollbar: !Self::should_autohide_scrollbar(cx),
-            hide_scrollbar_task: None,
             cwd_serialized: false,
             ime_state: None,
             _subscriptions: vec![
@@ -836,136 +830,6 @@ impl TerminalView {
         self.terminal = terminal;
     }
 
-    // Hack: Using editor in terminal causes cyclic dependency i.e. editor -> terminal -> project -> editor.
-    fn map_show_scrollbar_from_editor_to_terminal(
-        show_scrollbar: editor::ShowScrollbar,
-    ) -> terminal_settings::ShowScrollbar {
-        match show_scrollbar {
-            editor::ShowScrollbar::Auto => terminal_settings::ShowScrollbar::Auto,
-            editor::ShowScrollbar::System => terminal_settings::ShowScrollbar::System,
-            editor::ShowScrollbar::Always => terminal_settings::ShowScrollbar::Always,
-            editor::ShowScrollbar::Never => terminal_settings::ShowScrollbar::Never,
-        }
-    }
-
-    fn should_show_scrollbar(cx: &App) -> bool {
-        let show = TerminalSettings::get_global(cx)
-            .scrollbar
-            .show
-            .unwrap_or_else(|| {
-                Self::map_show_scrollbar_from_editor_to_terminal(
-                    EditorSettings::get_global(cx).scrollbar.show,
-                )
-            });
-        match show {
-            terminal_settings::ShowScrollbar::Auto => true,
-            terminal_settings::ShowScrollbar::System => true,
-            terminal_settings::ShowScrollbar::Always => true,
-            terminal_settings::ShowScrollbar::Never => false,
-        }
-    }
-
-    fn should_autohide_scrollbar(cx: &App) -> bool {
-        let show = TerminalSettings::get_global(cx)
-            .scrollbar
-            .show
-            .unwrap_or_else(|| {
-                Self::map_show_scrollbar_from_editor_to_terminal(
-                    EditorSettings::get_global(cx).scrollbar.show,
-                )
-            });
-        match show {
-            terminal_settings::ShowScrollbar::Auto => true,
-            terminal_settings::ShowScrollbar::System => cx
-                .try_global::<ScrollbarAutoHide>()
-                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
-            terminal_settings::ShowScrollbar::Always => false,
-            terminal_settings::ShowScrollbar::Never => true,
-        }
-    }
-
-    fn hide_scrollbar(&mut self, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        if !Self::should_autohide_scrollbar(cx) {
-            return;
-        }
-        self.hide_scrollbar_task = Some(cx.spawn(async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
-
-    fn render_scrollbar(&self, window: &Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx)
-            || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
-            || !self.content_mode(window, cx).is_scrollable()
-        {
-            return None;
-        }
-
-        if self.terminal.read(cx).total_lines() == self.terminal.read(cx).viewport_lines() {
-            return None;
-        }
-
-        self.scroll_handle.update(self.terminal.read(cx));
-
-        if let Some(new_display_offset) = self.scroll_handle.future_display_offset.take() {
-            self.terminal.update(cx, |term, _| {
-                let delta = new_display_offset as i32 - term.last_content.display_offset as i32;
-                match delta.cmp(&0) {
-                    std::cmp::Ordering::Greater => term.scroll_up_by(delta as usize),
-                    std::cmp::Ordering::Less => term.scroll_down_by(-delta as usize),
-                    std::cmp::Ordering::Equal => {}
-                }
-            });
-        }
-
-        Some(
-            div()
-                .occlude()
-                .id("terminal-view-scroll")
-                .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|terminal_view, _, window, cx| {
-                        if !terminal_view.scrollbar_state.is_dragging()
-                            && !terminal_view.focus_handle.contains_focused(window, cx)
-                        {
-                            terminal_view.hide_scrollbar(cx);
-                            cx.notify();
-                        }
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                }))
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .right_0()
-                .h_full()
-                .w(TERMINAL_SCROLLBAR_WIDTH)
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
-    }
-
     fn rerun_button(task: &TaskState) -> Option<IconButton> {
         if !task.show_rerun {
             return None;
@@ -1120,6 +984,29 @@ fn regex_search_for_query(query: &project::search::SearchQuery) -> Option<RegexS
     }
 }
 
+struct TerminalScrollbarSettingsWrapper;
+
+impl GlobalSetting for TerminalScrollbarSettingsWrapper {
+    fn get_value(_cx: &App) -> &Self {
+        &Self
+    }
+}
+
+impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
+    fn visibility(&self, cx: &App) -> scrollbars::ShowScrollbar {
+        TerminalSettings::get_global(cx)
+            .scrollbar
+            .show
+            .map(|value| match value {
+                terminal_settings::ShowScrollbar::Auto => scrollbars::ShowScrollbar::Auto,
+                terminal_settings::ShowScrollbar::System => scrollbars::ShowScrollbar::System,
+                terminal_settings::ShowScrollbar::Always => scrollbars::ShowScrollbar::Always,
+                terminal_settings::ShowScrollbar::Never => scrollbars::ShowScrollbar::Never,
+            })
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
+}
+
 impl TerminalView {
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_bell(cx);
@@ -1151,27 +1038,30 @@ impl TerminalView {
             terminal.focus_out();
             terminal.set_cursor_shape(CursorShape::Hollow);
         });
-        self.hide_scrollbar(cx);
         cx.notify();
     }
 }
 
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // TODO: this should be moved out of render
+        self.scroll_handle.update(self.terminal.read(cx));
+
+        if let Some(new_display_offset) = self.scroll_handle.future_display_offset.take() {
+            self.terminal.update(cx, |term, _| {
+                let delta = new_display_offset as i32 - term.last_content.display_offset as i32;
+                match delta.cmp(&0) {
+                    std::cmp::Ordering::Greater => term.scroll_up_by(delta as usize),
+                    std::cmp::Ordering::Less => term.scroll_down_by(-delta as usize),
+                    std::cmp::Ordering::Equal => {}
+                }
+            });
+        }
+
         let terminal_handle = self.terminal.clone();
         let terminal_view_handle = cx.entity();
 
         let focused = self.focus_handle.is_focused(window);
-
-        // Always calculate scrollbar width to prevent layout shift
-        let scrollbar_width = if Self::should_show_scrollbar(cx)
-            && self.content_mode(window, cx).is_scrollable()
-            && self.terminal.read(cx).total_lines() > self.terminal.read(cx).viewport_lines()
-        {
-            TERMINAL_SCROLLBAR_WIDTH
-        } else {
-            px(0.)
-        };
 
         div()
             .id("terminal-view")
@@ -1209,21 +1099,12 @@ impl Render for TerminalView {
                     }
                 }),
             )
-            .on_hover(cx.listener(|this, hovered, window, cx| {
-                if *hovered {
-                    this.show_scrollbar = true;
-                    this.hide_scrollbar_task.take();
-                    cx.notify();
-                } else if !this.focus_handle.contains_focused(window, cx) {
-                    this.hide_scrollbar(cx);
-                }
-            }))
             .child(
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
                 div()
+                    .id("terminal-view-container")
                     .size_full()
                     .bg(cx.theme().colors().editor_background)
-                    .when(scrollbar_width > px(0.), |div| div.pr(scrollbar_width))
                     .child(TerminalElement::new(
                         terminal_handle,
                         terminal_view_handle,
@@ -1234,8 +1115,15 @@ impl Render for TerminalView {
                         self.block_below_cursor.clone(),
                         self.mode.clone(),
                     ))
-                    .when_some(self.render_scrollbar(window, cx), |div, scrollbar| {
-                        div.child(scrollbar)
+                    .when(self.content_mode(window, cx).is_scrollable(), |div| {
+                        div.custom_scrollbars(
+                            Scrollbars::for_settings::<TerminalScrollbarSettingsWrapper>()
+                                .show_along(ScrollAxes::Vertical)
+                                .with_track_along(ScrollAxes::Vertical)
+                                .tracked_scroll_handle(self.scroll_handle.clone()),
+                            window,
+                            cx,
+                        )
                     }),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {

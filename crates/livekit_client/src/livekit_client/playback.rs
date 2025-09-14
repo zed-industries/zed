@@ -186,6 +186,8 @@ impl AudioStack {
         let capture_task = if rodio_pipeline {
             info!("Using experimental.rodio_audio audio pipeline");
             let voip_parts = audio::VoipParts::new(cx)?;
+            // Audio needs to run real-time and should never be paused. That is why we are using a
+            // normal std::thread and not a background task
             thread::spawn(move || {
                 // microphone is non send on mac
                 let microphone = audio::Audio::open_microphone(voip_parts)?;

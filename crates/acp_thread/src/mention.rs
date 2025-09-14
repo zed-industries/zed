@@ -162,7 +162,7 @@ impl MentionUri {
                 FileIcons::get_icon(abs_path, cx).unwrap_or_else(|| IconName::File.path().into())
             }
             MentionUri::PastedImage => IconName::Image.path().into(),
-            MentionUri::Directory { .. } => FileIcons::get_folder_icon(false, cx)
+            MentionUri::Directory { abs_path } => FileIcons::get_folder_icon(false, abs_path, cx)
                 .unwrap_or_else(|| IconName::Folder.path().into()),
             MentionUri::Symbol { .. } => IconName::Code.path().into(),
             MentionUri::Thread { .. } => IconName::Thread.path().into(),
