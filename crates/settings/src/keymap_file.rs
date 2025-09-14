@@ -434,11 +434,13 @@ impl KeymapFile {
         let mut generator = Self::action_schema_generator();
 
         let action_schemas = cx.action_schemas(&mut generator);
+        let action_documentation = cx.action_documentation();
         let deprecations = cx.deprecated_actions_to_preferred_actions();
         let deprecation_messages = cx.action_deprecation_messages();
         KeymapFile::generate_json_schema(
             generator,
             action_schemas,
+            action_documentation,
             deprecations,
             deprecation_messages,
         )
@@ -447,6 +449,7 @@ impl KeymapFile {
     fn generate_json_schema(
         mut generator: schemars::SchemaGenerator,
         action_schemas: Vec<(&'static str, Option<schemars::Schema>)>,
+        action_documentation: &HashMap<&'static str, &'static str>,
         deprecations: &HashMap<&'static str, &'static str>,
         deprecation_messages: &HashMap<&'static str, &'static str>,
     ) -> serde_json::Value {
@@ -499,14 +502,6 @@ impl KeymapFile {
 
         let mut empty_schema_action_names = vec![];
         for (name, action_schema) in action_schemas.into_iter() {
-            let description = action_schema.as_ref().and_then(|schema| {
-                schema
-                    .as_object()
-                    .and_then(|obj| obj.get("description"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            });
-
             let deprecation = if name == NoAction.name() {
                 Some("null")
             } else {
@@ -523,6 +518,7 @@ impl KeymapFile {
             } else if let Some(new_name) = deprecation {
                 add_deprecation_preferred_name(&mut plain_action, new_name);
             }
+            let description = action_documentation.get(name);
             if let Some(description) = &description {
                 add_description(&mut plain_action, description);
             }
