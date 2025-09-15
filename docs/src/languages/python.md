@@ -12,37 +12,49 @@ Python support is available natively in Zed.
 - Debug Adapter: [debugpy](https://github.com/microsoft/debugpy)
 
 ## Install Python
+
 You'll need both Zed and Python installed before you can begin.
 
 ### Step 1: Install Python
+
 Zed does not bundle a Python runtime, so you’ll need to install one yourself.
 Choose one of the following options:
 
 - uv (recommended)
+
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+
 To learn more, visit [Astral’s installation guide](https://docs.astral.sh/uv/getting-started/installation/).
 
 - Homebrew:
+
 ```bash
 brew install python
 ```
+
 - Python.org installer: Download the latest version from [python.org/downloads](https://python.org/downloads).
 
 ### Step 2: Verify Python Installation
+
 Confirm Python is installed and available in your shell:
+
 ```bash
 python3 --version
 ```
+
 You should see an output like `Python 3.x.x`.
 
 ## Open Your First Python Project in Zed
+
 Once Zed and Python are installed, open a folder containing Python code to start working.
 
 ### Step 1: Launch Zed with a Python Project
+
 Open Zed.
 From the menu bar, choose File > Open Folder, or launch from the terminal:
+
 ```bash
 zed path/to/your/project
 ```
@@ -50,6 +62,7 @@ zed path/to/your/project
 Zed will recognize `.py` files automatically using its native tree-sitter-python parser, with no plugins or manual setup required.
 
 ### Step 2: Use the Integrated Terminal (Optional)
+
 Zed includes an integrated terminal, accessible from the bottom panel. If Zed detects that your project is using a [virtual environment](#virtual-environments), it will be activated automatically in newly-created terminals. You can configure this behavior with the [`detect_venv`](../configuring-zed.md#terminal-detect_venv) setting.
 
 ## Configure Python Language Servers in Zed
@@ -57,11 +70,13 @@ Zed includes an integrated terminal, accessible from the bottom panel. If Zed de
 Zed provides several Python language servers out of the box. By default, [basedpyright](https://github.com/DetachHead/basedpyright) is the primary language server, and [Ruff](https://github.com/astral-sh/ruff) is used for formatting and linting.
 
 Other built-in language servers are:
+
 - [Ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
 - [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
 - [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
 These are disabled by default, but can be enabled in your settings. For example:
+
 ```json
 {
   "languages": {
@@ -105,6 +120,7 @@ For example, in order to:
 - disable inlay hints on function arguments
 
 You can use the following configuration:
+
 ```json
 {
   "lsp": {
@@ -119,7 +135,6 @@ You can use the following configuration:
   }
 }
 ```
-
 
 ##### Configuration files
 
@@ -244,15 +259,18 @@ For more details, refer to the Ruff documentation about [configuration files](ht
 Zed supports Python debugging through the `debugpy` adapter. You can start with no configuration or define custom launch profiles in `.zed/debug.json`.
 
 ### Start Debugging with No Setup
+
 Zed can automatically detect debuggable Python entry points. Press F4 (or run debugger: start from the Command Palette) to see available options for your current project.
 This works for:
+
 - Python scripts
 - Modules
--  pytest tests
+- pytest tests
 
 Zed uses `debugpy` under the hood, but no manual adapter configuration is required.
 
 ### Define Custom Debug Configurations
+
 For reusable setups, create a `.zed/debug.json` file in your project root. This gives you more control over how Zed runs and debugs your code.
 
 #### Debug Active File
@@ -267,6 +285,7 @@ For reusable setups, create a `.zed/debug.json` file in your project root. This 
   }
 ]
 ```
+
 This runs the file currently open in the editor.
 
 #### Debug a Flask App
@@ -313,13 +332,17 @@ requirements.txt
   }
 ]
 ```
+
 These can be combined to tailor the experience for web servers, test runners, or custom scripts.
 
 ## Troubleshoot and Maintain a Productive Python Setup
+
 Zed is designed to minimize configuration overhead, but occasional issues can still arise—especially around environments, language servers, or tooling. Here's how to keep your Python setup working smoothly.
 
 ### Resolve Language Server Startup Issues
+
 If a language server isn't responding or features like diagnostics or autocomplete aren't available:
+
 - Check your Zed log (using the {#action zed::OpenLog} action) for errors related to the language server you're trying to use. This is where you're likely to find useful information if the language server failed to start up at all.
 - Use the language server logs view to understand the lifecycle of the affected language server. You can access this view using the {#action dev::OpenLanguageServerLogs} action, or by clicking the lightning bolt icon in the status bar and selecting your language server. The most useful pieces of data in this view are:
   - "Server Logs", which shows any errors printed by the language server
