@@ -632,10 +632,7 @@ impl ConfigurationView {
 
         let api_url_editor = cx.new(|cx| {
             let input = SingleLineInput::new(window, cx, OLLAMA_API_URL).label("API URL");
-            input.editor.update(cx, |editor, cx| {
-                let api_url: Arc<str> = OllamaLanguageModelProvider::api_url(cx).into();
-                editor.set_text(api_url, window, cx);
-            });
+            input.set_text(OllamaLanguageModelProvider::api_url(cx), window, cx);
             input
         });
 
@@ -662,11 +659,9 @@ impl ConfigurationView {
             return;
         }
 
-        self.api_key_editor.update(cx, |input, cx| {
-            input.editor.update(cx, |editor, cx| {
-                editor.set_text("", window, cx);
-            });
-        });
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
@@ -678,11 +673,8 @@ impl ConfigurationView {
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor.update(cx, |input, cx| {
-            input.editor.update(cx, |editor, cx| {
-                editor.set_text("", window, cx);
-            });
-        });
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
@@ -714,11 +706,8 @@ impl ConfigurationView {
     }
 
     fn reset_api_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_url_editor.update(cx, |input, cx| {
-            input.editor.update(cx, |editor, cx| {
-                editor.set_text(OLLAMA_API_URL, window, cx);
-            });
-        });
+        self.api_url_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
         let fs = <dyn Fs>::global(cx);
         update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
             if let Some(settings) = settings.ollama.as_mut() {
