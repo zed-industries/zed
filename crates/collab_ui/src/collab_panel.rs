@@ -24,7 +24,7 @@ use rpc::{
     ErrorCode, ErrorExt,
     proto::{self, ChannelVisibility, PeerId},
 };
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{mem, sync::Arc};

@@ -328,7 +328,7 @@
   {
     "context": "vim_mode == helix_select",
     "bindings": {
-      "escape": "vim::NormalBefore",
+      "v": "vim::NormalBefore",
       ";": "vim::HelixCollapseSelection",
       "~": "vim::ChangeCase",
       "ctrl-a": "vim::Increment",

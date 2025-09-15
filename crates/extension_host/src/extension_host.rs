@@ -938,6 +938,20 @@ impl ExtensionStore {
                 ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
             let extension_id = extension_manifest.id.clone();
 
+            if let Some(uninstall_task) = this
+                .update(cx, |this, cx| {
+                    this.extension_index
+                        .extensions
+                        .get(extension_id.as_ref())
+                        .is_some_and(|index_entry| !index_entry.dev)
+                        .then(|| this.uninstall_extension(extension_id.clone(), cx))
+                })
+                .ok()
+                .flatten()
+            {
+                uninstall_task.await.log_err();
+            }
+
             if !this.update(cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
                     btree_map::Entry::Occupied(_) => return false,
@@ -986,7 +1000,7 @@ impl ExtensionStore {
                     )
                     .await?;
                 } else {
-                    bail!("extension {extension_id} is already installed");
+                    bail!("extension {extension_id} is still installed");
                 }
             }
 
