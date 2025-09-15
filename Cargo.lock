@@ -8922,6 +8922,7 @@ dependencies = [
  "settings",
  "snippet_provider",
  "task",
+ "theme",
  "util",
 ]
 

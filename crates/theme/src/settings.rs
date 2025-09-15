@@ -996,14 +996,10 @@ pub struct IconThemeName(pub Arc<str>);
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        add_and_get_ref: |generator, _params, cx| {
+        add_and_get_ref: |generator, params, _cx| {
             replace_subschema::<IconThemeName>(generator, || json_schema!({
                 "type": "string",
-                "enum": ThemeRegistry::global(cx)
-                    .list_icon_themes()
-                    .into_iter()
-                    .map(|icon_theme| icon_theme.name)
-                    .collect::<Vec<SharedString>>(),
+                "enum": params.icon_theme_names,
             }))
         }
     }

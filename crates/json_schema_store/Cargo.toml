@@ -21,6 +21,7 @@ project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+theme.workspace = true
 settings.workspace = true
 util.workspace = true
 paths.workspace = true

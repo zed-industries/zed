@@ -2,7 +2,7 @@
 use std::str::FromStr;
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, WeakEntity};
+use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, SharedString, WeakEntity};
 use project::LspStore;
 
 // Origin: https://github.com/SchemaStore/schemastore
@@ -94,10 +94,16 @@ fn resolve_schema_request(
                 .into_iter()
                 .map(|name| name.to_string())
                 .collect::<Vec<_>>();
+            let icon_theme_names = &theme::ThemeRegistry::global(cx)
+                .list_icon_themes()
+                .into_iter()
+                .map(|icon_theme| icon_theme.name)
+                .collect::<Vec<SharedString>>();
             cx.global::<settings::SettingsStore>().json_schema(
                 &settings::SettingsJsonSchemaParams {
                     language_names,
                     font_names,
+                    icon_theme_names,
                 },
                 cx,
             )
