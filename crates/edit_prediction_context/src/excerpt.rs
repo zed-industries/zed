@@ -475,7 +475,7 @@ mod tests {
         let excerpt = EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &options)
             .expect("Should select an excerpt");
         pretty_assertions::assert_eq!(
-            generate_marked_text(&text, &[excerpt.range.clone()], false),
+            generate_marked_text(&text, std::slice::from_ref(&excerpt.range), false),
             generate_marked_text(&text, &[expected_excerpt], false)
         );
         assert!(excerpt.size <= options.max_bytes);
