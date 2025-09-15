@@ -67,7 +67,7 @@ pub fn parse_markdown(
                         MarkdownTag::CodeBlock {
                             kind: CodeBlockKind::Indented,
                             metadata: CodeBlockMetadata {
-                                content_range: range.start + 1..range.end + 1,
+                                content_range: range.clone(),
                                 line_count: 1,
                             },
                         }
@@ -698,7 +698,28 @@ mod tests {
                 HashSet::from(["rust".into()]),
                 HashSet::new()
             )
-        )
+        );
+        assert_eq!(
+            parse_markdown("    fn main() {}"),
+            (
+                vec![
+                    (
+                        4..16,
+                        Start(CodeBlock {
+                            kind: CodeBlockKind::Indented,
+                            metadata: CodeBlockMetadata {
+                                content_range: 4..16,
+                                line_count: 1
+                            }
+                        })
+                    ),
+                    (4..16, Text),
+                    (4..16, End(MarkdownTagEnd::CodeBlock))
+                ],
+                HashSet::new(),
+                HashSet::new()
+            )
+        );
     }
 
     #[test]
