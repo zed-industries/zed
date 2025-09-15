@@ -1,8 +1,8 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
+use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use google_ai::{
     FunctionDeclaration, GenerateContentResponse, GoogleModelMode, Part, SystemInstruction,
     ThinkingConfig, UsageMetadata,
@@ -37,8 +37,8 @@ use util::ResultExt;
 use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKey;
+use crate::api_key::ApiKeyState;
 use crate::ui::InstructionListItem;
-use crate::{AllLanguageModelSettings, api_key::ApiKeyState};
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
@@ -173,8 +173,12 @@ impl GoogleLanguageModelProvider {
         })
     }
 
+    fn settings(cx: &App) -> &GoogleSettings {
+        &crate::AllLanguageModelSettings::get_global(cx).google
+    }
+
     fn api_url(cx: &App) -> SharedString {
-        let api_url = &AllLanguageModelSettings::get_global(cx).google.api_url;
+        let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
             google_ai::API_URL.into()
         } else {
@@ -223,10 +227,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &AllLanguageModelSettings::get_global(cx)
-            .google
-            .available_models
-        {
+        for model in &GoogleLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
                 google_ai::Model::Custom {
@@ -295,16 +296,11 @@ impl GoogleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let api_key_and_url = self.state.read_with(cx, |state, cx| {
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
             let api_url = GoogleLanguageModelProvider::api_url(cx);
-            let api_key = state.api_key_state.key(&api_url);
-            (api_key, api_url)
-        });
-        let (api_key, api_url) = match api_key_and_url {
-            Ok(api_key_and_url) => api_key_and_url,
-            Err(err) => {
-                return futures::future::ready(Err(err)).boxed();
-            }
+            (state.api_key_state.key(&api_url), api_url)
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         async move {
@@ -819,6 +815,10 @@ impl ConfigurationView {
         if api_key.is_empty() {
             return;
         }
+
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {

@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use convert_case::{Case, Casing};
-use futures::{FutureExt, StreamExt, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
@@ -20,8 +20,8 @@ use ui_input::SingleLineInput;
 use util::ResultExt;
 use zed_env_vars::EnvVar;
 
+use crate::api_key::ApiKeyState;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
-use crate::{AllLanguageModelSettings, api_key::ApiKeyState};
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
@@ -98,7 +98,7 @@ impl State {
 impl OpenAiCompatibleLanguageModelProvider {
     pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         fn resolve_settings<'a>(id: &'a str, cx: &'a App) -> Option<&'a OpenAiCompatibleSettings> {
-            AllLanguageModelSettings::get_global(cx)
+            crate::AllLanguageModelSettings::get_global(cx)
                 .openai_compatible
                 .get(id)
         }
@@ -239,16 +239,14 @@ impl OpenAiCompatibleLanguageModel {
     {
         let http_client = self.http_client.clone();
 
-        let api_key_and_url = self.state.read_with(cx, |state, _cx| {
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
-            let api_key = state.api_key_state.key(api_url);
-            (api_key, state.settings.api_url.clone())
-        });
-        let (api_key, api_url) = match api_key_and_url {
-            Ok(api_key_and_url) => api_key_and_url,
-            Err(err) => {
-                return futures::future::ready(Err(err)).boxed();
-            }
+            (
+                state.api_key_state.key(api_url),
+                state.settings.api_url.clone(),
+            )
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let provider = self.provider_name.clone();
@@ -423,6 +421,10 @@ impl ConfigurationView {
             return;
         }
 
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
+
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
@@ -433,11 +435,8 @@ impl ConfigurationView {
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor.update(cx, |input, cx| {
-            input.editor.update(cx, |editor, cx| {
-                editor.set_text("", window, cx);
-            });
-        });
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
