@@ -843,18 +843,13 @@ impl AgentConfiguration {
                                     .id(SharedString::from(format!("tooltip-{}", item_id)))
                                     .h_full()
                                     .w_3()
-                                    .mx_1()
+                                    .ml_1()
+                                    .mr_1p5()
                                     .justify_center()
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(
-                                div()
-                                    .ml_0p5()
-                                    .overflow_hidden()
-                                    .flex_shrink()
-                                    .child(Label::new(item_id).truncate())
-                            )
+                            .child(Label::new(item_id).truncate())
                             .child(
                                 div()
                                     .id("extension-source")
@@ -870,23 +865,19 @@ impl AgentConfiguration {
                             )
                             .when(is_running, |this| {
                                 this.child(
-                                    div()
-                                        .flex_none()
-                                        .child(
-                                            Label::new(if tool_count == 1 {
-                                                SharedString::from("1 tool")
-                                            } else {
-                                                SharedString::from(format!("{} tools", tool_count))
-                                            })
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small)
-                                        )
+                                    Label::new(if tool_count == 1 {
+                                        SharedString::from("1 tool")
+                                    } else {
+                                        SharedString::from(format!("{} tools", tool_count))
+                                    })
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
                                 )
                             }),
                     )
                     .child(
                         h_flex()
-                            .gap_1()
+                            .gap_0p5()
                             .flex_none()
                             .child(context_server_configuration_menu)
                             .child(
