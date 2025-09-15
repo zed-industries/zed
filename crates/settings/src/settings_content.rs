@@ -21,10 +21,25 @@ pub struct SettingsContent {
     #[serde(flatten)]
     pub theme: ThemeSettingsContent,
 
+    /// Configuration of audio in Zed.
+    pub audio: Option<AudioSettingsContent>,
+    pub auto_update: Option<bool>,
+
     // todo!() comments?!
     pub base_keymap: Option<BaseKeymapContent>,
 
-    pub auto_update: Option<bool>,
+    /// The list of custom Git hosting providers.
+    pub git_hosting_providers: Option<Vec<GitHostingProviderConfig>>,
+
+    /// Whether or not to enable Helix mode.
+    ///
+    /// Default: false
+    pub helix_mode: Option<bool>,
+    /// A map of log scopes to the desired log level.
+    /// Useful for filtering out noisy logs or enabling more verbose logging.
+    ///
+    /// Example: {"log": {"client": "warn"}}
+    pub log: Option<HashMap<String, String>>,
 
     pub title_bar: Option<TitleBarSettingsContent>,
 
@@ -32,19 +47,6 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub vim_mode: Option<bool>,
-    /// Whether or not to enable Helix mode.
-    ///
-    /// Default: false
-    pub helix_mode: Option<bool>,
-
-    /// Configuration of audio in Zed.
-    pub audio: Option<AudioSettingsContent>,
-
-    /// A map of log scopes to the desired log level.
-    /// Useful for filtering out noisy logs or enabling more verbose logging.
-    ///
-    /// Example: {"log": {"client": "warn"}}
-    pub log: Option<HashMap<String, String>>,
 }
 
 impl SettingsContent {
@@ -194,4 +196,27 @@ pub struct AudioSettingsContent {
     /// too loud quieter. This only affects how things sound for you.
     #[serde(rename = "experimental.control_output_volume", default)]
     pub control_output_volume: Option<bool>,
+}
+
+/// A custom Git hosting provider.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GitHostingProviderConfig {
+    /// The type of the provider.
+    ///
+    /// Must be one of `github`, `gitlab`, or `bitbucket`.
+    pub provider: GitHostingProviderKind,
+
+    /// The base URL for the provider (e.g., "https://code.corp.big.com").
+    pub base_url: String,
+
+    /// The display name for the provider (e.g., "BigCorp GitHub").
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHostingProviderKind {
+    Github,
+    Gitlab,
+    Bitbucket,
 }
