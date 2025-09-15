@@ -1961,10 +1961,36 @@ extern "C" fn window_did_move(this: &Object, _: Sel, _: id) {
     }
 }
 
+// Update the window scale factor and drawable size, and call the resize callback if any.
+fn update_window_scale_factor(window_state: &Arc<Mutex<MacWindowState>>) {
+    let mut lock = window_state.as_ref().lock();
+    let scale_factor = lock.scale_factor();
+    let size = lock.content_size();
+    let drawable_size = size.to_device_pixels(scale_factor);
+    unsafe {
+        let _: () = msg_send![
+            lock.renderer.layer(),
+            setContentsScale: scale_factor as f64
+        ];
+    }
+
+    lock.renderer.update_drawable_size(drawable_size);
+
+    if let Some(mut callback) = lock.resize_callback.take() {
+        let content_size = lock.content_size();
+        let scale_factor = lock.scale_factor();
+        drop(lock);
+        callback(content_size, scale_factor);
+        window_state.as_ref().lock().resize_callback = Some(callback);
+    };
+}
+
 extern "C" fn window_did_change_screen(this: &Object, _: Sel, _: id) {
     let window_state = unsafe { get_window_state(this) };
     let mut lock = window_state.as_ref().lock();
     lock.start_display_link();
+    drop(lock);
+    update_window_scale_factor(&window_state);
 }
 
 extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) {
@@ -2064,27 +2090,7 @@ extern "C" fn make_backing_layer(this: &Object, _: Sel) -> id {
 
 extern "C" fn view_did_change_backing_properties(this: &Object, _: Sel) {
     let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-
-    let scale_factor = lock.scale_factor();
-    let size = lock.content_size();
-    let drawable_size = size.to_device_pixels(scale_factor);
-    unsafe {
-        let _: () = msg_send![
-            lock.renderer.layer(),
-            setContentsScale: scale_factor as f64
-        ];
-    }
-
-    lock.renderer.update_drawable_size(drawable_size);
-
-    if let Some(mut callback) = lock.resize_callback.take() {
-        let content_size = lock.content_size();
-        let scale_factor = lock.scale_factor();
-        drop(lock);
-        callback(content_size, scale_factor);
-        window_state.as_ref().lock().resize_callback = Some(callback);
-    };
+    update_window_scale_factor(&window_state);
 }
 
 extern "C" fn set_frame_size(this: &Object, _: Sel, size: NSSize) {
