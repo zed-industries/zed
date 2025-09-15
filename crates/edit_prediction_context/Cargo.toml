@@ -12,12 +12,17 @@ workspace = true
 path = "src/edit_prediction_context.rs"
 
 [dependencies]
+anyhow.workspace = true
+collections.workspace = true
+gpui.workspace = true
 language.workspace = true
-workspace-hack.workspace = true
-tree-sitter.workspace = true
-text.workspace = true
 log.workspace = true
+project.workspace = true
+text.workspace = true
+tree-sitter.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
+worktree.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

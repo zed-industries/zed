@@ -5043,15 +5043,19 @@ dependencies = [
 name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "collections",
  "gpui",
  "indoc",
  "language",
  "log",
  "pretty_assertions",
+ "project",
  "text",
  "tree-sitter",
  "util",
  "workspace-hack",
+ "worktree",
  "zlog",
 ]
 
