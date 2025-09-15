@@ -1093,6 +1093,13 @@
     }
   },
   {
+    "context": "StashList || (StashList > Picker > Editor)",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-backspace": "stash_picker::DropStashItem"
+    }
+  },
+  {
     "context": "Terminal",
     "use_key_equivalents": true,
     "bindings": {

@@ -59,9 +59,9 @@ use itertools::Itertools as _;
 use language::{
     Bias, BinaryStatus, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, Diff, File as _, Language, LanguageName,
-    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, ManifestDelegate, ManifestName,
-    Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPoint, ToPointUtf16, Toolchain, Transaction,
-    Unclipped,
+    LanguageRegistry, LocalFile, LspAdapter, LspAdapterDelegate, LspInstaller, ManifestDelegate,
+    ManifestName, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Toolchain,
+    Transaction, Unclipped,
     language_settings::{
         FormatOnSave, Formatter, LanguageSettings, SelectedFormatter, language_settings,
     },
@@ -96,7 +96,7 @@ use sha2::{Digest, Sha256};
 use smol::channel::Sender;
 use snippet::Snippet;
 use std::{
-    any::{Any, TypeId},
+    any::TypeId,
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
@@ -112,7 +112,7 @@ use std::{
     time::{Duration, Instant},
 };
 use sum_tree::Dimensions;
-use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
@@ -534,6 +534,11 @@ impl LocalLspStore {
                 .and_then(|b| b.ignore_system_version)
                 .unwrap_or_default(),
             allow_binary_download,
+            pre_release: settings
+                .fetch
+                .as_ref()
+                .and_then(|f| f.pre_release)
+                .unwrap_or(false),
         };
 
         cx.spawn(async move |cx| {
@@ -10535,7 +10540,10 @@ impl LspStore {
             for (worktree_id, servers) in &local.lsp_tree.instances {
                 if *worktree_id != key.worktree_id {
                     for server_map in servers.roots.values() {
-                        if server_map.contains_key(&key.name) {
+                        if server_map
+                            .values()
+                            .any(|(node, _)| node.id() == Some(server_id))
+                        {
                             worktrees_using_server.push(*worktree_id);
                         }
                     }
@@ -10545,6 +10553,7 @@ impl LspStore {
 
         let mut buffer_paths_registered = Vec::new();
         self.buffer_store.clone().update(cx, |buffer_store, cx| {
+            let mut lsp_adapters = HashMap::default();
             for buffer_handle in buffer_store.buffers() {
                 let buffer = buffer_handle.read(cx);
                 let file = match File::from_dyn(buffer.file()) {
@@ -10557,9 +10566,9 @@ impl LspStore {
                 };
 
                 if !worktrees_using_server.contains(&file.worktree.read(cx).id())
-                    || !self
-                        .languages
-                        .lsp_adapters(&language.name())
+                    || !lsp_adapters
+                        .entry(language.name())
+                        .or_insert_with(|| self.languages.lsp_adapters(&language.name()))
                         .iter()
                         .any(|a| a.name == key.name)
                 {
@@ -12579,27 +12588,8 @@ impl SshLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for SshLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        self.name.clone()
-    }
-
-    async fn initialization_options(
-        self: Arc<Self>,
-        _: &Arc<dyn LspAdapterDelegate>,
-    ) -> Result<Option<serde_json::Value>> {
-        let Some(options) = &self.initialization_options else {
-            return Ok(None);
-        };
-        let result = serde_json::from_str(options)?;
-        Ok(result)
-    }
-
-    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
-        self.code_action_kinds.clone()
-    }
-
+impl LspInstaller for SshLspAdapter {
+    type BinaryVersion = ();
     async fn check_if_user_installed(
         &self,
         _: &dyn LspAdapterDelegate,
@@ -12620,18 +12610,41 @@ impl LspAdapter for SshLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<()> {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }
 
     async fn fetch_server_binary(
         &self,
-        _: Box<dyn 'static + Send + Any>,
+        _: (),
         _: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         anyhow::bail!("SshLspAdapter does not support fetch_server_binary")
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for SshLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        self.name.clone()
+    }
+
+    async fn initialization_options(
+        self: Arc<Self>,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(options) = &self.initialization_options else {
+            return Ok(None);
+        };
+        let result = serde_json::from_str(options)?;
+        Ok(result)
+    }
+
+    fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
+        self.code_action_kinds.clone()
     }
 }
 

@@ -5,9 +5,10 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
+use itertools::Itertools as _;
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate, Toolchain,
+    LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
@@ -15,11 +16,10 @@ use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
 use smol::{fs, lock::RwLock, stream::StreamExt};
 use std::{
-    any::Any,
     borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::merge_json_value_into;
@@ -512,9 +512,9 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn replace_test_name_parameters(test_name: &str) -> String {
-    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
-
-    regex::escape(&pattern.replace_all(test_name, "(.+?)"))
+    static PATTERN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(\$([A-Za-z0-9_\.]+|[\#])|%[psdifjo#\$%])").unwrap());
+    PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
 pub struct TypeScriptLspAdapter {
@@ -555,38 +555,35 @@ impl TypeScriptLspAdapter {
     }
 }
 
-struct TypeScriptVersions {
+pub struct TypeScriptVersions {
     typescript_version: String,
     server_version: String,
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for TypeScriptLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME
-    }
+impl LspInstaller for TypeScriptLspAdapter {
+    type BinaryVersion = TypeScriptVersions;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(TypeScriptVersions {
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<TypeScriptVersions> {
+        Ok(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
                 .node
                 .npm_package_latest_version("typescript-language-server")
                 .await?,
-        }) as Box<_>)
+        })
     }
 
     async fn check_if_version_installed(
         &self,
-        version: &(dyn 'static + Send + Any),
+        version: &TypeScriptVersions,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let version = version.downcast_ref::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         let should_install_language_server = self
@@ -612,11 +609,10 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: TypeScriptVersions,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         self.node
@@ -648,6 +644,13 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_ts_server_binary(container_dir, &self.node).await
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for TypeScriptLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -815,6 +818,99 @@ impl EsLintLspAdapter {
     }
 }
 
+impl LspInstaller for EsLintLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
+
+    async fn fetch_latest_server_version(
+        &self,
+        _delegate: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
+        let url = build_asset_url(
+            "zed-industries/vscode-eslint",
+            Self::CURRENT_VERSION_TAG_NAME,
+            Self::GITHUB_ASSET_KIND,
+        )?;
+
+        Ok(GitHubLspBinaryVersion {
+            name: Self::CURRENT_VERSION.into(),
+            digest: None,
+            url,
+        })
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        version: GitHubLspBinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let destination_path = Self::build_destination_path(&container_dir);
+        let server_path = destination_path.join(Self::SERVER_PATH);
+
+        if fs::metadata(&server_path).await.is_err() {
+            remove_matching(&container_dir, |_| true).await;
+
+            download_server_binary(
+                delegate,
+                &version.url,
+                None,
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+
+            let mut dir = fs::read_dir(&destination_path).await?;
+            let first = dir.next().await.context("missing first file")??;
+            let repo_root = destination_path.join("vscode-eslint");
+            fs::rename(first.path(), &repo_root).await?;
+
+            #[cfg(target_os = "windows")]
+            {
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("client").join("src").join("shared"),
+                )
+                .await?;
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("server").join("src").join("shared"),
+                )
+                .await?;
+            }
+
+            self.node
+                .run_npm_subcommand(&repo_root, "install", &[])
+                .await?;
+
+            self.node
+                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
+                .await?;
+        }
+
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            env: None,
+            arguments: eslint_server_binary_arguments(&server_path),
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let server_path =
+            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
+            env: None,
+            arguments: eslint_server_binary_arguments(&server_path),
+        })
+    }
+}
+
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -886,95 +982,6 @@ impl LspAdapter for EsLintLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME
     }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _delegate: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        let url = build_asset_url(
-            "zed-industries/vscode-eslint",
-            Self::CURRENT_VERSION_TAG_NAME,
-            Self::GITHUB_ASSET_KIND,
-        )?;
-
-        Ok(Box::new(GitHubLspBinaryVersion {
-            name: Self::CURRENT_VERSION.into(),
-            digest: None,
-            url,
-        }))
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        version: Box<dyn 'static + Send + Any>,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = Self::build_destination_path(&container_dir);
-        let server_path = destination_path.join(Self::SERVER_PATH);
-
-        if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |_| true).await;
-
-            download_server_binary(
-                delegate,
-                &version.url,
-                None,
-                &destination_path,
-                Self::GITHUB_ASSET_KIND,
-            )
-            .await?;
-
-            let mut dir = fs::read_dir(&destination_path).await?;
-            let first = dir.next().await.context("missing first file")??;
-            let repo_root = destination_path.join("vscode-eslint");
-            fs::rename(first.path(), &repo_root).await?;
-
-            #[cfg(target_os = "windows")]
-            {
-                handle_symlink(
-                    repo_root.join("$shared"),
-                    repo_root.join("client").join("src").join("shared"),
-                )
-                .await?;
-                handle_symlink(
-                    repo_root.join("$shared"),
-                    repo_root.join("server").join("src").join("shared"),
-                )
-                .await?;
-            }
-
-            self.node
-                .run_npm_subcommand(&repo_root, "install", &[])
-                .await?;
-
-            self.node
-                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
-                .await?;
-        }
-
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
-        })
-    }
-
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let server_path =
-            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
-        Some(LanguageServerBinary {
-            path: self.node.binary_path().await.ok()?,
-            env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
-        })
-    }
 }
 
 #[cfg(target_os = "windows")]
@@ -1009,7 +1016,9 @@ mod tests {
     use unindent::Unindent;
     use util::path;
 
-    use crate::typescript::{PackageJsonData, TypeScriptContextProvider};
+    use crate::typescript::{
+        PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+    };
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
@@ -1220,5 +1229,38 @@ mod tests {
                 ),
             ]
         );
+    }
+    #[test]
+    fn test_escaping_name() {
+        let cases = [
+            ("plain test name", "plain test name"),
+            ("test name with $param_name", "test name with (.+?)"),
+            ("test name with $nested.param.name", "test name with (.+?)"),
+            ("test name with $#", "test name with (.+?)"),
+            ("test name with $##", "test name with (.+?)\\#"),
+            ("test name with %p", "test name with (.+?)"),
+            ("test name with %s", "test name with (.+?)"),
+            ("test name with %d", "test name with (.+?)"),
+            ("test name with %i", "test name with (.+?)"),
+            ("test name with %f", "test name with (.+?)"),
+            ("test name with %j", "test name with (.+?)"),
+            ("test name with %o", "test name with (.+?)"),
+            ("test name with %#", "test name with (.+?)"),
+            ("test name with %$", "test name with (.+?)"),
+            ("test name with %%", "test name with (.+?)"),
+            ("test name with %q", "test name with %q"),
+            (
+                "test name with regex chars .*+?^${}()|[]\\",
+                "test name with regex chars \\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\",
+            ),
+            (
+                "test name with multiple $params and %pretty and %b and (.+?)",
+                "test name with multiple (.+?) and (.+?)retty and %b and \\(\\.\\+\\?\\)",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(replace_test_name_parameters(input), expected);
+        }
     }
 }

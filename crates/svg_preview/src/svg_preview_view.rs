@@ -1,29 +1,25 @@
 use std::path::PathBuf;
 
-use editor::{Editor, EditorEvent};
+use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource, IntoElement,
     ParentElement, Render, Resource, RetainAllImageCache, Styled, Subscription, WeakEntity, Window,
     div, img,
 };
-use project::ProjectPath;
+use multi_buffer::{Event as MultiBufferEvent, MultiBuffer};
 use ui::prelude::*;
 use workspace::item::Item;
 use workspace::{Pane, Workspace};
-use worktree::Event as WorktreeEvent;
 
 use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 
 pub struct SvgPreviewView {
     focus_handle: FocusHandle,
     svg_path: Option<PathBuf>,
-    project_path: Option<ProjectPath>,
     image_cache: Entity<RetainAllImageCache>,
-    workspace_handle: WeakEntity<Workspace>,
-    _editor_subscription: Subscription,
+    _buffer_subscription: Subscription,
     _workspace_subscription: Option<Subscription>,
-    _project_subscription: Option<Subscription>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,7 +110,7 @@ impl SvgPreviewView {
         editor: &Entity<Editor>,
         cx: &App,
     ) -> Option<usize> {
-        let editor_path = Self::get_svg_path(editor, cx);
+        let editor_path = Self::get_svg_path(editor.read(cx).buffer(), cx);
         pane.items_of_type::<SvgPreviewView>()
             .find(|view| {
                 let view_read = view.read(cx);
@@ -155,26 +151,10 @@ impl SvgPreviewView {
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
         cx.new(|cx| {
-            let svg_path = Self::get_svg_path(&active_editor, cx);
-            let project_path = Self::get_project_path(&active_editor, cx);
             let image_cache = RetainAllImageCache::new(cx);
-
-            let subscription = cx.subscribe_in(
-                &active_editor,
-                window,
-                |this: &mut SvgPreviewView, _editor, event: &EditorEvent, window, cx| {
-                    if event == &EditorEvent::Saved {
-                        // Remove cached image to force reload
-                        if let Some(svg_path) = &this.svg_path {
-                            let resource = Resource::Path(svg_path.clone().into());
-                            this.image_cache.update(cx, |cache, cx| {
-                                cache.remove(&resource, window, cx);
-                            });
-                        }
-                        cx.notify();
-                    }
-                },
-            );
+            let buffer = active_editor.read(cx).buffer();
+            let svg_path = Self::get_svg_path(buffer, cx);
+            let subscription = Self::create_buffer_subscription(&buffer.clone(), window, cx);
 
             // Subscribe to workspace active item changes to follow SVG files
             let workspace_subscription = if mode == SvgPreviewMode::Follow {
@@ -185,17 +165,24 @@ impl SvgPreviewView {
                         |this: &mut SvgPreviewView,
                          workspace,
                          event: &workspace::Event,
-                         _window,
+                         window,
                          cx| {
                             if let workspace::Event::ActiveItemChanged = event {
                                 let workspace_read = workspace.read(cx);
                                 if let Some(active_item) = workspace_read.active_item(cx)
-                                    && let Some(editor_entity) = active_item.downcast::<Editor>()
-                                    && Self::is_svg_file(&editor_entity, cx)
+                                    && let Some(editor) = active_item.downcast::<Editor>()
+                                    && Self::is_svg_file(&editor, cx)
                                 {
-                                    let new_path = Self::get_svg_path(&editor_entity, cx);
+                                    let buffer = editor.read(cx).buffer();
+                                    let new_path = Self::get_svg_path(&buffer, cx);
                                     if this.svg_path != new_path {
                                         this.svg_path = new_path;
+                                        this._buffer_subscription =
+                                            Self::create_buffer_subscription(
+                                                &buffer.clone(),
+                                                window,
+                                                cx,
+                                            );
                                         cx.notify();
                                     }
                                 }
@@ -207,74 +194,48 @@ impl SvgPreviewView {
                 None
             };
 
-            // We'll set up the project subscription after the entity is created
-            let project_subscription = None;
-
-            let view = Self {
+            Self {
                 focus_handle: cx.focus_handle(),
                 svg_path,
-                project_path,
                 image_cache,
-                workspace_handle,
-                _editor_subscription: subscription,
+                _buffer_subscription: subscription,
                 _workspace_subscription: workspace_subscription,
-                _project_subscription: project_subscription,
-            };
-
-            view
+            }
         })
     }
 
-    fn setup_project_subscription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let (Some(workspace), Some(project_path)) =
-            (self.workspace_handle.upgrade(), &self.project_path)
-        {
-            let project = workspace.read(cx).project().clone();
-            let worktree_id = project_path.worktree_id;
-            let worktree = {
-                let project_read = project.read(cx);
-                project_read
-                    .worktrees(cx)
-                    .find(|worktree| worktree.read(cx).id() == worktree_id)
-            };
+    fn create_buffer_subscription(
+        active_buffer: &Entity<MultiBuffer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe_in(
+            active_buffer,
+            window,
+            |this: &mut SvgPreviewView, buffer, event: &MultiBufferEvent, window, cx| {
+                let potential_path_change = event == &MultiBufferEvent::FileHandleChanged;
+                if event == &MultiBufferEvent::Saved || potential_path_change {
+                    // Remove cached image to force reload
+                    if let Some(svg_path) = &this.svg_path {
+                        let resource = Resource::Path(svg_path.clone().into());
+                        this.image_cache.update(cx, |cache, cx| {
+                            cache.remove(&resource, window, cx);
+                        });
+                    }
 
-            if let Some(worktree) = worktree {
-                self._project_subscription = Some(cx.subscribe_in(
-                    &worktree,
-                    window,
-                    |this: &mut SvgPreviewView, _worktree, event: &WorktreeEvent, window, cx| {
-                        if let WorktreeEvent::UpdatedEntries(changes) = event {
-                            if let Some(project_path) = &this.project_path {
-                                // Check if our SVG file was modified
-                                for (path, _entry_id, _change) in changes.iter() {
-                                    if path.as_ref() == project_path.path.as_ref() {
-                                        // File was modified externally, clear cache and refresh
-                                        if let Some(svg_path) = &this.svg_path {
-                                            let resource = Resource::Path(svg_path.clone().into());
-                                            this.image_cache.update(cx, |cache, cx| {
-                                                cache.remove(&resource, window, cx);
-                                            });
-                                        }
-                                        cx.notify();
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    },
-                ));
-            }
-        }
+                    if potential_path_change {
+                        this.svg_path = Self::get_svg_path(buffer, cx);
+                    }
+                    cx.notify();
+                }
+            },
+        )
     }
 
-    pub fn is_svg_file<C>(editor: &Entity<Editor>, cx: &C) -> bool
-    where
-        C: std::borrow::Borrow<App>,
-    {
-        let app = cx.borrow();
-        let buffer = editor.read(app).buffer().read(app);
+    pub fn is_svg_file(editor: &Entity<Editor>, cx: &App) -> bool {
+        let buffer = editor.read(cx).buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton()
-            && let Some(file) = buffer.read(app).file()
+            && let Some(file) = buffer.read(cx).file()
         {
             return file
                 .path()
@@ -286,37 +247,16 @@ impl SvgPreviewView {
         false
     }
 
-    fn get_svg_path<C>(editor: &Entity<Editor>, cx: &C) -> Option<PathBuf>
-    where
-        C: std::borrow::Borrow<App>,
-    {
-        let app = cx.borrow();
-        let buffer = editor.read(app).buffer().read(app).as_singleton()?;
-        let file = buffer.read(app).file()?;
+    fn get_svg_path(buffer: &Entity<MultiBuffer>, cx: &App) -> Option<PathBuf> {
+        let buffer = buffer.read(cx).as_singleton()?;
+        let file = buffer.read(cx).file()?;
         let local_file = file.as_local()?;
-        Some(local_file.abs_path(app))
-    }
-
-    fn get_project_path<C>(editor: &Entity<Editor>, cx: &C) -> Option<ProjectPath>
-    where
-        C: std::borrow::Borrow<App>,
-    {
-        let app = cx.borrow();
-        let buffer = editor.read(app).buffer().read(app).as_singleton()?;
-        let file = buffer.read(app).file()?;
-        Some(ProjectPath {
-            worktree_id: file.worktree_id(app),
-            path: file.path().clone(),
-        })
+        Some(local_file.abs_path(cx))
     }
 }
 
 impl Render for SvgPreviewView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Set up project subscription on first render if not already done
-        if self._project_subscription.is_none() {
-            self.setup_project_subscription(window, cx);
-        }
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("SvgPreview")
             .key_context("SvgPreview")

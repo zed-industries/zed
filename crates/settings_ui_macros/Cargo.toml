@@ -21,3 +21,6 @@ proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
 workspace-hack.workspace = true
+
+[dev-dependencies]
+settings.workspace = true

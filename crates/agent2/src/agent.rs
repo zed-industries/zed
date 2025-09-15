@@ -166,33 +166,41 @@ impl LanguageModels {
         cx.background_spawn(async move {
             for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
                 if let Err(err) = authenticate_task.await {
-                    if matches!(err, language_model::AuthenticateError::CredentialsNotFound) {
-                        // Since we're authenticating these providers in the
-                        // background for the purposes of populating the
-                        // language selector, we don't care about providers
-                        // where the credentials are not found.
-                    } else {
-                        // Some providers have noisy failure states that we
-                        // don't want to spam the logs with every time the
-                        // language model selector is initialized.
-                        //
-                        // Ideally these should have more clear failure modes
-                        // that we know are safe to ignore here, like what we do
-                        // with `CredentialsNotFound` above.
-                        match provider_id.0.as_ref() {
-                            "lmstudio" | "ollama" => {
-                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
-                                //
-                                // These fail noisily, so we don't log them.
-                            }
-                            "copilot_chat" => {
-                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
-                            }
-                            _ => {
-                                log::error!(
-                                    "Failed to authenticate provider: {}: {err}",
-                                    provider_name.0
-                                );
+                    match err {
+                        language_model::AuthenticateError::CredentialsNotFound => {
+                            // Since we're authenticating these providers in the
+                            // background for the purposes of populating the
+                            // language selector, we don't care about providers
+                            // where the credentials are not found.
+                        }
+                        language_model::AuthenticateError::ConnectionRefused => {
+                            // Not logging connection refused errors as they are mostly from LM Studio's noisy auth failures.
+                            // LM Studio only has one auth method (endpoint call) which fails for users who haven't enabled it.
+                            // TODO: Better manage LM Studio auth logic to avoid these noisy failures.
+                        }
+                        _ => {
+                            // Some providers have noisy failure states that we
+                            // don't want to spam the logs with every time the
+                            // language model selector is initialized.
+                            //
+                            // Ideally these should have more clear failure modes
+                            // that we know are safe to ignore here, like what we do
+                            // with `CredentialsNotFound` above.
+                            match provider_id.0.as_ref() {
+                                "lmstudio" | "ollama" => {
+                                    // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                    //
+                                    // These fail noisily, so we don't log them.
+                                }
+                                "copilot_chat" => {
+                                    // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                                }
+                                _ => {
+                                    log::error!(
+                                        "Failed to authenticate provider: {}: {err}",
+                                        provider_name.0
+                                    );
+                                }
                             }
                         }
                     }
@@ -747,6 +755,7 @@ impl NativeAgentConnection {
                                         acp::ContentBlock::Text(acp::TextContent {
                                             text,
                                             annotations: None,
+                                            meta: None,
                                         }),
                                         false,
                                         cx,
@@ -759,6 +768,7 @@ impl NativeAgentConnection {
                                         acp::ContentBlock::Text(acp::TextContent {
                                             text,
                                             annotations: None,
+                                            meta: None,
                                         }),
                                         true,
                                         cx,
@@ -804,7 +814,10 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp::PromptResponse { stop_reason });
+                                return Ok(acp::PromptResponse {
+                                    stop_reason,
+                                    meta: None,
+                                });
                             }
                         }
                     }
@@ -818,6 +831,7 @@ impl NativeAgentConnection {
             log::debug!("Response stream completed");
             anyhow::Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::EndTurn,
+                meta: None,
             })
         })
     }
@@ -1441,6 +1455,7 @@ mod tests {
                         mime_type: None,
                         size: None,
                         title: None,
+                        meta: None,
                     }),
                     " mean?".into(),
                 ],

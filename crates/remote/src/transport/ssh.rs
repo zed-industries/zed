@@ -37,6 +37,7 @@ pub(crate) struct SshRemoteConnection {
     ssh_platform: RemotePlatform,
     ssh_path_style: PathStyle,
     ssh_shell: String,
+    ssh_default_system_shell: String,
     _temp_dir: TempDir,
 }
 
@@ -105,6 +106,10 @@ impl RemoteConnection for SshRemoteConnection {
         self.ssh_shell.clone()
     }
 
+    fn default_system_shell(&self) -> String {
+        self.ssh_default_system_shell.clone()
+    }
+
     fn build_command(
         &self,
         input_program: Option<String>,
@@ -113,64 +118,24 @@ impl RemoteConnection for SshRemoteConnection {
         working_dir: Option<String>,
         port_forward: Option<(u16, String, u16)>,
     ) -> Result<CommandTemplate> {
-        use std::fmt::Write as _;
-
-        let mut script = String::new();
-        if let Some(working_dir) = working_dir {
-            let working_dir =
-                RemotePathBuf::new(working_dir.into(), self.ssh_path_style).to_string();
-
-            // shlex will wrap the command in single quotes (''), disabling ~ expansion,
-            // replace ith with something that works
-            const TILDE_PREFIX: &'static str = "~/";
-            let working_dir = if working_dir.starts_with(TILDE_PREFIX) {
-                let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
-                format!("$HOME/{working_dir}")
-            } else {
-                working_dir
-            };
-            write!(&mut script, "cd \"{working_dir}\"; ",).unwrap();
-        } else {
-            write!(&mut script, "cd; ").unwrap();
-        };
-
-        for (k, v) in input_env.iter() {
-            if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
-                write!(&mut script, "{}={} ", k, v).unwrap();
-            }
-        }
-
-        let shell = &self.ssh_shell;
-
-        if let Some(input_program) = input_program {
-            let command = shlex::try_quote(&input_program)?;
-            script.push_str(&command);
-            for arg in input_args {
-                let arg = shlex::try_quote(&arg)?;
-                script.push_str(" ");
-                script.push_str(&arg);
-            }
-        } else {
-            write!(&mut script, "exec {shell} -l").unwrap();
-        };
-
-        let shell_invocation = format!("{shell} -c {}", shlex::try_quote(&script).unwrap());
-
-        let mut args = Vec::new();
-        args.extend(self.socket.ssh_args());
-
-        if let Some((local_port, host, remote_port)) = port_forward {
-            args.push("-L".into());
-            args.push(format!("{local_port}:{host}:{remote_port}"));
-        }
-
-        args.push("-t".into());
-        args.push(shell_invocation);
-        Ok(CommandTemplate {
-            program: "ssh".into(),
-            args,
-            env: self.socket.envs.clone(),
-        })
+        let Self {
+            ssh_path_style,
+            socket,
+            ssh_shell,
+            ..
+        } = self;
+        let env = socket.envs.clone();
+        build_command(
+            input_program,
+            input_args,
+            input_env,
+            working_dir,
+            port_forward,
+            env,
+            *ssh_path_style,
+            ssh_shell,
+            socket.ssh_args(),
+        )
     }
 
     fn upload_directory(
@@ -387,6 +352,7 @@ impl SshRemoteConnection {
             _ => PathStyle::Posix,
         };
         let ssh_shell = socket.shell().await;
+        let ssh_default_system_shell = String::from("/bin/sh");
 
         let mut this = Self {
             socket,
@@ -396,6 +362,7 @@ impl SshRemoteConnection {
             ssh_path_style,
             ssh_platform,
             ssh_shell,
+            ssh_default_system_shell,
         };
 
         let (release_channel, version, commit) = cx.update(|cx| {
@@ -1035,5 +1002,141 @@ impl SshConnectionOptions {
         } else {
             host
         }
+    }
+}
+
+fn build_command(
+    input_program: Option<String>,
+    input_args: &[String],
+    input_env: &HashMap<String, String>,
+    working_dir: Option<String>,
+    port_forward: Option<(u16, String, u16)>,
+    ssh_env: HashMap<String, String>,
+    ssh_path_style: PathStyle,
+    ssh_shell: &str,
+    ssh_args: Vec<String>,
+) -> Result<CommandTemplate> {
+    use std::fmt::Write as _;
+
+    let mut exec = String::from("exec env -C ");
+    if let Some(working_dir) = working_dir {
+        let working_dir = RemotePathBuf::new(working_dir.into(), ssh_path_style).to_string();
+
+        // shlex will wrap the command in single quotes (''), disabling ~ expansion,
+        // replace with with something that works
+        const TILDE_PREFIX: &'static str = "~/";
+        if working_dir.starts_with(TILDE_PREFIX) {
+            let working_dir = working_dir.trim_start_matches("~").trim_start_matches("/");
+            write!(exec, "\"$HOME/{working_dir}\" ",).unwrap();
+        } else {
+            write!(exec, "\"{working_dir}\" ",).unwrap();
+        }
+    } else {
+        write!(exec, "\"$HOME\" ").unwrap();
+    };
+
+    for (k, v) in input_env.iter() {
+        if let Some((k, v)) = shlex::try_quote(k).ok().zip(shlex::try_quote(v).ok()) {
+            write!(exec, "{}={} ", k, v).unwrap();
+        }
+    }
+
+    write!(exec, "{ssh_shell} ").unwrap();
+    if let Some(input_program) = input_program {
+        let mut script = shlex::try_quote(&input_program)?.into_owned();
+        for arg in input_args {
+            let arg = shlex::try_quote(&arg)?;
+            script.push_str(" ");
+            script.push_str(&arg);
+        }
+        write!(exec, "-c {}", shlex::try_quote(&script).unwrap()).unwrap();
+    } else {
+        write!(exec, "-l").unwrap();
+    };
+
+    let mut args = Vec::new();
+    args.extend(ssh_args);
+
+    if let Some((local_port, host, remote_port)) = port_forward {
+        args.push("-L".into());
+        args.push(format!("{local_port}:{host}:{remote_port}"));
+    }
+
+    args.push("-t".into());
+    args.push(exec);
+    Ok(CommandTemplate {
+        program: "ssh".into(),
+        args,
+        env: ssh_env,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_command() -> Result<()> {
+        let mut input_env = HashMap::default();
+        input_env.insert("INPUT_VA".to_string(), "val".to_string());
+        let mut env = HashMap::default();
+        env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
+
+        let command = build_command(
+            Some("remote_program".to_string()),
+            &["arg1".to_string(), "arg2".to_string()],
+            &input_env,
+            Some("~/work".to_string()),
+            None,
+            env.clone(),
+            PathStyle::Posix,
+            "/bin/fish",
+            vec!["-p".to_string(), "2222".to_string()],
+        )?;
+
+        assert_eq!(command.program, "ssh");
+        assert_eq!(
+            command.args.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "-p",
+                "2222",
+                "-t",
+                "exec env -C \"$HOME/work\" INPUT_VA=val /bin/fish -c 'remote_program arg1 arg2'"
+            ]
+        );
+        assert_eq!(command.env, env);
+
+        let mut input_env = HashMap::default();
+        input_env.insert("INPUT_VA".to_string(), "val".to_string());
+        let mut env = HashMap::default();
+        env.insert("SSH_VAR".to_string(), "ssh-val".to_string());
+
+        let command = build_command(
+            None,
+            &["arg1".to_string(), "arg2".to_string()],
+            &input_env,
+            None,
+            Some((1, "foo".to_owned(), 2)),
+            env.clone(),
+            PathStyle::Posix,
+            "/bin/fish",
+            vec!["-p".to_string(), "2222".to_string()],
+        )?;
+
+        assert_eq!(command.program, "ssh");
+        assert_eq!(
+            command.args.iter().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "-p",
+                "2222",
+                "-L",
+                "1:foo:2",
+                "-t",
+                "exec env -C \"$HOME\" INPUT_VA=val /bin/fish -l"
+            ]
+        );
+        assert_eq!(command.env, env);
+
+        Ok(())
     }
 }
