@@ -616,9 +616,7 @@ impl SettingsStore {
     ) -> Vec<(Range<usize>, String)> {
         let old_content: UserSettingsContent = serde_json::from_str(text).unwrap_or_default();
         let mut new_content = old_content.clone();
-        dbg!(&new_content.content.title_bar);
         update(&mut new_content.content);
-        dbg!(&new_content.content.title_bar);
 
         let old_value = serde_json::to_value(&old_content).unwrap();
         let new_value = serde_json::to_value(new_content).unwrap();
@@ -1047,12 +1045,10 @@ impl Debug for SettingsStore {
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn from_file(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>> {
-        (type_name::<T>(), TypeId::of::<T>());
         T::from_file(s, cx).map(|result| Box::new(result) as _)
     }
 
     fn refine(&self, value: &mut dyn Any, refinements: &[&SettingsContent], cx: &mut App) {
-        (type_name::<T>(), TypeId::of::<T>());
         let value = value.downcast_mut::<T>().unwrap();
         for refinement in refinements {
             value.refine(refinement, cx)
@@ -1116,15 +1112,11 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        TitleBarSettingsContent, TitleBarVisibilityContent, VsCodeSettingsSource, default_settings,
+        TitleBarSettingsContent, TitleBarVisibilityContent, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
     };
 
     use super::*;
-    // This is so the SettingsUi macro can still work properly
-    use crate as settings;
-    use serde::Deserialize;
-    use settings_ui_macros::{SettingsKey, SettingsUi};
     use unindent::Unindent;
     use util::MergeFrom;
 

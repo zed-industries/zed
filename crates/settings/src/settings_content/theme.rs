@@ -276,7 +276,7 @@ pub struct ThemeName(pub Arc<str>);
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        add_and_get_ref: |generator, _params, cx| {
+        add_and_get_ref: |_generator, _params, _cx| {
             todo!()
             // replace_subschema::<ThemeName>(generator, || json_schema!({
             //     "type": "string",
@@ -294,7 +294,7 @@ pub struct IconThemeName(pub Arc<str>);
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        add_and_get_ref: |generator, _params, cx| {
+        add_and_get_ref: |_generator, _params, _cx| {
             todo!()
             // replace_subschema::<IconThemeName>(generator, || json_schema!({
             //     "type": "string",

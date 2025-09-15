@@ -1,10 +1,10 @@
-use anyhow::Result;
-use indexmap::IndexMap;
-use strum::IntoEnumIterator;
-use theme::{
+use ::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
     ThemeColorsContent, ThemeContent, ThemeStyleContent,
 };
+use anyhow::Result;
+use indexmap::IndexMap;
+use strum::IntoEnumIterator;
 
 use crate::ThemeMetadata;
 use crate::vscode::{VsCodeTheme, VsCodeTokenScope};
