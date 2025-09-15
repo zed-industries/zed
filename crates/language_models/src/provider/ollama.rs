@@ -197,8 +197,6 @@ impl OllamaLanguageModelProvider {
                 }
             }),
         };
-        this.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
         this
     }
 
