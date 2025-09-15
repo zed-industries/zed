@@ -4692,7 +4692,10 @@ impl OutlinePanel {
                 .custom_scrollbars(
                     Scrollbars::for_settings::<OutlinePanelSettings>()
                         .tracked_scroll_handle(self.scroll_handle.clone())
-                        .with_track_along(ScrollAxes::Horizontal)
+                        .with_track_along(
+                            ScrollAxes::Horizontal,
+                            cx.theme().colors().panel_background,
+                        )
                         .tracked_entity(cx.entity_id()),
                     window,
                     cx,

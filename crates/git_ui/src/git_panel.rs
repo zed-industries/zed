@@ -3748,7 +3748,10 @@ impl GitPanel {
                     .custom_scrollbars(
                         Scrollbars::for_settings::<GitPanelSettings>()
                             .tracked_scroll_handle(self.scroll_handle.clone())
-                            .with_track_along(ScrollAxes::Horizontal),
+                            .with_track_along(
+                                ScrollAxes::Horizontal,
+                                cx.theme().colors().panel_background,
+                            ),
                         window,
                         cx,
                     ),

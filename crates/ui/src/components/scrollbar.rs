@@ -30,7 +30,7 @@ pub mod scrollbars {
     /// When to show the scrollbar in the editor.
     ///
     /// Default: auto
-    #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+    #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
     #[serde(rename_all = "snake_case")]
     pub enum ShowScrollbar {
         /// Show the scrollbar if there's important information or
@@ -39,6 +39,7 @@ pub mod scrollbars {
         /// Match the system's configured behavior.
         System,
         /// Always show the scrollbar.
+        #[default]
         Always,
         /// Never show the scrollbar.
         Never,
@@ -302,7 +303,7 @@ enum ReservedSpace {
     #[default]
     None,
     Thumb,
-    Track,
+    Track(Hsla),
 }
 
 impl ReservedSpace {
@@ -311,7 +312,14 @@ impl ReservedSpace {
     }
 
     fn needs_scroll_track(&self) -> bool {
-        *self == ReservedSpace::Track
+        matches!(self, ReservedSpace::Track(_))
+    }
+
+    fn track_color(&self) -> Option<Hsla> {
+        match self {
+            ReservedSpace::Track(color) => Some(*color),
+            _ => None,
+        }
     }
 }
 
@@ -334,19 +342,24 @@ impl ScrollbarWidth {
 }
 
 #[derive(Clone)]
+enum Handle<T: ScrollableHandle> {
+    Tracked(T),
+    Untracked(fn() -> T),
+}
+
+#[derive(Clone)]
 pub struct Scrollbars<T: ScrollableHandle = ScrollHandle> {
     id: Option<ElementId>,
     get_visibility: fn(&App) -> ShowScrollbar,
     tracked_entity: Option<Option<EntityId>>,
-    scrollable_handle: T,
-    handle_was_added: bool,
+    scrollable_handle: Handle<T>,
     visibility: Point<ReservedSpace>,
     scrollbar_width: ScrollbarWidth,
 }
 
 impl Scrollbars {
     pub fn new(show_along: ScrollAxes) -> Self {
-        Self::new_with_setting(show_along, |_| ShowScrollbar::Always)
+        Self::new_with_setting(show_along, |_| ShowScrollbar::default())
     }
 
     pub fn for_settings<S: ScrollbarVisibility>() -> Scrollbars {
@@ -359,8 +372,7 @@ impl Scrollbars {
         Self {
             id: None,
             get_visibility,
-            handle_was_added: false,
-            scrollable_handle: ScrollHandle::new(),
+            scrollable_handle: Handle::Untracked(ScrollHandle::new),
             tracked_entity: None,
             visibility: show_along.apply_to(Default::default(), ReservedSpace::Thumb),
             scrollbar_width: ScrollbarWidth::Normal,
@@ -407,8 +419,7 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         } = self;
 
         Scrollbars {
-            handle_was_added: true,
-            scrollable_handle: tracked_scroll_handle,
+            scrollable_handle: Handle::Tracked(tracked_scroll_handle),
             id,
             tracked_entity: tracked_entity_id,
             visibility,
@@ -422,8 +433,8 @@ impl<ScrollHandle: ScrollableHandle> Scrollbars<ScrollHandle> {
         self
     }
 
-    pub fn with_track_along(mut self, along: ScrollAxes) -> Self {
-        self.visibility = along.apply_to(self.visibility, ReservedSpace::Track);
+    pub fn with_track_along(mut self, along: ScrollAxes, background_color: Hsla) -> Self {
+        self.visibility = along.apply_to(self.visibility, ReservedSpace::Track(background_color));
         self
     }
 
@@ -499,12 +510,17 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
         cx.observe_global_in::<SettingsStore>(window, Self::settings_changed)
             .detach();
 
+        let (manually_added, scroll_handle) = match config.scrollable_handle {
+            Handle::Tracked(handle) => (true, handle),
+            Handle::Untracked(func) => (false, func()),
+        };
+
         let show_setting = (config.get_visibility)(cx);
         ScrollbarState {
             thumb_state: Default::default(),
             notify_id: config.tracked_entity.map(|id| id.unwrap_or(parent_id)),
-            manually_added: config.handle_was_added,
-            scroll_handle: config.scrollable_handle,
+            manually_added,
+            scroll_handle,
             width: config.scrollbar_width,
             visibility: config.visibility,
             show_setting,
@@ -531,8 +547,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
                             .await;
                         scrollbar_state
                             .update(cx, |state, cx| {
-                                state.set_visibility(VisibilityState::Hidden, cx);
-                                state._auto_hide_task.take()
+                                if state.thumb_state == ThumbState::Inactive {
+                                    state.set_visibility(VisibilityState::Hidden, cx);
+                                }
+                                state._auto_hide_task.take();
                             })
                             .log_err();
                     })
@@ -578,8 +596,15 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
     }
 
     fn space_to_reserve_for(&self, axis: ScrollbarAxis) -> Option<Pixels> {
-        (self.show_state.is_disabled().not() && self.visibility.along(axis).needs_scroll_track())
-            .then(|| self.space_to_reserve())
+        (self.show_state.is_disabled().not()
+            && self.visibility.along(axis).needs_scroll_track()
+            && self
+                .scroll_handle()
+                .max_offset()
+                .along(axis)
+                .is_zero()
+                .not())
+        .then(|| self.space_to_reserve())
     }
 
     fn space_to_reserve(&self) -> Pixels {
@@ -643,7 +668,8 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             if state == ThumbState::Inactive {
                 self.schedule_auto_hide(window, cx);
             } else {
-                self.show_scrollbars(window, cx);
+                self.set_visibility(VisibilityState::Visible, cx);
+                self._auto_hide_task.take();
             }
             self.thumb_state = state;
             cx.notify();
@@ -848,6 +874,7 @@ struct ScrollbarLayout {
     track_bounds: Bounds<Pixels>,
     cursor_hitbox: Hitbox,
     reserved_space: ReservedSpace,
+    track_background: Option<(Bounds<Pixels>, Hsla)>,
     axis: ScrollbarAxis,
 }
 
@@ -1035,6 +1062,9 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                                     },
                                     HitboxBehavior::BlockMouseExceptScroll,
                                 ),
+                                track_background: reserved_space
+                                    .track_color()
+                                    .map(|color| (padded_bounds.dilate(SCROLLBAR_PADDING), color)),
                                 reserved_space,
                             }
                         })
@@ -1076,6 +1106,7 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     cursor_hitbox,
                     axis,
                     reserved_space,
+                    track_background,
                     ..
                 } in &prepaint_state.thumbs
                 {
@@ -1092,13 +1123,26 @@ impl<T: ScrollableHandle> Element for ScrollbarElement<T> {
                     };
 
                     let blending_color = if hovered || reserved_space.needs_scroll_track() {
-                        colors.surface_background
+                        track_background
+                            .map(|(_, background)| background)
+                            .unwrap_or(colors.surface_background)
                     } else {
                         let blend_color = colors.surface_background;
                         blend_color.min(blend_color.alpha(MAXIMUM_OPACITY))
                     };
 
                     let thumb_background = blending_color.blend(thumb_base_color);
+
+                    if let Some((track_bounds, color)) = track_background {
+                        window.paint_quad(quad(
+                            *track_bounds,
+                            Corners::default(),
+                            *color,
+                            Edges::default(),
+                            Hsla::transparent_black(),
+                            BorderStyle::default(),
+                        ));
+                    }
 
                     window.paint_quad(quad(
                         *thumb_bounds,
