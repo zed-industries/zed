@@ -1,13 +1,12 @@
 #![allow(missing_docs)]
 
-use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
 use schemars::{JsonSchema, JsonSchema_repr};
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
+use settings::{AccentContent, PlayerColorContent};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
@@ -289,16 +288,6 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct AccentContent(pub Option<String>);
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
-pub struct PlayerColorContent {
-    pub cursor: Option<String>,
-    pub background: Option<String>,
-    pub selection: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq)]

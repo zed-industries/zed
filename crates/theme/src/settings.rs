@@ -1,14 +1,14 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
     Appearance, DEFAULT_ICON_THEME_NAME, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme,
-    ThemeColorsRefinement, ThemeNotFoundError, ThemeRegistry, ThemeStyleContent,
+    ThemeNotFoundError, ThemeRegistry,
     status_colors_refinement, syntax_overrides, theme_colors_refinement,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, FontWeight, Global, Pixels, Subscription, Window,
-    px,
+    App, Context, Font, FontFallbacks, FontStyle, FontWeight, Global, Pixels, SharedString,
+    Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
@@ -261,6 +261,45 @@ impl Global for UiFontSize {}
 pub struct AgentFontSize(Pixels);
 
 impl Global for AgentFontSize {}
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, _params, cx| {
+            replace_subschema::<settings::ThemeName>(generator, || json_schema!({
+                "type": "string",
+                "enum": ThemeRegistry::global(cx).list_names(),
+            }))
+        }
+    }
+}
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, _params, cx| {
+            replace_subschema::<settings::IconThemeName>(generator, || json_schema!({
+                "type": "string",
+                "enum": ThemeRegistry::global(cx)
+                    .list_icon_themes()
+                    .into_iter()
+                    .map(|icon_theme| icon_theme.name)
+                    .collect::<Vec<SharedString>>(),
+            }))
+        }
+    }
+}
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, params, _cx| {
+            replace_subschema::<settings::FontFamilyName>(generator, || {
+                json_schema!({
+                    "type": "string",
+                    "enum": params.font_names,
+                })
+            })
+        }
+    }
+}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

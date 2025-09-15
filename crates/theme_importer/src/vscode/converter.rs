@@ -1,9 +1,9 @@
-use ::{
+use anyhow::Result;
+use indexmap::IndexMap;
+use settings::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
     ThemeColorsContent, ThemeContent, ThemeStyleContent,
 };
-use anyhow::Result;
-use indexmap::IndexMap;
 use strum::IntoEnumIterator;
 
 use crate::ThemeMetadata;

@@ -1,13 +1,10 @@
 use collections::{HashMap, IndexMap};
 use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight};
-use schemars::{JsonSchema, JsonSchema_repr, json_schema};
+use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::sync::Arc;
-use util::schemars::replace_subschema;
-
-use crate::ParameterizedJsonSchema;
 
 /// Settings for rendering text in UI and text buffers.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -195,19 +192,6 @@ impl UiDensity {
 #[serde(transparent)]
 pub struct FontFamilyName(pub Arc<str>);
 
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
-            replace_subschema::<FontFamilyName>(generator, || {
-                json_schema!({
-                    "type": "string",
-                    "enum": params.font_names,
-                })
-            })
-        }
-    }
-}
-
 /// The buffer's line height.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
@@ -274,39 +258,11 @@ pub struct PlayerColorContent {
 #[serde(transparent)]
 pub struct ThemeName(pub Arc<str>);
 
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |_generator, _params, _cx| {
-            todo!()
-            // replace_subschema::<ThemeName>(generator, || json_schema!({
-            //     "type": "string",
-            //     "enum": ThemeRegistry::global(cx).list_names(),
-            // }))
-        }
-    }
-}
-
 /// Newtype for a icon theme name. Its `ParameterizedJsonSchema` lists the icon theme names known at
 /// runtime.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct IconThemeName(pub Arc<str>);
-
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |_generator, _params, _cx| {
-            todo!()
-            // replace_subschema::<IconThemeName>(generator, || json_schema!({
-            //     "type": "string",
-            //     "enum": ThemeRegistry::global(cx)
-            //         .list_icon_themes()
-            //         .into_iter()
-            //         .map(|icon_theme| icon_theme.name)
-            //         .collect::<Vec<SharedString>>(),
-            // }))
-        }
-    }
-}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
