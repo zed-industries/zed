@@ -1127,6 +1127,7 @@ impl AgentConfiguration {
                     SharedString::from(format!("start_acp_thread-{name}")),
                     "Start New Thread",
                 )
+                .layer(ElevationIndex::ModalSurface)
                 .label_size(LabelSize::Small)
                 .icon(IconName::Thread)
                 .icon_position(IconPosition::Start)
