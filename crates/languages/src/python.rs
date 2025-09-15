@@ -1131,7 +1131,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     let activate_keyword = match shell {
                         ShellKind::Cmd => ".",
                         ShellKind::Nushell => "overlay use",
-                        ShellKind::Powershell => ".",
+                        ShellKind::PowerShell => ".",
                         ShellKind::Fish => "source",
                         ShellKind::Csh => "source",
                         ShellKind::Posix => "source",
@@ -1141,7 +1141,7 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::Csh => "activate.csh",
                         ShellKind::Fish => "activate.fish",
                         ShellKind::Nushell => "activate.nu",
-                        ShellKind::Powershell => "activate.ps1",
+                        ShellKind::PowerShell => "activate.ps1",
                         ShellKind::Cmd => "activate.bat",
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
@@ -1165,7 +1165,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
                     ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
-                    ShellKind::Powershell => None,
+                    ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
                     ShellKind::Cmd => None,
                 })

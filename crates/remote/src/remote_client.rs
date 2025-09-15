@@ -772,6 +772,10 @@ impl RemoteClient {
         Some(self.remote_connection()?.shell())
     }
 
+    pub fn default_system_shell(&self) -> Option<String> {
+        Some(self.remote_connection()?.default_system_shell())
+    }
+
     pub fn shares_network_interface(&self) -> bool {
         self.remote_connection()
             .map_or(false, |connection| connection.shares_network_interface())
@@ -1062,6 +1066,7 @@ pub(crate) trait RemoteConnection: Send + Sync {
     fn connection_options(&self) -> RemoteConnectionOptions;
     fn path_style(&self) -> PathStyle;
     fn shell(&self) -> String;
+    fn default_system_shell(&self) -> String;
 
     #[cfg(any(test, feature = "test-support"))]
     fn simulate_disconnect(&self, _: &AsyncApp) {}
@@ -1501,6 +1506,10 @@ mod fake {
         }
 
         fn shell(&self) -> String {
+            "sh".to_owned()
+        }
+
+        fn default_system_shell(&self) -> String {
             "sh".to_owned()
         }
     }

@@ -39,7 +39,6 @@ dependencies = [
  "util",
  "uuid",
  "watch",
- "which 6.0.3",
  "workspace-hack",
 ]
 
@@ -1023,7 +1022,6 @@ dependencies = [
  "util",
  "watch",
  "web_search",
- "which 6.0.3",
  "workspace",
  "workspace-hack",
  "zlog",
