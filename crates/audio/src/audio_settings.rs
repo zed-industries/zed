@@ -9,44 +9,107 @@ use settings::{Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 pub struct AudioSettings {
     /// Opt into the new audio system.
+    ///
+    /// You need to rejoin a call for this setting to apply
     #[serde(rename = "experimental.rodio_audio", default)]
     pub rodio_audio: bool, // default is false
     /// Requires 'rodio_audio: true'
     ///
-    /// Use the new audio systems automatic gain control for your microphone.
-    /// This affects how loud you sound to others.
-    #[serde(rename = "experimental.control_input_volume", default)]
-    pub control_input_volume: bool,
+    /// Automatically increase or decrease you microphone's volume. This affects how
+    /// loud you sound to others.
+    ///
+    /// Recommended: off (default)
+    /// Microphones are too quite in zed, until everyone is on experimental
+    /// audio and has auto speaker volume on this will make you very loud
+    /// compared to other speakers.
+    #[serde(
+        rename = "experimental.auto_microphone_volume",
+        default = "default_false"
+    )]
+    pub auto_microphone_volume: bool,
     /// Requires 'rodio_audio: true'
     ///
-    /// Use the new audio systems automatic gain control on everyone in the
-    /// call. This makes call members who are too quite louder and those who are
-    /// too loud quieter. This only affects how things sound for you.
-    #[serde(rename = "experimental.control_output_volume", default)]
-    pub control_output_volume: bool,
+    /// Automatically increate or decrease the volume of other call members.
+    /// This only affects how things sound for you.
+    #[serde(rename = "experimental.auto_speaker_volume", default = "default_true")]
+    pub auto_speaker_volume: bool,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Remove background noises. Works great for typing, cars, dogs, AC. Does
+    /// not work well on music.
+    #[serde(rename = "experimental.denoise", default = "default_false")]
+    pub denoise: bool,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Use audio parameters compatible with the previous versions of
+    /// experimental audio and non-experimental audio. When this is false you
+    /// will sound strange to anyone not on the latest experimental audio. In
+    /// the future we will migrate by setting this to false
+    ///
+    /// You need to rejoin a call for this setting to apply
+    #[serde(
+        rename = "experimental.legacy_audio_compatible",
+        default = "default_true"
+    )]
+    pub legacy_audio_compatible: bool,
 }
-
 /// Configuration of audio in Zed.
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
 #[serde(default)]
 #[settings_key(key = "audio")]
 pub struct AudioSettingsContent {
     /// Opt into the new audio system.
+    ///
+    /// You need to rejoin a call for this setting to apply
     #[serde(rename = "experimental.rodio_audio", default)]
     pub rodio_audio: bool, // default is false
     /// Requires 'rodio_audio: true'
     ///
-    /// Use the new audio systems automatic gain control for your microphone.
-    /// This affects how loud you sound to others.
-    #[serde(rename = "experimental.control_input_volume", default)]
-    pub control_input_volume: bool,
+    /// Automatically increase or decrease you microphone's volume. This affects how
+    /// loud you sound to others.
+    ///
+    /// Recommended: off (default)
+    /// Microphones are too quite in zed, until everyone is on experimental
+    /// audio and has auto speaker volume on this will make you very loud
+    /// compared to other speakers.
+    #[serde(
+        rename = "experimental.auto_microphone_volume",
+        default = "default_false"
+    )]
+    pub auto_microphone_volume: bool,
     /// Requires 'rodio_audio: true'
     ///
-    /// Use the new audio systems automatic gain control on everyone in the
-    /// call. This makes call members who are too quite louder and those who are
-    /// too loud quieter. This only affects how things sound for you.
-    #[serde(rename = "experimental.control_output_volume", default)]
-    pub control_output_volume: bool,
+    /// Automatically increate or decrease the volume of other call members.
+    /// This only affects how things sound for you.
+    #[serde(rename = "experimental.auto_speaker_volume", default = "default_true")]
+    pub auto_speaker_volume: bool,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Remove background noises. Works great for typing, cars, dogs, AC. Does
+    /// not work well on music.
+    #[serde(rename = "experimental.denoise", default = "default_false")]
+    pub denoise: bool,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Use audio parameters compatible with the previous versions of
+    /// experimental audio and non-experimental audio. When this is false you
+    /// will sound strange to anyone not on the latest experimental audio. In
+    /// the future we will migrate by setting this to false
+    ///
+    /// You need to rejoin a call for this setting to apply
+    #[serde(
+        rename = "experimental.legacy_audio_compatible",
+        default = "default_true"
+    )]
+    pub legacy_audio_compatible: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_false() -> bool {
+    false
 }
 
 impl Settings for AudioSettings {
@@ -61,31 +124,38 @@ impl Settings for AudioSettings {
 
 /// See docs on [LIVE_SETTINGS]
 pub(crate) struct LiveSettings {
-    pub(crate) control_input_volume: AtomicBool,
-    pub(crate) control_output_volume: AtomicBool,
+    pub(crate) auto_microphone_volume: AtomicBool,
+    pub(crate) auto_speaker_volume: AtomicBool,
+    pub(crate) denoise: AtomicBool,
 }
 
 impl LiveSettings {
     pub(crate) fn initialize(&self, cx: &mut App) {
         cx.observe_global::<SettingsStore>(move |cx| {
-            LIVE_SETTINGS.control_input_volume.store(
-                AudioSettings::get_global(cx).control_input_volume,
+            LIVE_SETTINGS.auto_microphone_volume.store(
+                AudioSettings::get_global(cx).auto_microphone_volume,
                 Ordering::Relaxed,
             );
-            LIVE_SETTINGS.control_output_volume.store(
-                AudioSettings::get_global(cx).control_output_volume,
+            LIVE_SETTINGS.auto_speaker_volume.store(
+                AudioSettings::get_global(cx).auto_speaker_volume,
                 Ordering::Relaxed,
             );
+            LIVE_SETTINGS
+                .denoise
+                .store(AudioSettings::get_global(cx).denoise, Ordering::Relaxed);
         })
         .detach();
 
         let init_settings = AudioSettings::get_global(cx);
         LIVE_SETTINGS
-            .control_input_volume
-            .store(init_settings.control_input_volume, Ordering::Relaxed);
+            .auto_microphone_volume
+            .store(init_settings.auto_microphone_volume, Ordering::Relaxed);
         LIVE_SETTINGS
-            .control_output_volume
-            .store(init_settings.control_output_volume, Ordering::Relaxed);
+            .auto_speaker_volume
+            .store(init_settings.auto_speaker_volume, Ordering::Relaxed);
+        LIVE_SETTINGS
+            .denoise
+            .store(init_settings.denoise, Ordering::Relaxed);
     }
 }
 
@@ -94,6 +164,7 @@ impl LiveSettings {
 /// real time and must each run in a dedicated OS thread, therefore we can not
 /// use the background executor.
 pub(crate) static LIVE_SETTINGS: LiveSettings = LiveSettings {
-    control_input_volume: AtomicBool::new(true),
-    control_output_volume: AtomicBool::new(true),
+    auto_microphone_volume: AtomicBool::new(true),
+    auto_speaker_volume: AtomicBool::new(true),
+    denoise: AtomicBool::new(true),
 };

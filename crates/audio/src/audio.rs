@@ -31,17 +31,19 @@ pub use rodio_ext::RodioExt;
 
 use crate::audio_settings::LIVE_SETTINGS;
 
-// NOTE: We used to use WebRTC's mixer which only supported
-// 16kHz, 32kHz and 48kHz. As 48 is the most common "next step up"
-// for audio output devices like speakers/bluetooth, we just hard-code
-// this; and downsample when we need to.
+// We are migrating to 16kHz sample rate from 48kHz. In the future
+// once we are reasonably sure most users have upgraded we will
+// remove the LEGACY parameters.
 //
-// Since most noise cancelling requires 16kHz we will move to
-// that in the future.
-pub const SAMPLE_RATE: NonZero<u32> = nz!(48000);
-pub const CHANNEL_COUNT: NonZero<u16> = nz!(2);
+// We migrate to 16kHz because it is sufficient for speech and required
+// by the denoiser and future Speech to Text layers.
+pub const SAMPLE_RATE: NonZero<u32> = nz!(16000);
+pub const CHANNEL_COUNT: NonZero<u16> = nz!(1);
 pub const BUFFER_SIZE: usize = // echo canceller and livekit want 10ms of audio
     (SAMPLE_RATE.get() as usize / 100) * CHANNEL_COUNT.get() as usize;
+
+pub const LEGACY_SAMPLE_RATE: NonZero<u32> = nz!(48000);
+pub const LEGACY_CHANNEL_COUNT: NonZero<u16> = nz!(2);
 
 pub const REPLAY_DURATION: Duration = Duration::from_secs(30);
 
@@ -160,8 +162,13 @@ impl Audio {
         let stream = rodio::microphone::MicrophoneBuilder::new()
             .default_device()?
             .default_config()?
-            .prefer_sample_rates([SAMPLE_RATE, SAMPLE_RATE.saturating_mul(nz!(2))])
-            .prefer_channel_counts([nz!(1), nz!(2)])
+            .prefer_sample_rates([
+                SAMPLE_RATE, // sample rates trivially resamplable to `SAMPLE_RATE`
+                SAMPLE_RATE.saturating_mul(nz!(2)),
+                SAMPLE_RATE.saturating_mul(nz!(3)),
+                SAMPLE_RATE.saturating_mul(nz!(4)),
+            ])
+            .prefer_channel_counts([CHANNEL_COUNT, CHANNEL_COUNT.saturating_mul(nz!(2))])
             .prefer_buffer_sizes(512..)
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
@@ -189,15 +196,24 @@ impl Audio {
                     }
                 }
             })
+            .denoise()
+            .context("Could not set up denoiser")?
+            .periodic_access(Duration::from_millis(100), move |denoise| {
+                denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
+            })
             .automatic_gain_control(1.0, 4.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
-                agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
+                agc_source
+                    .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
             })
             .replayable(REPLAY_DURATION)?;
 
         voip_parts
             .replays
             .add_voip_stream("local microphone".to_string(), replay);
+
+        let stream = stream.constant_params(LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE);
+
         Ok(stream)
     }
 
@@ -210,7 +226,7 @@ impl Audio {
         let (replay_source, source) = source
             .automatic_gain_control(1.0, 4.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
-                agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
+                agc_source.set_enabled(LIVE_SETTINGS.auto_speaker_volume.load(Ordering::Relaxed));
             })
             .replayable(REPLAY_DURATION)
             .expect("REPLAY_DURATION is longer than 100ms");
