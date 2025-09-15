@@ -18,7 +18,7 @@ pub mod rust_analyzer_ext;
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionDisplayOptions, CompletionResponse,
     CompletionSource, CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction,
-    LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
+    LspFoldingRange, LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
     ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
@@ -3609,7 +3609,6 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_lsp_command::<PrepareRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_entity_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
-        client.add_entity_request_handler(Self::handle_lsp_command::<GetFoldingRanges>);
 
         client.add_entity_request_handler(Self::handle_lsp_ext_cancel_flycheck);
         client.add_entity_request_handler(Self::handle_lsp_ext_run_flycheck);

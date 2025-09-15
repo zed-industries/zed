@@ -26,8 +26,8 @@ use language::{
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription,
     CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
-    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
-    OneOf, RenameOptions, ServerCapabilities,
+    DocumentHighlightKind, FoldingRangeProviderCapability, LanguageServer, LanguageServerId,
+    LinkedEditingRangeServerCapabilities, OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -4607,10 +4607,12 @@ impl LspCommand for GetFoldingRanges {
     }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        capabilities
-            .server_capabilities
-            .folding_range_provider
-            .is_some()
+        match capabilities.server_capabilities.folding_range_provider {
+            Some(FoldingRangeProviderCapability::Simple(bool)) => bool,
+            Some(FoldingRangeProviderCapability::FoldingProvider(_)) => true,
+            Some(FoldingRangeProviderCapability::Options(_)) => todo!(),
+            None => false,
+        }
     }
 
     fn to_lsp(
@@ -4662,11 +4664,16 @@ impl LspCommand for GetFoldingRanges {
     }
 
     async fn from_proto(
-        _message: proto::GetFoldingRanges,
+        message: proto::GetFoldingRanges,
         _: Entity<LspStore>,
-        _: Entity<Buffer>,
-        _: AsyncApp,
+        buffer: Entity<Buffer>,
+        mut cx: AsyncApp,
     ) -> Result<Self> {
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
         Ok(Self)
     }
 

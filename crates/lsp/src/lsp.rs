@@ -855,7 +855,7 @@ impl LanguageServer {
                         dynamic_registration: Some(true),
                     }),
                     folding_range: Some(FoldingRangeClientCapabilities {
-                        dynamic_registration: Some(false),
+                        dynamic_registration: Some(true),
                         range_limit: None,
                         line_folding_only: Some(false),
                         folding_range_kind: Some(FoldingRangeKindCapability {

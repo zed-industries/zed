@@ -550,7 +550,6 @@ entity_messages!(
     GetProjectSymbols,
     GetReferences,
     GetSignatureHelp,
-    GetFoldingRanges,
     OpenUnstagedDiff,
     OpenUncommittedDiff,
     GetTypeDefinition,
