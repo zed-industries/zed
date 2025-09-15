@@ -379,7 +379,7 @@ pub struct JsxTagAutoCloseSettings {
 }
 
 /// The settings for inlay hints.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct InlayHintSettings {
     /// Global switch to toggle hints on and off.
     ///
@@ -446,7 +446,7 @@ fn scroll_debounce_ms() -> u64 {
 }
 
 /// Controls how completions are processed for this language.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettings {
     /// Controls how words are completed.
@@ -773,7 +773,7 @@ pub enum Formatter {
 }
 
 /// The settings for indent guides.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct IndentGuideSettingsContent {
     /// Whether to display indent guides in the editor.
     ///

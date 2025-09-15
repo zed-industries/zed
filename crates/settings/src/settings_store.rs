@@ -12,7 +12,7 @@ use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGl
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde_json::Value;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
@@ -257,19 +257,13 @@ trait AnySettingValue: 'static + Send + Sync {
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
     fn set_global_value(&mut self, value: Box<dyn Any>);
     fn set_local_value(&mut self, root_id: WorktreeId, path: Arc<Path>, value: Box<dyn Any>);
-    fn json_schema(&self, generator: &mut schemars::SchemaGenerator) -> schemars::Schema;
-    fn edits_for_update(
+    fn import_from_vscode(
         &self,
-        raw_settings: &serde_json::Value,
-        tab_size: usize,
         vscode_settings: &VsCodeSettings,
-        text: &mut String,
-        edits: &mut Vec<(Range<usize>, String)>,
+        settings_content: &mut SettingsContent,
     );
     fn settings_ui_item(&self) -> SettingsUiEntry;
 }
-
-struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
     pub fn new(cx: &App, default_settings: &str) -> Self {
@@ -605,18 +599,12 @@ impl SettingsStore {
         new_text
     }
 
-    pub fn get_vscode_edits(&self, mut old_text: String, vscode: &VsCodeSettings) -> String {
-        let mut new_text = old_text.clone();
-        let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-        let raw_settings = parse_json_with_comments::<Value>(&old_text).unwrap_or_default();
-        let tab_size = self.json_tab_size();
-        for v in self.setting_values.values() {
-            v.edits_for_update(&raw_settings, tab_size, vscode, &mut old_text, &mut edits);
-        }
-        for (range, replacement) in edits.into_iter() {
-            new_text.replace_range(range, &replacement);
-        }
-        new_text
+    pub fn get_vscode_edits(&self, old_text: String, vscode: &VsCodeSettings) -> String {
+        self.new_text_for_update(old_text, |settings_content| {
+            for v in self.setting_values.values() {
+                v.import_from_vscode(vscode, settings_content)
+            }
+        })
     }
 
     /// Updates the value of a setting in a JSON file, returning a list
@@ -628,10 +616,13 @@ impl SettingsStore {
     ) -> Vec<(Range<usize>, String)> {
         let old_content: UserSettingsContent = serde_json::from_str(text).unwrap_or_default();
         let mut new_content = old_content.clone();
+        dbg!(&new_content.content.title_bar);
         update(&mut new_content.content);
+        dbg!(&new_content.content.title_bar);
 
         let old_value = serde_json::to_value(&old_content).unwrap();
         let new_value = serde_json::to_value(new_content).unwrap();
+        // dbg!(&old_value, &new_value);
 
         let mut key_path = Vec::new();
         let mut edits = Vec::new();
@@ -713,8 +704,6 @@ impl SettingsStore {
             ..Default::default()
         });
 
-        todo!();
-        // self.server_settings = Some(settings);
         self.recompute_values(None, cx)?;
         Ok(())
     }
@@ -1110,45 +1099,12 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         }
     }
 
-    fn json_schema(&self, generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        todo!()
-        // T::FileContent::json_schema(generator)
-    }
-
-    fn edits_for_update(
+    fn import_from_vscode(
         &self,
-        raw_settings: &serde_json::Value,
-        tab_size: usize,
         vscode_settings: &VsCodeSettings,
-        text: &mut String,
-        edits: &mut Vec<(Range<usize>, String)>,
+        settings_content: &mut SettingsContent,
     ) {
-        todo!()
-        // let (key, deserialized_setting) = self.deserialize_setting_with_key(raw_settings);
-        // let old_content = match deserialized_setting {
-        //     Ok(content) => content.0.downcast::<T::FileContent>().unwrap(),
-        //     Err(_) => Box::<<T as Settings>::FileContent>::default(),
-        // };
-        // let mut new_content = old_content.clone();
-        // T::import_from_vscode(vscode_settings, &mut new_content);
-
-        // let old_value = serde_json::to_value(&old_content).unwrap();
-        // let new_value = serde_json::to_value(new_content).unwrap();
-
-        // let mut key_path = Vec::new();
-        // if let Some(key) = key {
-        //     key_path.push(key);
-        // }
-
-        // update_value_in_json_text(
-        //     text,
-        //     &mut key_path,
-        //     tab_size,
-        //     &old_value,
-        //     &new_value,
-        //     T::PRESERVED_KEYS.unwrap_or_default(),
-        //     edits,
-        // );
+        T::import_from_vscode(vscode_settings, settings_content);
     }
 
     fn settings_ui_item(&self) -> SettingsUiEntry {
@@ -1196,18 +1152,20 @@ mod tests {
     #[derive(Debug, PartialEq)]
     struct TitleBarSettings {
         show: TitleBarVisibilityContent,
+        show_branch_name: bool,
     }
 
     impl Settings for TitleBarSettings {
         fn from_file(content: &SettingsContent, _: &mut App) -> Option<Self> {
-            let content = content.title_bar?;
+            let content = content.title_bar.clone()?;
             Some(TitleBarSettings {
                 show: content.show?,
+                show_branch_name: content.show_branch_name?,
             })
         }
 
         fn refine(&mut self, content: &SettingsContent, _: &mut App) {
-            let Some(content) = content.title_bar else {
+            let Some(content) = content.title_bar.as_ref() else {
                 return;
             };
             self.show.merge_from(&content.show)
@@ -1227,26 +1185,18 @@ mod tests {
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: true }
         );
-        // assert_eq!(
-        //     store.get::<UserSettings>(None),
-        //     &UserSettings {
-        //         name: "John Doe".to_string(),
-        //         age: 30,
-        //         staff: false,
-        //     }
-        // );
-        // assert_eq!(
-        //     store.get::<MultiKeySettings>(None),
-        //     &MultiKeySettings {
-        //         key1: String::new(),
-        //         key2: String::new(),
-        //     }
-        // );
+        assert_eq!(
+            store.get::<TitleBarSettings>(None).show,
+            TitleBarVisibilityContent::Always
+        );
 
         store
             .set_user_settings(
                 r#"{
                     "auto_update": false,
+                    "title_bar": {
+                      "show": "never"
+                    }
                 }"#,
                 cx,
             )
@@ -1256,43 +1206,40 @@ mod tests {
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: false }
         );
-        // assert_eq!(
-        //     store.get::<UserSettings>(None),
-        //     &UserSettings {
-        //         name: "John Doe".to_string(),
-        //         age: 31,
-        //         staff: false
-        //     }
-        // );
+        assert_eq!(
+            store.get::<TitleBarSettings>(None).show,
+            TitleBarVisibilityContent::Never
+        );
 
-        store
-            .set_local_settings(
-                WorktreeId::from_usize(1),
-                Path::new("/root1").into(),
-                LocalSettingsKind::Settings,
-                Some(r#"{ "user": { "staff": true } }"#),
-                cx,
-            )
-            .unwrap();
-        store
-            .set_local_settings(
-                WorktreeId::from_usize(1),
-                Path::new("/root1/subdir").into(),
-                LocalSettingsKind::Settings,
-                Some(r#"{ "user": { "name": "Jane Doe" } }"#),
-                cx,
-            )
-            .unwrap();
+        // todo!()
+        // store
+        //     .set_local_settings(
+        //         WorktreeId::from_usize(1),
+        //         Path::new("/root1").into(),
+        //         LocalSettingsKind::Settings,
+        //         Some(r#"{ "user": { "staff": true } }"#),
+        //         cx,
+        //     )
+        //     .unwrap();
+        // store
+        //     .set_local_settings(
+        //         WorktreeId::from_usize(1),
+        //         Path::new("/root1/subdir").into(),
+        //         LocalSettingsKind::Settings,
+        //         Some(r#"{ "user": { "name": "Jane Doe" } }"#),
+        //         cx,
+        //     )
+        //     .unwrap();
 
-        store
-            .set_local_settings(
-                WorktreeId::from_usize(1),
-                Path::new("/root2").into(),
-                LocalSettingsKind::Settings,
-                Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
-                cx,
-            )
-            .unwrap();
+        // store
+        //     .set_local_settings(
+        //         WorktreeId::from_usize(1),
+        //         Path::new("/root2").into(),
+        //         LocalSettingsKind::Settings,
+        //         Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
+        //         cx,
+        //     )
+        //     .unwrap();
 
         // assert_eq!(
         //     store.get::<UserSettings>(Some(SettingsLocation {
@@ -1339,49 +1286,26 @@ mod tests {
         // );
     }
 
-    // #[gpui::test]
-    // fn test_setting_store_assign_json_before_register(cx: &mut App) {
-    //     let mut store = SettingsStore::new(cx);
-    //     store
-    //         .set_default_settings(
-    //             r#"{
-    //                 "turbo": true,
-    //                 "user": {
-    //                     "name": "John Doe",
-    //                     "age": 30,
-    //                     "staff": false
-    //                 },
-    //                 "key1": "x"
-    //             }"#,
-    //             cx,
-    //         )
-    //         .unwrap();
-    //     store
-    //         .set_user_settings(r#"{ "turbo": false }"#, cx)
-    //         .unwrap();
-    //     store.register_setting::<UserSettings>(cx);
-    //     store.register_setting::<TurboSetting>(cx);
+    #[gpui::test]
+    fn test_setting_store_assign_json_before_register(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store
+            .set_user_settings(r#"{ "auto_update": false }"#, cx)
+            .unwrap();
+        store.register_setting::<AutoUpdateSetting>(cx);
+        store.register_setting::<TitleBarSettings>(cx);
 
-    //     assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(false));
-    //     assert_eq!(
-    //         store.get::<UserSettings>(None),
-    //         &UserSettings {
-    //             name: "John Doe".to_string(),
-    //             age: 30,
-    //             staff: false,
-    //         }
-    //     );
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: false }
+        );
+        assert_eq!(
+            store.get::<TitleBarSettings>(None).show,
+            TitleBarVisibilityContent::Always,
+        );
+    }
 
-    //     store.register_setting::<MultiKeySettings>(cx);
-    //     assert_eq!(
-    //         store.get::<MultiKeySettings>(None),
-    //         &MultiKeySettings {
-    //             key1: "x".into(),
-    //             key2: String::new(),
-    //         }
-    //     );
-    // }
-
+    #[track_caller]
     fn check_settings_update(
         store: &mut SettingsStore,
         old_json: String,
@@ -1391,6 +1315,7 @@ mod tests {
     ) {
         store.set_user_settings(&old_json, cx).ok();
         let edits = store.edits_for_update(&old_json, update);
+        dbg!(&edits);
         let mut new_json = old_json;
         for (range, replacement) in edits.into_iter() {
             new_json.replace_range(range, &replacement);
@@ -1500,78 +1425,87 @@ mod tests {
             cx,
         );
 
-        // // weird formatting
-        // check_settings_update(
-        //     &mut store,
-        //     r#"{
-        //         "user":   { "age": 36, "name": "Max", "staff": true }
-        //         }"#
-        //     .unindent(),
-        //     |settings| settings.age = Some(37),
-        //     r#"{
-        //         "user":   { "age": 37, "name": "Max", "staff": true }
-        //         }"#
-        //     .unindent(),
-        //     cx,
-        // );
+        // weird formatting
+        check_settings_update(
+            &mut store,
+            r#"{
+                "title_bar":   { "show": "always", "name": "Max"  }
+                }"#
+            .unindent(),
+            |settings| {
+                dbg!(&settings.title_bar);
+                settings.title_bar.as_mut().unwrap().show = Some(TitleBarVisibilityContent::Never);
+                dbg!(&settings.title_bar);
+            },
+            r#"{
+                "title_bar":   { "show": "never", "name": "Max"  }
+                }"#
+            .unindent(),
+            cx,
+        );
 
-        // // single-line formatting, other keys
-        // check_settings_update::<MultiKeySettings>(
-        //     &mut store,
-        //     r#"{ "one": 1, "two": 2 }"#.unindent(),
-        //     |settings| settings.key1 = Some("x".into()),
-        //     r#"{ "key1": "x", "one": 1, "two": 2 }"#.unindent(),
-        //     cx,
-        // );
+        // single-line formatting, other keys
+        check_settings_update(
+            &mut store,
+            r#"{ "one": 1, "two": 2 }"#.to_owned(),
+            |settings| settings.auto_update = Some(true),
+            r#"{ "auto_update": true, "one": 1, "two": 2 }"#.to_owned(),
+            cx,
+        );
 
-        // // empty object
-        // check_settings_update::<UserSettings>(
-        //     &mut store,
-        //     r#"{
-        //         "user": {}
-        //     }"#
-        //     .unindent(),
-        //     |settings| settings.age = Some(37),
-        //     r#"{
-        //         "user": {
-        //             "age": 37
-        //         }
-        //     }"#
-        //     .unindent(),
-        //     cx,
-        // );
+        // empty object
+        check_settings_update(
+            &mut store,
+            r#"{
+                "title_bar": {}
+            }"#
+            .unindent(),
+            |settings| settings.title_bar.as_mut().unwrap().show_menus = Some(true),
+            r#"{
+                "title_bar": {
+                    "show_menus": true
+                }
+            }"#
+            .unindent(),
+            cx,
+        );
 
-        // // no content
-        // check_settings_update::<UserSettings>(
-        //     &mut store,
-        //     r#""#.unindent(),
-        //     |settings| settings.age = Some(37),
-        //     r#"{
-        //         "user": {
-        //             "age": 37
-        //         }
-        //     }
-        //     "#
-        //     .unindent(),
-        //     cx,
-        // );
+        // no content
+        check_settings_update(
+            &mut store,
+            r#""#.unindent(),
+            |settings| {
+                settings.title_bar = Some(TitleBarSettingsContent {
+                    show_branch_name: Some(true),
+                    ..Default::default()
+                })
+            },
+            r#"{
+                "title_bar": {
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
 
-        // check_settings_update::<UserSettings>(
-        //     &mut store,
-        //     r#"{
-        //     }
-        //     "#
-        //     .unindent(),
-        //     |settings| settings.age = Some(37),
-        //     r#"{
-        //         "user": {
-        //             "age": 37
-        //         }
-        //     }
-        //     "#
-        //     .unindent(),
-        //     cx,
-        // );
+        check_settings_update(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            |settings| settings.title_bar.get_or_insert_default().show_branch_name = Some(true),
+            r#"{
+                "title_bar": {
+                    "show_branch_name": true
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
     }
 
     // #[gpui::test]

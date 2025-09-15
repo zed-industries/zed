@@ -11,7 +11,7 @@ use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{ActiveSettingsProfileName, Settings};
+use crate::ActiveSettingsProfileName;
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsContent {
@@ -42,29 +42,29 @@ pub struct ServerSettingsContent {
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
-pub(crate) struct UserSettingsContent {
+pub struct UserSettingsContent {
     #[serde(flatten)]
-    pub(crate) content: SettingsContent,
+    pub content: SettingsContent,
 
-    pub(crate) dev: Option<SettingsContent>,
-    pub(crate) nightly: Option<SettingsContent>,
-    pub(crate) preview: Option<SettingsContent>,
-    pub(crate) stable: Option<SettingsContent>,
+    pub dev: Option<SettingsContent>,
+    pub nightly: Option<SettingsContent>,
+    pub preview: Option<SettingsContent>,
+    pub stable: Option<SettingsContent>,
 
-    pub(crate) macos: Option<SettingsContent>,
-    pub(crate) windows: Option<SettingsContent>,
-    pub(crate) linux: Option<SettingsContent>,
+    pub macos: Option<SettingsContent>,
+    pub windows: Option<SettingsContent>,
+    pub linux: Option<SettingsContent>,
 
     #[serde(default)]
-    pub(crate) profiles: HashMap<String, SettingsContent>,
+    pub profiles: HashMap<String, SettingsContent>,
 }
 
 pub struct ExtensionsSettingsContent {
-    pub(crate) all_languages: AllLanguageSettingsContent,
+    pub all_languages: AllLanguageSettingsContent,
 }
 
 impl UserSettingsContent {
-    pub(crate) fn for_release_channel(&self) -> Option<&SettingsContent> {
+    pub fn for_release_channel(&self) -> Option<&SettingsContent> {
         match *release_channel::RELEASE_CHANNEL {
             ReleaseChannel::Dev => self.dev.as_ref(),
             ReleaseChannel::Nightly => self.nightly.as_ref(),
@@ -73,7 +73,7 @@ impl UserSettingsContent {
         }
     }
 
-    pub(crate) fn for_os(&self) -> Option<&SettingsContent> {
+    pub fn for_os(&self) -> Option<&SettingsContent> {
         match env::consts::OS {
             "macos" => self.macos.as_ref(),
             "linux" => self.linux.as_ref(),
@@ -82,7 +82,7 @@ impl UserSettingsContent {
         }
     }
 
-    pub(crate) fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
+    pub fn for_profile(&self, cx: &App) -> Option<&SettingsContent> {
         let Some(active_profile) = cx.try_global::<ActiveSettingsProfileName>() else {
             return None;
         };
@@ -112,7 +112,7 @@ pub struct ProjectSettingsContent {
     pub(crate) all_languages: AllLanguageSettingsContent,
 }
 
-#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TitleBarSettingsContent {
     /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
     ///
