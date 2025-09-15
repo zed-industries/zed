@@ -5046,12 +5046,16 @@ dependencies = [
 name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
+ "gpui",
+ "indoc",
  "language",
  "log",
+ "pretty_assertions",
  "text",
  "tree-sitter",
  "util",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
@@ -20908,7 +20912,6 @@ dependencies = [
  "ctor",
  "db",
  "edit_prediction",
- "edit_prediction_context",
  "editor",
  "feature_flags",
  "fs",

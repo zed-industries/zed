@@ -18,3 +18,12 @@ tree-sitter.workspace = true
 text.workspace = true
 log.workspace = true
 util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
+language = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+text = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

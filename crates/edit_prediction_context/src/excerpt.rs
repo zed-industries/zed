@@ -6,6 +6,8 @@ use util::RangeExt;
 
 // TODO:
 //
+// - Test parent signatures
+//
 // - Decide whether to count signatures against the excerpt size. Could instead defer this to prompt
 // planning.
 //
@@ -435,4 +437,165 @@ fn node_line_start(node: Node) -> Point {
 
 fn node_line_end(node: Node) -> Point {
     Point::new(node.end_position().row as u32 + 1, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, TestAppContext};
+    use language::{Buffer, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use util::test::{generate_marked_text, marked_text_offsets_by};
+
+    fn create_buffer(text: &str, cx: &mut TestAppContext) -> BufferSnapshot {
+        let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(rust_lang().into(), cx));
+        buffer.read_with(cx, |buffer, _| buffer.snapshot())
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
+        .unwrap()
+    }
+
+    fn cursor_and_excerpt_range(text: &str) -> (String, usize, Range<usize>) {
+        let (text, offsets) = marked_text_offsets_by(text, vec!['ˇ', '«', '»']);
+        (text, offsets[&'ˇ'][0], offsets[&'«'][0]..offsets[&'»'][0])
+    }
+
+    fn check_example(options: EditPredictionExcerptOptions, text: &str, cx: &mut TestAppContext) {
+        let (text, cursor, expected_excerpt) = cursor_and_excerpt_range(text);
+
+        let buffer = create_buffer(&text, cx);
+        let cursor_point = cursor.to_point(&buffer);
+
+        let excerpt = EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &options)
+            .expect("Should select an excerpt");
+        pretty_assertions::assert_eq!(
+            generate_marked_text(&text, &[excerpt.range.clone()], false),
+            generate_marked_text(&text, &[expected_excerpt], false)
+        );
+        assert!(excerpt.size <= options.max_bytes);
+        assert!(excerpt.range.contains(&cursor));
+    }
+
+    #[gpui::test]
+    fn test_ast_based_selection_current_node(cx: &mut TestAppContext) {
+        zlog::init_test();
+        let text = r#"
+fn main() {
+    let x = 1;
+«    let ˇy = 2;
+»    let z = 3;
+}"#;
+
+        let options = EditPredictionExcerptOptions {
+            max_bytes: 20,
+            min_bytes: 10,
+            target_before_cursor_over_total_bytes: 0.5,
+            include_parent_signatures: false,
+        };
+
+        check_example(options, text, cx);
+    }
+
+    #[gpui::test]
+    fn test_ast_based_selection_parent_node(cx: &mut TestAppContext) {
+        zlog::init_test();
+        let text = r#"
+fn foo() {}
+
+«fn main() {
+    let x = 1;
+    let ˇy = 2;
+    let z = 3;
+}
+»
+fn bar() {}"#;
+
+        let options = EditPredictionExcerptOptions {
+            max_bytes: 65,
+            min_bytes: 10,
+            target_before_cursor_over_total_bytes: 0.5,
+            include_parent_signatures: false,
+        };
+
+        check_example(options, text, cx);
+    }
+
+    #[gpui::test]
+    fn test_ast_based_selection_expands_to_siblings(cx: &mut TestAppContext) {
+        zlog::init_test();
+        let text = r#"
+fn main() {
+«    let x = 1;
+    let ˇy = 2;
+    let z = 3;
+»}"#;
+
+        let options = EditPredictionExcerptOptions {
+            max_bytes: 50,
+            min_bytes: 10,
+            target_before_cursor_over_total_bytes: 0.5,
+            include_parent_signatures: false,
+        };
+
+        check_example(options, text, cx);
+    }
+
+    #[gpui::test]
+    fn test_line_based_selection(cx: &mut TestAppContext) {
+        zlog::init_test();
+        let text = r#"
+fn main() {
+    let x = 1;
+«    if true {
+        let ˇy = 2;
+    }
+    let z = 3;
+»}"#;
+
+        let options = EditPredictionExcerptOptions {
+            max_bytes: 60,
+            min_bytes: 45,
+            target_before_cursor_over_total_bytes: 0.5,
+            include_parent_signatures: false,
+        };
+
+        check_example(options, text, cx);
+    }
+
+    #[gpui::test]
+    fn test_line_based_selection_with_before_cursor_ratio(cx: &mut TestAppContext) {
+        zlog::init_test();
+        let text = r#"
+    fn main() {
+«        let a = 1;
+        let b = 2;
+        let c = 3;
+        let ˇd = 4;
+        let e = 5;
+        let f = 6;
+»
+        let g = 7;
+    }"#;
+
+        let options = EditPredictionExcerptOptions {
+            max_bytes: 120,
+            min_bytes: 10,
+            target_before_cursor_over_total_bytes: 0.6,
+            include_parent_signatures: false,
+        };
+
+        check_example(options, text, cx);
+    }
 }
