@@ -6,3 +6,44 @@ kbd.keybinding {
   display: inline-block;
   margin: 0 2px;
 }
+
+/* Copy markdown button styling */
+#copy-markdown-toggle i {
+  font-weight: 500 !important;
+  -webkit-text-stroke: 0.5px currentColor;
+}
+
+/* Toast notification styling */
+.copy-toast {
+  position: fixed;
+  top: 70px;
+  right: 20px;
+  padding: 12px 20px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
+  background: var(--theme-popup-bg);
+  border: 1px solid var(--theme-popup-border);
+  z-index: 1000;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: all 0.3s ease-in-out;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  max-width: 280px;
+}
+
+.copy-toast.success {
+  border-color: #10b981;
+  background: color-mix(in srgb, #10b981 10%, var(--theme-popup-bg));
+}
+
+.copy-toast.error {
+  border-color: #ef4444;
+  background: color-mix(in srgb, #ef4444 10%, var(--theme-popup-bg));
+}
+
+.copy-toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
