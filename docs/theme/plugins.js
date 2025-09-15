@@ -116,7 +116,7 @@ const copyMarkdown = () => {
   if (!copyButton) return;
 
   // Store the original icon class, loading state, and timeout reference
-  const originalIconClass = 'fa fa-copy';
+  const originalIconClass = "fa fa-copy";
   let isLoading = false;
   let iconTimeoutId = null;
 
@@ -130,33 +130,33 @@ const copyMarkdown = () => {
 
     // Remove /docs/ prefix and .html suffix, then add .md
     const cleanPath = pathname
-      .replace(/^\/docs\//, '')
-      .replace(/\.html$/, '')
-      .replace(/\/$/, '');
+      .replace(/^\/docs\//, "")
+      .replace(/\.html$/, "")
+      .replace(/\/$/, "");
 
-    return cleanPath ? cleanPath + '.md' : 'getting-started.md';
+    return cleanPath ? cleanPath + ".md" : "getting-started.md";
   };
 
   const showToast = (message, isSuccess = true) => {
     // Remove existing toast if any
-    const existingToast = document.getElementById('copy-toast');
+    const existingToast = document.getElementById("copy-toast");
     existingToast?.remove();
 
-    const toast = document.createElement('div');
-    toast.id = 'copy-toast';
-    toast.className = `copy-toast ${isSuccess ? 'success' : 'error'}`;
+    const toast = document.createElement("div");
+    toast.id = "copy-toast";
+    toast.className = `copy-toast ${isSuccess ? "success" : "error"}`;
     toast.textContent = message;
 
     document.body.appendChild(toast);
 
     // Show toast with animation
     setTimeout(() => {
-      toast.classList.add('show');
+      toast.classList.add("show");
     }, 10);
 
     // Hide and remove toast after 2 seconds
     setTimeout(() => {
-      toast.classList.remove('show');
+      toast.classList.remove("show");
       setTimeout(() => {
         toast.parentNode?.removeChild(toast);
       }, 300);
@@ -164,7 +164,7 @@ const copyMarkdown = () => {
   };
 
   const changeButtonIcon = (iconClass, duration = 1000) => {
-    const icon = copyButton.querySelector('i');
+    const icon = copyButton.querySelector("i");
     if (!icon) return;
 
     // Clear any existing timeout
@@ -189,14 +189,16 @@ const copyMarkdown = () => {
 
     try {
       isLoading = true;
-      changeButtonIcon('fa fa-spinner fa-spin', 0); // Don't auto-restore spinner
+      changeButtonIcon("fa fa-spinner fa-spin", 0); // Don't auto-restore spinner
 
       const pagePath = getCurrentPagePath();
       const rawUrl = `https://raw.githubusercontent.com/zed-industries/zed/main/docs/src/${pagePath}`;
 
       const response = await fetch(rawUrl);
       if (!response.ok) {
-        throw new Error(`Failed to fetch markdown: ${response.status} ${response.statusText}`);
+        throw new Error(
+          `Failed to fetch markdown: ${response.status} ${response.statusText}`,
+        );
       }
 
       const markdownContent = await response.text();
@@ -206,25 +208,24 @@ const copyMarkdown = () => {
         await navigator.clipboard.writeText(markdownContent);
       } else {
         // Fallback: throw error if clipboard API isn't available
-        throw new Error('Clipboard API not supported in this browser');
+        throw new Error("Clipboard API not supported in this browser");
       }
 
-      changeButtonIcon('fa fa-check', 1000);
-      showToast('Markdown copied to clipboard!');
-
+      changeButtonIcon("fa fa-check", 1000);
+      showToast("Page content copied to clipboard!");
     } catch (error) {
-      console.error('Error copying markdown:', error);
-      changeButtonIcon('fa fa-exclamation-triangle', 2000);
-      showToast('Failed to copy markdown. Please try again.', false);
+      console.error("Error copying markdown:", error);
+      changeButtonIcon("fa fa-exclamation-triangle", 2000);
+      showToast("Failed to copy markdown. Please try again.", false);
     } finally {
       isLoading = false;
     }
   };
 
-  copyButton.addEventListener('click', fetchAndCopyMarkdown);
+  copyButton.addEventListener("click", fetchAndCopyMarkdown);
 };
 
 // Initialize functionality when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener("DOMContentLoaded", () => {
   copyMarkdown();
 });
