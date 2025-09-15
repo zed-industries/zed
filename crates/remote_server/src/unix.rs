@@ -12,6 +12,7 @@ use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
+use iroh::Watcher;
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
@@ -273,7 +274,12 @@ impl ServerListeners {
     }
 }
 
-fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
+fn start_p2p_server(
+    log_rx: Receiver<Vec<u8>>,
+    cx: &mut App,
+    rt: tokio::runtime::Handle,
+) -> AnyProtoClient {
+    log::info!("START P2P SERVER");
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
@@ -282,7 +288,22 @@ fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
 
     // TODO(b5): create an endpoint & wire up here, thne call start_p2p_server in the main func of remote_server
-    todo!();
+    // TODO: track task
+
+    let _task = rt.spawn(async move {
+        let endpoint = iroh::Endpoint::builder()
+            .alpns(vec![remote::ZED_ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        log::info!("ADDR: iroh started");
+        let home_relay = endpoint.home_relay().initialized().await;
+        log::info!("ADDR: home relay: {}", home_relay);
+        let addr = endpoint.node_addr().initialized().await;
+        log::info!("ADDR: {:?}", addr);
+
+        anyhow::Ok(())
+    });
 
     RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
@@ -291,13 +312,17 @@ fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
+    rt: tokio::runtime::Handle,
 ) -> AnyProtoClient {
+    log::info!("START SERVER");
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
     let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
+
+    start_p2p_server(log_rx.clone(), cx, rt);
 
     cx.on_app_quit(move |_| {
         let mut app_quit_tx = app_quit_tx.clone();
@@ -437,6 +462,7 @@ pub fn execute_run(
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
 ) -> Result<()> {
+    log::info!("START RUN");
     init_paths()?;
 
     match daemonize()? {
@@ -479,7 +505,9 @@ pub fn execute_run(
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");
-        let session = start_server(listeners, log_rx, cx);
+        let rt = tokio::runtime::Runtime::new().expect("failed to start tokio runtime");
+
+        let session = start_server(listeners, log_rx, cx, rt.handle().clone());
 
         client::init_settings(cx);
 
@@ -781,7 +809,9 @@ fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
+    log::debug!("log file: {:?}, binary {:?}", paths.log_file, binary_name);
     let mut server_process = std::process::Command::new(binary_name);
+
     server_process
         .arg("run")
         .arg("--log-file")

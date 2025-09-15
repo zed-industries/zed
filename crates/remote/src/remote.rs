@@ -8,6 +8,6 @@ pub use remote_client::{
     ConnectionIdentifier, ConnectionState, RemoteClient, RemoteClientDelegate, RemoteClientEvent,
     RemoteConnectionOptions, RemotePlatform,
 };
-pub use transport::iroh::{IrohConnectionOptions, IrohZedRemote, ZedIrohTicket};
+pub use transport::iroh::{IrohConnectionOptions, IrohZedRemote, ZED_ALPN, ZedIrohTicket};
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
 pub use transport::wsl::WslConnectionOptions;

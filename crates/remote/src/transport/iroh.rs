@@ -37,7 +37,7 @@ use util::paths::{PathStyle, RemotePathBuf};
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the
 /// connection handshake, and the connection is aborted unless both nodes pass
 /// the same bytestring.
-const ZED_ALPN: &[u8] = b"iroh/zed/remote/0";
+pub const ZED_ALPN: &[u8] = b"iroh/zed/remote/0";
 
 // max length of an RPC message in bytes
 const MAX_MESSAGE_SIZE: usize = 10000;
@@ -46,6 +46,7 @@ const MAX_MESSAGE_SIZE: usize = 10000;
 pub struct IrohZedRemote {
     options: IrohConnectionOptions,
     endpoint: Endpoint,
+    ssh_shell: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -81,8 +82,7 @@ impl RemoteConnection for IrohZedRemote {
     }
 
     fn shell(&self) -> String {
-        todo!();
-        // self.ssh_shell.clone()
+        self.ssh_shell.clone()
     }
 
     fn build_command(
@@ -151,6 +151,7 @@ impl IrohZedRemote {
         Ok(Self {
             options: connection_options,
             endpoint,
+            ssh_shell: "todo".into(),
         })
     }
 
