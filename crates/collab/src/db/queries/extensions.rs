@@ -25,7 +25,19 @@ impl Database {
                 .add(extension_version::Column::SchemaVersion.lte(max_schema_version));
             if let Some(filter) = filter {
                 let fuzzy_name_filter = Self::fuzzy_like_string(filter);
-                condition = condition.add(Expr::cust_with_expr("name ILIKE $1", fuzzy_name_filter));
+                let description_filter = format!("%{}%", filter);
+
+                let extension_version_table_name = extension_version::Entity.table_name();
+                let description_column_name = extension_version::Column::Description.as_str();
+                let query = format!(
+                    "name ILIKE $1 OR {extension_version_table_name}.{description_column_name} ILIKE $2"
+                );
+
+                condition = condition
+                    .add(Expr::cust_with_exprs(
+                        query,
+                        [fuzzy_name_filter.into(), description_filter.into()],
+                    ));
             }
 
             if let Some(provides_filter) = provides_filter {

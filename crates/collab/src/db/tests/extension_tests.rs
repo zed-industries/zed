@@ -421,3 +421,199 @@ async fn test_extensions_by_id(db: &Arc<Database>) {
         }]
     );
 }
+
+test_both_dbs!(
+    test_extension_search_by_name,
+    test_extension_search_by_name_postgres,
+    test_extension_search_by_name_sqlite
+);
+
+async fn test_extension_search_by_name(db: &Arc<Database>) {
+    let t0 = time::OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();
+    let t0 = time::PrimitiveDateTime::new(t0.date(), t0.time());
+
+    let t0_chrono = convert_time_to_chrono(t0);
+
+    db.insert_extension_versions(
+        &[
+            (
+                "ext1",
+                vec![NewExtensionVersion {
+                    name: "Framework A".into(),
+                    version: semver::Version::parse("0.0.1").unwrap(),
+                    description: "Framework A that suits Language X".into(),
+                    authors: vec!["max".into(), "lucas".into()],
+                    repository: "ext1/repo".into(),
+                    schema_version: 1,
+                    wasm_api_version: Some("0.0.4".into()),
+                    provides: BTreeSet::from_iter([
+                        ExtensionProvides::Grammars,
+                        ExtensionProvides::Languages,
+                        ExtensionProvides::LanguageServers,
+                    ]),
+                    published_at: t0,
+                }],
+            ),
+            (
+                "ext2",
+                vec![NewExtensionVersion {
+                    name: "Extension Two".into(),
+                    version: semver::Version::parse("0.2.0").unwrap(),
+                    description: "a great extension".into(),
+                    authors: vec!["marshall".into()],
+                    repository: "ext2/repo".into(),
+                    schema_version: 0,
+                    wasm_api_version: None,
+                    provides: BTreeSet::default(),
+                    published_at: t0,
+                }],
+            ),
+            (
+                "ext3",
+                vec![NewExtensionVersion {
+                    name: "Some Extension".into(),
+                    version: semver::Version::parse("0.2.0").unwrap(),
+                    description: "a great extension".into(),
+                    authors: vec!["marshall".into()],
+                    repository: "ext2/repo".into(),
+                    schema_version: 0,
+                    wasm_api_version: None,
+                    provides: BTreeSet::default(),
+                    published_at: t0,
+                }],
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    )
+    .await
+    .unwrap();
+
+    let extensions = db
+        .get_extensions(Some("Framework A"), None, 1, 5)
+        .await
+        .unwrap();
+
+    assert_eq!(1, extensions.len());
+
+    assert_eq!(
+        extensions,
+        &[ExtensionMetadata {
+            id: "ext1".into(),
+            manifest: rpc::ExtensionApiManifest {
+                name: "Framework A".into(),
+                version: "0.0.1".into(),
+                authors: vec!["max".into(), "lucas".into()],
+                description: Some("Framework A that suits Language X".into()),
+                repository: "ext1/repo".into(),
+                schema_version: Some(1),
+                wasm_api_version: Some("0.0.4".into()),
+                provides: BTreeSet::from_iter([
+                    ExtensionProvides::Grammars,
+                    ExtensionProvides::Languages,
+                    ExtensionProvides::LanguageServers,
+                ]),
+            },
+            published_at: t0_chrono,
+            download_count: 0,
+        }]
+    );
+}
+
+test_both_dbs!(
+    test_extension_search_by_description,
+    test_extension_search_by_description_postgres,
+    test_extension_search_by_description_sqlite
+);
+
+async fn test_extension_search_by_description(db: &Arc<Database>) {
+    let t0 = time::OffsetDateTime::from_unix_timestamp_nanos(0).unwrap();
+    let t0 = time::PrimitiveDateTime::new(t0.date(), t0.time());
+
+    let t0_chrono = convert_time_to_chrono(t0);
+
+    db.insert_extension_versions(
+        &[
+            (
+                "ext1",
+                vec![NewExtensionVersion {
+                    name: "Framework A".into(),
+                    version: semver::Version::parse("0.0.1").unwrap(),
+                    description: "Framework A that suits Language X".into(),
+                    authors: vec!["max".into(), "lucas".into()],
+                    repository: "ext1/repo".into(),
+                    schema_version: 1,
+                    wasm_api_version: Some("0.0.4".into()),
+                    provides: BTreeSet::from_iter([
+                        ExtensionProvides::Grammars,
+                        ExtensionProvides::Languages,
+                        ExtensionProvides::LanguageServers,
+                    ]),
+                    published_at: t0,
+                }],
+            ),
+            (
+                "ext2",
+                vec![NewExtensionVersion {
+                    name: "Extension Two".into(),
+                    version: semver::Version::parse("0.2.0").unwrap(),
+                    description: "a great extension".into(),
+                    authors: vec!["marshall".into()],
+                    repository: "ext2/repo".into(),
+                    schema_version: 0,
+                    wasm_api_version: None,
+                    provides: BTreeSet::default(),
+                    published_at: t0,
+                }],
+            ),
+            (
+                "ext3",
+                vec![NewExtensionVersion {
+                    name: "Some Extension".into(),
+                    version: semver::Version::parse("0.2.0").unwrap(),
+                    description: "a great extension".into(),
+                    authors: vec!["marshall".into()],
+                    repository: "ext2/repo".into(),
+                    schema_version: 0,
+                    wasm_api_version: None,
+                    provides: BTreeSet::default(),
+                    published_at: t0,
+                }],
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    )
+    .await
+    .unwrap();
+
+    let extensions = db
+        .get_extensions(Some("Language X"), None, 1, 5)
+        .await
+        .unwrap();
+
+    assert_eq!(1, extensions.len());
+
+    assert_eq!(
+        extensions,
+        &[ExtensionMetadata {
+            id: "ext1".into(),
+            manifest: rpc::ExtensionApiManifest {
+                name: "Framework A".into(),
+                version: "0.0.1".into(),
+                authors: vec!["max".into(), "lucas".into()],
+                description: Some("Framework A that suits Language X".into()),
+                repository: "ext1/repo".into(),
+                schema_version: Some(1),
+                wasm_api_version: Some("0.0.4".into()),
+                provides: BTreeSet::from_iter([
+                    ExtensionProvides::Grammars,
+                    ExtensionProvides::Languages,
+                    ExtensionProvides::LanguageServers,
+                ]),
+            },
+            published_at: t0_chrono,
+            download_count: 0,
+        }]
+    );
+}
