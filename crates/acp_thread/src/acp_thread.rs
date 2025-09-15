@@ -1127,9 +1127,32 @@ impl AcpThread {
         let update = update.into();
         let languages = self.project.read(cx).languages().clone();
 
-        let ix = self
-            .index_for_tool_call(update.id())
-            .context("Tool call not found")?;
+        let ix = match self.index_for_tool_call(update.id()) {
+            Some(ix) => ix,
+            None => {
+                // Tool call not found - create a failed tool call entry
+                let failed_tool_call = ToolCall {
+                    id: update.id().clone(),
+                    label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
+                    kind: acp::ToolKind::Fetch,
+                    content: vec![ToolCallContent::ContentBlock(ContentBlock::new(
+                        acp::ContentBlock::Text(acp::TextContent {
+                            text: "Tool call not found".to_string(),
+                            annotations: None,
+                        }),
+                        &languages,
+                        cx,
+                    ))],
+                    status: ToolCallStatus::Failed,
+                    locations: Vec::new(),
+                    resolved_locations: Vec::new(),
+                    raw_input: None,
+                    raw_output: None,
+                };
+                self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
+                return Ok(());
+            }
+        };
         let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
             unreachable!()
         };
@@ -3153,5 +3176,65 @@ mod tests {
         fn run(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_not_found_creates_failed_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        // Try to update a tool call that doesn't exist
+        let nonexistent_id = acp::ToolCallId("nonexistent-tool-call".into());
+        thread.update(cx, |thread, cx| {
+            let result = thread.handle_session_update(
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate {
+                    id: nonexistent_id.clone(),
+                    fields: acp::ToolCallUpdateFields {
+                        status: Some(acp::ToolCallStatus::Completed),
+                        ..Default::default()
+                    },
+                }),
+                cx,
+            );
+
+            // The update should succeed (not return an error)
+            assert!(result.is_ok());
+
+            // There should now be exactly one entry in the thread
+            assert_eq!(thread.entries.len(), 1);
+
+            // The entry should be a failed tool call
+            if let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[0] {
+                assert_eq!(tool_call.id, nonexistent_id);
+                assert!(matches!(tool_call.status, ToolCallStatus::Failed));
+                assert_eq!(tool_call.kind, acp::ToolKind::Fetch);
+
+                // Check that the content contains the error message
+                assert_eq!(tool_call.content.len(), 1);
+                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content[0] {
+                    match content_block {
+                        ContentBlock::Markdown { markdown } => {
+                            let markdown_text = markdown.read(cx).source();
+                            assert!(markdown_text.contains("Tool call not found"));
+                        }
+                        ContentBlock::Empty => panic!("Expected markdown content, got empty"),
+                        ContentBlock::ResourceLink { .. } => {
+                            panic!("Expected markdown content, got resource link")
+                        }
+                    }
+                } else {
+                    panic!("Expected ContentBlock, got: {:?}", tool_call.content[0]);
+                }
+            } else {
+                panic!("Expected ToolCall entry, got: {:?}", thread.entries[0]);
+            }
+        });
     }
 }
