@@ -24,7 +24,7 @@ pub struct EditPredictionExcerptOptions {
     /// in an excerpt smaller than this, it will fall back on line-based selection.
     pub min_bytes: usize,
     /// Target ratio of bytes before the cursor divided by total bytes in the window.
-    pub before_cursor_bytes_ratio: f32,
+    pub target_before_cursor_over_total_bytes: f32,
     /// Whether to include parent signatures
     pub include_parent_signatures: bool,
 }
@@ -347,7 +347,7 @@ impl<'a> ExcerptSelector<'a> {
         let bytes_remaining = self.options.max_bytes.saturating_sub(signatures_size);
 
         let before_bytes =
-            (self.options.before_cursor_bytes_ratio * bytes_remaining as f32) as usize;
+            (self.options.target_before_cursor_over_total_bytes * bytes_remaining as f32) as usize;
 
         let start_point = {
             let offset = self.query_offset.saturating_sub(before_bytes);
@@ -396,22 +396,24 @@ impl<'a> ExcerptSelector<'a> {
     ) -> bool {
         let forward_ratio = self.excerpt_range_ratio(forward);
         let backward_ratio = self.excerpt_range_ratio(backward);
-        let forward_delta = (forward_ratio - self.options.before_cursor_bytes_ratio).abs();
-        let backward_delta = (backward_ratio - self.options.before_cursor_bytes_ratio).abs();
+        let forward_delta =
+            (forward_ratio - self.options.target_before_cursor_over_total_bytes).abs();
+        let backward_delta =
+            (backward_ratio - self.options.target_before_cursor_over_total_bytes).abs();
         let forward_is_better = forward_delta <= backward_delta;
         if forward_is_better {
             log::debug!(
                 "expanding forward since {} is closer than {} to {}",
                 forward_ratio,
                 backward_ratio,
-                self.options.before_cursor_bytes_ratio
+                self.options.target_before_cursor_over_total_bytes
             );
         } else {
             log::debug!(
                 "expanding backward since {} is closer than {} to {}",
                 backward_ratio,
                 forward_ratio,
-                self.options.before_cursor_bytes_ratio
+                self.options.target_before_cursor_over_total_bytes
             );
         }
         forward_is_better
