@@ -17,8 +17,7 @@ default = []
 [dependencies]
 anyhow.workspace = true
 gpui.workspace = true
-schemars.workspace = true
-serde.workspace = true
+collections.workspace = true
 settings.workspace = true
 zlog.workspace = true
 workspace-hack.workspace = true

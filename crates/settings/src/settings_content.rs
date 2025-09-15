@@ -39,6 +39,12 @@ pub struct SettingsContent {
 
     /// Configuration of audio in Zed.
     pub audio: Option<AudioSettingsContent>,
+
+    /// A map of log scopes to the desired log level.
+    /// Useful for filtering out noisy logs or enabling more verbose logging.
+    ///
+    /// Example: {"log": {"client": "warn"}}
+    pub log: Option<HashMap<String, String>>,
 }
 
 impl SettingsContent {
