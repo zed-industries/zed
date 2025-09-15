@@ -1,8 +1,8 @@
 use crate::{
     CURSOR_MARKER, EDITABLE_REGION_END_MARKER, EDITABLE_REGION_START_MARKER, START_OF_FILE_MARKER,
+    guess_token_count,
 };
-use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
-use language::{BufferSnapshot, OffsetRangeExt as _, Point};
+use language::{BufferSnapshot, Point};
 use std::{fmt::Write, ops::Range};
 
 #[derive(Debug)]
@@ -15,23 +15,34 @@ pub fn excerpt_for_cursor_position(
     position: Point,
     path: &str,
     snapshot: &BufferSnapshot,
-    editable_region_byte_limit: usize,
-    context_byte_limit: usize,
-) -> Option<InputExcerpt> {
-    let editable_range = EditPredictionExcerpt::select_from_buffer(
-        position,
-        snapshot,
-        &EditPredictionExcerptOptions {
-            max_bytes: editable_region_byte_limit,
-            min_bytes: editable_region_byte_limit / 2,
-            before_cursor_bytes_ratio: 0.75,
-            include_parent_signatures: false,
-        },
-    )?
-    .range;
+    editable_region_token_limit: usize,
+    context_token_limit: usize,
+) -> InputExcerpt {
+    let mut scope_range = position..position;
+    let mut remaining_edit_tokens = editable_region_token_limit;
 
-    let editable_range = editable_range.to_point(snapshot);
-    let context_range = expand_range(snapshot, editable_range.clone(), context_byte_limit);
+    while let Some(parent) = snapshot.syntax_ancestor(scope_range.clone()) {
+        let parent_tokens = guess_token_count(parent.byte_range().len());
+        let parent_point_range = Point::new(
+            parent.start_position().row as u32,
+            parent.start_position().column as u32,
+        )
+            ..Point::new(
+                parent.end_position().row as u32,
+                parent.end_position().column as u32,
+            );
+        if parent_point_range == scope_range {
+            break;
+        } else if parent_tokens <= editable_region_token_limit {
+            scope_range = parent_point_range;
+            remaining_edit_tokens = editable_region_token_limit - parent_tokens;
+        } else {
+            break;
+        }
+    }
+
+    let editable_range = expand_range(snapshot, scope_range, remaining_edit_tokens);
+    let context_range = expand_range(snapshot, editable_range.clone(), context_token_limit);
 
     let mut prompt = String::new();
 
@@ -51,10 +62,10 @@ pub fn excerpt_for_cursor_position(
     }
     write!(prompt, "\n```").unwrap();
 
-    Some(InputExcerpt {
+    InputExcerpt {
         editable_range,
         prompt,
-    })
+    }
 }
 
 fn push_editable_range(
@@ -77,7 +88,7 @@ fn push_editable_range(
 fn expand_range(
     snapshot: &BufferSnapshot,
     range: Range<Point>,
-    mut remaining_bytes: usize,
+    mut remaining_tokens: usize,
 ) -> Range<Point> {
     let mut expanded_range = range;
     expanded_range.start.column = 0;
@@ -85,18 +96,19 @@ fn expand_range(
     loop {
         let mut expanded = false;
 
-        if remaining_bytes > 0 && expanded_range.start.row > 0 {
+        if remaining_tokens > 0 && expanded_range.start.row > 0 {
             expanded_range.start.row -= 1;
-            let line_bytes = snapshot.line_len(expanded_range.start.row) as usize;
-            remaining_bytes = remaining_bytes.saturating_sub(line_bytes + 1);
+            let line_tokens =
+                guess_token_count(snapshot.line_len(expanded_range.start.row) as usize);
+            remaining_tokens = remaining_tokens.saturating_sub(line_tokens);
             expanded = true;
         }
 
-        if remaining_bytes > 0 && expanded_range.end.row < snapshot.max_point().row {
+        if remaining_tokens > 0 && expanded_range.end.row < snapshot.max_point().row {
             expanded_range.end.row += 1;
             expanded_range.end.column = snapshot.line_len(expanded_range.end.row);
-            let line_bytes = expanded_range.end.column as usize;
-            remaining_bytes = remaining_bytes.saturating_sub(line_bytes + 1);
+            let line_tokens = guess_token_count(expanded_range.end.column as usize);
+            remaining_tokens = remaining_tokens.saturating_sub(line_tokens);
             expanded = true;
         }
 
@@ -147,9 +159,9 @@ mod tests {
 
         // Ensure we try to fit the largest possible syntax scope, resorting to line-based expansion
         // when a larger scope doesn't fit the editable region.
-        let excerpt = excerpt_for_cursor_position(Point::new(12, 5), "main.rs", &snapshot, 150, 96);
+        let excerpt = excerpt_for_cursor_position(Point::new(12, 5), "main.rs", &snapshot, 50, 32);
         assert_eq!(
-            excerpt.unwrap().prompt,
+            excerpt.prompt,
             indoc! {r#"
             ```main.rs
                 let x = 42;
@@ -175,9 +187,9 @@ mod tests {
         );
 
         // The `bar` function won't fit within the editable region, so we resort to line-based expansion.
-        let excerpt = excerpt_for_cursor_position(Point::new(12, 5), "main.rs", &snapshot, 80, 96);
+        let excerpt = excerpt_for_cursor_position(Point::new(12, 5), "main.rs", &snapshot, 40, 32);
         assert_eq!(
-            excerpt.unwrap().prompt,
+            excerpt.prompt,
             indoc! {r#"
             ```main.rs
             fn bar() {
