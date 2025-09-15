@@ -6,16 +6,15 @@ use util::RangeExt;
 
 // TODO:
 //
-// - Handle excessive parent signature size
-//
-// - Use guess offsets for line based to do faster AST based selection?
-//
-// Things to consider:
+// - Decide whether to count signatures against the excerpt size. Could instead defer this to prompt
+// planning.
 //
 // - Still return an excerpt even if the line around the cursor doesn't fit (e.g. for a markdown
 // paragraph).
 //
 // - Truncation of long lines.
+//
+// - Filter outer syntax layers that don't support edit prediction.
 
 #[derive(Debug, Clone)]
 pub struct EditPredictionExcerptOptions {
@@ -193,7 +192,6 @@ impl<'a> ExcerptSelector<'a> {
 
     /// Select the smallest syntax layer that exceeds max_len, or the largest if none exceed max_len.
     fn select_syntax_layer(&self) -> Option<Node<'_>> {
-        // todo! Filter outer layers that don't support edit prediction?
         let mut smallest_exceeding_max_len: Option<Node<'_>> = None;
         let mut largest: Option<Node<'_>> = None;
         for layer in self
@@ -340,6 +338,8 @@ impl<'a> ExcerptSelector<'a> {
 
         // this could be expanded further since recalculated `signature_size` may be smaller, but
         // skipping that for now for simplicity
+        //
+        // TODO: could also consider checking if lines immediately before / after fit.
         let excerpt = self.make_excerpt(start_offset..end_offset);
         if excerpt.size > self.options.max_bytes {
             log::error!(
