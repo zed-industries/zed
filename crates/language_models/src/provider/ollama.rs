@@ -722,7 +722,7 @@ impl ConfigurationView {
         let fs = <dyn Fs>::global(cx);
         update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
             if let Some(settings) = settings.ollama.as_mut() {
-                settings.api_url = None;
+                settings.api_url = Some(OLLAMA_API_URL.into());
             }
         });
         cx.notify();
