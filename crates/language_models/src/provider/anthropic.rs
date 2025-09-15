@@ -1,5 +1,5 @@
+use crate::api_key::ApiKeyState;
 use crate::ui::InstructionListItem;
-use crate::{AllLanguageModelSettings, api_key::ApiKeyState};
 use anthropic::{
     AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
     ToolResultPart, Usage,
@@ -156,7 +156,7 @@ impl AnthropicLanguageModelProvider {
     }
 
     fn settings(cx: &App) -> &AnthropicSettings {
-        &AllLanguageModelSettings::get_global(cx).anthropic
+        &crate::AllLanguageModelSettings::get_global(cx).anthropic
     }
 
     fn api_url(cx: &App) -> SharedString {
@@ -219,11 +219,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .anthropic
-            .available_models
-            .iter()
-        {
+        for model in &AnthropicLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
                 anthropic::Model::Custom {

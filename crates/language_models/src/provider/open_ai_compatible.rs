@@ -20,8 +20,8 @@ use ui_input::SingleLineInput;
 use util::ResultExt;
 use zed_env_vars::EnvVar;
 
+use crate::api_key::ApiKeyState;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
-use crate::{AllLanguageModelSettings, api_key::ApiKeyState};
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
@@ -98,7 +98,7 @@ impl State {
 impl OpenAiCompatibleLanguageModelProvider {
     pub fn new(id: Arc<str>, http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         fn resolve_settings<'a>(id: &'a str, cx: &'a App) -> Option<&'a OpenAiCompatibleSettings> {
-            AllLanguageModelSettings::get_global(cx)
+            crate::AllLanguageModelSettings::get_global(cx)
                 .openai_compatible
                 .get(id)
         }

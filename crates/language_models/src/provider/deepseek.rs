@@ -26,7 +26,7 @@ use ui::{Icon, IconName, List, prelude::*};
 use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{AllLanguageModelSettings, api_key::ApiKeyState, ui::InstructionListItem};
+use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("deepseek");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("DeepSeek");
@@ -119,7 +119,7 @@ impl DeepSeekLanguageModelProvider {
     }
 
     fn settings(cx: &App) -> &DeepSeekSettings {
-        &AllLanguageModelSettings::get_global(cx).deepseek
+        &crate::AllLanguageModelSettings::get_global(cx).deepseek
     }
 
     fn api_url(cx: &App) -> &str {

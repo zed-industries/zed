@@ -25,7 +25,7 @@ use ui_input::SingleLineInput;
 use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{AllLanguageModelSettings, api_key::ApiKeyState, ui::InstructionListItem};
+use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::OPEN_AI_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDER_NAME;
@@ -113,7 +113,7 @@ impl OpenAiLanguageModelProvider {
     }
 
     fn settings(cx: &App) -> &OpenAiSettings {
-        &AllLanguageModelSettings::get_global(cx).openai
+        &crate::AllLanguageModelSettings::get_global(cx).openai
     }
 
     fn api_url(cx: &App) -> SharedString {
@@ -166,10 +166,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &AllLanguageModelSettings::get_global(cx)
-            .openai
-            .available_models
-        {
+        for model in &OpenAiLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
                 open_ai::Model::Custom {

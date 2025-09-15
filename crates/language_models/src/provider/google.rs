@@ -37,8 +37,8 @@ use util::ResultExt;
 use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKey;
+use crate::api_key::ApiKeyState;
 use crate::ui::InstructionListItem;
-use crate::{AllLanguageModelSettings, api_key::ApiKeyState};
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
@@ -173,8 +173,12 @@ impl GoogleLanguageModelProvider {
         })
     }
 
+    fn settings(cx: &App) -> &GoogleSettings {
+        &crate::AllLanguageModelSettings::get_global(cx).google
+    }
+
     fn api_url(cx: &App) -> SharedString {
-        let api_url = &AllLanguageModelSettings::get_global(cx).google.api_url;
+        let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
             google_ai::API_URL.into()
         } else {
@@ -223,10 +227,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &AllLanguageModelSettings::get_global(cx)
-            .google
-            .available_models
-        {
+        for model in &GoogleLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
                 google_ai::Model::Custom {

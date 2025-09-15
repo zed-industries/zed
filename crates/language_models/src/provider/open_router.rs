@@ -27,7 +27,7 @@ use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::ResultExt;
 use zed_env_vars::{EnvVar, env_var};
 
-use crate::{AllLanguageModelSettings, api_key::ApiKeyState, ui::InstructionListItem};
+use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openrouter");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("OpenRouter");
@@ -96,7 +96,6 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<open_router::Model>,
     fetch_models_task: Option<Task<Result<(), LanguageModelCompletionError>>>,
-    settings: OpenRouterSettings,
 }
 
 impl State {
@@ -171,14 +170,17 @@ impl State {
 impl OpenRouterLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| {
-            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                let current_settings = &AllLanguageModelSettings::get_global(cx).open_router;
-                let settings_changed = current_settings != &this.settings;
-                if settings_changed {
-                    this.settings = current_settings.clone();
-                    this.authenticate(cx).detach();
+            cx.observe_global::<SettingsStore>({
+                let mut last_settings = OpenRouterLanguageModelProvider::settings(cx).clone();
+                move |this: &mut State, cx| {
+                    let current_settings = OpenRouterLanguageModelProvider::settings(cx);
+                    let settings_changed = current_settings != &last_settings;
+                    if settings_changed {
+                        last_settings = current_settings.clone();
+                        this.authenticate(cx).detach();
+                        cx.notify();
+                    }
                 }
-                cx.notify();
             })
             .detach();
             State {
@@ -186,7 +188,6 @@ impl OpenRouterLanguageModelProvider {
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
-                settings: OpenRouterSettings::default(),
             }
         });
 
@@ -194,7 +195,7 @@ impl OpenRouterLanguageModelProvider {
     }
 
     fn settings(cx: &App) -> &OpenRouterSettings {
-        &AllLanguageModelSettings::get_global(cx).open_router
+        &crate::AllLanguageModelSettings::get_global(cx).open_router
     }
 
     fn api_url(cx: &App) -> SharedString {
