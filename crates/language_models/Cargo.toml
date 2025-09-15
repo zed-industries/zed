@@ -61,6 +61,7 @@ util.workspace = true
 vercel = { workspace = true, features = ["schemars"] }
 workspace-hack.workspace = true
 x_ai = { workspace = true, features = ["schemars"] }
+zed_env_vars.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
