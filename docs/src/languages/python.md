@@ -17,21 +17,23 @@ You'll need both Zed and Python installed before you can begin.
 ### Step 1: Install Python
 Zed does not bundle a Python runtime, so you’ll need to install one yourself.
 Choose one of the following options:
-- Astral (recommended):
-```json
+
+- uv (recommended)
+```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
-To learn more, visit Astral’s installation guide
+To learn more, visit [Astral’s installation guide](https://docs.astral.sh/uv/getting-started/installation/).
+
 - Homebrew:
-```json
+```bash
 brew install python
 ```
 - Python.org installer: Download the latest version from [python.org/downloads](https://python.org/downloads).
 
 ### Step 2: Verify Python Installation
 Confirm Python is installed and available in your shell:
-```json
-uv --version
+```bash
+python3 --version
 ```
 You should see an output like `Python 3.x.x`.
 
@@ -41,27 +43,23 @@ Once Zed and Python are installed, open a folder containing Python code to start
 ### Step 1: Launch Zed with a Python Project
 Open Zed.
 From the menu bar, choose File > Open Folder, or launch from the terminal:
-`zed path/to/your/project`
+```bash
+zed path/to/your/project
+```
 
 Zed will recognize `.py` files automatically using its native tree-sitter-python parser, with no plugins or manual setup required.
 
 ### Step 2: Use the Integrated Terminal (Optional)
-Zed includes a terminal, accessible from the bottom panel (). You can also use your external terminal of choice.
-
-From the terminal, verify you’re in the correct environment:
-`python3 script.py`
-
-If you’re using a virtual environment, Zed will attempt to auto-activate it in the terminal if it detects one (see `detect_venv` behavior in docs).
-
+Zed includes an integrated terminal, accessible from the bottom panel. If Zed detects that your project is using a [virtual environment](#virtual-environments), it will be activated automatically in newly-created terminals. You can configure this behavior with the [`detect_venv`](../configuring-zed.md#terminal-detect_venv) setting.
 
 ## Configure Python Language Servers in Zed
 
-Zed provides several Python language servers out of the box. By default, [basedpyright](https://github.com/DetachHead/basedpyright) is the primary language server, and [Ruff](https://github.com/astral-sh/ruff) is used for formatting.
+Zed provides several Python language servers out of the box. By default, [basedpyright](https://github.com/DetachHead/basedpyright) is the primary language server, and [Ruff](https://github.com/astral-sh/ruff) is used for formatting and linting.
 
 Other built-in language servers are:
-- [Ty](https://docs.astral.sh/ty/) -- Up-and-coming language server from Astral, built for speed.
-- [Pyright](https://github.com/microsoft/pyright) -- The basis for basedpyright.
-- [PyLSP](https://github.com/python-lsp/python-lsp-server) -- A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
+- [Ty](https://docs.astral.sh/ty/)&mdash;Up-and-coming language server from Astral, built for speed.
+- [Pyright](https://github.com/microsoft/pyright)&mdash;The basis for basedpyright.
+- [PyLSP](https://github.com/python-lsp/python-lsp-server)&mdash;A plugin-based language server that integrates with tools like `pycodestyle`, `autopep8`, and `yapf`.
 
 These are disabled by default, but can be enabled in your settings. For example:
 ```json
@@ -69,7 +67,8 @@ These are disabled by default, but can be enabled in your settings. For example:
   "languages": {
     "Python": {
       "language_servers": {
-        // Disable basedpyright and enable Ty, and otherwise use the default configuration.
+        // Disable basedpyright and enable Ty, and otherwise
+        // use the default configuration.
         "ty", "!basedpyright", ".."
       }
     }
@@ -81,7 +80,7 @@ See: [Working with Language Servers](https://zed.dev/docs/configuring-languages#
 
 ### Basedpyright
 
-[basedpyright](https://docs.basedpyright.com/latest/) replaced [Pyright](https://github.com/microsoft/pyright) as the primary Python language server beginning with Zed v0.204.0. It provides core language server functionality like navigation (go to definition/find all references) and type checking. Compared to Pyright, it adds support for additional language server features (like inlay hints) and checking rules.
+[basedpyright](https://docs.basedpyright.com/latest/) is the primary Python language server in Zed beginning with Zed v0.204.0. It provides core language server functionality like navigation (go to definition/find all references) and type checking. Compared to Pyright, it adds support for additional language server features (like inlay hints) and checking rules.
 
 Note that while basedpyright in isolation defaults to the `recommended` [type-checking mode](https://docs.basedpyright.com/latest/benefits-over-pyright/better-defaults/#typecheckingmode), Zed configures it to use the less-strict `standard` mode by default, which matches the behavior of Pyright. You can set the type-checking mode for your project using the `typeCheckingMode` setting in `pyrightconfig.json` or `pyproject.toml`, which will override Zed's default. Read on more for more details about how to configure basedpyright.
 
@@ -141,38 +140,34 @@ Here's an example `pyrightconfig.json` file that configures basedpyright to use 
 
 See [Python Language Server Configuration](https://github.com/python-lsp/python-lsp-server/blob/develop/CONFIGURATION.md) for more.
 
-## Set Up and Activate Python Virtual Environments
+## Virtual Environments
 
-If you don’t already have a virtual environment set up on your computer, follow these steps to create one. Use a [virtual environments](https://docs.python.org/3/library/venv.html) to isolate your project’s dependencies and interpreter. Zed detects and activates virtual environments automatically in its terminal.
+[Virtual environments](https://docs.python.org/3/library/venv.html) are a useful tool for fixing a Python version and set of dependencies for a specific project, in a way that's isolated from other projects on the same machine. Zed has built-in support for discovering, configuring, and activating virtual environments, based on the language-agnostic concept of a [toolchain](../toolchains.md).
 
-### Create and Activate a Virtual Environment
-In your project root:
-`python3 -m venv .venv
-source .venv/bin/activate`
+Note that if you have a global Python installation, it is also counted as a toolchain for Zed's purposes.
 
-Zed will recognize `.venv` and activate it in the terminal without extra configuration.
+### Create a Virtual Environment
 
-### Link Virtual Environment to Language Server
-For Pyright, create a `pyrightconfig.json` at the root of your project:
-``` json {
-  "venvPath": ".",
-  "venv": ".venv"
-}
+If your project doesn't have a virtual environment set up already, you can create one as follows:
+
+```bash
+python3 -m venv .venv
 ```
 
-Or, if you're using pyproject.toml, add:
-``` json
-[tool.pyright]
-venvPath = "."
-venv = ".venv"`
-```
+Alternatively, if you're using `uv`, running `uv sync` will create a virtual environment the first time you run it.
 
-You can also set the path directly in `settings.json` as shown above. This ensures Pyright uses the correct interpreter and dependencies when analyzing your code.
+### How Zed Uses Python Toolchains
 
-## Virtual Environments in the Terminal {#terminal-detect_venv}
+Zed uses the selected Python toolchain for your project in the following ways:
 
-Zed will detect Python virtual environments and automatically activate them in terminal if available.
-See: [detect_venv documentation](../configuring-zed.md#terminal-detect_venv) for more.
+- Built-in language servers will be automatically configured with the path to the toolchain's Python interpreter and, if applicable, virtual environment. This is important so that they can resolve dependencies. (Note that language servers provided by extensions can't be automatically configured like this currently.)
+- Python tasks (such as pytest tests) will be run using the toolchain's Python interpreter.
+- If the toolchain is a virtual environment, the environment's activation script will be run automatically when you launch a new shell in Zed's integrated terminal, giving you convenient access to the selected Python interpreter and dependency set.
+- If a built-in language server is installed in the active virtual environment, that binary will be used instead of Zed's private automatically-installed binary. This also applies to debugpy.
+
+### Selecting a Toolchain
+
+For most projects, Zed will automatically select the right Python toolchain. In complex projects with multiple virtual environments, it might be necessary to override this selection. You can use the [toolchain selector](../toolchains.md#selecting-toolchains) to pick a toolchain from the list discovered by Zed, or [specify the path to a toolchain manually](../toolchains.md#adding-toolchains-manually) if it's not on the list.
 
 ## Code Formatting & Linting
 
@@ -332,26 +327,4 @@ If a language server isn't responding or features like diagnostics or autocomple
 - Verify your `settings.json` or `pyrightconfig.json` is syntactically correct.
 - Restart Zed to reinitialize language server connections, or try restarting the language server using the {#action editor::RestartLanguageServer}
 
-If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use "Server Info" view to confirm which virtual environment Zed is sending to the language server---look for the `* Configuration` section at the end.
-
-### Diagnose Environment Detection Failures
-Zed will attempt to detect and activate a virtual environment when you open a terminal. If this fails:
-- Make sure that the right environment is chosen in the selector.
-- Make sure that you haven't disabled virtual environment detection for terminals by setting [`detect_venv`](../configuring-zed.md#terminal-detect_venv) to `"off"`.
-- Confirm your environment is located at `.venv/` in the project root.
-- Ensure the environment was created using `python3 -m venv .venv`.
-- Manually activate the environment in the terminal to verify it's working.
-- If using Pyright, ensure venvPath and venv are correctly set in `pyrightconfig.json`.
-
-### Keep Zed and Language Tools Up to Date
-Outdated tools can cause silent failures or missing features. Periodically:
-- Update Zed from [zed.dev](https://zed.dev) or using the in-app updater.
-- Run `pip install --upgrade` for tools like `pyright`, `pylsp`, `flake8`, etc.
-- Recreate your virtual environment if dependencies become inconsistent or corrupted.
-
-### Review Logs and Terminal Output
-If something breaks and it's unclear why:
-- Check the Zed terminal for environment activation logs or Python errors.
-- Use verbose flags (e.g., `--verbose` for some CLI tools) to get more detailed output.
-- Validate that paths and environment variables are what you expect.
-- Taking a few minutes to inspect the output can often reveal the root cause faster than reconfiguring settings blindly.
+If the language server is failing to resolve imports, and you're using a virtual environment, make sure that the right environment is chosen in the selector. You can use "Server Info" view to confirm which virtual environment Zed is sending to the language server&mdash;look for the `* Configuration` section at the end.
