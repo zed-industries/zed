@@ -9179,6 +9179,7 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
+ "fs",
  "futures 0.3.31",
  "google_ai",
  "gpui",
