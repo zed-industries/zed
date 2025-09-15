@@ -70,7 +70,7 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let api_url = DeepSeekLanguageModelProvider::api_url(cx).to_string();
+        let api_url = SharedString::new(DeepSeekLanguageModelProvider::api_url(cx));
         self.api_key_state
             .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
@@ -101,7 +101,7 @@ impl DeepSeekLanguageModelProvider {
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(),
+                api_key_state: ApiKeyState::new(SharedString::new(Self::api_url(cx))),
             }
         });
 

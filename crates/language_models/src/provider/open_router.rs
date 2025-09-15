@@ -105,13 +105,13 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let api_url = OpenRouterLanguageModelProvider::api_url(cx).to_string();
+        let api_url = OpenRouterLanguageModelProvider::api_url(cx);
         self.api_key_state
             .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        let api_url = SharedString::new(OpenRouterLanguageModelProvider::api_url(cx));
+        let api_url = OpenRouterLanguageModelProvider::api_url(cx);
         let task = self.api_key_state.load_if_needed(
             api_url,
             &API_KEY_ENV_VAR,
@@ -133,12 +133,11 @@ impl State {
     ) -> Task<Result<(), LanguageModelCompletionError>> {
         let http_client = self.http_client.clone();
         let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-        let Some(api_key) = self.api_key_state.key(api_url) else {
+        let Some(api_key) = self.api_key_state.key(&api_url) else {
             return Task::ready(Err(LanguageModelCompletionError::NoApiKey {
                 provider: PROVIDER_NAME,
             }));
         };
-        let api_url = api_url.to_string();
         cx.spawn(async move |this, cx| {
             let models = list_models(http_client.as_ref(), &api_url, &api_key)
                 .await
@@ -183,7 +182,7 @@ impl OpenRouterLanguageModelProvider {
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(),
+                api_key_state: ApiKeyState::new(Self::api_url(cx)),
                 http_client: http_client.clone(),
                 available_models: Vec::new(),
                 fetch_models_task: None,
@@ -198,8 +197,8 @@ impl OpenRouterLanguageModelProvider {
         &AllLanguageModelSettings::get_global(cx).open_router
     }
 
-    fn api_url(cx: &App) -> &str {
-        &Self::settings(cx).api_url
+    fn api_url(cx: &App) -> SharedString {
+        SharedString::new(Self::settings(cx).api_url.as_str())
     }
 
     fn create_language_model(&self, model: open_router::Model) -> Arc<dyn LanguageModel> {
@@ -325,8 +324,8 @@ impl OpenRouterLanguageModel {
         let http_client = self.http_client.clone();
         let api_key_and_url = self.state.read_with(cx, |state, cx| {
             let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-            let api_key = state.api_key_state.key(api_url);
-            (api_key, api_url.to_string())
+            let api_key = state.api_key_state.key(&api_url);
+            (api_key, api_url)
         });
         let (api_key, api_url) = match api_key_and_url {
             Ok(api_key_and_url) => api_key_and_url,

@@ -69,13 +69,13 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let api_url = MistralLanguageModelProvider::api_url(cx).to_string();
+        let api_url = MistralLanguageModelProvider::api_url(cx);
         self.api_key_state
             .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        let api_url = SharedString::new(MistralLanguageModelProvider::api_url(cx));
+        let api_url = MistralLanguageModelProvider::api_url(cx);
         self.api_key_state.load_if_needed(
             api_url,
             &API_KEY_ENV_VAR,
@@ -89,7 +89,7 @@ impl MistralLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                let api_url = SharedString::new(Self::api_url(cx));
+                let api_url = Self::api_url(cx);
                 this.api_key_state.handle_url_change(
                     api_url,
                     &API_KEY_ENV_VAR,
@@ -100,7 +100,7 @@ impl MistralLanguageModelProvider {
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(),
+                api_key_state: ApiKeyState::new(Self::api_url(cx)),
             }
         });
 
@@ -121,12 +121,12 @@ impl MistralLanguageModelProvider {
         &crate::AllLanguageModelSettings::get_global(cx).mistral
     }
 
-    fn api_url(cx: &App) -> &str {
+    fn api_url(cx: &App) -> SharedString {
         let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
-            mistral::MISTRAL_API_URL
+            mistral::MISTRAL_API_URL.into()
         } else {
-            api_url
+            SharedString::new(api_url.as_str())
         }
     }
 }
@@ -246,8 +246,8 @@ impl MistralLanguageModel {
 
         let api_key_and_url = self.state.read_with(cx, |state, cx| {
             let api_url = MistralLanguageModelProvider::api_url(cx);
-            let api_key = state.api_key_state.key(api_url);
-            (api_key, api_url.to_string())
+            let api_key = state.api_key_state.key(&api_url);
+            (api_key, api_url)
         });
         let (api_key, api_url) = match api_key_and_url {
             Ok(api_key_and_url) => api_key_and_url,

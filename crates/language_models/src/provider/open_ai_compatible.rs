@@ -79,7 +79,7 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let api_url = self.settings.api_url.clone();
+        let api_url = SharedString::new(self.settings.api_url.as_str());
         self.api_key_state
             .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
@@ -110,25 +110,24 @@ impl OpenAiCompatibleLanguageModelProvider {
                     return;
                 };
                 if &this.settings != &settings {
-                    if settings.api_url != this.settings.api_url {
-                        let api_url = settings.api_url.clone().into();
-                        this.api_key_state.handle_url_change(
-                            api_url,
-                            &this.api_key_env_var,
-                            |this| &mut this.api_key_state,
-                            cx,
-                        );
-                    }
+                    let api_url = SharedString::new(settings.api_url.as_str());
+                    this.api_key_state.handle_url_change(
+                        api_url,
+                        &this.api_key_env_var,
+                        |this| &mut this.api_key_state,
+                        cx,
+                    );
                     this.settings = settings;
                     cx.notify();
                 }
             })
             .detach();
+            let settings = resolve_settings(&id, cx).cloned().unwrap_or_default();
             State {
                 id: id.clone(),
                 api_key_env_var: EnvVar::new(api_key_env_var_name),
-                api_key_state: ApiKeyState::new(),
-                settings: resolve_settings(&id, cx).cloned().unwrap_or_default(),
+                api_key_state: ApiKeyState::new(SharedString::new(settings.api_url.as_str())),
+                settings,
             }
         });
 
