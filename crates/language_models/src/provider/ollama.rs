@@ -74,13 +74,13 @@ pub struct OllamaLanguageModelProvider {
 pub struct State {
     api_key_state: ApiKeyState,
     http_client: Arc<dyn HttpClient>,
-    available_models: Vec<ollama::Model>,
+    fetched_models: Vec<ollama::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
 }
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        !self.available_models.is_empty()
+        !self.fetched_models.is_empty()
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -158,7 +158,7 @@ impl State {
             ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
             this.update(cx, |this, cx| {
-                this.available_models = ollama_models;
+                this.fetched_models = ollama_models;
                 cx.notify();
             })
         })
@@ -191,7 +191,7 @@ impl OllamaLanguageModelProvider {
 
                 State {
                     http_client,
-                    available_models: Default::default(),
+                    fetched_models: Default::default(),
                     fetch_model_task: None,
                     api_key_state: ApiKeyState::new(Self::api_url(cx)),
                 }
@@ -253,7 +253,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         let mut models: HashMap<String, ollama::Model> = HashMap::new();
 
         // Add models from the Ollama API
-        for model in self.state.read(cx).available_models.iter() {
+        for model in self.state.read(cx).fetched_models.iter() {
             models.insert(model.name.clone(), model.clone());
         }
 
