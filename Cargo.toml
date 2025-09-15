@@ -52,6 +52,7 @@ members = [
     "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/deepseek",
+    "crates/denoise",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
