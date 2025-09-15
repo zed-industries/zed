@@ -20920,6 +20920,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeta2"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "edit_prediction",
+ "gpui",
+ "language",
+ "project",
+ "workspace-hack",
+]
+
+[[package]]
 name = "zeta_cli"
 version = "0.1.0"
 dependencies = [

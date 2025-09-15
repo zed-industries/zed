@@ -197,6 +197,7 @@ members = [
     "crates/zed_actions",
     "crates/zed_env_vars",
     "crates/zeta",
+    "crates/zeta2",
     "crates/zeta_cli",
     "crates/zlog",
     "crates/zlog_settings",

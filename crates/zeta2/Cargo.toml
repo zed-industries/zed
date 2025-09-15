@@ -1,0 +1,20 @@
+[package]
+name = "zeta2"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/zeta2.rs"
+
+[dependencies]
+client.workspace = true
+edit_prediction.workspace = true
+gpui.workspace = true
+language.workspace = true
+project.workspace = true
+workspace-hack.workspace = true
