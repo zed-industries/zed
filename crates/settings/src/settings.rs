@@ -24,8 +24,7 @@ pub use keymap_file::{
 pub use settings_file::*;
 pub use settings_json::*;
 pub use settings_store::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation,
-    SettingsSources, SettingsStore,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation, SettingsStore,
 };
 pub use settings_ui_core::*;
 // Re-export the derive macro

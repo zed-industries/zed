@@ -21,11 +21,21 @@ pub struct SettingsContent {
     #[serde(flatten)]
     pub theme: ThemeSettingsContent,
 
+    // todo!() comments?!
     pub base_keymap: Option<BaseKeymapContent>,
 
     pub auto_update: Option<bool>,
 
     pub title_bar: Option<TitleBarSettingsContent>,
+
+    /// Whether or not to enable Vim mode.
+    ///
+    /// Default: false
+    pub vim_mode: Option<bool>,
+    /// Whether or not to enable Helix mode.
+    ///
+    /// Default: false
+    pub helix_mode: Option<bool>,
 }
 
 impl SettingsContent {

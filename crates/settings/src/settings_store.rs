@@ -11,7 +11,6 @@ use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGl
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::JsonSchema;
-use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use smallvec::SmallVec;
 use std::{
@@ -22,7 +21,7 @@ use std::{
     str::{self, FromStr},
     sync::Arc,
 };
-use util::{ResultExt as _, merge_non_null_json_value_into, schemars::DefaultDenyUnknownFields};
+use util::{ResultExt as _, schemars::DefaultDenyUnknownFields};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
@@ -126,69 +125,6 @@ pub trait Settings: 'static + Send + Sync + Sized {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SettingsSources<'a, T> {
-    /// The default Zed settings.
-    pub default: &'a T,
-    /// Global settings (loaded before user settings).
-    pub global: Option<&'a T>,
-    /// Settings provided by extensions.
-    pub extensions: Option<&'a T>,
-    /// The user settings.
-    pub user: Option<&'a T>,
-    /// The user settings for the current release channel.
-    pub release_channel: Option<&'a T>,
-    /// The user settings for the current operating system.
-    pub operating_system: Option<&'a T>,
-    /// The settings associated with an enabled settings profile
-    pub profile: Option<&'a T>,
-    /// The server's settings.
-    pub server: Option<&'a T>,
-    /// The project settings, ordered from least specific to most specific.
-    pub project: &'a [&'a T],
-}
-
-impl<'a, T: Serialize> SettingsSources<'a, T> {
-    /// Returns an iterator over the default settings as well as all settings customizations.
-    pub fn defaults_and_customizations(&self) -> impl Iterator<Item = &T> {
-        [self.default].into_iter().chain(self.customizations())
-    }
-
-    /// Returns an iterator over all of the settings customizations.
-    pub fn customizations(&self) -> impl Iterator<Item = &T> {
-        self.global
-            .into_iter()
-            .chain(self.extensions)
-            .chain(self.user)
-            .chain(self.release_channel)
-            .chain(self.operating_system)
-            .chain(self.profile)
-            .chain(self.server)
-            .chain(self.project.iter().copied())
-    }
-
-    /// Returns the settings after performing a JSON merge of the provided customizations.
-    ///
-    /// Customizations later in the iterator win out over the earlier ones.
-    pub fn json_merge_with<O: DeserializeOwned>(
-        customizations: impl Iterator<Item = &'a T>,
-    ) -> Result<O> {
-        let mut merged = Value::Null;
-        for value in customizations {
-            merge_non_null_json_value_into(serde_json::to_value(value).unwrap(), &mut merged);
-        }
-        Ok(serde_json::from_value(merged)?)
-    }
-
-    /// Returns the settings after performing a JSON merge of the customizations into the
-    /// default settings.
-    ///
-    /// More-specific customizations win out over the less-specific ones.
-    pub fn json_merge<O: DeserializeOwned>(&'a self) -> Result<O> {
-        Self::json_merge_with(self.defaults_and_customizations())
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
 pub struct SettingsLocation<'a> {
     pub worktree_id: WorktreeId,
     pub path: &'a Path,
@@ -262,7 +198,6 @@ trait AnySettingValue: 'static + Send + Sync {
         vscode_settings: &VsCodeSettings,
         settings_content: &mut SettingsContent,
     );
-    fn settings_ui_item(&self) -> SettingsUiEntry;
 }
 
 impl SettingsStore {
@@ -274,7 +209,7 @@ impl SettingsStore {
             default_settings,
             global_settings: None,
             server_settings: None,
-            user_settings: Some(Default::default()), // todo!()
+            user_settings: None,
             extension_settings: None,
             local_settings: BTreeMap::default(),
             raw_editorconfig_settings: BTreeMap::default(),
@@ -353,9 +288,6 @@ impl SettingsStore {
         }
 
         setting_value.set_global_value(Box::new(value));
-
-        // todo!() local settings
-        // (they weren't handled before...)
     }
 
     /// Get the value of a setting.
@@ -585,9 +517,7 @@ impl SettingsStore {
     }
 
     pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUiEntry> {
-        self.setting_values
-            .values()
-            .map(|item| item.settings_ui_item())
+        [].into_iter()
     }
 }
 
@@ -628,7 +558,6 @@ impl SettingsStore {
 
         let old_value = serde_json::to_value(&old_content).unwrap();
         let new_value = serde_json::to_value(new_content).unwrap();
-        // dbg!(&old_value, &new_value);
 
         let mut key_path = Vec::new();
         let mut edits = Vec::new();
@@ -1108,11 +1037,6 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
         settings_content: &mut SettingsContent,
     ) {
         T::import_from_vscode(vscode_settings, settings_content);
-    }
-
-    fn settings_ui_item(&self) -> SettingsUiEntry {
-        todo!()
-        // <<T as Settings>::FileContent as SettingsUi>::settings_ui_entry()
     }
 }
 
@@ -1694,52 +1618,4 @@ mod tests {
             }
         );
     }
-
-    // #[derive(
-    //     Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
-    // )]
-    // #[settings_key(None)]
-    // struct LanguageSettings {
-    //     #[serde(default)]
-    //     languages: HashMap<String, LanguageSettingEntry>,
-    // }
-
-    // #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-    // struct LanguageSettingEntry {
-    //     language_setting_1: Option<bool>,
-    //     language_setting_2: Option<bool>,
-    // }
-
-    // impl Settings for LanguageSettings {
-    //     type FileContent = Self;
-
-    //     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-    //         sources.json_merge()
-    //     }
-
-    //     fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
-    //         current.languages.extend(
-    //             vscode
-    //                 .read_value("vscode_languages")
-    //                 .and_then(|value| value.as_array())
-    //                 .map(|languages| {
-    //                     languages
-    //                         .iter()
-    //                         .filter_map(|value| value.as_object())
-    //                         .filter_map(|item| {
-    //                             let mut rest = item.clone();
-    //                             let name = rest.remove("name")?.as_str()?.to_string();
-    //                             let entry = serde_json::from_value::<LanguageSettingEntry>(
-    //                                 serde_json::Value::Object(rest),
-    //                             )
-    //                             .ok()?;
-
-    //                             Some((name, entry))
-    //                         })
-    //                 })
-    //                 .into_iter()
-    //                 .flatten(),
-    //         );
-    //     }
-    // }
 }
