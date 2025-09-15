@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -11,11 +11,9 @@ use language_model::{
     LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionCall,
-    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OllamaFunctionCall,
+    OllamaFunctionTool, OllamaToolCall, discover_available_models, stream_chat_completion,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -25,6 +23,8 @@ use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 use crate::ui::InstructionListItem;
+
+pub use ollama::AvailableModel;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -39,24 +39,6 @@ pub struct OllamaSettings {
     pub available_models: Vec<AvailableModel>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The model name in the Ollama API (e.g. "llama3.2:latest")
-    pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
-    pub display_name: Option<String>,
-    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
-    pub max_tokens: u64,
-    /// The number of seconds to keep the connection open after the last request
-    pub keep_alive: Option<KeepAlive>,
-    /// Whether the model supports tools
-    pub supports_tools: Option<bool>,
-    /// Whether the model supports vision
-    pub supports_images: Option<bool>,
-    /// Whether to enable think mode
-    pub supports_thinking: Option<bool>,
-}
-
 pub struct OllamaLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Entity<State>,
@@ -64,7 +46,7 @@ pub struct OllamaLanguageModelProvider {
 
 pub struct State {
     http_client: Arc<dyn HttpClient>,
-    available_models: Vec<ollama::Model>,
+    available_models: Vec<AvailableModel>,
     fetch_model_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
@@ -81,42 +63,7 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, None).await?;
-
-            let tasks = models
-                .into_iter()
-                // Since there is no metadata from the Ollama API
-                // indicating which models are embedding models,
-                // simply filter out models with "-embed" in their name
-                .filter(|model| !model.name.contains("-embed"))
-                .map(|model| {
-                    let http_client = Arc::clone(&http_client);
-                    let api_url = api_url.clone();
-                    async move {
-                        let name = model.name.as_str();
-                        let capabilities = show_model(http_client.as_ref(), &api_url, name).await?;
-                        let ollama_model = ollama::Model::new(
-                            name,
-                            None,
-                            None,
-                            Some(capabilities.supports_tools()),
-                            Some(capabilities.supports_vision()),
-                            Some(capabilities.supports_thinking()),
-                        );
-                        Ok(ollama_model)
-                    }
-                });
-
-            // Rate-limit capability fetches
-            // since there is an arbitrary number of models available
-            let mut ollama_models: Vec<_> = futures::stream::iter(tasks)
-                .buffer_unordered(5)
-                .collect::<Vec<Result<_>>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>>>()?;
-
-            ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
+            let ollama_models = discover_available_models(http_client, &api_url, None).await?;
 
             this.update(cx, |this, cx| {
                 this.available_models = ollama_models;
@@ -141,6 +88,29 @@ impl State {
 }
 
 impl OllamaLanguageModelProvider {
+    pub fn global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<GlobalOllamaLanguageModelProvider>()
+            .map(|provider| provider.0.clone())
+    }
+
+    pub fn set_global(provider: Entity<Self>, cx: &mut App) {
+        cx.set_global(GlobalOllamaLanguageModelProvider(provider));
+    }
+
+    pub fn available_models_for_completion(&self, cx: &App) -> Vec<AvailableModel> {
+        self.state.read(cx).available_models.clone()
+    }
+
+    pub fn http_client(&self) -> Arc<dyn HttpClient> {
+        self.http_client.clone()
+    }
+
+    pub fn refresh_models(&self, cx: &mut App) {
+        self.state.update(cx, |state, cx| {
+            state.restart_fetch_models_task(cx);
+        });
+    }
+
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let this = Self {
             http_client: http_client.clone(),
@@ -205,7 +175,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let mut models: HashMap<String, AvailableModel> = HashMap::new();
 
         // Add models from the Ollama API
         for model in self.state.read(cx).available_models.iter() {
@@ -220,13 +190,13 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         {
             models.insert(
                 model.name.clone(),
-                ollama::Model {
+                AvailableModel {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
                     keep_alive: model.keep_alive.clone(),
                     supports_tools: model.supports_tools,
-                    supports_vision: model.supports_images,
+                    supports_images: model.supports_images,
                     supports_thinking: model.supports_thinking,
                 },
             );
@@ -273,19 +243,19 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
 pub struct OllamaLanguageModel {
     id: LanguageModelId,
-    model: ollama::Model,
+    model: AvailableModel,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
 
 impl OllamaLanguageModel {
     fn to_ollama_request(&self, request: LanguageModelRequest) -> ChatRequest {
-        let supports_vision = self.model.supports_vision.unwrap_or(false);
+        let supports_images = self.model.supports_images.unwrap_or(false);
 
         let mut messages = Vec::with_capacity(request.messages.len());
 
         for mut msg in request.messages.into_iter() {
-            let images = if supports_vision {
+            let images = if supports_images {
                 msg.content
                     .iter()
                     .filter_map(|content| match content {
@@ -404,7 +374,7 @@ impl LanguageModel for OllamaLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
-        self.model.supports_vision.unwrap_or(false)
+        self.model.supports_images.unwrap_or(false)
     }
 
     fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
@@ -708,6 +678,10 @@ impl Render for ConfigurationView {
         }
     }
 }
+
+struct GlobalOllamaLanguageModelProvider(Entity<OllamaLanguageModelProvider>);
+
+impl Global for GlobalOllamaLanguageModelProvider {}
 
 fn tool_into_ollama(tool: LanguageModelRequestTool) -> ollama::OllamaTool {
     ollama::OllamaTool::Function {

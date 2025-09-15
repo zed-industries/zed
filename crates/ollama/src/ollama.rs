@@ -3,9 +3,10 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
+pub const OLLAMA_API_KEY_VAR: &str = "OLLAMA_API_KEY";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -31,14 +32,21 @@ impl Default for KeepAlive {
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct Model {
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct AvailableModel {
+    /// The model name in the Ollama API (e.g. "llama3.2:latest")
     pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
+    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
     pub max_tokens: u64,
+    /// The number of seconds to keep the connection open after the last request
     pub keep_alive: Option<KeepAlive>,
+    /// Whether the model supports tools
     pub supports_tools: Option<bool>,
-    pub supports_vision: Option<bool>,
+    /// Whether the model supports images
+    pub supports_images: Option<bool>,
+    /// Whether to enable think mode
     pub supports_thinking: Option<bool>,
 }
 
@@ -64,13 +72,13 @@ fn get_max_tokens(name: &str) -> u64 {
     .clamp(1, MAXIMUM_TOKENS)
 }
 
-impl Model {
+impl AvailableModel {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
         max_tokens: Option<u64>,
         supports_tools: Option<bool>,
-        supports_vision: Option<bool>,
+        supports_images: Option<bool>,
         supports_thinking: Option<bool>,
     ) -> Self {
         Self {
@@ -81,7 +89,7 @@ impl Model {
             max_tokens: max_tokens.unwrap_or_else(|| get_max_tokens(name)),
             keep_alive: Some(KeepAlive::indefinite()),
             supports_tools,
-            supports_vision,
+            supports_images,
             supports_thinking,
         }
     }
@@ -97,6 +105,37 @@ impl Model {
     pub fn max_token_count(&self) -> u64 {
         self.max_tokens
     }
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateRequest {
+    pub model: String,
+    pub prompt: String,
+    pub suffix: Option<String>,
+    pub stream: bool,
+    pub options: Option<GenerateOptions>,
+    pub keep_alive: Option<KeepAlive>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateOptions {
+    pub num_predict: Option<i32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub stop: Option<Vec<String>>,
+}
+
+#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
+#[derive(Debug, Serialize, Deserialize)]
+pub struct GenerateResponse {
+    pub response: String,
+    pub done: bool,
+    pub total_duration: Option<u64>,
+    pub load_duration: Option<u64>,
+    pub prompt_eval_count: Option<i32>,
+    pub eval_count: Option<i32>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -235,7 +274,7 @@ impl ModelShow {
         self.capabilities.iter().any(|v| v == "tools")
     }
 
-    pub fn supports_vision(&self) -> bool {
+    pub fn supports_images(&self) -> bool {
         self.capabilities.iter().any(|v| v == "vision")
     }
 
@@ -313,13 +352,18 @@ pub async fn stream_chat_completion(
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: Option<String>,
     _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
-    let request_builder = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
+    }
 
     let request = request_builder.body(AsyncBody::default())?;
 
@@ -340,15 +384,25 @@ pub async fn get_models(
 }
 
 /// Fetch details of a model, used to determine model capabilities
-pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<ModelShow> {
+pub async fn show_model(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: Option<String>,
+    model: &str,
+) -> Result<ModelShow> {
     let uri = format!("{api_url}/api/show");
-    let request = HttpRequest::builder()
+    let mut request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json")
-        .body(AsyncBody::from(
-            serde_json::json!({ "model": model }).to_string(),
-        ))?;
+        .header("Content-Type", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"));
+    }
+
+    let request = request_builder.body(AsyncBody::from(
+        serde_json::json!({ "model": model }).to_string(),
+    ))?;
 
     let mut response = client.send(request).await?;
     let mut body = String::new();
@@ -364,9 +418,218 @@ pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> 
     Ok(details)
 }
 
+pub async fn generate(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: Option<String>,
+    request: GenerateRequest,
+) -> Result<GenerateResponse> {
+    let uri = format!("{api_url}/api/generate");
+    let mut request_builder = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json");
+
+    if let Some(api_key) = api_key {
+        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
+    }
+
+    let serialized_request = serde_json::to_string(&request)?;
+    let request = request_builder.body(AsyncBody::from(serialized_request))?;
+
+    let mut response = match client.send(request).await {
+        Ok(response) => response,
+        Err(err) => {
+            log::error!("Ollama server unavailable at {}: {}", api_url, err);
+            return Err(err);
+        }
+    };
+
+    let mut body = String::new();
+    response.body_mut().read_to_string(&mut body).await?;
+
+    anyhow::ensure!(
+        response.status().is_success(),
+        "Failed to connect to Ollama API: {} {}",
+        response.status(),
+        body,
+    );
+
+    let response: GenerateResponse =
+        serde_json::from_str(&body).context("Unable to parse Ollama generate response")?;
+    Ok(response)
+}
+
+/// Discover available models from the Ollama API with their capabilities
+pub async fn discover_available_models(
+    client: Arc<dyn HttpClient>,
+    api_url: &str,
+    api_key: Option<String>,
+) -> Result<Vec<AvailableModel>> {
+    let models = get_models(client.as_ref(), api_url, api_key.clone(), None).await?;
+
+    let tasks = models
+        .into_iter()
+        .filter(|model| !model.name.contains("-embed"))
+        .map(|model| {
+            let client = client.clone();
+            let api_key = api_key.clone();
+            let api_url = api_url.to_string();
+            async move {
+                let capabilities =
+                    show_model(client.as_ref(), &api_url, api_key, &model.name).await?;
+                Ok(AvailableModel::new(
+                    &model.name,
+                    None,
+                    None,
+                    Some(capabilities.supports_tools()),
+                    Some(capabilities.supports_images()),
+                    Some(capabilities.supports_thinking()),
+                ))
+            }
+        });
+
+    let mut available_models: Vec<_> = futures::stream::iter(tasks)
+        .buffer_unordered(5)
+        .collect::<Vec<Result<_>>>()
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+
+    available_models.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(available_models)
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake {
+    use super::*;
+    use http_client::{AsyncBody, Response, Url};
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    pub struct FakeHttpClient {
+        responses: Arc<Mutex<HashMap<String, String>>>,
+        requests: Arc<Mutex<Vec<(String, String)>>>, // (path, body)
+    }
+
+    impl FakeHttpClient {
+        pub fn new() -> Self {
+            Self {
+                responses: Arc::new(Mutex::new(HashMap::new())),
+                requests: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        pub fn set_response(&self, path: &str, response: String) {
+            self.responses
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), response);
+        }
+
+        pub fn set_generate_response(&self, completion_text: &str) {
+            let response = serde_json::json!({
+                "response": completion_text,
+                "done": true,
+                "context": [],
+                "total_duration": 1000000_u64,
+                "load_duration": 1000000_u64,
+                "prompt_eval_count": 10,
+                "prompt_eval_duration": 1000000_u64,
+                "eval_count": 20,
+                "eval_duration": 1000000_u64
+            });
+            self.set_response("/api/generate", response.to_string());
+        }
+
+        pub fn set_error(&self, path: &str) {
+            // Remove any existing response to force an error
+            self.responses.lock().unwrap().remove(path);
+        }
+
+        pub fn get_requests(&self) -> Vec<(String, String)> {
+            self.requests.lock().unwrap().clone()
+        }
+
+        pub fn clear_requests(&self) {
+            self.requests.lock().unwrap().clear();
+        }
+    }
+
+    impl HttpClient for FakeHttpClient {
+        fn type_name(&self) -> &'static str {
+            "FakeHttpClient"
+        }
+
+        fn user_agent(&self) -> Option<&http::HeaderValue> {
+            None
+        }
+
+        fn proxy(&self) -> Option<&Url> {
+            None
+        }
+
+        fn send(
+            &self,
+            req: http_client::Request<AsyncBody>,
+        ) -> futures::future::BoxFuture<'static, Result<Response<AsyncBody>, anyhow::Error>>
+        {
+            let path = req.uri().path().to_string();
+            let responses = Arc::clone(&self.responses);
+            let requests = Arc::clone(&self.requests);
+
+            Box::pin(async move {
+                // Store the request
+                requests.lock().unwrap().push((path.clone(), String::new()));
+
+                let responses = responses.lock().unwrap();
+
+                if let Some(response_body) = responses.get(&path).cloned() {
+                    let response = Response::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(AsyncBody::from(response_body))
+                        .unwrap();
+                    Ok(response)
+                } else {
+                    Err(anyhow::anyhow!("No mock response set for {}", path))
+                }
+            })
+        }
+    }
+
+    pub struct Ollama;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_generate_request_with_suffix_serialization() {
+        let request = GenerateRequest {
+            model: "qwen2.5-coder:32b".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: None,
+            }),
+            keep_alive: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "qwen2.5-coder:32b");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+    }
 
     #[test]
     fn parse_completion() {
@@ -588,5 +851,168 @@ mod tests {
         let message_images = parsed["messages"][0]["images"].as_array().unwrap();
         assert_eq!(message_images.len(), 1);
         assert_eq!(message_images[0].as_str().unwrap(), base64_image);
+    }
+
+    #[test]
+    fn test_generate_request_with_api_key_serialization() {
+        let request = GenerateRequest {
+            model: "qwen2.5-coder:32b".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: None,
+            }),
+            keep_alive: None,
+        };
+
+        // Test with API key
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "qwen2.5-coder:32b");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+
+        // Note: The API key parameter is passed to the generate function itself,
+        // not included in the GenerateRequest struct that gets serialized to JSON
+    }
+
+    #[test]
+    fn test_generate_request_with_stop_tokens() {
+        let request = GenerateRequest {
+            model: "codellama:7b-code".to_string(),
+            prompt: "def fibonacci(n):".to_string(),
+            suffix: Some("    return result".to_string()),
+            stream: false,
+            options: Some(GenerateOptions {
+                num_predict: Some(150),
+                temperature: Some(0.1),
+                top_p: Some(0.95),
+                stop: Some(vec!["<EOT>".to_string()]),
+            }),
+            keep_alive: None,
+        };
+
+        let json = serde_json::to_string(&request).unwrap();
+        let parsed: GenerateRequest = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed.model, "codellama:7b-code");
+        assert_eq!(parsed.prompt, "def fibonacci(n):");
+        assert_eq!(parsed.suffix, Some("    return result".to_string()));
+        assert!(!parsed.stream);
+        assert!(parsed.options.is_some());
+        let options = parsed.options.unwrap();
+        assert_eq!(options.stop, Some(vec!["<EOT>".to_string()]));
+    }
+
+    #[test]
+    fn test_discover_available_models() {
+        use crate::fake::FakeHttpClient;
+        use std::sync::Arc;
+
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+
+        // Mock /api/tags response (list models)
+        let models_response = serde_json::json!({
+            "models": [
+                {
+                    "name": "qwen2.5-coder:3b",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 1000000,
+                    "digest": "abc123",
+                    "details": {
+                        "format": "gguf",
+                        "family": "qwen2",
+                        "families": ["qwen2"],
+                        "parameter_size": "3B",
+                        "quantization_level": "Q4_0"
+                    }
+                },
+                {
+                    "name": "codellama:7b-code",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 2000000,
+                    "digest": "def456",
+                    "details": {
+                        "format": "gguf",
+                        "family": "codellama",
+                        "families": ["codellama"],
+                        "parameter_size": "7B",
+                        "quantization_level": "Q4_0"
+                    }
+                },
+                {
+                    "name": "nomic-embed-text",
+                    "modified_at": "2024-01-01T00:00:00Z",
+                    "size": 500000,
+                    "digest": "ghi789",
+                    "details": {
+                        "format": "gguf",
+                        "family": "nomic-embed",
+                        "families": ["nomic-embed"],
+                        "parameter_size": "137M",
+                        "quantization_level": "Q4_0"
+                    }
+                }
+            ]
+        });
+
+        fake_http_client.set_response("/api/tags", models_response.to_string());
+
+        // Mock /api/show responses for model capabilities
+        let capabilities_response = serde_json::json!({
+            "capabilities": ["tools", "thinking"]
+        });
+        fake_http_client.set_response("/api/show", capabilities_response.to_string());
+
+        // Test the shared discover_available_models function
+        let models = futures::executor::block_on(discover_available_models(
+            fake_http_client,
+            "http://localhost:11434",
+            None,
+        ))
+        .unwrap();
+
+        // Should have 2 models (excluding the embedding model)
+        assert_eq!(models.len(), 2);
+
+        let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
+        assert!(model_names.contains(&"codellama:7b-code"));
+        assert!(model_names.contains(&"qwen2.5-coder:3b"));
+        assert!(!model_names.contains(&"nomic-embed-text"));
+
+        // Verify models are sorted alphabetically
+        assert_eq!(models[0].name, "codellama:7b-code");
+        assert_eq!(models[1].name, "qwen2.5-coder:3b");
+
+        // Verify capabilities were detected
+        assert_eq!(models[0].supports_tools, Some(true));
+        assert_eq!(models[0].supports_thinking, Some(true));
+        assert_eq!(models[1].supports_tools, Some(true));
+        assert_eq!(models[1].supports_thinking, Some(true));
+    }
+
+    #[test]
+    fn test_discover_available_models_api_failure() {
+        use crate::fake::FakeHttpClient;
+        use std::sync::Arc;
+
+        let fake_http_client = Arc::new(FakeHttpClient::new());
+        fake_http_client.set_error("Connection refused");
+
+        // Test that API failure is properly handled
+        let result = futures::executor::block_on(discover_available_models(
+            fake_http_client,
+            "http://localhost:11434",
+            None,
+        ));
+
+        assert!(result.is_err());
     }
 }

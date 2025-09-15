@@ -9,17 +9,24 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/ollama.rs"
+path = "src/lib.rs"
 
 [features]
 default = []
 schemars = ["dep:schemars"]
+test-support = [
+    "http_client/test-support",
+]
 
 [dependencies]
 anyhow.workspace = true
 futures.workspace = true
 http_client.workspace = true
+log.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 workspace-hack.workspace = true
+
+[dev-dependencies]
+http_client = { workspace = true, features = ["test-support"] }

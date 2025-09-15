@@ -5016,6 +5016,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "clock",
  "cloud_llm_client",
  "copilot",
  "edit_prediction",
@@ -5024,9 +5025,15 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
+ "http_client",
  "indoc",
  "language",
+ "language_model",
+ "language_models",
  "lsp",
+ "ollama",
+ "ollama_edit_predictions",
  "paths",
  "project",
  "regex",
@@ -11130,9 +11137,30 @@ dependencies = [
  "anyhow",
  "futures 0.3.31",
  "http_client",
+ "log",
  "schemars",
  "serde",
  "serde_json",
+ "workspace-hack",
+]
+
+[[package]]
+name = "ollama_edit_predictions"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "client",
+ "edit_prediction",
+ "editor",
+ "gpui",
+ "http_client",
+ "language",
+ "ollama",
+ "project",
+ "serde_json",
+ "settings",
+ "theme",
+ "workspace",
  "workspace-hack",
 ]
 
@@ -20591,6 +20619,8 @@ dependencies = [
  "nix 0.29.0",
  "node_runtime",
  "notifications",
+ "ollama",
+ "ollama_edit_predictions",
  "onboarding",
  "outline",
  "outline_panel",
