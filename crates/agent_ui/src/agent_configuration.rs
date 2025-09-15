@@ -818,6 +818,8 @@ impl AgentConfiguration {
                     )
                     .child(
                         h_flex()
+                            .flex_1()
+                            .min_w_0()
                             .child(
                                 Disclosure::new(
                                     "tool-list-disclosure",
@@ -841,17 +843,19 @@ impl AgentConfiguration {
                                     .id(SharedString::from(format!("tooltip-{}", item_id)))
                                     .h_full()
                                     .w_3()
-                                    .mx_1()
+                                    .ml_1()
+                                    .mr_1p5()
                                     .justify_center()
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).ml_0p5())
+                            .child(Label::new(item_id).truncate())
                             .child(
                                 div()
                                     .id("extension-source")
                                     .mt_0p5()
                                     .mx_1()
+                                    .flex_none()
                                     .tooltip(Tooltip::text(source_tooltip))
                                     .child(
                                         Icon::new(source_icon)
@@ -873,7 +877,8 @@ impl AgentConfiguration {
                     )
                     .child(
                         h_flex()
-                            .gap_1()
+                            .gap_0p5()
+                            .flex_none()
                             .child(context_server_configuration_menu)
                             .child(
                                 Switch::new("context-server-switch", is_running.into())
