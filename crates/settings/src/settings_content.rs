@@ -3,22 +3,15 @@ mod theme;
 pub use language::*;
 pub use theme::*;
 
-use std::borrow::Cow;
 use std::env;
-use std::num::NonZeroU32;
-use std::sync::Arc;
 
-use anyhow::Result;
-use collections::{HashMap, HashSet};
-use gpui::{App, FontFallbacks, FontFeatures, HighlightStyle, Hsla, Modifiers, SharedString};
+use collections::HashMap;
+use gpui::{App, SharedString};
 use release_channel::ReleaseChannel;
-use schemars::{JsonSchema, json_schema};
-use serde::de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
-use util::schemars::replace_subschema;
-use util::serde::default_true;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
-use crate::{ActiveSettingsProfileName, ParameterizedJsonSchema, Settings};
+use crate::{ActiveSettingsProfileName, Settings};
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsContent {

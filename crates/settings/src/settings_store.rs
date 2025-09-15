@@ -15,7 +15,6 @@ use serde_json::Value;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
-    env,
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
@@ -24,14 +23,13 @@ use std::{
 };
 use util::{
     ResultExt as _, merge_non_null_json_value_into,
-    schemars::{DefaultDenyUnknownFields, add_new_subschema},
 };
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiEntry,
-    VsCodeSettings, WorktreeId, default_settings, parse_json_with_comments,
+    ActiveSettingsProfileName, SettingsJsonSchemaParams, SettingsUiEntry,
+    VsCodeSettings, WorktreeId, parse_json_with_comments,
     replace_value_in_json_text,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, ServerSettingsContent, SettingsContent,
@@ -1238,12 +1236,12 @@ impl Debug for SettingsStore {
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn from_file(&self, s: &SettingsContent) -> Option<Box<dyn Any>> {
-        dbg!(type_name::<T>(), TypeId::of::<T>());
+        (type_name::<T>(), TypeId::of::<T>());
         T::from_file(s).map(|result| Box::new(result) as _)
     }
 
     fn refine(&self, value: &mut dyn Any, refinements: &[&SettingsContent]) {
-        dbg!(type_name::<T>(), TypeId::of::<T>());
+        (type_name::<T>(), TypeId::of::<T>());
         let value = value.downcast_mut::<T>().unwrap();
         for refinement in refinements {
             value.refine(refinement)
