@@ -644,7 +644,22 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 let is_horizontal =
                         corner_center_to_point.x <
                         corner_center_to_point.y;
-                let border_width = select(border.y, border.x, is_horizontal);
+
+                // When applying dashed borders to just some, not all, the sides.
+                // The way we chose border widths above sometimes comes with a 0 width value.
+                // So we choose again to avoid division by zero.
+                let dashed_border = vec2<f32>(
+                        select(
+                            quad.border_widths.bottom,
+                            quad.border_widths.top,
+                            quad.border_widths.bottom < quad.border_widths.top),
+                        select(
+                            quad.border_widths.right,
+                            quad.border_widths.left,
+                            quad.border_widths.right < quad.border_widths.left )
+                   );
+
+                let border_width = select(dashed_border.y, dashed_border.x, is_horizontal);
                 dash_velocity = dv_numerator / border_width;
                 t = select(point.y, point.x, is_horizontal) * dash_velocity;
                 max_t = select(size.y, size.x, is_horizontal) * dash_velocity;
