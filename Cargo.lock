@@ -20643,6 +20643,7 @@ dependencies = [
  "zed_actions",
  "zed_env_vars",
  "zeta",
+ "zeta2",
  "zlog",
  "zlog_settings",
 ]
@@ -20928,6 +20929,7 @@ dependencies = [
  "gpui",
  "language",
  "project",
+ "util",
  "workspace-hack",
 ]
 

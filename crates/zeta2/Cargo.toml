@@ -18,3 +18,4 @@ gpui.workspace = true
 language.workspace = true
 project.workspace = true
 workspace-hack.workspace = true
+util.workspace = true
