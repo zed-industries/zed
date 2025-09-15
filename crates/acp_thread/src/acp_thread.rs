@@ -1123,6 +1123,7 @@ impl AcpThread {
                         acp::ContentBlock::Text(acp::TextContent {
                             text: "Tool call not found".to_string(),
                             annotations: None,
+                            meta: None,
                         }),
                         &languages,
                         cx,
@@ -3206,6 +3207,7 @@ mod tests {
                         status: Some(acp::ToolCallStatus::Completed),
                         ..Default::default()
                     },
+                    meta: None,
                 }),
                 cx,
             );
