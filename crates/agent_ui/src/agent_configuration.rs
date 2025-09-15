@@ -818,6 +818,8 @@ impl AgentConfiguration {
                     )
                     .child(
                         h_flex()
+                            .flex_1()
+                            .min_w_0()
                             .child(
                                 Disclosure::new(
                                     "tool-list-disclosure",
@@ -846,12 +848,19 @@ impl AgentConfiguration {
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).ml_0p5())
+                            .child(
+                                div()
+                                    .ml_0p5()
+                                    .overflow_hidden()
+                                    .flex_shrink()
+                                    .child(Label::new(item_id).truncate())
+                            )
                             .child(
                                 div()
                                     .id("extension-source")
                                     .mt_0p5()
                                     .mx_1()
+                                    .flex_none()
                                     .tooltip(Tooltip::text(source_tooltip))
                                     .child(
                                         Icon::new(source_icon)
@@ -861,19 +870,24 @@ impl AgentConfiguration {
                             )
                             .when(is_running, |this| {
                                 this.child(
-                                    Label::new(if tool_count == 1 {
-                                        SharedString::from("1 tool")
-                                    } else {
-                                        SharedString::from(format!("{} tools", tool_count))
-                                    })
-                                    .color(Color::Muted)
-                                    .size(LabelSize::Small),
+                                    div()
+                                        .flex_none()
+                                        .child(
+                                            Label::new(if tool_count == 1 {
+                                                SharedString::from("1 tool")
+                                            } else {
+                                                SharedString::from(format!("{} tools", tool_count))
+                                            })
+                                            .color(Color::Muted)
+                                            .size(LabelSize::Small)
+                                        )
                                 )
                             }),
                     )
                     .child(
                         h_flex()
                             .gap_1()
+                            .flex_none()
                             .child(context_server_configuration_menu)
                             .child(
                                 Switch::new("context-server-switch", is_running.into())
