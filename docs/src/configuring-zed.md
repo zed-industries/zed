@@ -4026,6 +4026,23 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
+## REPL
+
+- Description: Repl settings.
+- Setting: `repl`
+- Default:
+
+```json
+"repl": {
+  // Maximum number of columns to keep in REPL's scrollback buffer.
+  // Clamped with [20, 512] range.
+  "max_columns": 128,
+  // Maximum number of lines to keep in REPL's scrollback buffer.
+  // Clamped with [4, 256] range.
+  "max_lines": 32
+},
+```
+
 ## Theme
 
 - Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
@@ -4106,6 +4123,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json
 "title_bar": {
+  "show": "always",
   "show_branch_icon": false,
   "show_branch_name": true,
   "show_project_items": true,

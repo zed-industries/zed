@@ -5,8 +5,8 @@ mod claude_code_onboarding_modal;
 mod context_pill;
 mod end_trial_upsell;
 mod onboarding_modal;
-pub mod preview;
 mod unavailable_editing_tooltip;
+mod usage_callout;
 
 pub use acp_onboarding_modal::*;
 pub use agent_notification::*;
@@ -16,3 +16,4 @@ pub use context_pill::*;
 pub use end_trial_upsell::*;
 pub use onboarding_modal::*;
 pub use unavailable_editing_tooltip::*;
+pub use usage_callout::*;

@@ -3162,6 +3162,182 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         ]
     );
 }
+
+#[gpui::test]
+async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "b": {
+                    "c": {
+                        "d": {}
+                    }
+                }
+            },
+            "target_destination": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    // Case 1: Move last dir 'd' - should move only 'd', leaving 'a/b/c'
+    select_path(&panel, "root/a/b/c/d", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("target_destination")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a/b/c",
+            "    > target_destination/d  <== selected"
+        ],
+        "Moving last empty directory 'd' should leave 'a/b/c' and move only 'd'"
+    );
+
+    // Reset
+    select_path(&panel, "root/target_destination/d", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("a/b/c")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // Case 2: Move middle dir 'b' - should move 'b/c/d', leaving only 'a'
+    select_path(&panel, "root/a/b", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("target_destination")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    v a", "    > target_destination/b/c/d"],
+        "Moving middle directory 'b' should leave only 'a' and move 'b/c/d'"
+    );
+
+    // Reset
+    select_path(&panel, "root/target_destination/b", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("a")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // Case 3: Move first dir 'a' - should move whole 'a/b/c/d'
+    select_path(&panel, "root/a", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("target_destination")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > target_destination/a/b/c/d"],
+        "Moving first directory 'a' should move whole 'a/b/c/d' chain"
+    );
+}
+
 #[gpui::test]
 async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);

@@ -293,7 +293,7 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, JsonSchema, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LineIndicatorFormat {
     Short,
@@ -301,10 +301,13 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
-#[serde(transparent)]
-#[settings_key(key = "line_indicator_format")]
-pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
+#[derive(
+    Clone, Copy, Default, Debug, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey,
+)]
+#[settings_key(None)]
+pub(crate) struct LineIndicatorFormatContent {
+    line_indicator_format: Option<LineIndicatorFormat>,
+}
 
 impl Settings for LineIndicatorFormat {
     type FileContent = LineIndicatorFormatContent;
@@ -312,14 +315,18 @@ impl Settings for LineIndicatorFormat {
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         let format = [
             sources.release_channel,
-            sources.operating_system,
+            sources.profile,
             sources.user,
+            sources.operating_system,
+            Some(sources.default),
         ]
         .into_iter()
-        .find_map(|value| value.copied())
-        .unwrap_or(*sources.default);
+        .flatten()
+        .filter_map(|val| val.line_indicator_format)
+        .next()
+        .ok_or_else(Self::missing_default)?;
 
-        Ok(format.0)
+        Ok(format)
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}

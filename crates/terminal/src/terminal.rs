@@ -25,13 +25,14 @@ use alacritty_terminal::{
         ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
     },
 };
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 
 use futures::{
     FutureExt,
     channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded},
 };
 
+use itertools::Itertools as _;
 use mappings::mouse::{
     alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
     scroll_report,
@@ -48,10 +49,7 @@ use terminal_hyperlinks::RegexSearches;
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
-use util::{
-    paths::{self, home_dir},
-    truncate_and_trailoff,
-};
+use util::truncate_and_trailoff;
 
 use std::{
     borrow::Cow,
@@ -276,7 +274,9 @@ impl Dimensions for TerminalBounds {
 #[derive(Error, Debug)]
 pub struct TerminalError {
     pub directory: Option<PathBuf>,
-    pub shell: Shell,
+    pub program: Option<String>,
+    pub args: Option<Vec<String>>,
+    pub title_override: Option<SharedString>,
     pub source: std::io::Error,
 }
 
@@ -294,29 +294,23 @@ impl TerminalError {
                     Err(s) => s,
                 }
             })
-            .unwrap_or_else(|| {
-                format!(
-                    "<none specified, using home directory> {}",
-                    paths::home_dir().to_string_lossy()
-                )
-            })
+            .unwrap_or_else(|| "<none specified>".to_string())
     }
 
     pub fn fmt_shell(&self) -> String {
-        match &self.shell {
-            Shell::System => "<system defined shell>".to_string(),
-            Shell::Program(s) => s.to_string(),
-            Shell::WithArguments {
-                program,
-                args,
-                title_override,
-            } => {
-                if let Some(title_override) = title_override {
-                    format!("{} {} ({})", program, args.join(" "), title_override)
-                } else {
-                    format!("{} {}", program, args.join(" "))
-                }
-            }
+        if let Some(title_override) = &self.title_override {
+            format!(
+                "{} {} ({})",
+                self.program.as_deref().unwrap_or("<system defined shell>"),
+                self.args.as_ref().into_iter().flatten().format(" "),
+                title_override
+            )
+        } else {
+            format!(
+                "{} {}",
+                self.program.as_deref().unwrap_or("<system defined shell>"),
+                self.args.as_ref().into_iter().flatten().format(" ")
+            )
         }
     }
 }
@@ -420,15 +414,16 @@ impl TerminalBuilder {
         });
 
         let pty_options = {
-            let alac_shell = shell_params.map(|params| {
-                alacritty_terminal::tty::Shell::new(params.program, params.args.unwrap_or_default())
+            let alac_shell = shell_params.as_ref().map(|params| {
+                alacritty_terminal::tty::Shell::new(
+                    params.program.clone(),
+                    params.args.clone().unwrap_or_default(),
+                )
             });
 
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
-                working_directory: working_directory
-                    .clone()
-                    .or_else(|| Some(home_dir().to_path_buf())),
+                working_directory: working_directory.clone(),
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
             }
@@ -474,7 +469,9 @@ impl TerminalBuilder {
             Err(error) => {
                 bail!(TerminalError {
                     directory: working_directory,
-                    shell,
+                    program: shell_params.as_ref().map(|params| params.program.clone()),
+                    args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                    title_override: terminal_title_override,
                     source: error,
                 });
             }
@@ -489,7 +486,8 @@ impl TerminalBuilder {
             pty,
             pty_options.drain_on_exit,
             false,
-        )?;
+        )
+        .context("failed to create event loop")?;
 
         //Kick things off
         let pty_tx = event_loop.channel();
@@ -531,6 +529,7 @@ impl TerminalBuilder {
                 max_scroll_history_lines,
                 window_id,
             },
+            child_exited: None,
         };
 
         if !activation_script.is_empty() && no_task {
@@ -729,6 +728,7 @@ pub struct Terminal {
     shell_program: Option<String>,
     template: CopyTemplate,
     activation_script: Vec<String>,
+    child_exited: Option<ExitStatus>,
 }
 
 struct CopyTemplate {
@@ -1924,10 +1924,13 @@ impl Terminal {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(e).ok();
         }
+        if let Some(e) = e {
+            self.child_exited = Some(e);
+        }
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if error_code.is_none() {
+                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;
@@ -2163,11 +2166,12 @@ pub fn get_color_at_index(index: usize, theme: &Theme) -> Hsla {
 }
 
 /// Generates the RGB channels in [0, 5] for a given index into the 6x6x6 ANSI color cube.
+///
 /// See: [8 bit ANSI color](https://en.wikipedia.org/wiki/ANSI_escape_code#8-bit).
 ///
 /// Wikipedia gives a formula for calculating the index for a given color:
 ///
-/// ```
+/// ```text
 /// index = 16 + 36 × r + 6 × g + b (0 ≤ r, g, b ≤ 5)
 /// ```
 ///
@@ -2205,20 +2209,22 @@ mod tests {
     use collections::HashMap;
     use gpui::{Pixels, Point, TestAppContext, bounds, point, size};
     use rand::{Rng, distr, rngs::ThreadRng};
+    use task::ShellBuilder;
 
-    #[ignore = "Test is flaky on macOS, and doesn't run on Windows"]
     #[gpui::test]
     async fn test_basic_terminal(cx: &mut TestAppContext) {
         cx.executor().allow_parking();
 
         let (completion_tx, completion_rx) = smol::channel::unbounded();
+        let (program, args) = ShellBuilder::new(None, &Shell::System)
+            .build(Some("echo".to_owned()), &["hello".to_owned()]);
         let terminal = cx.new(|cx| {
             TerminalBuilder::new(
                 None,
                 None,
                 task::Shell::WithArguments {
-                    program: "echo".into(),
-                    args: vec!["hello".into()],
+                    program,
+                    args,
                     title_override: None,
                 },
                 HashMap::default(),

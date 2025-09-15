@@ -614,6 +614,7 @@ impl Thread {
     fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
         let image = model.map_or(true, |model| model.supports_images());
         acp::PromptCapabilities {
+            meta: None,
             image,
             audio: false,
             embedded_context: true,
@@ -728,6 +729,7 @@ impl Thread {
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
+                    meta: None,
                     id: acp::ToolCallId(tool_use.id.to_string().into()),
                     title: tool_use.name.to_string(),
                     kind: acp::ToolKind::Other,
@@ -2333,6 +2335,7 @@ impl ThreadEventStream {
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall {
+            meta: None,
             id: acp::ToolCallId(id.to_string().into()),
             title,
             kind,
@@ -2352,6 +2355,7 @@ impl ThreadEventStream {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp::ToolCallUpdate {
+                    meta: None,
                     id: acp::ToolCallId(tool_use_id.to_string().into()),
                     fields,
                 }
@@ -2437,6 +2441,7 @@ impl ToolCallEventStream {
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
                     tool_call: acp::ToolCallUpdate {
+                        meta: None,
                         id: acp::ToolCallId(self.tool_use_id.to_string().into()),
                         fields: acp::ToolCallUpdateFields {
                             title: Some(title.into()),
@@ -2448,16 +2453,19 @@ impl ToolCallEventStream {
                             id: acp::PermissionOptionId("always_allow".into()),
                             name: "Always Allow".into(),
                             kind: acp::PermissionOptionKind::AllowAlways,
+                            meta: None,
                         },
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("allow".into()),
                             name: "Allow".into(),
                             kind: acp::PermissionOptionKind::AllowOnce,
+                            meta: None,
                         },
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("deny".into()),
                             name: "Deny".into(),
                             kind: acp::PermissionOptionKind::RejectOnce,
+                            meta: None,
                         },
                     ],
                     response: response_tx,
@@ -2611,17 +2619,21 @@ impl From<UserMessageContent> for acp::ContentBlock {
             UserMessageContent::Text(text) => acp::ContentBlock::Text(acp::TextContent {
                 text,
                 annotations: None,
+                meta: None,
             }),
             UserMessageContent::Image(image) => acp::ContentBlock::Image(acp::ImageContent {
                 data: image.source.to_string(),
                 mime_type: "image/png".to_string(),
+                meta: None,
                 annotations: None,
                 uri: None,
             }),
             UserMessageContent::Mention { uri, content } => {
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
+                    meta: None,
                     resource: acp::EmbeddedResourceResource::TextResourceContents(
                         acp::TextResourceContents {
+                            meta: None,
                             mime_type: None,
                             text: content,
                             uri: uri.to_uri().to_string(),

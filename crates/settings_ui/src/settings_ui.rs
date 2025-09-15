@@ -909,7 +909,7 @@ fn render_dropdown(
     let value = downcast_any_item::<String>(value);
     let id = element_id_from_path(&value.path);
 
-    let menu = window.use_state(cx, |window, cx| {
+    let menu = window.use_keyed_state(id.clone(), cx, |window, cx| {
         let path = value.path.clone();
         let handler = Rc::new(move |variant: &'static str, cx: &mut App| {
             SettingsValue::write_value(&path, serde_json::Value::String(variant.to_string()), cx);

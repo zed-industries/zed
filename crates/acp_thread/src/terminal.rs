@@ -28,7 +28,7 @@ pub struct TerminalOutput {
 impl Terminal {
     pub fn new(
         id: acp::TerminalId,
-        command: String,
+        command_label: &str,
         working_dir: Option<PathBuf>,
         output_byte_limit: Option<usize>,
         terminal: Entity<terminal::Terminal>,
@@ -40,7 +40,7 @@ impl Terminal {
             id,
             command: cx.new(|cx| {
                 Markdown::new(
-                    format!("```\n{}\n```", command).into(),
+                    format!("```\n{}\n```", command_label).into(),
                     Some(language_registry.clone()),
                     None,
                     cx,
@@ -75,6 +75,7 @@ impl Terminal {
                     acp::TerminalExitStatus {
                         exit_code: exit_status.as_ref().map(|e| e.exit_code()),
                         signal: exit_status.and_then(|e| e.signal().map(Into::into)),
+                        meta: None,
                     }
                 })
                 .shared(),
@@ -105,7 +106,9 @@ impl Terminal {
                 exit_status: Some(acp::TerminalExitStatus {
                     exit_code: exit_status.as_ref().map(|e| e.exit_code()),
                     signal: exit_status.and_then(|e| e.signal().map(Into::into)),
+                    meta: None,
                 }),
+                meta: None,
             }
         } else {
             let (current_content, original_len) = self.truncated_output(cx);
@@ -114,6 +117,7 @@ impl Terminal {
                 truncated: current_content.len() < original_len,
                 output: current_content,
                 exit_status: None,
+                meta: None,
             }
         }
     }
