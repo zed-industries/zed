@@ -1398,24 +1398,14 @@ mod tests {
 
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut App) {
-        let mut store = SettingsStore::new(
-            cx,
-            r#"{
-                "auto_update": false,
-                "user": {
-                    "name": "John Doe",
-                    "age": 30,
-                    "staff": false
-                }
-            }"#,
-        );
+        let mut store = SettingsStore::new(cx, &default_settings());
         store.register_setting::<AutoUpdateSetting>(cx);
         store.register_setting::<TitleBarSettings>(cx);
         // store.register_setting::<MultiKeySettings>(cx);
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
-            &AutoUpdateSetting { auto_update: false }
+            &AutoUpdateSetting { auto_update: true }
         );
         // assert_eq!(
         //     store.get::<UserSettings>(None),
@@ -1436,9 +1426,7 @@ mod tests {
         store
             .set_user_settings(
                 r#"{
-                    "auto_update": true,
-                    "user": { "age": 31 },
-                    "key1": "a"
+                    "auto_update": false,
                 }"#,
                 cx,
             )
@@ -1446,7 +1434,7 @@ mod tests {
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
-            &AutoUpdateSetting { auto_update: true }
+            &AutoUpdateSetting { auto_update: false }
         );
         // assert_eq!(
         //     store.get::<UserSettings>(None),

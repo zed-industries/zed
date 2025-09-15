@@ -14884,6 +14884,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "serde_path_to_error",
+ "serde_repr",
  "settings_ui_macros",
  "smallvec",
  "tree-sitter",
