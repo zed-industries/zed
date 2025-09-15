@@ -201,7 +201,7 @@ impl Audio {
             .periodic_access(Duration::from_millis(100), move |denoise| {
                 denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
             })
-            .automatic_gain_control(1.0, 4.0, 0.0, 5.0)
+            .automatic_gain_control(1.0, 2.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
@@ -224,7 +224,7 @@ impl Audio {
         cx: &mut App,
     ) -> anyhow::Result<()> {
         let (replay_source, source) = source
-            .automatic_gain_control(1.0, 4.0, 0.0, 5.0)
+            .automatic_gain_control(1.0, 2.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source.set_enabled(LIVE_SETTINGS.auto_speaker_volume.load(Ordering::Relaxed));
             })
