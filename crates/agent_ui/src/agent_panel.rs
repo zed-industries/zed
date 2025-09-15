@@ -53,7 +53,9 @@ use assistant_tool::ToolWorkingSet;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::{CompletionIntent, Plan, PlanV1, PlanV2, UsageLimit};
 use editor::{Anchor, AnchorRangeExt as _, Editor, EditorEvent, MultiBuffer};
-use feature_flags::{self, ClaudeCodeFeatureFlag, FeatureFlagAppExt, GeminiAndNativeFeatureFlag, GooseAcpFeatureFlag};
+use feature_flags::{
+    self, ClaudeCodeFeatureFlag, FeatureFlagAppExt, GeminiAndNativeFeatureFlag, GooseAcpFeatureFlag,
+};
 use fs::Fs;
 use gpui::{
     Action, Animation, AnimationExt as _, AnyElement, App, AsyncWindowContext, ClipboardItem,
@@ -1948,13 +1950,7 @@ impl AgentPanel {
             AgentType::GooseAcp => {
                 self.selected_agent = AgentType::GooseAcp;
                 self.serialize(cx);
-                self.external_thread(
-                    Some(crate::ExternalAgent::GooseAcp),
-                    None,
-                    None,
-                    window,
-                    cx,
-                )
+                self.external_thread(Some(crate::ExternalAgent::GooseAcp), None, None, window, cx)
             }
             AgentType::Custom { name, command } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name, command }),
@@ -2710,7 +2706,7 @@ impl AgentPanel {
                             })
                             .when(cx.has_flag::<GooseAcpFeatureFlag>(), |menu| {
                                 menu.item(
-                                    ContextMenuEntry::new("New Goose ACP Thread")
+                                    ContextMenuEntry::new("New Goose Thread")
                                         .icon(IconName::Terminal)
                                         .disabled(is_via_collab)
                                         .icon_color(Color::Muted)

@@ -15,7 +15,7 @@ impl AgentServer for GooseAcp {
     }
 
     fn name(&self) -> SharedString {
-        "Goose ACP".into()
+        "Goose".into()
     }
 
     fn logo(&self) -> ui::IconName {
@@ -41,19 +41,10 @@ impl AgentServer for GooseAcp {
                 env: None,
             };
 
-            let root_dir = std::path::PathBuf::from(
-                root_dir.as_deref().unwrap_or(".")
-            );
+            let root_dir = std::path::PathBuf::from(root_dir.as_deref().unwrap_or("."));
 
-            let connection = crate::acp::connect(
-                name,
-                command,
-                &root_dir,
-                default_mode,
-                is_remote,
-                cx,
-            )
-            .await?;
+            let connection =
+                crate::acp::connect(name, command, &root_dir, default_mode, is_remote, cx).await?;
             Ok((connection, None))
         })
     }
