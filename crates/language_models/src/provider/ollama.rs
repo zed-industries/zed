@@ -85,8 +85,17 @@ impl State {
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let api_url = OllamaLanguageModelProvider::api_url(cx);
-        self.api_key_state
-            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
+        let task = self
+            .api_key_state
+            .store(api_url, api_key, |this| &mut this.api_key_state, cx);
+
+        self.fetched_models.clear();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                .ok();
+            result
+        })
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
@@ -181,8 +190,12 @@ impl OllamaLanguageModelProvider {
                         let current_settings = OllamaLanguageModelProvider::settings(cx);
                         let settings_changed = current_settings != &last_settings;
                         if settings_changed {
+                            let url_changed = last_settings.api_url != current_settings.api_url;
                             last_settings = current_settings.clone();
-                            this.authenticate(cx).detach();
+                            if url_changed {
+                                this.fetched_models.clear();
+                                this.authenticate(cx).detach();
+                            }
                             cx.notify();
                         }
                     }
