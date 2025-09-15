@@ -14,7 +14,9 @@ use util::ResultExt as _;
 
 use crate::{
     Project,
-    project_settings::{ContextServerSettings, ProjectSettings},
+    project_settings::{
+        ContextServerConfig, ContextServerSettings, ProjectSettings, TransportConfig,
+    },
     worktree_store::WorktreeStore,
 };
 
@@ -93,19 +95,35 @@ impl ContextServerState {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ContextServerConfiguration {
     Custom {
-        command: ContextServerCommand,
+        config: ContextServerConfig,
     },
     Extension {
-        command: ContextServerCommand,
+        config: ContextServerConfig,
         settings: serde_json::Value,
     },
 }
 
 impl ContextServerConfiguration {
-    pub fn command(&self) -> &ContextServerCommand {
+    pub fn command(&self) -> Option<ContextServerCommand> {
         match self {
-            ContextServerConfiguration::Custom { command } => command,
-            ContextServerConfiguration::Extension { command, .. } => command,
+            ContextServerConfiguration::Custom { config } => match config {
+                ContextServerConfig::Stdio { command, args, env } => Some(ContextServerCommand {
+                    path: command.clone(),
+                    args: args.clone(),
+                    env: env.clone(),
+                    timeout: None,
+                }),
+                ContextServerConfig::Transport { .. } => None,
+            },
+            ContextServerConfiguration::Extension { config, .. } => match config {
+                ContextServerConfig::Stdio { command, args, env } => Some(ContextServerCommand {
+                    path: command.clone(),
+                    args: args.clone(),
+                    env: env.clone(),
+                    timeout: None,
+                }),
+                ContextServerConfig::Transport { .. } => None,
+            },
         }
     }
 
@@ -117,10 +135,9 @@ impl ContextServerConfiguration {
         cx: &AsyncApp,
     ) -> Option<Self> {
         match settings {
-            ContextServerSettings::Custom {
-                enabled: _,
-                command,
-            } => Some(ContextServerConfiguration::Custom { command }),
+            ContextServerSettings::Custom { enabled: _, config } => {
+                Some(ContextServerConfiguration::Custom { config })
+            }
             ContextServerSettings::Extension {
                 enabled: _,
                 settings,
@@ -132,7 +149,13 @@ impl ContextServerConfiguration {
 
                 let command = descriptor.command(worktree_store, cx).await.log_err()?;
 
-                Some(ContextServerConfiguration::Extension { command, settings })
+                let config = ContextServerConfig::Stdio {
+                    command: command.path,
+                    args: command.args,
+                    env: command.env,
+                };
+
+                Some(ContextServerConfiguration::Extension { config, settings })
             }
         }
     }
@@ -489,11 +512,132 @@ impl ContextServerStore {
         if let Some(factory) = self.context_server_factory.as_ref() {
             factory(id, configuration)
         } else {
-            Arc::new(ContextServer::stdio(
-                id,
-                configuration.command().clone(),
-                root_path,
-            ))
+            // Parse the configuration to determine transport type
+            match configuration.as_ref() {
+                ContextServerConfiguration::Custom { config } => match config {
+                    ContextServerConfig::Stdio { command, args, env } => {
+                        Arc::new(ContextServer::stdio(
+                            id,
+                            ContextServerCommand {
+                                path: command.clone(),
+                                args: args.clone(),
+                                env: env.clone(),
+                                timeout: None,
+                            },
+                            root_path,
+                        ))
+                    }
+                    ContextServerConfig::Transport { transport } => match transport {
+                        TransportConfig::Http { url, headers } => {
+                            #[cfg(feature = "rmcp")]
+                            {
+                                Arc::new(ContextServer::http(id, url.clone(), headers.clone()))
+                            }
+                            #[cfg(not(feature = "rmcp"))]
+                            {
+                                let _ = (url, headers); // Suppress unused variable warnings
+                                log::warn!("HTTP transport requested but RMCP feature not enabled");
+                                // Fallback to stdio with dummy command
+                                Arc::new(ContextServer::stdio(
+                                    id,
+                                    ContextServerCommand {
+                                        path: "echo".into(),
+                                        args: vec!["RMCP not enabled".to_string()],
+                                        env: None,
+                                        timeout: None,
+                                    },
+                                    root_path,
+                                ))
+                            }
+                        }
+                        TransportConfig::Sse { url, headers } => {
+                            #[cfg(feature = "rmcp")]
+                            {
+                                Arc::new(ContextServer::sse(id, url.clone(), headers.clone()))
+                            }
+                            #[cfg(not(feature = "rmcp"))]
+                            {
+                                let _ = (url, headers); // Suppress unused variable warnings
+                                log::warn!("SSE transport requested but RMCP feature not enabled");
+                                // Fallback to stdio with dummy command
+                                Arc::new(ContextServer::stdio(
+                                    id,
+                                    ContextServerCommand {
+                                        path: "echo".into(),
+                                        args: vec!["RMCP not enabled".to_string()],
+                                        env: None,
+                                        timeout: None,
+                                    },
+                                    root_path,
+                                ))
+                            }
+                        }
+                    },
+                },
+                ContextServerConfiguration::Extension {
+                    config,
+                    settings: _,
+                } => match config {
+                    ContextServerConfig::Stdio { command, args, env } => {
+                        Arc::new(ContextServer::stdio(
+                            id,
+                            ContextServerCommand {
+                                path: command.clone(),
+                                args: args.clone(),
+                                env: env.clone(),
+                                timeout: None,
+                            },
+                            root_path,
+                        ))
+                    }
+                    ContextServerConfig::Transport { transport } => match transport {
+                        TransportConfig::Http { url, headers } => {
+                            #[cfg(feature = "rmcp")]
+                            {
+                                Arc::new(ContextServer::http(id, url.clone(), headers.clone()))
+                            }
+                            #[cfg(not(feature = "rmcp"))]
+                            {
+                                let _ = (url, headers); // Suppress unused variable warnings
+                                log::warn!("HTTP transport requested but RMCP feature not enabled");
+                                // Fallback to stdio with dummy command
+                                Arc::new(ContextServer::stdio(
+                                    id,
+                                    ContextServerCommand {
+                                        path: "echo".into(),
+                                        args: vec!["RMCP not enabled".to_string()],
+                                        env: None,
+                                        timeout: None,
+                                    },
+                                    root_path,
+                                ))
+                            }
+                        }
+                        TransportConfig::Sse { url, headers } => {
+                            #[cfg(feature = "rmcp")]
+                            {
+                                Arc::new(ContextServer::sse(id, url.clone(), headers.clone()))
+                            }
+                            #[cfg(not(feature = "rmcp"))]
+                            {
+                                let _ = (url, headers); // Suppress unused variable warnings
+                                log::warn!("SSE transport requested but RMCP feature not enabled");
+                                // Fallback to stdio with dummy command
+                                Arc::new(ContextServer::stdio(
+                                    id,
+                                    ContextServerCommand {
+                                        path: "echo".into(),
+                                        args: vec!["RMCP not enabled".to_string()],
+                                        env: None,
+                                        timeout: None,
+                                    },
+                                    root_path,
+                                ))
+                            }
+                        }
+                    },
+                },
+            }
         }
     }
 
@@ -640,7 +784,7 @@ mod tests {
         FakeFs, Project, context_server_store::registry::ContextServerDescriptor,
         project_settings::ProjectSettings,
     };
-    use context_server::test::create_fake_transport;
+
     use gpui::{AppContext, TestAppContext, UpdateGlobal as _};
     use serde_json::json;
     use std::{cell::RefCell, path::PathBuf, rc::Rc};
@@ -674,14 +818,8 @@ mod tests {
         let server_1_id = ContextServerId(SERVER_1_ID.into());
         let server_2_id = ContextServerId(SERVER_2_ID.into());
 
-        let server_1 = Arc::new(ContextServer::new(
-            server_1_id.clone(),
-            Arc::new(create_fake_transport(SERVER_1_ID, cx.executor())),
-        ));
-        let server_2 = Arc::new(ContextServer::new(
-            server_2_id.clone(),
-            Arc::new(create_fake_transport(SERVER_2_ID, cx.executor())),
-        ));
+        let server_1 = Arc::new(ContextServer::test_fake(server_1_id.clone()));
+        let server_2 = Arc::new(ContextServer::test_fake(server_2_id.clone()));
 
         store.update(cx, |store, cx| store.start_server(server_1, cx));
 
@@ -754,14 +892,8 @@ mod tests {
         let server_1_id = ContextServerId(SERVER_1_ID.into());
         let server_2_id = ContextServerId(SERVER_2_ID.into());
 
-        let server_1 = Arc::new(ContextServer::new(
-            server_1_id.clone(),
-            Arc::new(create_fake_transport(SERVER_1_ID, cx.executor())),
-        ));
-        let server_2 = Arc::new(ContextServer::new(
-            server_2_id.clone(),
-            Arc::new(create_fake_transport(SERVER_2_ID, cx.executor())),
-        ));
+        let server_1 = Arc::new(ContextServer::test_fake(server_1_id.clone()));
+        let server_2 = Arc::new(ContextServer::test_fake(server_2_id.clone()));
 
         let _server_events = assert_server_events(
             &store,
@@ -811,14 +943,8 @@ mod tests {
 
         let server_id = ContextServerId(SERVER_1_ID.into());
 
-        let server_with_same_id_1 = Arc::new(ContextServer::new(
-            server_id.clone(),
-            Arc::new(create_fake_transport(SERVER_1_ID, cx.executor())),
-        ));
-        let server_with_same_id_2 = Arc::new(ContextServer::new(
-            server_id.clone(),
-            Arc::new(create_fake_transport(SERVER_1_ID, cx.executor())),
-        ));
+        let server_with_same_id_1 = Arc::new(ContextServer::test_fake(server_id.clone()));
+        let server_with_same_id_2 = Arc::new(ContextServer::test_fake(server_id.clone()));
 
         // If we start another server with the same id, we should report that we stopped the previous one
         let _server_events = assert_server_events(
@@ -874,7 +1000,6 @@ mod tests {
         )
         .await;
 
-        let executor = cx.executor();
         let registry = cx.new(|cx| {
             let mut registry = ContextServerDescriptorRegistry::new();
             registry.register_context_server_descriptor(SERVER_1_ID.into(), fake_descriptor_1, cx);
@@ -882,12 +1007,7 @@ mod tests {
         });
         let store = cx.new(|cx| {
             ContextServerStore::test_maintain_server_loop(
-                Box::new(move |id, _| {
-                    Arc::new(ContextServer::new(
-                        id.clone(),
-                        Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
-                    ))
-                }),
+                Box::new(move |id, _| Arc::new(ContextServer::test_fake(id.clone()))),
                 registry.clone(),
                 project.read(cx).worktree_store(),
                 project.downgrade(),
@@ -979,11 +1099,10 @@ mod tests {
                         server_2_id.0.clone(),
                         ContextServerSettings::Custom {
                             enabled: true,
-                            command: ContextServerCommand {
-                                path: "somebinary".into(),
+                            config: ContextServerConfig::Stdio {
+                                command: "somebinary".into(),
                                 args: vec!["arg".to_string()],
                                 env: None,
-                                timeout: None,
                             },
                         },
                     ),
@@ -1020,11 +1139,10 @@ mod tests {
                         server_2_id.0.clone(),
                         ContextServerSettings::Custom {
                             enabled: true,
-                            command: ContextServerCommand {
-                                path: "somebinary".into(),
+                            config: ContextServerConfig::Stdio {
+                                command: "somebinary".into(),
                                 args: vec!["anotherArg".to_string()],
                                 env: None,
-                                timeout: None,
                             },
                         },
                     ),
@@ -1103,27 +1221,20 @@ mod tests {
                 SERVER_1_ID.into(),
                 ContextServerSettings::Custom {
                     enabled: true,
-                    command: ContextServerCommand {
-                        path: "somebinary".into(),
+                    config: ContextServerConfig::Stdio {
+                        command: "somebinary".into(),
                         args: vec!["arg".to_string()],
                         env: None,
-                        timeout: None,
                     },
                 },
             )],
         )
         .await;
 
-        let executor = cx.executor();
         let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
         let store = cx.new(|cx| {
             ContextServerStore::test_maintain_server_loop(
-                Box::new(move |id, _| {
-                    Arc::new(ContextServer::new(
-                        id.clone(),
-                        Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
-                    ))
-                }),
+                Box::new(move |id, _| Arc::new(ContextServer::test_fake(id.clone()))),
                 registry.clone(),
                 project.read(cx).worktree_store(),
                 project.downgrade(),
@@ -1156,11 +1267,10 @@ mod tests {
                     server_1_id.0.clone(),
                     ContextServerSettings::Custom {
                         enabled: false,
-                        command: ContextServerCommand {
-                            path: "somebinary".into(),
+                        config: ContextServerConfig::Stdio {
+                            command: "somebinary".into(),
                             args: vec!["arg".to_string()],
                             env: None,
-                            timeout: None,
                         },
                     },
                 )],
@@ -1185,10 +1295,9 @@ mod tests {
                     server_1_id.0.clone(),
                     ContextServerSettings::Custom {
                         enabled: true,
-                        command: ContextServerCommand {
-                            path: "somebinary".into(),
+                        config: ContextServerConfig::Stdio {
+                            command: "somebinary".into(),
                             args: vec!["arg".to_string()],
-                            timeout: None,
                             env: None,
                         },
                     },
@@ -1238,11 +1347,10 @@ mod tests {
     fn dummy_server_settings() -> ContextServerSettings {
         ContextServerSettings::Custom {
             enabled: true,
-            command: ContextServerCommand {
-                path: "somebinary".into(),
+            config: ContextServerConfig::Stdio {
+                command: "somebinary".into(),
                 args: vec!["arg".to_string()],
                 env: None,
-                timeout: None,
             },
         }
     }

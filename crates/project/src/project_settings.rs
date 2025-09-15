@@ -100,7 +100,7 @@ pub enum ContextServerSettings {
         enabled: bool,
 
         #[serde(flatten)]
-        command: ContextServerCommand,
+        config: ContextServerConfig,
     },
     Extension {
         /// Whether the context server is enabled.
@@ -111,6 +111,37 @@ pub enum ContextServerSettings {
         /// Consult the documentation for the context server to see what settings
         /// are supported.
         settings: serde_json::Value,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ContextServerConfig {
+    Stdio {
+        command: PathBuf,
+        args: Vec<String>,
+        #[serde(default)]
+        env: Option<HashMap<String, String>>,
+    },
+    Transport {
+        transport: TransportConfig,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "type")]
+pub enum TransportConfig {
+    #[serde(rename = "http")]
+    Http {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+    #[serde(rename = "sse")]
+    Sse {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
     },
 }
 
@@ -619,17 +650,21 @@ impl Settings for ProjectSettings {
             current
                 .context_servers
                 .extend(mcp.iter().filter_map(|(k, v)| {
-                    Some((
-                        k.clone().into(),
+                    Some((k.clone().into(), {
+                        let vscode_command: ContextServerCommand =
+                            serde_json::from_value::<VsCodeContextServerCommand>(v.clone())
+                                .ok()?
+                                .into();
+
                         ContextServerSettings::Custom {
                             enabled: true,
-                            command: serde_json::from_value::<VsCodeContextServerCommand>(
-                                v.clone(),
-                            )
-                            .ok()?
-                            .into(),
-                        },
-                    ))
+                            config: ContextServerConfig::Stdio {
+                                command: vscode_command.path,
+                                args: vscode_command.args,
+                                env: vscode_command.env,
+                            },
+                        }
+                    }))
                 }));
         }
 

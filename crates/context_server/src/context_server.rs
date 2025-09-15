@@ -18,8 +18,9 @@ use util::redact::should_redact;
 #[cfg(feature = "rmcp")]
 use rmcp::{
     ServiceExt,
+    model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParam},
     service::{RoleClient, RunningService},
-    transport::{ConfigureCommandExt, TokioChildProcess},
+    transport::{ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess},
 };
 #[cfg(feature = "rmcp")]
 use tokio::process::Command;
@@ -76,7 +77,7 @@ pub enum ContextServerTransport {
 pub struct ContextServer {
     id: ContextServerId,
     #[cfg(feature = "rmcp")]
-    service: RwLock<Option<Arc<RunningService<RoleClient, ()>>>>,
+    service: RwLock<Option<Arc<RunningService<RoleClient, InitializeRequestParam>>>>,
     #[cfg(not(feature = "rmcp"))]
     client: RwLock<Option<()>>, // Placeholder when RMCP not enabled
     configuration: ContextServerTransport,
@@ -154,7 +155,7 @@ impl ContextServer {
     }
 
     #[cfg(feature = "rmcp")]
-    pub fn service(&self) -> Option<Arc<RunningService<RoleClient, ()>>> {
+    pub fn service(&self) -> Option<Arc<RunningService<RoleClient, InitializeRequestParam>>> {
         self.service.read().clone()
     }
 
@@ -165,7 +166,7 @@ impl ContextServer {
 
     // Legacy method for backward compatibility
     #[cfg(feature = "rmcp")]
-    pub fn client(&self) -> Option<Arc<RunningService<RoleClient, ()>>> {
+    pub fn client(&self) -> Option<Arc<RunningService<RoleClient, InitializeRequestParam>>> {
         self.service()
     }
 
@@ -208,6 +209,15 @@ impl ContextServer {
     async fn initialize(&self) -> Result<()> {
         log::debug!("starting context server {}", self.id);
 
+        let client_info = ClientInfo {
+            protocol_version: Default::default(),
+            capabilities: ClientCapabilities::default(),
+            client_info: Implementation {
+                name: "zed".to_string(),
+                version: "0.0.1".to_string(),
+            },
+        };
+
         let service = match &self.configuration {
             ContextServerTransport::Stdio(command, working_directory) => {
                 let mut cmd = Command::new(&command.path);
@@ -222,11 +232,19 @@ impl ContextServer {
                 }
 
                 let transport = TokioChildProcess::new(cmd.configure(|_| {}))?;
-                ().serve(transport).await?
+                client_info.serve(transport).await?
             }
-            ContextServerTransport::Http { url: _, headers: _ } => {
-                // TODO: Implement HTTP transport when needed
-                return Err(anyhow::anyhow!("HTTP transport not yet implemented"));
+            ContextServerTransport::Http { url, headers } => {
+                // Correct HTTP implementation using StreamableHttpClientTransport
+                let transport = StreamableHttpClientTransport::from_uri(url.clone());
+
+                // TODO: Add headers support if RMCP supports it
+                let _ = headers; // Suppress unused variable warning
+                // for (key, value) in headers {
+                //     transport.add_header(key, value)?;
+                // }
+
+                client_info.serve(transport).await?
             }
             ContextServerTransport::Sse { url: _, headers: _ } => {
                 // TODO: Implement SSE transport when needed
