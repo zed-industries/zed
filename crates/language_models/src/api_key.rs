@@ -96,6 +96,11 @@ impl ApiKeyState {
         get_this: impl Fn(&mut Ent) -> &mut Self + 'static,
         cx: &Context<Ent>,
     ) -> Task<Result<()>> {
+        if self.is_from_env_var() {
+            return Task::ready(Err(anyhow!(
+                "bug: attempted to store API key in system keychain when API key is from env var",
+            )));
+        }
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |ent, cx| {
             if let Some(key) = &key {
