@@ -21,16 +21,13 @@ use std::{
     str::{self, FromStr},
     sync::Arc,
 };
-use util::{
-    ResultExt as _, merge_non_null_json_value_into,
-};
+use util::{ResultExt as _, merge_non_null_json_value_into};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ActiveSettingsProfileName, SettingsJsonSchemaParams, SettingsUiEntry,
-    VsCodeSettings, WorktreeId, parse_json_with_comments,
-    replace_value_in_json_text,
+    ActiveSettingsProfileName, SettingsJsonSchemaParams, SettingsUiEntry, VsCodeSettings,
+    WorktreeId, parse_json_with_comments, replace_value_in_json_text,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, ServerSettingsContent, SettingsContent,
         UserSettingsContent,
@@ -60,9 +57,9 @@ pub trait Settings: 'static + Send + Sync + Sized {
     /// user settings match the current version of the settings.
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
-    fn from_file(content: &SettingsContent) -> Option<Self>;
+    fn from_file(content: &SettingsContent, cx: &mut App) -> Option<Self>;
 
-    fn refine(&mut self, content: &SettingsContent);
+    fn refine(&mut self, content: &SettingsContent, cx: &mut App);
 
     fn missing_default() -> anyhow::Error {
         anyhow::anyhow!("missing default for: {}", std::any::type_name::<Self>())
@@ -252,8 +249,8 @@ struct SettingValue<T> {
 trait AnySettingValue: 'static + Send + Sync {
     fn setting_type_name(&self) -> &'static str;
 
-    fn from_file(&self, s: &SettingsContent) -> Option<Box<dyn Any>>;
-    fn refine(&self, value: &mut dyn Any, s: &[&SettingsContent]);
+    fn from_file(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>>;
+    fn refine(&self, value: &mut dyn Any, s: &[&SettingsContent], cx: &mut App);
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
@@ -347,9 +344,9 @@ impl SettingsStore {
             refinements.push(server_settings)
         }
         // todo!() unwrap...
-        let mut value = T::from_file(&self.default_settings).unwrap();
+        let mut value = T::from_file(&self.default_settings, cx).unwrap();
         for refinement in refinements {
-            value.refine(refinement)
+            value.refine(refinement, cx)
         }
 
         setting_value.set_global_value(Box::new(value));
@@ -1114,8 +1111,8 @@ impl SettingsStore {
         for setting_value in self.setting_values.values_mut() {
             // If the global settings file changed, reload the global value for the field.
             if changed_local_path.is_none() {
-                let mut value = setting_value.from_file(&self.default_settings).unwrap();
-                setting_value.refine(value.as_mut(), &refinements);
+                let mut value = setting_value.from_file(&self.default_settings, cx).unwrap();
+                setting_value.refine(value.as_mut(), &refinements, cx);
                 setting_value.set_global_value(value);
             }
 
@@ -1137,7 +1134,7 @@ impl SettingsStore {
 
                 // NOTE: this kind of condition existing in the old code too,
                 // but is there a problem when a setting is removed from a file?
-                if setting_value.from_file(local_settings).is_some() {
+                if setting_value.from_file(local_settings, cx).is_some() {
                     paths_stack.push(Some((*root_id, directory_path.as_ref())));
                     project_settings_stack.push(local_settings);
 
@@ -1150,9 +1147,9 @@ impl SettingsStore {
                         continue;
                     }
 
-                    let mut value = setting_value.from_file(&self.default_settings).unwrap();
-                    setting_value.refine(value.as_mut(), &refinements);
-                    setting_value.refine(value.as_mut(), &project_settings_stack);
+                    let mut value = setting_value.from_file(&self.default_settings, cx).unwrap();
+                    setting_value.refine(value.as_mut(), &refinements, cx);
+                    setting_value.refine(value.as_mut(), &project_settings_stack, cx);
                     setting_value.set_local_value(*root_id, directory_path.clone(), value);
                 }
             }
@@ -1235,16 +1232,16 @@ impl Debug for SettingsStore {
 }
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
-    fn from_file(&self, s: &SettingsContent) -> Option<Box<dyn Any>> {
+    fn from_file(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>> {
         (type_name::<T>(), TypeId::of::<T>());
-        T::from_file(s).map(|result| Box::new(result) as _)
+        T::from_file(s, cx).map(|result| Box::new(result) as _)
     }
 
-    fn refine(&self, value: &mut dyn Any, refinements: &[&SettingsContent]) {
+    fn refine(&self, value: &mut dyn Any, refinements: &[&SettingsContent], cx: &mut App) {
         (type_name::<T>(), TypeId::of::<T>());
         let value = value.downcast_mut::<T>().unwrap();
         for refinement in refinements {
-            value.refine(refinement)
+            value.refine(refinement, cx)
         }
     }
 
@@ -1338,7 +1335,7 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        TitleBarSettingsContent, TitleBarVisibilityContent, VsCodeSettingsSource,
+        TitleBarSettingsContent, TitleBarVisibilityContent, VsCodeSettingsSource, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
     };
 
@@ -1348,7 +1345,7 @@ mod tests {
     use serde::Deserialize;
     use settings_ui_macros::{SettingsKey, SettingsUi};
     use unindent::Unindent;
-    use util::Refine;
+    use util::MergeFrom;
 
     #[derive(Debug, PartialEq)]
     struct AutoUpdateSetting {
@@ -1356,13 +1353,13 @@ mod tests {
     }
 
     impl Settings for AutoUpdateSetting {
-        fn from_file(content: &SettingsContent) -> Option<Self> {
+        fn from_file(content: &SettingsContent, _: &mut App) -> Option<Self> {
             content
                 .auto_update
                 .map(|auto_update| AutoUpdateSetting { auto_update })
         }
 
-        fn refine(&mut self, content: &SettingsContent) {
+        fn refine(&mut self, content: &SettingsContent, _: &mut App) {
             if let Some(auto_update) = content.auto_update {
                 self.auto_update = auto_update;
             }
@@ -1377,18 +1374,18 @@ mod tests {
     }
 
     impl Settings for TitleBarSettings {
-        fn from_file(content: &SettingsContent) -> Option<Self> {
+        fn from_file(content: &SettingsContent, _: &mut App) -> Option<Self> {
             let content = content.title_bar?;
             Some(TitleBarSettings {
                 show: content.show?,
             })
         }
 
-        fn refine(&mut self, content: &SettingsContent) {
+        fn refine(&mut self, content: &SettingsContent, _: &mut App) {
             let Some(content) = content.title_bar else {
                 return;
             };
-            self.show.refine(&content.show)
+            self.show.merge_from(&content.show)
         }
 
         fn import_from_vscode(_: &VsCodeSettings, _: &mut SettingsContent) {}

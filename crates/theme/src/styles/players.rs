@@ -152,7 +152,7 @@ impl PlayerColors {
     }
 
     /// Merges the given player colors into this [`PlayerColors`] instance.
-    pub fn merge(&mut self, user_player_colors: &[PlayerColorContent]) {
+    pub fn merge(&mut self, user_player_colors: &[settings::PlayerColorContent]) {
         if user_player_colors.is_empty() {
             return;
         }

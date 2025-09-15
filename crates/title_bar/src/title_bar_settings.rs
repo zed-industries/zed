@@ -38,7 +38,7 @@ impl Settings for TitleBarSettings {
         }
     }
 
-    fn refine(&mut self, s: &SettingsContent) {
+    fn refine(&mut self, s: &SettingsContent, _: &mut App) {
         let Some(content) = s.title_bar else {
             return
         }

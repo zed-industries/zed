@@ -66,7 +66,7 @@ impl AccentColors {
     }
 
     /// Merges the given accent colors into this [`AccentColors`] instance.
-    pub fn merge(&mut self, accent_colors: &[AccentContent]) {
+    pub fn merge(&mut self, accent_colors: &[settings::AccentContent]) {
         if accent_colors.is_empty() {
             return;
         }

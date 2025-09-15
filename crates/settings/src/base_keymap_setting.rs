@@ -4,6 +4,7 @@ use crate::{
     self as settings,
     settings_content::{self, BaseKeymapContent, SettingsContent},
 };
+use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, VsCodeSettings};
@@ -138,11 +139,11 @@ pub struct BaseKeymapSetting {
 }
 
 impl Settings for BaseKeymap {
-    fn from_file(s: &crate::settings_content::SettingsContent) -> Option<Self> {
+    fn from_file(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Option<Self> {
         s.base_keymap.map(Into::into)
     }
 
-    fn refine(&mut self, s: &settings_content::SettingsContent) {
+    fn refine(&mut self, s: &settings_content::SettingsContent, _cx: &mut App) {
         if let Some(base_keymap) = s.base_keymap {
             *self = base_keymap.into();
         };

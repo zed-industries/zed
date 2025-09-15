@@ -1388,12 +1388,12 @@ pub fn refine<T: Clone>(dest: &mut T, src: &Option<T>) {
     }
 }
 
-pub trait Refine: Sized + Clone {
-    fn refine(&mut self, src: &Option<Self>);
+pub trait MergeFrom: Sized + Clone {
+    fn merge_from(&mut self, src: &Option<Self>);
 }
 
-impl<T: Clone> Refine for T {
-    fn refine(&mut self, src: &Option<Self>) {
+impl<T: Clone> MergeFrom for T {
+    fn merge_from(&mut self, src: &Option<Self>) {
         if let Some(src) = src {
             *self = src.clone();
         }

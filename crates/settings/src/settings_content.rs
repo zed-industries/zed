@@ -18,6 +18,9 @@ pub struct SettingsContent {
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
 
+    #[serde(flatten)]
+    pub theme: ThemeSettingsContent,
+
     pub base_keymap: Option<BaseKeymapContent>,
 
     pub auto_update: Option<bool>,

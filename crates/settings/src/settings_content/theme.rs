@@ -1,5 +1,5 @@
 use collections::{HashMap, IndexMap};
-use gpui::{FontFallbacks, FontFeatures};
+use gpui::{FontFallbacks, FontFeatures, FontStyle, FontWeight};
 use schemars::{JsonSchema, JsonSchema_repr, json_schema};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
@@ -999,12 +999,32 @@ pub enum WindowBackgroundContent {
     Blurred,
 }
 
+impl Into<gpui::WindowBackgroundAppearance> for WindowBackgroundContent {
+    fn into(self) -> gpui::WindowBackgroundAppearance {
+        match self {
+            WindowBackgroundContent::Opaque => gpui::WindowBackgroundAppearance::Opaque,
+            WindowBackgroundContent::Transparent => gpui::WindowBackgroundAppearance::Transparent,
+            WindowBackgroundContent::Blurred => gpui::WindowBackgroundAppearance::Blurred,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FontStyleContent {
     Normal,
     Italic,
     Oblique,
+}
+
+impl From<FontStyleContent> for FontStyle {
+    fn from(value: FontStyleContent) -> Self {
+        match value {
+            FontStyleContent::Normal => FontStyle::Normal,
+            FontStyleContent::Italic => FontStyle::Italic,
+            FontStyleContent::Oblique => FontStyle::Oblique,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq)]
@@ -1019,4 +1039,71 @@ pub enum FontWeightContent {
     Bold = 700,
     ExtraBold = 800,
     Black = 900,
+}
+
+impl From<FontWeightContent> for FontWeight {
+    fn from(value: FontWeightContent) -> Self {
+        match value {
+            FontWeightContent::Thin => FontWeight::THIN,
+            FontWeightContent::ExtraLight => FontWeight::EXTRA_LIGHT,
+            FontWeightContent::Light => FontWeight::LIGHT,
+            FontWeightContent::Normal => FontWeight::NORMAL,
+            FontWeightContent::Medium => FontWeight::MEDIUM,
+            FontWeightContent::Semibold => FontWeight::SEMIBOLD,
+            FontWeightContent::Bold => FontWeight::BOLD,
+            FontWeightContent::ExtraBold => FontWeight::EXTRA_BOLD,
+            FontWeightContent::Black => FontWeight::BLACK,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_buffer_line_height_deserialize_valid() {
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!("comfortable")).unwrap(),
+            BufferLineHeight::Comfortable
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!("standard")).unwrap(),
+            BufferLineHeight::Standard
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 1.0})).unwrap(),
+            BufferLineHeight::Custom(1.0)
+        );
+        assert_eq!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 1.5})).unwrap(),
+            BufferLineHeight::Custom(1.5)
+        );
+    }
+
+    #[test]
+    fn test_buffer_line_height_deserialize_invalid() {
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 0.99}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": 0.0}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
+        assert!(
+            serde_json::from_value::<BufferLineHeight>(json!({"custom": -1.0}))
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("buffer_line_height.custom must be at least 1.0")
+        );
+    }
 }
