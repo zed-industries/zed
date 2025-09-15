@@ -5040,6 +5040,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction_context"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "pretty_assertions",
+ "text",
+ "tree-sitter",
+ "util",
+ "workspace-hack",
+ "zlog",
+]
+
+[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
