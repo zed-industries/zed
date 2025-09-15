@@ -1,8 +1,9 @@
+use std::ops::Range;
+
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
 use language::Buffer;
 use project::Project;
-use std::ops::Range;
 
 // TODO: Find a better home for `Direction`.
 //
