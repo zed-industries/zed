@@ -1008,11 +1008,7 @@ mod tests {
                 .set_user_settings("{}", cx)
                 .expect("Unable to set user settings");
             cx.set_global(store);
-        });
-        cx.update(|cx| {
             AutoUpdateSetting::register(cx);
-        });
-        cx.update(|cx| {
             assert!(AutoUpdateSetting::get_global(cx).0);
         });
     }
