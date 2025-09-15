@@ -547,8 +547,10 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
                             .await;
                         scrollbar_state
                             .update(cx, |state, cx| {
-                                state.set_visibility(VisibilityState::Hidden, cx);
-                                state._auto_hide_task.take()
+                                if state.thumb_state == ThumbState::Inactive {
+                                    state.set_visibility(VisibilityState::Hidden, cx);
+                                }
+                                state._auto_hide_task.take();
                             })
                             .log_err();
                     })
@@ -666,7 +668,8 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             if state == ThumbState::Inactive {
                 self.schedule_auto_hide(window, cx);
             } else {
-                self.show_scrollbars(window, cx);
+                self.set_visibility(VisibilityState::Visible, cx);
+                self._auto_hide_task.take();
             }
             self.thumb_state = state;
             cx.notify();
