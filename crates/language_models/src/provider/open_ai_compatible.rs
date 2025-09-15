@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use convert_case::{Case, Casing};
-use futures::{FutureExt, StreamExt, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
@@ -239,16 +239,14 @@ impl OpenAiCompatibleLanguageModel {
     {
         let http_client = self.http_client.clone();
 
-        let api_key_and_url = self.state.read_with(cx, |state, _cx| {
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, _cx| {
             let api_url = &state.settings.api_url;
-            let api_key = state.api_key_state.key(api_url);
-            (api_key, state.settings.api_url.clone())
-        });
-        let (api_key, api_url) = match api_key_and_url {
-            Ok(api_key_and_url) => api_key_and_url,
-            Err(err) => {
-                return futures::future::ready(Err(err)).boxed();
-            }
+            (
+                state.api_key_state.key(api_url),
+                state.settings.api_url.clone(),
+            )
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let provider = self.provider_name.clone();

@@ -4,11 +4,10 @@ use anthropic::{
     AnthropicError, AnthropicModelMode, ContentDelta, Event, ResponseContent, ToolResultContent,
     ToolResultPart, Usage,
 };
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::Stream;
-use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, FontStyle, Task, TextStyle, WhiteSpace};
 use http_client::HttpClient;
 use language_model::{
@@ -363,16 +362,11 @@ impl AnthropicModel {
     > {
         let http_client = self.http_client.clone();
 
-        let api_key_and_url = self.state.read_with(cx, |state, cx| {
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
             let api_url = AnthropicLanguageModelProvider::api_url(cx);
-            let api_key = state.api_key_state.key(&api_url);
-            (api_key, api_url)
-        });
-        let (api_key, api_url) = match api_key_and_url {
-            Ok(api_key_and_url) => api_key_and_url,
-            Err(err) => {
-                return futures::future::ready(Err(err.into())).boxed();
-            }
+            (state.api_key_state.key(&api_url), api_url)
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let beta_headers = self.model.beta_headers();

@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
+use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, SharedString, Task, TextStyle, WhiteSpace,
 };
@@ -322,17 +322,11 @@ impl OpenRouterLanguageModel {
         >,
     > {
         let http_client = self.http_client.clone();
-        let api_key_and_url = self.state.read_with(cx, |state, cx| {
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
             let api_url = OpenRouterLanguageModelProvider::api_url(cx);
-            let api_key = state.api_key_state.key(&api_url);
-            (api_key, api_url)
-        });
-        let (api_key, api_url) = match api_key_and_url {
-            Ok(api_key_and_url) => api_key_and_url,
-            Err(err) => {
-                return futures::future::ready(Err(LanguageModelCompletionError::Other(err)))
-                    .boxed();
-            }
+            (state.api_key_state.key(&api_url), api_url)
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         async move {

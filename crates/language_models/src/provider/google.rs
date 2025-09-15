@@ -1,8 +1,8 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
+use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use google_ai::{
     FunctionDeclaration, GenerateContentResponse, GoogleModelMode, Part, SystemInstruction,
     ThinkingConfig, UsageMetadata,
@@ -295,16 +295,11 @@ impl GoogleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let api_key_and_url = self.state.read_with(cx, |state, cx| {
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
             let api_url = GoogleLanguageModelProvider::api_url(cx);
-            let api_key = state.api_key_state.key(&api_url);
-            (api_key, api_url)
-        });
-        let (api_key, api_url) = match api_key_and_url {
-            Ok(api_key_and_url) => api_key_and_url,
-            Err(err) => {
-                return futures::future::ready(Err(err)).boxed();
-            }
+            (state.api_key_state.key(&api_url), api_url)
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         async move {

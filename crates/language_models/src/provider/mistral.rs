@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use collections::BTreeMap;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture, stream::BoxStream};
 use gpui::{
     AnyView, App, AsyncApp, Context, Entity, FontStyle, SharedString, Task, TextStyle, WhiteSpace,
     Window,
@@ -244,16 +244,11 @@ impl MistralLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let api_key_and_url = self.state.read_with(cx, |state, cx| {
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
             let api_url = MistralLanguageModelProvider::api_url(cx);
-            let api_key = state.api_key_state.key(&api_url);
-            (api_key, api_url)
-        });
-        let (api_key, api_url) = match api_key_and_url {
-            Ok(api_key_and_url) => api_key_and_url,
-            Err(err) => {
-                return futures::future::ready(Err(err)).boxed();
-            }
+            (state.api_key_state.key(&api_url), api_url)
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
