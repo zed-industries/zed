@@ -1,8 +1,8 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
     Appearance, DEFAULT_ICON_THEME_NAME, IconTheme, IconThemeNotFoundError, SyntaxTheme, Theme,
-    ThemeNotFoundError, ThemeRegistry,
-    status_colors_refinement, syntax_overrides, theme_colors_refinement,
+    ThemeNotFoundError, ThemeRegistry, status_colors_refinement, syntax_overrides,
+    theme_colors_refinement,
 };
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -89,6 +89,16 @@ impl From<UiDensity> for String {
     }
 }
 
+impl From<settings::UiDensity> for UiDensity {
+    fn from(val: settings::UiDensity) -> Self {
+        match val {
+            settings::UiDensity::Compact => Self::Compact,
+            settings::UiDensity::Default => Self::Default,
+            settings::UiDensity::Comfortable => Self::Comfortable,
+        }
+    }
+}
+
 /// Customizable settings for the UI and theme system.
 #[derive(Clone, PartialEq)]
 pub struct ThemeSettings {
@@ -131,7 +141,7 @@ pub struct ThemeSettings {
     pub active_icon_theme: Arc<IconTheme>,
     /// The density of the UI.
     /// Note: This setting is still experimental. See [this tracking issue](
-    pub ui_density: settings::UiDensity,
+    pub ui_density: UiDensity,
     /// The amount of fading applied to unnecessary code.
     pub unnecessary_code_fade: f32,
 }
@@ -822,7 +832,7 @@ impl settings::Settings for ThemeSettings {
                 .get_icon_theme(icon_theme_selection.icon_theme(*system_appearance))
                 .ok()?,
             icon_theme_selection: Some(icon_theme_selection),
-            ui_density: content.ui_density?,
+            ui_density: content.ui_density?.into(),
             unnecessary_code_fade: content.unnecessary_code_fade?,
         };
 
@@ -835,7 +845,8 @@ impl settings::Settings for ThemeSettings {
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
 
-        self.ui_density.merge_from(&value.ui_density);
+        self.ui_density
+            .merge_from(&value.ui_density.map(Into::into));
 
         if let Some(value) = value.buffer_font_family.clone() {
             self.buffer_font.family = value.0.into();

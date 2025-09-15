@@ -944,26 +944,21 @@ impl SettingsStore {
                     break;
                 }
 
-                // NOTE: this kind of condition existing in the old code too,
-                // but is there a problem when a setting is removed from a file?
-                if setting_value.from_file(local_settings, cx).is_some() {
-                    paths_stack.push(Some((*root_id, directory_path.as_ref())));
-                    project_settings_stack.push(local_settings);
+                paths_stack.push(Some((*root_id, directory_path.as_ref())));
+                project_settings_stack.push(local_settings);
 
-                    // If a local settings file changed, then avoid recomputing local
-                    // settings for any path outside of that directory.
-                    if changed_local_path.is_some_and(|(changed_root_id, changed_local_path)| {
-                        *root_id != changed_root_id
-                            || !directory_path.starts_with(changed_local_path)
-                    }) {
-                        continue;
-                    }
-
-                    let mut value = setting_value.from_file(&self.default_settings, cx).unwrap();
-                    setting_value.refine(value.as_mut(), &refinements, cx);
-                    setting_value.refine(value.as_mut(), &project_settings_stack, cx);
-                    setting_value.set_local_value(*root_id, directory_path.clone(), value);
+                // If a local settings file changed, then avoid recomputing local
+                // settings for any path outside of that directory.
+                if changed_local_path.is_some_and(|(changed_root_id, changed_local_path)| {
+                    *root_id != changed_root_id || !directory_path.starts_with(changed_local_path)
+                }) {
+                    continue;
                 }
+
+                let mut value = setting_value.from_file(&self.default_settings, cx).unwrap();
+                setting_value.refine(value.as_mut(), &refinements, cx);
+                setting_value.refine(value.as_mut(), &project_settings_stack, cx);
+                setting_value.set_local_value(*root_id, directory_path.clone(), value);
             }
         }
         Ok(())
@@ -1111,6 +1106,8 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use crate::{
         TitleBarSettingsContent, TitleBarVisibilityContent, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
@@ -1166,12 +1163,37 @@ mod tests {
         fn import_from_vscode(_: &VsCodeSettings, _: &mut SettingsContent) {}
     }
 
+    #[derive(Debug, PartialEq)]
+    struct DefaultLanguageSettings {
+        tab_size: NonZeroU32,
+        preferred_line_length: u32,
+    }
+
+    impl Settings for DefaultLanguageSettings {
+        fn from_file(content: &SettingsContent, _: &mut App) -> Option<Self> {
+            let content = &content.project.all_languages.defaults;
+            Some(DefaultLanguageSettings {
+                tab_size: content.tab_size?,
+                preferred_line_length: content.preferred_line_length?,
+            })
+        }
+
+        fn refine(&mut self, content: &SettingsContent, _: &mut App) {
+            let content = &content.project.all_languages.defaults;
+            self.tab_size.merge_from(&content.tab_size);
+            self.preferred_line_length
+                .merge_from(&content.preferred_line_length);
+        }
+
+        fn import_from_vscode(_: &VsCodeSettings, _: &mut SettingsContent) {}
+    }
+
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
         store.register_setting::<AutoUpdateSetting>(cx);
         store.register_setting::<TitleBarSettings>(cx);
-        // store.register_setting::<MultiKeySettings>(cx);
+        store.register_setting::<DefaultLanguageSettings>(cx);
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
@@ -1204,78 +1226,75 @@ mod tests {
         );
 
         // todo!()
-        // store
-        //     .set_local_settings(
-        //         WorktreeId::from_usize(1),
-        //         Path::new("/root1").into(),
-        //         LocalSettingsKind::Settings,
-        //         Some(r#"{ "user": { "staff": true } }"#),
-        //         cx,
-        //     )
-        //     .unwrap();
-        // store
-        //     .set_local_settings(
-        //         WorktreeId::from_usize(1),
-        //         Path::new("/root1/subdir").into(),
-        //         LocalSettingsKind::Settings,
-        //         Some(r#"{ "user": { "name": "Jane Doe" } }"#),
-        //         cx,
-        //     )
-        //     .unwrap();
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(1),
+                Path::new("/root1").into(),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "tab_size": 5 }"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(1),
+                Path::new("/root1/subdir").into(),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "preferred_line_length": 50 }"#),
+                cx,
+            )
+            .unwrap();
 
-        // store
-        //     .set_local_settings(
-        //         WorktreeId::from_usize(1),
-        //         Path::new("/root2").into(),
-        //         LocalSettingsKind::Settings,
-        //         Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
-        //         cx,
-        //     )
-        //     .unwrap();
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(1),
+                Path::new("/root2").into(),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "tab_size": 9, "title_bar": { "show_branch_name": false } }"#),
+                cx,
+            )
+            .unwrap();
 
-        // assert_eq!(
-        //     store.get::<UserSettings>(Some(SettingsLocation {
-        //         worktree_id: WorktreeId::from_usize(1),
-        //         path: Path::new("/root1/something"),
-        //     })),
-        //     &UserSettings {
-        //         name: "John Doe".to_string(),
-        //         age: 31,
-        //         staff: true
-        //     }
-        // );
-        // assert_eq!(
-        //     store.get::<UserSettings>(Some(SettingsLocation {
-        //         worktree_id: WorktreeId::from_usize(1),
-        //         path: Path::new("/root1/subdir/something")
-        //     })),
-        //     &UserSettings {
-        //         name: "Jane Doe".to_string(),
-        //         age: 31,
-        //         staff: true
-        //     }
-        // );
-        // assert_eq!(
-        //     store.get::<UserSettings>(Some(SettingsLocation {
-        //         worktree_id: WorktreeId::from_usize(1),
-        //         path: Path::new("/root2/something")
-        //     })),
-        //     &UserSettings {
-        //         name: "John Doe".to_string(),
-        //         age: 42,
-        //         staff: false
-        //     }
-        // );
-        // assert_eq!(
-        //     store.get::<MultiKeySettings>(Some(SettingsLocation {
-        //         worktree_id: WorktreeId::from_usize(1),
-        //         path: Path::new("/root2/something")
-        //     })),
-        //     &MultiKeySettings {
-        //         key1: "a".to_string(),
-        //         key2: "b".to_string(),
-        //     }
-        // );
+        assert_eq!(
+            store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
+                worktree_id: WorktreeId::from_usize(1),
+                path: Path::new("/root1/something"),
+            })),
+            &DefaultLanguageSettings {
+                preferred_line_length: 80,
+                tab_size: 5.try_into().unwrap(),
+            }
+        );
+        assert_eq!(
+            store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
+                worktree_id: WorktreeId::from_usize(1),
+                path: Path::new("/root1/subdir/something")
+            })),
+            &DefaultLanguageSettings {
+                preferred_line_length: 50,
+                tab_size: 5.try_into().unwrap(),
+            }
+        );
+        assert_eq!(
+            store.get::<DefaultLanguageSettings>(Some(SettingsLocation {
+                worktree_id: WorktreeId::from_usize(1),
+                path: Path::new("/root2/something")
+            })),
+            &DefaultLanguageSettings {
+                preferred_line_length: 80,
+                tab_size: 9.try_into().unwrap(),
+            }
+        );
+        assert_eq!(
+            store.get::<TitleBarSettings>(Some(SettingsLocation {
+                worktree_id: WorktreeId::from_usize(1),
+                path: Path::new("/root2/something")
+            })),
+            &TitleBarSettings {
+                show: TitleBarVisibilityContent::Never,
+                show_branch_name: true,
+            }
+        );
     }
 
     #[gpui::test]

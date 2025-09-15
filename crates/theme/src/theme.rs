@@ -44,6 +44,10 @@ pub use crate::scale::*;
 pub use crate::schema::*;
 pub use crate::settings::*;
 pub use crate::styles::*;
+pub use ::settings::{
+    FontStyleContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
+    ThemeStyleContent,
+};
 
 /// Defines window border radius for platforms that use client side decorations.
 pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
