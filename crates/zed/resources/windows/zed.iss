@@ -34,6 +34,7 @@ CloseApplications=force
 SignTool=Defaultsign
 DefaultDirName={autopf}\{#AppName}
 PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=commandline dialog
 
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
