@@ -58,7 +58,7 @@ pub trait Settings: 'static + Send + Sync + Sized {
     /// user settings match the current version of the settings.
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
-    fn from_file(content: &SettingsContent, cx: &mut App) -> Option<Self>;
+    fn from_default(content: &SettingsContent, cx: &mut App) -> Option<Self>;
 
     fn refine(&mut self, content: &SettingsContent, cx: &mut App);
 
@@ -322,6 +322,10 @@ impl SettingsStore {
             refinements.push(extension_settings)
         }
 
+        if let Some(global_settings) = self.global_settings.as_ref() {
+            refinements.push(global_settings)
+        }
+
         if let Some(user_settings) = self.user_settings.as_ref() {
             refinements.push(&user_settings.content);
             if let Some(release_channel) = user_settings.for_release_channel() {
@@ -338,8 +342,12 @@ impl SettingsStore {
         if let Some(server_settings) = self.server_settings.as_ref() {
             refinements.push(server_settings)
         }
-        // todo!() unwrap...
-        let mut value = T::from_file(&self.default_settings, cx).unwrap();
+        let Some(mut value) = T::from_default(&self.default_settings, cx) else {
+            panic!(
+                "{}::from_file return None for default.json",
+                type_name::<T>()
+            )
+        };
         for refinement in refinements {
             value.refine(refinement, cx)
         }
@@ -903,6 +911,10 @@ impl SettingsStore {
             refinements.push(extension_settings)
         }
 
+        if let Some(global_settings) = self.global_settings.as_ref() {
+            refinements.push(global_settings)
+        }
+
         if let Some(user_settings) = self.user_settings.as_ref() {
             refinements.push(&user_settings.content);
             if let Some(release_channel) = user_settings.for_release_channel() {
@@ -1040,7 +1052,7 @@ impl Debug for SettingsStore {
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn from_file(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>> {
-        T::from_file(s, cx).map(|result| Box::new(result) as _)
+        T::from_default(s, cx).map(|result| Box::new(result) as _)
     }
 
     fn refine(&self, value: &mut dyn Any, refinements: &[&SettingsContent], cx: &mut App) {
@@ -1109,7 +1121,7 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        TitleBarSettingsContent, TitleBarVisibilityContent, default_settings,
+        TitleBarSettingsContent, TitleBarVisibilityContent, VsCodeSettingsSource, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
     };
 
@@ -1123,7 +1135,7 @@ mod tests {
     }
 
     impl Settings for AutoUpdateSetting {
-        fn from_file(content: &SettingsContent, _: &mut App) -> Option<Self> {
+        fn from_default(content: &SettingsContent, _: &mut App) -> Option<Self> {
             content
                 .auto_update
                 .map(|auto_update| AutoUpdateSetting { auto_update })
@@ -1145,7 +1157,7 @@ mod tests {
     }
 
     impl Settings for TitleBarSettings {
-        fn from_file(content: &SettingsContent, _: &mut App) -> Option<Self> {
+        fn from_default(content: &SettingsContent, _: &mut App) -> Option<Self> {
             let content = content.title_bar.clone()?;
             Some(TitleBarSettings {
                 show: content.show?,
@@ -1160,7 +1172,18 @@ mod tests {
             self.show.merge_from(&content.show)
         }
 
-        fn import_from_vscode(_: &VsCodeSettings, _: &mut SettingsContent) {}
+        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
+            let mut show = None;
+
+            vscode.enum_setting("window.titleBarStyle", &mut show, |value| match value {
+                "never" => Some(TitleBarVisibilityContent::Never),
+                "always" => Some(TitleBarVisibilityContent::Always),
+                _ => None,
+            });
+            if let Some(show) = show {
+                content.title_bar.get_or_insert_default().show.replace(show);
+            }
+        }
     }
 
     #[derive(Debug, PartialEq)]
@@ -1170,7 +1193,7 @@ mod tests {
     }
 
     impl Settings for DefaultLanguageSettings {
-        fn from_file(content: &SettingsContent, _: &mut App) -> Option<Self> {
+        fn from_default(content: &SettingsContent, _: &mut App) -> Option<Self> {
             let content = &content.project.all_languages.defaults;
             Some(DefaultLanguageSettings {
                 tab_size: content.tab_size?,
@@ -1185,7 +1208,17 @@ mod tests {
                 .merge_from(&content.preferred_line_length);
         }
 
-        fn import_from_vscode(_: &VsCodeSettings, _: &mut SettingsContent) {}
+        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
+            let content = &mut content.project.all_languages.defaults;
+
+            if let Some(size) = vscode
+                .read_value("editor.tabSize")
+                .and_then(|v| v.as_u64())
+                .and_then(|n| NonZeroU32::new(n as u32))
+            {
+                content.tab_size = Some(size);
+            }
+        }
     }
 
     #[gpui::test]
@@ -1337,9 +1370,6 @@ mod tests {
     #[gpui::test]
     fn test_setting_store_update(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        // store.register_setting::<MultiKeySettings>(cx);
-        // store.register_setting::<UserSettings>(cx);
-        // store.register_setting::<LanguageSettings>(cx);
 
         // entries added and updated
         check_settings_update(
@@ -1519,381 +1549,151 @@ mod tests {
         );
     }
 
-    // #[gpui::test]
-    // fn test_vscode_import(cx: &mut App) {
-    //     let mut store = SettingsStore::new(cx);
-    //     store.register_setting::<UserSettings>(cx);
-    //     store.register_setting::<JournalSettings>(cx);
-    //     store.register_setting::<LanguageSettings>(cx);
-    //     store.register_setting::<MultiKeySettings>(cx);
+    #[gpui::test]
+    fn test_vscode_import(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<DefaultLanguageSettings>(cx);
+        store.register_setting::<TitleBarSettings>(cx);
+        store.register_setting::<AutoUpdateSetting>(cx);
 
-    //     // create settings that werent present
-    //     check_vscode_import(
-    //         &mut store,
-    //         r#"{
-    //         }
-    //         "#
-    //         .unindent(),
-    //         r#" { "user.age": 37 } "#.to_owned(),
-    //         r#"{
-    //             "user": {
-    //                 "age": 37
-    //             }
-    //         }
-    //         "#
-    //         .unindent(),
-    //         cx,
-    //     );
+        // create settings that werent present
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#" { "editor.tabSize": 37 } "#.to_owned(),
+            r#"{
+                "tab_size": 37
+            }
+            "#
+            .unindent(),
+            cx,
+        );
 
-    //     // persist settings that were present
-    //     check_vscode_import(
-    //         &mut store,
-    //         r#"{
-    //             "user": {
-    //                 "staff": true,
-    //                 "age": 37
-    //             }
-    //         }
-    //         "#
-    //         .unindent(),
-    //         r#"{ "user.age": 42 }"#.to_owned(),
-    //         r#"{
-    //             "user": {
-    //                 "staff": true,
-    //                 "age": 42
-    //             }
-    //         }
-    //         "#
-    //         .unindent(),
-    //         cx,
-    //     );
+        // persist settings that were present
+        check_vscode_import(
+            &mut store,
+            r#"{
+                "preferred_line_length": 99,
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.tabSize": 42 }"#.to_owned(),
+            r#"{
+                "tab_size": 42,
+                "preferred_line_length": 99,
+            }
+            "#
+            .unindent(),
+            cx,
+        );
 
-    //     // don't clobber settings that aren't present in vscode
-    //     check_vscode_import(
-    //         &mut store,
-    //         r#"{
-    //             "user": {
-    //                 "staff": true,
-    //                 "age": 37
-    //             }
-    //         }
-    //         "#
-    //         .unindent(),
-    //         r#"{}"#.to_owned(),
-    //         r#"{
-    //             "user": {
-    //                 "staff": true,
-    //                 "age": 37
-    //             }
-    //         }
-    //         "#
-    //         .unindent(),
-    //         cx,
-    //     );
+        // don't clobber settings that aren't present in vscode
+        check_vscode_import(
+            &mut store,
+            r#"{
+                "preferred_line_length": 99,
+                "tab_size": 42
+            }
+            "#
+            .unindent(),
+            r#"{}"#.to_owned(),
+            r#"{
+                "preferred_line_length": 99,
+                "tab_size": 42
+            }
+            "#
+            .unindent(),
+            cx,
+        );
 
-    //     // custom enum
-    //     check_vscode_import(
-    //         &mut store,
-    //         r#"{
-    //             "journal": {
-    //             "hour_format": "hour12"
-    //             }
-    //         }
-    //         "#
-    //         .unindent(),
-    //         r#"{ "time_format": "24" }"#.to_owned(),
-    //         r#"{
-    //             "journal": {
-    //             "hour_format": "hour24"
-    //             }
-    //         }
-    //         "#
-    //         .unindent(),
-    //         cx,
-    //     );
+        // custom enum
+        check_vscode_import(
+            &mut store,
+            r#"{
+                "title_bar": {
+                "show": "always"
+                }
+            }
+            "#
+            .unindent(),
+            r#"{ "window.titleBarStyle": "never" }"#.to_owned(),
+            r#"{
+                "title_bar": {
+                "show": "never"
+                }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+    }
 
-    //     // Multiple keys for one setting
-    //     check_vscode_import(
-    //         &mut store,
-    //         r#"{
-    //             "key1": "value"
-    //         }
-    //         "#
-    //         .unindent(),
-    //         r#"{
-    //             "key_1_first": "hello",
-    //             "key_1_second": "world"
-    //         }"#
-    //         .to_owned(),
-    //         r#"{
-    //             "key1": "hello world"
-    //         }
-    //         "#
-    //         .unindent(),
-    //         cx,
-    //     );
+    #[track_caller]
+    fn check_vscode_import(
+        store: &mut SettingsStore,
+        old: String,
+        vscode: String,
+        expected: String,
+        cx: &mut App,
+    ) {
+        store.set_user_settings(&old, cx).ok();
+        let new = store.get_vscode_edits(
+            old,
+            &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
+        );
+        pretty_assertions::assert_eq!(new, expected);
+    }
 
-    //     // Merging lists together entries added and updated
-    //     check_vscode_import(
-    //         &mut store,
-    //         r#"{
-    //             "languages": {
-    //                 "JSON": {
-    //                     "language_setting_1": true
-    //                 },
-    //                 "Rust": {
-    //                     "language_setting_2": true
-    //                 }
-    //             }
-    //         }"#
-    //         .unindent(),
-    //         r#"{
-    //             "vscode_languages": [
-    //                 {
-    //                     "name": "JavaScript",
-    //                     "language_setting_1": true
-    //                 },
-    //                 {
-    //                     "name": "Rust",
-    //                     "language_setting_2": false
-    //                 }
-    //             ]
-    //         }"#
-    //         .to_owned(),
-    //         r#"{
-    //             "languages": {
-    //                 "JavaScript": {
-    //                     "language_setting_1": true
-    //                 },
-    //                 "JSON": {
-    //                     "language_setting_1": true
-    //                 },
-    //                 "Rust": {
-    //                     "language_setting_2": false
-    //                 }
-    //             }
-    //         }"#
-    //         .unindent(),
-    //         cx,
-    //     );
-    // }
+    #[gpui::test]
+    fn test_global_settings(cx: &mut App) {
+        let mut store = SettingsStore::new(cx, &test_settings());
+        store.register_setting::<TitleBarSettings>(cx);
 
-    // fn check_vscode_import(
-    //     store: &mut SettingsStore,
-    //     old: String,
-    //     vscode: String,
-    //     expected: String,
-    //     cx: &mut App,
-    // ) {
-    //     store.set_user_settings(&old, cx).ok();
-    //     let new = store.get_vscode_edits(
-    //         old,
-    //         &VsCodeSettings::from_str(&vscode, VsCodeSettingsSource::VsCode).unwrap(),
-    //     );
-    //     pretty_assertions::assert_eq!(new, expected);
-    // }
+        // Set global settings - these should override defaults but not user settings
+        store
+            .set_global_settings(
+                r#"{
+                    "title_bar": {
+                        "show": "never",
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
 
-    // #[derive(Debug, PartialEq, Deserialize, SettingsUi)]
-    // struct UserSettings {
-    //     name: String,
-    //     age: u32,
-    //     staff: bool,
-    // }
+        // Before user settings, global settings should apply
+        assert_eq!(
+            store.get::<TitleBarSettings>(None),
+            &TitleBarSettings {
+                show: TitleBarVisibilityContent::Never,
+                show_branch_name: true,
+            }
+        );
 
-    // #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-    // #[settings_key(key = "user")]
-    // struct UserSettingsContent {
-    //     name: Option<String>,
-    //     age: Option<u32>,
-    //     staff: Option<bool>,
-    // }
+        // Set user settings - these should override both defaults and global
+        store
+            .set_user_settings(
+                r#"{
+                    "title_bar": {
+                        "show": "always"
+                    }
+                }"#,
+                cx,
+            )
+            .unwrap();
 
-    // impl Settings for UserSettings {
-    //     type FileContent = UserSettingsContent;
-
-    //     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-    //         sources.json_merge()
-    //     }
-
-    //     fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
-    //         vscode.u32_setting("user.age", &mut current.age);
-    //     }
-    // }
-
-    // #[derive(Debug, Deserialize, PartialEq)]
-    // struct TurboSetting(bool);
-
-    // #[derive(
-    //     Copy,
-    //     Clone,
-    //     PartialEq,
-    //     Eq,
-    //     Debug,
-    //     Default,
-    //     serde::Serialize,
-    //     serde::Deserialize,
-    //     SettingsUi,
-    //     SettingsKey,
-    //     JsonSchema,
-    // )]
-    // #[serde(default)]
-    // #[settings_key(None)]
-    // pub struct TurboSettingContent {
-    //     turbo: Option<bool>,
-    // }
-
-    // impl Settings for TurboSetting {
-    //     type FileContent = TurboSettingContent;
-
-    //     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-    //         Ok(Self(
-    //             sources
-    //                 .user
-    //                 .or(sources.server)
-    //                 .unwrap_or(sources.default)
-    //                 .turbo
-    //                 .unwrap_or_default(),
-    //         ))
-    //     }
-
-    //     fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut Self::FileContent) {}
-    // }
-
-    // #[derive(Clone, Debug, PartialEq, Deserialize)]
-    // struct MultiKeySettings {
-    //     #[serde(default)]
-    //     key1: String,
-    //     #[serde(default)]
-    //     key2: String,
-    // }
-
-    // #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-    // #[settings_key(None)]
-    // struct MultiKeySettingsJson {
-    //     key1: Option<String>,
-    //     key2: Option<String>,
-    // }
-
-    // impl Settings for MultiKeySettings {
-    //     type FileContent = MultiKeySettingsJson;
-
-    //     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-    //         sources.json_merge()
-    //     }
-
-    //     fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
-    //         let first_value = vscode.read_string("key_1_first");
-    //         let second_value = vscode.read_string("key_1_second");
-
-    //         if let Some((first, second)) = first_value.zip(second_value) {
-    //             current.key1 = Some(format!("{} {}", first, second));
-    //         }
-    //     }
-    // }
-
-    // #[derive(Debug, Deserialize)]
-    // struct JournalSettings {
-    //     #[expect(unused)]
-    //     pub path: String,
-    //     #[expect(unused)]
-    //     pub hour_format: HourFormat,
-    // }
-
-    // #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-    // #[serde(rename_all = "snake_case")]
-    // enum HourFormat {
-    //     Hour12,
-    //     Hour24,
-    // }
-
-    // #[derive(
-    //     Clone, Default, Debug, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
-    // )]
-    // #[settings_key(key = "journal")]
-    // struct JournalSettingsJson {
-    //     pub path: Option<String>,
-    //     pub hour_format: Option<HourFormat>,
-    // }
-
-    // impl Settings for JournalSettings {
-    //     type FileContent = JournalSettingsJson;
-
-    //     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-    //         sources.json_merge()
-    //     }
-
-    //     fn import_from_vscode(vscode: &VsCodeSettings, current: &mut Self::FileContent) {
-    //         vscode.enum_setting("time_format", &mut current.hour_format, |s| match s {
-    //             "12" => Some(HourFormat::Hour12),
-    //             "24" => Some(HourFormat::Hour24),
-    //             _ => None,
-    //         });
-    //     }
-    // }
-
-    // #[gpui::test]
-    // fn test_global_settings(cx: &mut App) {
-    //     let mut store = SettingsStore::new(cx);
-    //     store.register_setting::<UserSettings>(cx);
-    //     store
-    //         .set_default_settings(
-    //             r#"{
-    //                 "user": {
-    //                     "name": "John Doe",
-    //                     "age": 30,
-    //                     "staff": false
-    //                 }
-    //             }"#,
-    //             cx,
-    //         )
-    //         .unwrap();
-
-    //     // Set global settings - these should override defaults but not user settings
-    //     store
-    //         .set_global_settings(
-    //             r#"{
-    //                 "user": {
-    //                     "name": "Global User",
-    //                     "age": 35,
-    //                     "staff": true
-    //                 }
-    //             }"#,
-    //             cx,
-    //         )
-    //         .unwrap();
-
-    //     // Before user settings, global settings should apply
-    //     assert_eq!(
-    //         store.get::<UserSettings>(None),
-    //         &UserSettings {
-    //             name: "Global User".to_string(),
-    //             age: 35,
-    //             staff: true,
-    //         }
-    //     );
-
-    //     // Set user settings - these should override both defaults and global
-    //     store
-    //         .set_user_settings(
-    //             r#"{
-    //                 "user": {
-    //                     "age": 40
-    //                 }
-    //             }"#,
-    //             cx,
-    //         )
-    //         .unwrap();
-
-    //     // User settings should override global settings
-    //     assert_eq!(
-    //         store.get::<UserSettings>(None),
-    //         &UserSettings {
-    //             name: "Global User".to_string(), // Name from global settings
-    //             age: 40,                         // Age from user settings
-    //             staff: true,                     // Staff from global settings
-    //         }
-    //     );
-    // }
+        // User settings should override global settings
+        assert_eq!(
+            store.get::<TitleBarSettings>(None),
+            &TitleBarSettings {
+                show: TitleBarVisibilityContent::Always,
+                show_branch_name: true, // Staff from global settings
+            }
+        );
+    }
 
     // #[derive(
     //     Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,

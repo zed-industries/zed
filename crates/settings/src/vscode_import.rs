@@ -78,12 +78,7 @@ impl VsCodeSettings {
     }
 
     pub fn read_value(&self, setting: &str) -> Option<&Value> {
-        if let Some(value) = self.content.get(setting) {
-            return Some(value);
-        }
-        // TODO: maybe check if it's in [platform] settings for current platform as a fallback
-        // TODO: deal with language specific settings
-        None
+        self.content.get(setting)
     }
 
     pub fn read_string(&self, setting: &str) -> Option<&str> {

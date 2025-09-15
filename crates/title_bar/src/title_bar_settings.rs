@@ -24,7 +24,7 @@ pub struct TitleBarSettings {
 }
 
 impl Settings for TitleBarSettings {
-    fn from_file(s: &SettingsContent) -> Option<Self> {
+    fn from_default(s: &SettingsContent) -> Option<Self> {
         let content = s.title_bar?;
         TitleBarSettings {
             show: content.show?,

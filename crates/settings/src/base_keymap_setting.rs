@@ -139,7 +139,7 @@ pub struct BaseKeymapSetting {
 }
 
 impl Settings for BaseKeymap {
-    fn from_file(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Option<Self> {
+    fn from_default(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Option<Self> {
         s.base_keymap.map(Into::into)
     }
 

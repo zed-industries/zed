@@ -796,7 +796,7 @@ fn font_fallbacks_from_settings(
 }
 
 impl settings::Settings for ThemeSettings {
-    fn from_file(content: &settings::SettingsContent, cx: &mut App) -> Option<Self> {
+    fn from_default(content: &settings::SettingsContent, cx: &mut App) -> Option<Self> {
         let content = &content.theme;
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
