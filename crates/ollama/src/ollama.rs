@@ -6,7 +6,6 @@ use serde_json::Value;
 use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
-pub const OLLAMA_API_KEY_VAR: &str = "OLLAMA_API_KEY";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -280,7 +279,7 @@ pub async fn complete(
 pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
-    api_key: Option<String>,
+    api_key: Option<&str>,
     request: ChatRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
@@ -319,7 +318,7 @@ pub async fn stream_chat_completion(
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
-    api_key: Option<String>,
+    api_key: Option<&str>,
     _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
@@ -354,7 +353,7 @@ pub async fn get_models(
 pub async fn show_model(
     client: &dyn HttpClient,
     api_url: &str,
-    api_key: Option<String>,
+    api_key: Option<&str>,
     model: &str,
 ) -> Result<ModelShow> {
     let uri = format!("{api_url}/api/show");

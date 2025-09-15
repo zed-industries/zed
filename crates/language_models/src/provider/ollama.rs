@@ -1,9 +1,8 @@
-use anyhow::{Context as _, Result, anyhow};
-use credentials_provider::CredentialsProvider;
+use anyhow::{Result, anyhow};
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -14,21 +13,23 @@ use language_model::{
 };
 use menu;
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OLLAMA_API_KEY_VAR,
-    OLLAMA_API_URL, OllamaFunctionCall, OllamaFunctionTool, OllamaToolCall, get_models, show_model,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OLLAMA_API_URL,
+    OllamaFunctionCall, OllamaFunctionTool, OllamaToolCall, get_models, show_model,
     stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
 use ui::{ButtonLike, ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
-use util::ResultExt;
+use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
+use crate::api_key::ApiKeyState;
 use crate::ui::InstructionListItem;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
@@ -37,6 +38,9 @@ const OLLAMA_SITE: &str = "https://ollama.com/";
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Ollama");
+
+const API_KEY_ENV_VAR_NAME: &str = "OLLAMA_API_KEY";
+static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
@@ -68,12 +72,10 @@ pub struct OllamaLanguageModelProvider {
 }
 
 pub struct State {
+    api_key_state: ApiKeyState,
     http_client: Arc<dyn HttpClient>,
     available_models: Vec<ollama::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
-    _subscription: Subscription,
-    api_key: Option<String>,
-    api_key_from_env: bool,
 }
 
 impl State {
@@ -81,52 +83,41 @@ impl State {
         !self.available_models.is_empty()
     }
 
-    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .ollama
-            .api_url
-            .clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .delete_credentials(&api_url, cx)
-                .await
-                .log_err();
-            this.update(cx, |this, cx| {
-                this.api_key = None;
-                this.api_key_from_env = false;
-                cx.notify();
-            })
-        })
+    fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let api_url = OllamaLanguageModelProvider::api_url(cx);
+        self.api_key_state
+            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
 
-    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .ollama
-            .api_url
-            .clone();
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let api_url = OllamaLanguageModelProvider::api_url(cx);
+        let task = self.api_key_state.load_if_needed(
+            api_url,
+            &API_KEY_ENV_VAR,
+            |this| &mut this.api_key_state,
+            cx,
+        );
+
+        // Always try to fetch models - if no API key is needed (local Ollama), it will work
+        // If API key is needed and provided, it will work
+        // If API key is needed and not provided, it will fail gracefully
         cx.spawn(async move |this, cx| {
-            credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
-                .await
-                .log_err();
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                cx.notify();
-            })
+            let result = task.await;
+            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                .ok();
+            result
         })
     }
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
         let http_client = Arc::clone(&self.http_client);
-        let api_url = settings.api_url.clone();
-        let api_key = self.api_key.clone();
+        let api_url = OllamaLanguageModelProvider::api_url(cx);
+        let api_key = self.api_key_state.key(&api_url);
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, api_key.clone(), None).await?;
+            let models =
+                get_models(http_client.as_ref(), &api_url, api_key.as_deref(), None).await?;
 
             let tasks = models
                 .into_iter()
@@ -141,7 +132,8 @@ impl State {
                     async move {
                         let name = model.name.as_str();
                         let capabilities =
-                            show_model(http_client.as_ref(), &api_url, api_key, name).await?;
+                            show_model(http_client.as_ref(), &api_url, api_key.as_deref(), name)
+                                .await?;
                         let ollama_model = ollama::Model::new(
                             name,
                             None,
@@ -176,45 +168,6 @@ impl State {
         let task = self.fetch_models(cx);
         self.fetch_model_task.replace(task);
     }
-
-    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .ollama
-            .api_url
-            .clone();
-        let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(OLLAMA_API_KEY_VAR) {
-                (Some(api_key), true)
-            } else {
-                match credentials_provider.read_credentials(&api_url, cx).await {
-                    Ok(Some((_, api_key))) => (
-                        Some(String::from_utf8(api_key).context("invalid Ollama API key")?),
-                        false,
-                    ),
-                    Ok(None) => (None, false),
-                    Err(_) => (None, false),
-                }
-            };
-
-            this.update(cx, |this, cx| {
-                this.api_key = api_key;
-                this.api_key_from_env = from_env;
-                cx.notify();
-            })?;
-
-            // Always try to fetch models - if no API key is needed (local Ollama), it will work
-            // If API key is needed and provided, it will work
-            // If API key is needed and not provided, it will fail gracefully
-            let _ = fetch_models_task.await;
-            Ok(())
-        })
-    }
 }
 
 impl OllamaLanguageModelProvider {
@@ -222,34 +175,44 @@ impl OllamaLanguageModelProvider {
         let this = Self {
             http_client: http_client.clone(),
             state: cx.new(|cx| {
-                let subscription = cx.observe_global::<SettingsStore>({
-                    let mut last_settings = AllLanguageModelSettings::get_global(cx).ollama.clone();
+                cx.observe_global::<SettingsStore>({
+                    let mut last_settings = OllamaLanguageModelProvider::settings(cx).clone();
                     move |this: &mut State, cx| {
-                        let new_settings = &AllLanguageModelSettings::get_global(cx).ollama;
-                        if &last_settings != new_settings {
-                            last_settings = new_settings.clone();
-                            if last_settings.api_url != new_settings.api_url {
-                                this.available_models.clear();
-                            }
-                            this.restart_fetch_models_task(cx);
+                        let current_settings = OllamaLanguageModelProvider::settings(cx);
+                        let settings_changed = current_settings != &last_settings;
+                        if settings_changed {
+                            last_settings = current_settings.clone();
+                            this.authenticate(cx).detach();
                             cx.notify();
                         }
                     }
-                });
+                })
+                .detach();
 
                 State {
                     http_client,
                     available_models: Default::default(),
                     fetch_model_task: None,
-                    _subscription: subscription,
-                    api_key: None,
-                    api_key_from_env: false,
+                    api_key_state: ApiKeyState::new(Self::api_url(cx)),
                 }
             }),
         };
         this.state
             .update(cx, |state, cx| state.restart_fetch_models_task(cx));
         this
+    }
+
+    fn settings(cx: &App) -> &OllamaSettings {
+        &AllLanguageModelSettings::get_global(cx).ollama
+    }
+
+    fn api_url(cx: &App) -> SharedString {
+        let api_url = &Self::settings(cx).api_url;
+        if api_url.is_empty() {
+            OLLAMA_API_URL.into()
+        } else {
+            SharedString::new(api_url.as_str())
+        }
     }
 }
 
@@ -295,11 +258,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .ollama
-            .available_models
-            .iter()
-        {
+        for model in &OllamaLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
                 ollama::Model {
@@ -350,7 +309,8 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_api_key(cx))
+        self.state
+            .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 }
 
@@ -538,19 +498,17 @@ impl LanguageModel for OllamaLanguageModel {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok((api_url, api_key)) = cx.update(|cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            (
-                settings.api_url.clone(),
-                self.state.read(cx).api_key.clone(),
-            )
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+            let api_url = OllamaLanguageModelProvider::api_url(cx);
+            (state.api_key_state.key(&api_url), api_url)
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
             let stream =
-                stream_chat_completion(http_client.as_ref(), &api_url, api_key, request).await?;
+                stream_chat_completion(http_client.as_ref(), &api_url, api_key.as_deref(), request)
+                    .await?;
             let stream = map_to_language_model_completion_events(stream);
             Ok(stream)
         });
@@ -675,11 +633,7 @@ impl ConfigurationView {
         let api_url_editor = cx.new(|cx| {
             let input = SingleLineInput::new(window, cx, OLLAMA_API_URL).label("API URL");
             input.editor.update(cx, |editor, cx| {
-                let api_url: Arc<str> = AllLanguageModelSettings::get_global(cx)
-                    .ollama
-                    .api_url
-                    .as_str()
-                    .into();
+                let api_url: Arc<str> = OllamaLanguageModelProvider::api_url(cx).into();
                 editor.set_text(api_url, window, cx);
             });
             input
@@ -708,15 +662,19 @@ impl ConfigurationView {
             return;
         }
 
+        self.api_key_editor.update(cx, |input, cx| {
+            input.editor.update(cx, |editor, cx| {
+                editor.set_text("", window, cx);
+            });
+        });
+
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
                 .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -728,7 +686,9 @@ impl ConfigurationView {
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
-            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
+            state
+                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .await
         })
         .detach_and_log_err(cx);
 
@@ -737,10 +697,8 @@ impl ConfigurationView {
 
     fn save_api_url(&mut self, cx: &mut Context<Self>) {
         let api_url = self.api_url_editor.read(cx).text(cx).trim().to_string();
-
-        let current_url = &AllLanguageModelSettings::get_global(cx).ollama.api_url;
-
-        if !api_url.is_empty() && &api_url != current_url {
+        let current_url = OllamaLanguageModelProvider::api_url(cx);
+        if !api_url.is_empty() && &api_url != &current_url {
             let fs = <dyn Fs>::global(cx);
             update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
                 if let Some(settings) = settings.ollama.as_mut() {
@@ -800,14 +758,15 @@ impl ConfigurationView {
 
     fn render_api_key_editor(&self, cx: &Context<Self>) -> Div {
         let state = self.state.read(cx);
+        let env_var_set = state.api_key_state.is_from_env_var();
 
-        if state.api_key.is_none() {
+        if !state.api_key_state.has_key() {
             v_flex()
               .on_action(cx.listener(Self::save_api_key))
               .child(self.api_key_editor.clone())
               .child(
                   Label::new(
-                      format!("You can also assign the {OLLAMA_API_KEY_VAR} environment variable and restart Zed.")
+                      format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed.")
                   )
                   .size(LabelSize::Small)
                   .color(Color::Muted),
@@ -826,10 +785,10 @@ impl ConfigurationView {
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(
                             Label::new(
-                                if state.api_key_from_env {
-                                    format!("API key set in {OLLAMA_API_KEY_VAR} environment variable.")
+                                if env_var_set {
+                                    format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable.")
                                 } else {
-                                    "API key configured.".to_string()
+                                    "API key configured".to_string()
                                 }
                             )
                         )
@@ -841,8 +800,8 @@ impl ConfigurationView {
                         .icon_size(IconSize::Small)
                         .icon_position(IconPosition::Start)
                         .layer(ElevationIndex::ModalSurface)
-                        .when(state.api_key_from_env, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {OLLAMA_API_KEY_VAR} environment variable.")))
+                        .when(env_var_set, |this| {
+                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )
@@ -850,7 +809,7 @@ impl ConfigurationView {
     }
 
     fn render_api_url_editor(&self, cx: &Context<Self>) -> Div {
-        let api_url = &AllLanguageModelSettings::get_global(cx).ollama.api_url;
+        let api_url = OllamaLanguageModelProvider::api_url(cx);
         let custom_api_url_set = api_url != OLLAMA_API_URL;
 
         if custom_api_url_set {
