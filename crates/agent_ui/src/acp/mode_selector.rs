@@ -110,7 +110,7 @@ impl ModeSelector {
                                         .child(h_flex().flex_shrink_0().children(
                                             ui::render_modifiers(
                                                 &gpui::Modifiers::secondary_key(),
-                                                PlatformStyle::Windows,
+                                                PlatformStyle::platform(),
                                                 None,
                                                 Some(ui::TextSize::Default.rems(cx).into()),
                                                 true,
