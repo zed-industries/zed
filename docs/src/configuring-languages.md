@@ -439,7 +439,7 @@ When renaming a symbol that spans multiple files, Zed will open a preview in a m
 
 ### Hover Information
 
-Use the `editor: Show Hover` command to display information about the symbol under the cursor. This often includes type information, documentation, and links to relevant resources.
+Use the `editor: Hover` command to display information about the symbol under the cursor. This often includes type information, documentation, and links to relevant resources.
 
 ### Workspace Symbol Search
 

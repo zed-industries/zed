@@ -180,7 +180,9 @@ pub mod git {
             SelectRepo,
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
-            Branch
+            Branch,
+            /// Opens the git stash selector.
+            ViewStash
         ]
     );
 }

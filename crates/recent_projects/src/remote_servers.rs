@@ -23,7 +23,6 @@ use remote::{
 use settings::{Settings, SettingsStore, update_settings_file, watch_config_file};
 use smol::stream::StreamExt as _;
 use std::{
-    any::Any,
     borrow::Cow,
     collections::BTreeSet,
     path::PathBuf,
@@ -35,7 +34,7 @@ use std::{
 };
 use ui::{
     IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Scrollbar, ScrollbarState, Section, Tooltip, prelude::*,
+    Section, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -284,7 +283,7 @@ impl RemoteEntry {
 
 #[derive(Clone)]
 struct DefaultState {
-    scrollbar: ScrollbarState,
+    scroll_handle: ScrollHandle,
     add_new_server: NavigableEntry,
     servers: Vec<RemoteEntry>,
 }
@@ -292,7 +291,6 @@ struct DefaultState {
 impl DefaultState {
     fn new(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
         let handle = ScrollHandle::new();
-        let scrollbar = ScrollbarState::new(handle.clone());
         let add_new_server = NavigableEntry::new(&handle, cx);
 
         let ssh_settings = SshSettings::get_global(cx);
@@ -333,7 +331,7 @@ impl DefaultState {
         }
 
         Self {
-            scrollbar,
+            scroll_handle: handle,
             add_new_server,
             servers,
         }
@@ -1449,7 +1447,6 @@ impl RemoteServerProjects {
             }
         }
 
-        let scroll_state = state.scrollbar.parent_entity(&cx.entity());
         let connect_button = div()
             .id("ssh-connect-new-server-container")
             .track_focus(&state.add_new_server.focus_handle)
@@ -1480,17 +1477,12 @@ impl RemoteServerProjects {
                 cx.notify();
             }));
 
-        let handle = &**scroll_state.scroll_handle() as &dyn Any;
-        let Some(scroll_handle) = handle.downcast_ref::<ScrollHandle>() else {
-            unreachable!()
-        };
-
         let mut modal_section = Navigable::new(
             v_flex()
                 .track_focus(&self.focus_handle(cx))
                 .id("ssh-server-list")
                 .overflow_y_scroll()
-                .track_scroll(scroll_handle)
+                .track_scroll(&state.scroll_handle)
                 .size_full()
                 .child(connect_button)
                 .child(
@@ -1585,17 +1577,7 @@ impl RemoteServerProjects {
                             )
                             .size_full(),
                         )
-                        .child(
-                            div()
-                                .occlude()
-                                .h_full()
-                                .absolute()
-                                .top_1()
-                                .bottom_1()
-                                .right_1()
-                                .w(px(8.))
-                                .children(Scrollbar::vertical(scroll_state)),
-                        ),
+                        .vertical_scrollbar_for(state.scroll_handle, window, cx),
                 ),
             )
             .into_any_element()

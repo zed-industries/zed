@@ -6414,6 +6414,45 @@ impl MultiBufferSnapshot {
     pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
         self.diffs.get(&buffer_id)
     }
+
+    /// Visually annotates a position or range with the `Debug` representation of a value. The
+    /// callsite of this function is used as a key - previous annotations will be removed.
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn debug<V, R>(&self, ranges: &R, value: V)
+    where
+        R: debug::ToMultiBufferDebugRanges,
+        V: std::fmt::Debug,
+    {
+        self.debug_with_key(std::panic::Location::caller(), ranges, value);
+    }
+
+    /// Visually annotates a position or range with the `Debug` representation of a value. Previous
+    /// debug annotations with the same key will be removed. The key is also used to determine the
+    /// annotation's color.
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn debug_with_key<K, R, V>(&self, key: &K, ranges: &R, value: V)
+    where
+        K: std::hash::Hash + 'static,
+        R: debug::ToMultiBufferDebugRanges,
+        V: std::fmt::Debug,
+    {
+        let text_ranges = ranges
+            .to_multi_buffer_debug_ranges(self)
+            .into_iter()
+            .flat_map(|range| {
+                self.range_to_buffer_ranges(range).into_iter().map(
+                    |(buffer, range, _excerpt_id)| {
+                        buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+                    },
+                )
+            })
+            .collect();
+        text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
+            debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
+        });
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -7993,5 +8032,77 @@ impl ToPointUtf16 for PointUtf16 {
 impl From<ExcerptId> for EntityId {
     fn from(id: ExcerptId) -> Self {
         EntityId::from(id.0 as u64)
+    }
+}
+
+#[cfg(debug_assertions)]
+pub mod debug {
+    use super::*;
+
+    pub trait ToMultiBufferDebugRanges {
+        fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot)
+        -> Vec<Range<usize>>;
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for T {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            [self.to_offset(snapshot)].to_multi_buffer_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Range<T> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            [self.start.to_offset(snapshot)..self.end.to_offset(snapshot)]
+                .to_multi_buffer_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Vec<T> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.as_slice().to_multi_buffer_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Vec<Range<T>> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.as_slice().to_multi_buffer_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for [T] {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.iter()
+                .map(|item| {
+                    let offset = item.to_offset(snapshot);
+                    offset..offset
+                })
+                .collect()
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for [Range<T>] {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.iter()
+                .map(|range| range.start.to_offset(snapshot)..range.end.to_offset(snapshot))
+                .collect()
+        }
     }
 }

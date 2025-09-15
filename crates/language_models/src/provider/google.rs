@@ -2,13 +2,14 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use editor::{Editor, EditorElement, EditorStyle};
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
+use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
 use google_ai::{
     FunctionDeclaration, GenerateContentResponse, GoogleModelMode, Part, SystemInstruction,
     ThinkingConfig, UsageMetadata,
 };
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FontStyle, Subscription, Task, TextStyle, WhiteSpace,
+    AnyView, App, AsyncApp, Context, Entity, FontStyle, SharedString, Task, TextStyle, WhiteSpace,
+    Window,
 };
 use http_client::HttpClient;
 use language_model::{
@@ -26,18 +27,18 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::{
-    Arc,
+    Arc, LazyLock,
     atomic::{self, AtomicU64},
 };
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, truncate_and_trailoff};
+use zed_env_vars::EnvVar;
 
-use crate::AllLanguageModelSettings;
+use crate::api_key::ApiKey;
+use crate::api_key::ApiKeyState;
 use crate::ui::InstructionListItem;
-
-use super::anthropic::ApiKey;
 
 const PROVIDER_ID: LanguageModelProviderId = language_model::GOOGLE_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::GOOGLE_PROVIDER_NAME;
@@ -91,101 +92,56 @@ pub struct GoogleLanguageModelProvider {
 }
 
 pub struct State {
-    api_key: Option<String>,
-    api_key_from_env: bool,
-    _subscription: Subscription,
+    api_key_state: ApiKeyState,
 }
 
-const GEMINI_API_KEY_VAR: &str = "GEMINI_API_KEY";
-const GOOGLE_AI_API_KEY_VAR: &str = "GOOGLE_AI_API_KEY";
+const GEMINI_API_KEY_VAR_NAME: &str = "GEMINI_API_KEY";
+const GOOGLE_AI_API_KEY_VAR_NAME: &str = "GOOGLE_AI_API_KEY";
+
+static API_KEY_ENV_VAR: LazyLock<EnvVar> = LazyLock::new(|| {
+    // Try GEMINI_API_KEY first as primary, fallback to GOOGLE_AI_API_KEY
+    EnvVar::new(GEMINI_API_KEY_VAR_NAME.into()).or(EnvVar::new(GOOGLE_AI_API_KEY_VAR_NAME.into()))
+});
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        self.api_key.is_some()
+        self.api_key_state.has_key()
     }
 
-    fn reset_api_key(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .google
-            .api_url
-            .clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .delete_credentials(&api_url, cx)
-                .await
-                .log_err();
-            this.update(cx, |this, cx| {
-                this.api_key = None;
-                this.api_key_from_env = false;
-                cx.notify();
-            })
-        })
+    fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let api_url = GoogleLanguageModelProvider::api_url(cx);
+        self.api_key_state
+            .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
 
-    fn set_api_key(&mut self, api_key: String, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .google
-            .api_url
-            .clone();
-        cx.spawn(async move |this, cx| {
-            credentials_provider
-                .write_credentials(&api_url, "Bearer", api_key.as_bytes(), cx)
-                .await?;
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                cx.notify();
-            })
-        })
-    }
-
-    fn authenticate(&self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
-        let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .google
-            .api_url
-            .clone();
-
-        cx.spawn(async move |this, cx| {
-            let (api_key, from_env) = if let Ok(api_key) = std::env::var(GOOGLE_AI_API_KEY_VAR) {
-                (api_key, true)
-            } else if let Ok(api_key) = std::env::var(GEMINI_API_KEY_VAR) {
-                (api_key, true)
-            } else {
-                let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, cx)
-                    .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
-                (
-                    String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
-                    false,
-                )
-            };
-
-            this.update(cx, |this, cx| {
-                this.api_key = Some(api_key);
-                this.api_key_from_env = from_env;
-                cx.notify();
-            })?;
-
-            Ok(())
-        })
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let api_url = GoogleLanguageModelProvider::api_url(cx);
+        self.api_key_state.load_if_needed(
+            api_url,
+            &API_KEY_ENV_VAR,
+            |this| &mut this.api_key_state,
+            cx,
+        )
     }
 }
 
 impl GoogleLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
-        let state = cx.new(|cx| State {
-            api_key: None,
-            api_key_from_env: false,
-            _subscription: cx.observe_global::<SettingsStore>(|_, cx| {
+        let state = cx.new(|cx| {
+            cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
+                let api_url = Self::api_url(cx);
+                this.api_key_state.handle_url_change(
+                    api_url,
+                    &API_KEY_ENV_VAR,
+                    |this| &mut this.api_key_state,
+                    cx,
+                );
                 cx.notify();
-            }),
+            })
+            .detach();
+            State {
+                api_key_state: ApiKeyState::new(Self::api_url(cx)),
+            }
         });
 
         Self { http_client, state }
@@ -201,30 +157,32 @@ impl GoogleLanguageModelProvider {
         })
     }
 
-    pub fn api_key(cx: &mut App) -> Task<Result<ApiKey>> {
+    pub fn api_key_for_gemini_cli(cx: &mut App) -> Task<Result<String>> {
+        if let Some(key) = API_KEY_ENV_VAR.value.clone() {
+            return Task::ready(Ok(key));
+        }
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
-        let api_url = AllLanguageModelSettings::get_global(cx)
-            .google
-            .api_url
-            .clone();
-
-        if let Ok(key) = std::env::var(GEMINI_API_KEY_VAR) {
-            Task::ready(Ok(ApiKey {
-                key,
-                from_env: true,
-            }))
-        } else {
-            cx.spawn(async move |cx| {
-                let (_, api_key) = credentials_provider
-                    .read_credentials(&api_url, cx)
+        let api_url = Self::api_url(cx).to_string();
+        cx.spawn(async move |cx| {
+            Ok(
+                ApiKey::load_from_system_keychain(&api_url, credentials_provider.as_ref(), cx)
                     .await?
-                    .ok_or(AuthenticateError::CredentialsNotFound)?;
+                    .key()
+                    .to_string(),
+            )
+        })
+    }
 
-                Ok(ApiKey {
-                    key: String::from_utf8(api_key).context("invalid {PROVIDER_NAME} API key")?,
-                    from_env: false,
-                })
-            })
+    fn settings(cx: &App) -> &GoogleSettings {
+        &crate::AllLanguageModelSettings::get_global(cx).google
+    }
+
+    fn api_url(cx: &App) -> SharedString {
+        let api_url = &Self::settings(cx).api_url;
+        if api_url.is_empty() {
+            google_ai::API_URL.into()
+        } else {
+            SharedString::new(api_url.as_str())
         }
     }
 }
@@ -269,10 +227,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &AllLanguageModelSettings::get_global(cx)
-            .google
-            .available_models
-        {
+        for model in &GoogleLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
                 google_ai::Model::Custom {
@@ -317,7 +272,8 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_api_key(cx))
+        self.state
+            .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 }
 
@@ -340,11 +296,11 @@ impl GoogleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let Ok((api_key, api_url)) = cx.read_entity(&self.state, |state, cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).google;
-            (state.api_key.clone(), settings.api_url.clone())
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+            let api_url = GoogleLanguageModelProvider::api_url(cx);
+            (state.api_key_state.key(&api_url), api_url)
         }) else {
-            return futures::future::ready(Err(anyhow!("App state dropped"))).boxed();
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         async move {
@@ -418,13 +374,16 @@ impl LanguageModel for GoogleLanguageModel {
         let model_id = self.model.request_id().to_string();
         let request = into_google(request, model_id, self.model.mode());
         let http_client = self.http_client.clone();
-        let api_key = self.state.read(cx).api_key.clone();
-
-        let settings = &AllLanguageModelSettings::get_global(cx).google;
-        let api_url = settings.api_url.clone();
+        let api_url = GoogleLanguageModelProvider::api_url(cx);
+        let api_key = self.state.read(cx).api_key_state.key(&api_url);
 
         async move {
-            let api_key = api_key.context("Missing Google API key")?;
+            let Some(api_key) = api_key else {
+                return Err(LanguageModelCompletionError::NoApiKey {
+                    provider: PROVIDER_NAME,
+                }
+                .into());
+            };
             let response = google_ai::count_tokens(
                 http_client.as_ref(),
                 &api_url,
@@ -852,20 +811,22 @@ impl ConfigurationView {
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx);
+        let api_key = self.api_key_editor.read(cx).text(cx).trim().to_string();
         if api_key.is_empty() {
             return;
         }
 
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
-                .update(cx, |state, cx| state.set_api_key(api_key, cx))?
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
                 .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -874,11 +835,11 @@ impl ConfigurationView {
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
-            state.update(cx, |state, cx| state.reset_api_key(cx))?.await
+            state
+                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .await
         })
         .detach_and_log_err(cx);
-
-        cx.notify();
     }
 
     fn render_api_key_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -913,7 +874,7 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let env_var_set = self.state.read(cx).api_key_from_env;
+        let env_var_set = self.state.read(cx).api_key_state.is_from_env_var();
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
@@ -950,7 +911,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {GEMINI_API_KEY_VAR} environment variable and restart Zed."),
+                        format!("You can also assign the {GEMINI_API_KEY_VAR_NAME} environment variable and restart Zed."),
                     )
                     .size(LabelSize::Small).color(Color::Muted),
                 )
@@ -969,9 +930,14 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {GEMINI_API_KEY_VAR} environment variable.")
+                            format!("API key set in {} environment variable", API_KEY_ENV_VAR.name)
                         } else {
-                            "API key configured.".to_string()
+                            let api_url = GoogleLanguageModelProvider::api_url(cx);
+                            if api_url == google_ai::API_URL {
+                                "API key configured".to_string()
+                            } else {
+                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
+                            }
                         })),
                 )
                 .child(
@@ -982,7 +948,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(Tooltip::text(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR} and {GOOGLE_AI_API_KEY_VAR} environment variables are unset.")))
+                            this.tooltip(Tooltip::text(format!("To reset your API key, make sure {GEMINI_API_KEY_VAR_NAME} and {GOOGLE_AI_API_KEY_VAR_NAME} environment variables are unset.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )

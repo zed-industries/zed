@@ -411,7 +411,10 @@ message Envelope {
         ExternalAgentsUpdated external_agents_updated = 375;
 
         ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
-        NewExternalAgentVersionAvailable new_external_agent_version_available = 377; // current max
+        NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
+
+        StashDrop stash_drop = 378;
+        StashApply stash_apply = 379; // current max
     }
 
     reserved 87 to 88;

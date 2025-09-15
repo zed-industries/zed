@@ -2,13 +2,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncApp;
-use language::{LanguageName, LspAdapter, LspAdapterDelegate, Toolchain};
+use language::{LanguageName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::Value;
 use std::{
-    any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
@@ -59,31 +58,29 @@ impl VtslsLspAdapter {
     }
 }
 
-struct TypeScriptVersions {
+pub struct TypeScriptVersions {
     typescript_version: String,
     server_version: String,
 }
 
 const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("vtsls");
 
-#[async_trait(?Send)]
-impl LspAdapter for VtslsLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        SERVER_NAME
-    }
+impl LspInstaller for VtslsLspAdapter {
+    type BinaryVersion = TypeScriptVersions;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(TypeScriptVersions {
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<TypeScriptVersions> {
+        Ok(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
                 .node
                 .npm_package_latest_version("@vtsls/language-server")
                 .await?,
-        }) as Box<_>)
+        })
     }
 
     async fn check_if_user_installed(
@@ -103,11 +100,10 @@ impl LspAdapter for VtslsLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: TypeScriptVersions,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::SERVER_PATH);
 
         let mut packages_to_install = Vec::new();
@@ -158,6 +154,13 @@ impl LspAdapter for VtslsLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_ts_server_binary(container_dir, &self.node).await
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for VtslsLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        SERVER_NAME
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {

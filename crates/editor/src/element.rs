@@ -18,7 +18,7 @@ use crate::{
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
         MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes,
-        ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
+        ScrollbarDiagnostics, ShowMinimap,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
@@ -85,7 +85,7 @@ use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::utils::ensure_minimum_contrast;
 use ui::{
     ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
-    right_click_menu,
+    right_click_menu, scrollbars::ShowScrollbar,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
@@ -1505,6 +1505,15 @@ impl EditorElement {
                 selections.push((player, layouts));
             }
         });
+
+        #[cfg(debug_assertions)]
+        Self::layout_debug_ranges(
+            &mut selections,
+            start_anchor..end_anchor,
+            &snapshot.display_snapshot,
+            cx,
+        );
+
         (selections, active_rows, newest_selection_head)
     }
 
@@ -7293,6 +7302,54 @@ impl EditorElement {
             .is_some_and(|style| matches!(style, GitHunkStyleSetting::UnstagedHollow));
 
         unstaged == unstaged_hollow
+    }
+
+    #[cfg(debug_assertions)]
+    fn layout_debug_ranges(
+        selections: &mut Vec<(PlayerColor, Vec<SelectionLayout>)>,
+        anchor_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) {
+        let theme = cx.theme();
+        text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
+            if debug_ranges.ranges.is_empty() {
+                return;
+            }
+            let buffer_snapshot = &display_snapshot.buffer_snapshot;
+            for (buffer, buffer_range, excerpt_id) in
+                buffer_snapshot.range_to_buffer_ranges(anchor_range)
+            {
+                let buffer_range =
+                    buffer.anchor_after(buffer_range.start)..buffer.anchor_before(buffer_range.end);
+                selections.extend(debug_ranges.ranges.iter().flat_map(|debug_range| {
+                    let player_color = theme
+                        .players()
+                        .color_for_participant(debug_range.occurrence_index as u32 + 1);
+                    debug_range.ranges.iter().filter_map(move |range| {
+                        if range.start.buffer_id != Some(buffer.remote_id()) {
+                            return None;
+                        }
+                        let clipped_start = range.start.max(&buffer_range.start, buffer);
+                        let clipped_end = range.end.min(&buffer_range.end, buffer);
+                        let range = buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_start)?
+                            ..buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_end)?;
+                        let start = range.start.to_display_point(display_snapshot);
+                        let end = range.end.to_display_point(display_snapshot);
+                        let selection_layout = SelectionLayout {
+                            head: start,
+                            range: start..end,
+                            cursor_shape: CursorShape::Bar,
+                            is_newest: false,
+                            is_local: false,
+                            active_rows: start.row()..end.row(),
+                            user_name: Some(SharedString::new(debug_range.value.clone())),
+                        };
+                        Some((player_color, vec![selection_layout]))
+                    })
+                }));
+            }
+        });
     }
 }
 

@@ -1012,6 +1012,8 @@ impl settings::Settings for DisableAiSettings {
             .iter()
             .chain(sources.user.iter())
             .chain(sources.server.iter())
+            .chain(sources.release_channel.iter())
+            .chain(sources.profile.iter())
             .any(|disabled| disabled.disable_ai == Some(true));
 
         Ok(Self { disable_ai })

@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -68,7 +68,7 @@ pub struct ContextPickerCompletionProvider {
     workspace: WeakEntity<Workspace>,
     history_store: Entity<HistoryStore>,
     prompt_store: Option<Entity<PromptStore>>,
-    prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
 }
 
@@ -78,7 +78,7 @@ impl ContextPickerCompletionProvider {
         workspace: WeakEntity<Workspace>,
         history_store: Entity<HistoryStore>,
         prompt_store: Option<Entity<PromptStore>>,
-        prompt_capabilities: Rc<Cell<acp::PromptCapabilities>>,
+        prompt_capabilities: Rc<RefCell<acp::PromptCapabilities>>,
         available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     ) -> Self {
         Self {
@@ -600,7 +600,7 @@ impl ContextPickerCompletionProvider {
                 }),
         );
 
-        if self.prompt_capabilities.get().embedded_context {
+        if self.prompt_capabilities.borrow().embedded_context {
             const RECENT_COUNT: usize = 2;
             let threads = self
                 .history_store
@@ -622,7 +622,7 @@ impl ContextPickerCompletionProvider {
         workspace: &Entity<Workspace>,
         cx: &mut App,
     ) -> Vec<ContextPickerEntry> {
-        let embedded_context = self.prompt_capabilities.get().embedded_context;
+        let embedded_context = self.prompt_capabilities.borrow().embedded_context;
         let mut entries = if embedded_context {
             vec![
                 ContextPickerEntry::Mode(ContextPickerMode::File),
@@ -694,7 +694,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ContextCompletion::try_parse(
                 line,
                 offset_to_line,
-                self.prompt_capabilities.get().embedded_context,
+                self.prompt_capabilities.borrow().embedded_context,
             )
         });
         let Some(state) = state else {
@@ -896,7 +896,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             ContextCompletion::try_parse(
                 line,
                 offset_to_line,
-                self.prompt_capabilities.get().embedded_context,
+                self.prompt_capabilities.borrow().embedded_context,
             )
             .map(|completion| {
                 completion.source_range().start <= offset_to_line + position.column as usize

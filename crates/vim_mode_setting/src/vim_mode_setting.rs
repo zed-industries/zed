@@ -43,12 +43,18 @@ impl Settings for VimModeSetting {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         Ok(Self(
-            sources
-                .user
-                .and_then(|mode| mode.vim_mode)
-                .or(sources.server.and_then(|mode| mode.vim_mode))
-                .or(sources.default.vim_mode)
-                .ok_or_else(Self::missing_default)?,
+            [
+                sources.profile,
+                sources.release_channel,
+                sources.user,
+                sources.server,
+                Some(sources.default),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(|mode| mode.vim_mode)
+            .next()
+            .ok_or_else(Self::missing_default)?,
         ))
     }
 
@@ -86,12 +92,18 @@ impl Settings for HelixModeSetting {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         Ok(Self(
-            sources
-                .user
-                .and_then(|mode| mode.helix_mode)
-                .or(sources.server.and_then(|mode| mode.helix_mode))
-                .or(sources.default.helix_mode)
-                .ok_or_else(Self::missing_default)?,
+            [
+                sources.profile,
+                sources.release_channel,
+                sources.user,
+                sources.server,
+                Some(sources.default),
+            ]
+            .into_iter()
+            .flatten()
+            .filter_map(|mode| mode.helix_mode)
+            .next()
+            .ok_or_else(Self::missing_default)?,
         ))
     }
 

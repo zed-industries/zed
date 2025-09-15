@@ -398,7 +398,7 @@ impl Vim {
 
         match self.mode {
             Mode::Normal | Mode::HelixNormal => self.normal_object(object, count, window, cx),
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
                 self.visual_object(object, count, window, cx)
             }
             Mode::Insert | Mode::Replace => {

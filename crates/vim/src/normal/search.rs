@@ -3,7 +3,7 @@ use gpui::{Action, Context, Window, actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions, buffer_search};
-use serde_derive::Deserialize;
+use serde::Deserialize;
 use settings::Settings;
 use std::{iter::Peekable, str::Chars};
 use util::serde::default_true;
