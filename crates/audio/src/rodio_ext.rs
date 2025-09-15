@@ -1,4 +1,5 @@
 use std::{
+    f32,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -32,6 +33,7 @@ pub trait RodioExt: Source + Sized {
         channel_count: ChannelCount,
         sample_rate: SampleRate,
     ) -> UniformSourceIterator<Self>;
+    fn suspicious_stereo_to_mono(self) -> ToMono<Self>;
 }
 
 impl<S: Source> RodioExt for S {
@@ -120,8 +122,76 @@ impl<S: Source> RodioExt for S {
     ) -> UniformSourceIterator<Self> {
         UniformSourceIterator::new(self, channel_count, sample_rate)
     }
+    fn suspicious_stereo_to_mono(self) -> ToMono<Self> {
+        ToMono {
+            input_channel_count: self.channels(),
+            inner: self,
+            mean: f32::EPSILON * 3.0,
+        }
+    }
 }
 
+/// constant source, only works on a single span
+pub struct ToMono<S> {
+    inner: S,
+    input_channel_count: ChannelCount,
+    /// running mean of second channel 'volume'
+    mean: f32,
+}
+impl<S> ToMono<S> {
+    fn real_stereo(&self) -> bool {
+        dbg!(self.mean);
+        dbg!(self.mean >= f32::EPSILON * 3.0)
+    }
+
+    fn update_mean(&mut self, second_channel: Sample) {
+        const HISTORY: f32 = 500.0;
+        self.mean *= (HISTORY - 1.0) / HISTORY;
+        self.mean += second_channel.abs() / HISTORY;
+    }
+}
+
+impl<S: Source> Source for ToMono<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> ChannelCount {
+        rodio::nz!(1)
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        self.inner.sample_rate()
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+}
+
+impl<S: Source> Iterator for ToMono<S> {
+    type Item = Sample;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.input_channel_count.get() {
+            1 => self.next(),
+            2 => {
+                let first_channel = self.next()?;
+                let second_channel = self.next()?;
+                self.update_mean(second_channel);
+
+                if self.real_stereo() {
+                    Some((first_channel + second_channel) / 2.0)
+                } else {
+                    Some(first_channel)
+                }
+            }
+            _ => todo!("unsupported channel count"),
+        }
+    }
+}
+
+/// constant source, only works on a single span
 pub struct TakeSamples<S> {
     inner: S,
     left_to_take: usize,
@@ -166,6 +236,7 @@ impl<S: Source> Source for TakeSamples<S> {
     }
 }
 
+/// constant source, only works on a single span
 #[derive(Debug)]
 struct ReplayQueue {
     inner: ArrayQueue<Vec<Sample>>,
@@ -212,6 +283,7 @@ impl ReplayQueue {
     }
 }
 
+/// constant source, only works on a single span
 pub struct ProcessBuffer<const N: usize, S, F>
 where
     S: Source + Sized,
@@ -279,6 +351,7 @@ where
     }
 }
 
+/// constant source, only works on a single span
 pub struct InspectBuffer<const N: usize, S, F>
 where
     S: Source + Sized,
@@ -343,6 +416,7 @@ where
     }
 }
 
+/// constant source, only works on a single span
 #[derive(Debug)]
 pub struct Replayable<S: Source> {
     inner: S,
@@ -394,6 +468,7 @@ impl<S: Source> Source for Replayable<S> {
     }
 }
 
+/// constant source, only works on a single span
 #[derive(Debug)]
 pub struct Replay {
     rx: Arc<ReplayQueue>,

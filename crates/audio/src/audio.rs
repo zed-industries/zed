@@ -161,12 +161,13 @@ impl Audio {
             .default_device()?
             .default_config()?
             .prefer_sample_rates([SAMPLE_RATE, SAMPLE_RATE.saturating_mul(nz!(2))])
-            .prefer_channel_counts([nz!(1), nz!(2)])
+            .prefer_channel_counts([nz!(2)])
             .prefer_buffer_sizes(512..)
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
 
         let (replay, stream) = stream
+            // .suspicious_stereo_to_mono()
             .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
             .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
@@ -216,7 +217,7 @@ impl Audio {
         let (replay_source, source) = source
             .automatic_gain_control(1.0, 4.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
-                agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
+                agc_source.set_enabled(LIVE_SETTINGS.control_output_volume.load(Ordering::Relaxed));
             })
             .replayable(REPLAY_DURATION)
             .expect("REPLAY_DURATION is longer then 100ms");
