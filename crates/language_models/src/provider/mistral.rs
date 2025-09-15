@@ -757,6 +757,10 @@ impl ConfigurationView {
             return;
         }
 
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state

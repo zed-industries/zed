@@ -418,6 +418,10 @@ impl ConfigurationView {
             return;
         }
 
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
@@ -428,11 +432,8 @@ impl ConfigurationView {
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor.update(cx, |input, cx| {
-            input.editor.update(cx, |editor, cx| {
-                editor.set_text("", window, cx);
-            });
-        });
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
