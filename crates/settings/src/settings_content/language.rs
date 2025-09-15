@@ -195,7 +195,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: off
     #[serde(default)]
-    pub prettier: Option<PrettierSettings>,
+    pub prettier: Option<PrettierSettingsContent>,
     /// Whether to automatically close JSX tags.
     #[serde(default)]
     pub jsx_tag_auto_close: Option<JsxTagAutoCloseSettings>,
@@ -524,7 +524,7 @@ fn default_3() -> usize {
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct PrettierSettings {
+pub struct PrettierSettingsContent {
     /// Enables or disables formatting with Prettier for a given language.
     #[serde(default)]
     pub allowed: bool,
@@ -543,6 +543,7 @@ pub struct PrettierSettings {
     #[serde(flatten)]
     pub options: HashMap<String, serde_json::Value>,
 }
+
 /// Controls the behavior of formatting files when they are saved.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FormatOnSave {

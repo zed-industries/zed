@@ -130,7 +130,7 @@ pub enum BaseKeymapContent {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
-    pub(crate) all_languages: AllLanguageSettingsContent,
+    pub all_languages: AllLanguageSettingsContent,
 }
 
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]

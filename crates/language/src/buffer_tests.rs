@@ -1,8 +1,6 @@
 use super::*;
 use crate::Buffer;
-use crate::language_settings::{
-    AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent,
-};
+use crate::language_settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
@@ -3849,7 +3847,7 @@ fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     cx.set_global(settings_store);
     crate::init(cx);
     cx.update_global::<SettingsStore, _>(|settings, cx| {
-        settings.update_user_settings::<AllLanguageSettings>(cx, f);
+        settings.update_user_settings(cx, |content| f(&mut content.project.all_languages));
     });
 }
 

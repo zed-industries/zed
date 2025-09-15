@@ -17,8 +17,9 @@ use serde::{
 };
 
 use settings::{
-    ParameterizedJsonSchema, Settings, SettingsKey, SettingsLocation, SettingsSources,
-    SettingsStore, SettingsUi,
+    FormatOnSave, IndentGuideSettingsContent, LanguageSettingsContent, ParameterizedJsonSchema,
+    RewrapBehavior, Settings, SettingsKey, SettingsLocation, SettingsSources, SettingsStore,
+    SettingsUi,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
@@ -86,7 +87,8 @@ pub struct LanguageSettings {
     /// Character counts at which to show wrap guides (vertical rulers) in the editor.
     pub wrap_guides: Vec<usize>,
     /// Indent guide related settings.
-    pub indent_guides: IndentGuideSettings,
+    /// todo!() shouldthis be not the content type?
+    pub indent_guides: IndentGuideSettingsContent,
     /// Whether or not to perform a buffer format before saving.
     pub format_on_save: FormatOnSave,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
@@ -96,9 +98,9 @@ pub struct LanguageSettings {
     /// when saving it.
     pub ensure_final_newline_on_save: bool,
     /// How to perform a buffer format.
-    pub formatter: SelectedFormatter,
+    pub formatter: settings::SelectedFormatter,
     /// Zed's Prettier integration settings.
-    pub prettier: PrettierSettings,
+    pub prettier: settings::PrettierSettingsContent,
     /// Whether to automatically close JSX tags.
     pub jsx_tag_auto_close: JsxTagAutoCloseSettings,
     /// Whether to use language servers to provide code intelligence.
@@ -128,7 +130,7 @@ pub struct LanguageSettings {
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
-    pub inlay_hints: InlayHintSettings,
+    pub inlay_hints: settings::InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
     /// Whether to automatically surround text with brackets.
@@ -301,75 +303,13 @@ pub struct CopilotSettings {
     pub enterprise_uri: Option<String>,
 }
 
-/// The settings for all languages.
-#[derive(
-    Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey,
-)]
-#[settings_key(None)]
-#[settings_ui(group = "Default Language Settings")]
-pub struct AllLanguageSettingsContent {
-    /// The settings for enabling/disabling features.
-    #[serde(default)]
-    pub features: Option<FeaturesContent>,
-    /// The edit prediction settings.
-    #[serde(default)]
-    pub edit_predictions: Option<EditPredictionSettingsContent>,
-    /// The default language settings.
-    #[serde(flatten)]
-    pub defaults: LanguageSettingsContent,
-    /// The settings for individual languages.
-    #[serde(default)]
-    pub languages: LanguageToSettingsMap,
-    /// Settings for associating file extensions and filenames
-    /// with languages.
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub file_types: HashMap<Arc<str>, Vec<String>>,
-}
-
-/// Map from language name to settings. Its `ParameterizedJsonSchema` allows only known language
-/// names in the keys.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct LanguageToSettingsMap(pub HashMap<LanguageName, LanguageSettingsContent>);
-
-impl SettingsUi for LanguageToSettingsMap {
-    fn settings_ui_item() -> settings::SettingsUiItem {
-        settings::SettingsUiItem::DynamicMap(settings::SettingsUiItemDynamicMap {
-            item: LanguageSettingsContent::settings_ui_item,
-            defaults_path: &[],
-            determine_items: |settings_value, cx| {
-                use settings::SettingsUiEntryMetaData;
-
-                // todo(settings_ui): We should be using a global LanguageRegistry, but it's not implemented yet
-                _ = cx;
-
-                let Some(settings_language_map) = settings_value.as_object() else {
-                    return Vec::new();
-                };
-                let mut languages = Vec::with_capacity(settings_language_map.len());
-
-                for language_name in settings_language_map.keys().map(gpui::SharedString::from) {
-                    languages.push(SettingsUiEntryMetaData {
-                        title: language_name.clone(),
-                        path: language_name,
-                        // todo(settings_ui): Implement documentation for each language
-                        // ideally based on the language's official docs from extension or builtin info
-                        documentation: None,
-                    });
-                }
-                return languages;
-            },
-        })
-    }
-}
-
 inventory::submit! {
     ParameterizedJsonSchema {
         add_and_get_ref: |generator, params, _cx| {
             let language_settings_content_ref = generator
                 .subschema_for::<LanguageSettingsContent>()
                 .to_value();
-            replace_subschema::<LanguageToSettingsMap>(generator, || json_schema!({
+            replace_subschema::<settings::LanguageToSettingsMap>(generator, || json_schema!({
                 "type": "object",
                 "properties": params
                     .language_names
@@ -461,386 +401,6 @@ fn default_3() -> usize {
     3
 }
 
-/// The settings for a particular language.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi)]
-#[settings_ui(group = "Default")]
-pub struct LanguageSettingsContent {
-    /// How many columns a tab should occupy.
-    ///
-    /// Default: 4
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub tab_size: Option<NonZeroU32>,
-    /// Whether to indent lines using tab characters, as opposed to multiple
-    /// spaces.
-    ///
-    /// Default: false
-    #[serde(default)]
-    pub hard_tabs: Option<bool>,
-    /// How to soft-wrap long lines of text.
-    ///
-    /// Default: none
-    #[serde(default)]
-    pub soft_wrap: Option<SoftWrap>,
-    /// The column at which to soft-wrap lines, for buffers where soft-wrap
-    /// is enabled.
-    ///
-    /// Default: 80
-    #[serde(default)]
-    pub preferred_line_length: Option<u32>,
-    /// Whether to show wrap guides in the editor. Setting this to true will
-    /// show a guide at the 'preferred_line_length' value if softwrap is set to
-    /// 'preferred_line_length', and will show any additional guides as specified
-    /// by the 'wrap_guides' setting.
-    ///
-    /// Default: true
-    #[serde(default)]
-    pub show_wrap_guides: Option<bool>,
-    /// Character counts at which to show wrap guides in the editor.
-    ///
-    /// Default: []
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub wrap_guides: Option<Vec<usize>>,
-    /// Indent guide related settings.
-    #[serde(default)]
-    pub indent_guides: Option<IndentGuideSettings>,
-    /// Whether or not to perform a buffer format before saving.
-    ///
-    /// Default: on
-    #[serde(default)]
-    pub format_on_save: Option<FormatOnSave>,
-    /// Whether or not to remove any trailing whitespace from lines of a buffer
-    /// before saving it.
-    ///
-    /// Default: true
-    #[serde(default)]
-    pub remove_trailing_whitespace_on_save: Option<bool>,
-    /// Whether or not to ensure there's a single newline at the end of a buffer
-    /// when saving it.
-    ///
-    /// Default: true
-    #[serde(default)]
-    pub ensure_final_newline_on_save: Option<bool>,
-    /// How to perform a buffer format.
-    ///
-    /// Default: auto
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub formatter: Option<SelectedFormatter>,
-    /// Zed's Prettier integration settings.
-    /// Allows to enable/disable formatting with Prettier
-    /// and configure default Prettier, used when no project-level Prettier installation is found.
-    ///
-    /// Default: off
-    #[serde(default)]
-    pub prettier: Option<PrettierSettings>,
-    /// Whether to automatically close JSX tags.
-    #[serde(default)]
-    pub jsx_tag_auto_close: Option<JsxTagAutoCloseSettings>,
-    /// Whether to use language servers to provide code intelligence.
-    ///
-    /// Default: true
-    #[serde(default)]
-    pub enable_language_server: Option<bool>,
-    /// The list of language servers to use (or disable) for this language.
-    ///
-    /// This array should consist of language server IDs, as well as the following
-    /// special tokens:
-    /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
-    /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
-    ///
-    /// Default: ["..."]
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub language_servers: Option<Vec<String>>,
-    /// Controls where the `editor::Rewrap` action is allowed for this language.
-    ///
-    /// Note: This setting has no effect in Vim mode, as rewrap is already
-    /// allowed everywhere.
-    ///
-    /// Default: "in_comments"
-    #[serde(default)]
-    pub allow_rewrap: Option<RewrapBehavior>,
-    /// Controls whether edit predictions are shown immediately (true)
-    /// or manually by triggering `editor::ShowEditPrediction` (false).
-    ///
-    /// Default: true
-    #[serde(default)]
-    pub show_edit_predictions: Option<bool>,
-    /// Controls whether edit predictions are shown in the given language
-    /// scopes.
-    ///
-    /// Example: ["string", "comment"]
-    ///
-    /// Default: []
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub edit_predictions_disabled_in: Option<Vec<String>>,
-    /// Whether to show tabs and spaces in the editor.
-    #[serde(default)]
-    pub show_whitespaces: Option<ShowWhitespaceSetting>,
-    /// Visible characters used to render whitespace when show_whitespaces is enabled.
-    ///
-    /// Default: "•" for spaces, "→" for tabs.
-    #[serde(default)]
-    pub whitespace_map: Option<WhitespaceMap>,
-    /// Whether to start a new line with a comment when a previous line is a comment as well.
-    ///
-    /// Default: true
-    #[serde(default)]
-    pub extend_comment_on_newline: Option<bool>,
-    /// Inlay hint related settings.
-    #[serde(default)]
-    pub inlay_hints: Option<InlayHintSettings>,
-    /// Whether to automatically type closing characters for you. For example,
-    /// when you type (, Zed will automatically add a closing ) at the correct position.
-    ///
-    /// Default: true
-    pub use_autoclose: Option<bool>,
-    /// Whether to automatically surround text with characters for you. For example,
-    /// when you select text and type (, Zed will automatically surround text with ().
-    ///
-    /// Default: true
-    pub use_auto_surround: Option<bool>,
-    /// Controls how the editor handles the autoclosed characters.
-    /// When set to `false`(default), skipping over and auto-removing of the closing characters
-    /// happen only for auto-inserted characters.
-    /// Otherwise(when `true`), the closing characters are always skipped over and auto-removed
-    /// no matter how they were inserted.
-    ///
-    /// Default: false
-    pub always_treat_brackets_as_autoclosed: Option<bool>,
-    /// Whether to use additional LSP queries to format (and amend) the code after
-    /// every "trigger" symbol input, defined by LSP server capabilities.
-    ///
-    /// Default: true
-    pub use_on_type_format: Option<bool>,
-    /// Which code actions to run on save after the formatter.
-    /// These are not run if formatting is off.
-    ///
-    /// Default: {} (or {"source.organizeImports": true} for Go).
-    #[settings_ui(skip)]
-    pub code_actions_on_format: Option<HashMap<String, bool>>,
-    /// Whether to perform linked edits of associated ranges, if the language server supports it.
-    /// For example, when editing opening <html> tag, the contents of the closing </html> tag will be edited as well.
-    ///
-    /// Default: true
-    pub linked_edits: Option<bool>,
-    /// Whether indentation should be adjusted based on the context whilst typing.
-    ///
-    /// Default: true
-    pub auto_indent: Option<bool>,
-    /// Whether indentation of pasted content should be adjusted based on the context.
-    ///
-    /// Default: true
-    pub auto_indent_on_paste: Option<bool>,
-    /// Task configuration for this language.
-    ///
-    /// Default: {}
-    pub tasks: Option<LanguageTaskConfig>,
-    /// Whether to pop the completions menu while typing in an editor without
-    /// explicitly requesting it.
-    ///
-    /// Default: true
-    pub show_completions_on_input: Option<bool>,
-    /// Whether to display inline and alongside documentation for items in the
-    /// completions menu.
-    ///
-    /// Default: true
-    pub show_completion_documentation: Option<bool>,
-    /// Controls how completions are processed for this language.
-    pub completions: Option<CompletionSettings>,
-    /// Preferred debuggers for this language.
-    ///
-    /// Default: []
-    #[settings_ui(skip)]
-    pub debuggers: Option<Vec<String>>,
-}
-
-/// The behavior of `editor::Rewrap`.
-#[derive(
-    Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum RewrapBehavior {
-    /// Only rewrap within comments.
-    #[default]
-    InComments,
-    /// Only rewrap within the current selection(s).
-    InSelections,
-    /// Allow rewrapping anywhere.
-    Anywhere,
-}
-
-/// The contents of the edit prediction settings.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
-pub struct EditPredictionSettingsContent {
-    /// A list of globs representing files that edit predictions should be disabled for.
-    /// This list adds to a pre-existing, sensible default set of globs.
-    /// Any additional ones you add are combined with them.
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub disabled_globs: Option<Vec<String>>,
-    /// The mode used to display edit predictions in the buffer.
-    /// Provider support required.
-    #[serde(default)]
-    pub mode: EditPredictionsMode,
-    /// Settings specific to GitHub Copilot.
-    #[serde(default)]
-    pub copilot: CopilotSettingsContent,
-    /// Whether edit predictions are enabled in the assistant prompt editor.
-    /// This has no effect if globally disabled.
-    #[serde(default = "default_true")]
-    pub enabled_in_text_threads: bool,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
-pub struct CopilotSettingsContent {
-    /// HTTP/HTTPS proxy to use for Copilot.
-    ///
-    /// Default: none
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub proxy: Option<String>,
-    /// Disable certificate verification for the proxy (not recommended).
-    ///
-    /// Default: false
-    #[serde(default)]
-    pub proxy_no_verify: Option<bool>,
-    /// Enterprise URI for Copilot.
-    ///
-    /// Default: none
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub enterprise_uri: Option<String>,
-}
-
-/// The settings for enabling/disabling features.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
-#[serde(rename_all = "snake_case")]
-#[settings_ui(group = "Features")]
-pub struct FeaturesContent {
-    /// Determines which edit prediction provider to use.
-    pub edit_prediction_provider: Option<EditPredictionProvider>,
-}
-
-/// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
-#[serde(rename_all = "snake_case")]
-pub enum SoftWrap {
-    /// Prefer a single line generally, unless an overly long line is encountered.
-    None,
-    /// Deprecated: use None instead. Left to avoid breaking existing users' configs.
-    /// Prefer a single line generally, unless an overly long line is encountered.
-    PreferLine,
-    /// Soft wrap lines that exceed the editor width.
-    EditorWidth,
-    /// Soft wrap lines at the preferred line length.
-    PreferredLineLength,
-    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
-    Bounded,
-}
-
-/// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, PartialEq, Eq, SettingsUi)]
-pub enum FormatOnSave {
-    /// Files should be formatted on save.
-    On,
-    /// Files should not be formatted on save.
-    Off,
-    List(FormatterList),
-}
-
-impl JsonSchema for FormatOnSave {
-    fn schema_name() -> Cow<'static, str> {
-        "OnSaveFormatter".into()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let formatter_schema = Formatter::json_schema(generator);
-
-        json_schema!({
-            "oneOf": [
-                {
-                    "type": "array",
-                    "items": formatter_schema
-                },
-                {
-                    "type": "string",
-                    "enum": ["on", "off", "language_server"]
-                },
-                formatter_schema
-            ]
-        })
-    }
-}
-
-impl Serialize for FormatOnSave {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::On => serializer.serialize_str("on"),
-            Self::Off => serializer.serialize_str("off"),
-            Self::List(list) => list.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for FormatOnSave {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct FormatDeserializer;
-
-        impl<'d> Visitor<'d> for FormatDeserializer {
-            type Value = FormatOnSave;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a valid on-save formatter kind")
-            }
-            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if v == "on" {
-                    Ok(Self::Value::On)
-                } else if v == "off" {
-                    Ok(Self::Value::Off)
-                } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList::Single(
-                        Formatter::LanguageServer { name: None },
-                    )))
-                } else {
-                    let ret: Result<FormatterList, _> =
-                        Deserialize::deserialize(v.into_deserializer());
-                    ret.map(Self::Value::List)
-                }
-            }
-            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
-                ret.map(Self::Value::List)
-            }
-            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
-                ret.map(Self::Value::List)
-            }
-        }
-        deserializer.deserialize_any(FormatDeserializer)
-    }
-}
-
 /// Controls how whitespace should be displayedin the editor.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
@@ -882,150 +442,6 @@ impl WhitespaceMap {
             .as_ref()
             .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
     }
-}
-
-/// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, PartialEq, Eq, SettingsUi)]
-pub enum SelectedFormatter {
-    /// Format files using Zed's Prettier integration (if applicable),
-    /// or falling back to formatting via language server.
-    #[default]
-    Auto,
-    List(FormatterList),
-}
-
-impl JsonSchema for SelectedFormatter {
-    fn schema_name() -> Cow<'static, str> {
-        "Formatter".into()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let formatter_schema = Formatter::json_schema(generator);
-
-        json_schema!({
-            "oneOf": [
-                {
-                    "type": "array",
-                    "items": formatter_schema
-                },
-                {
-                    "type": "string",
-                    "enum": ["auto", "language_server"]
-                },
-                formatter_schema
-            ]
-        })
-    }
-}
-
-impl Serialize for SelectedFormatter {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            SelectedFormatter::Auto => serializer.serialize_str("auto"),
-            SelectedFormatter::List(list) => list.serialize(serializer),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for SelectedFormatter {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct FormatDeserializer;
-
-        impl<'d> Visitor<'d> for FormatDeserializer {
-            type Value = SelectedFormatter;
-
-            fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-                formatter.write_str("a valid formatter kind")
-            }
-            fn visit_str<E>(self, v: &str) -> std::result::Result<Self::Value, E>
-            where
-                E: serde::de::Error,
-            {
-                if v == "auto" {
-                    Ok(Self::Value::Auto)
-                } else if v == "language_server" {
-                    Ok(Self::Value::List(FormatterList::Single(
-                        Formatter::LanguageServer { name: None },
-                    )))
-                } else {
-                    let ret: Result<FormatterList, _> =
-                        Deserialize::deserialize(v.into_deserializer());
-                    ret.map(SelectedFormatter::List)
-                }
-            }
-            fn visit_map<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::MapAccessDeserializer::new(map));
-                ret.map(SelectedFormatter::List)
-            }
-            fn visit_seq<A>(self, map: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'d>,
-            {
-                let ret: Result<FormatterList, _> =
-                    Deserialize::deserialize(de::value::SeqAccessDeserializer::new(map));
-                ret.map(SelectedFormatter::List)
-            }
-        }
-        deserializer.deserialize_any(FormatDeserializer)
-    }
-}
-
-/// Controls which formatters should be used when formatting code.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
-#[serde(untagged)]
-pub enum FormatterList {
-    Single(Formatter),
-    Vec(#[settings_ui(skip)] Vec<Formatter>),
-}
-
-impl Default for FormatterList {
-    fn default() -> Self {
-        Self::Single(Formatter::default())
-    }
-}
-
-impl AsRef<[Formatter]> for FormatterList {
-    fn as_ref(&self) -> &[Formatter] {
-        match &self {
-            Self::Single(single) => slice::from_ref(single),
-            Self::Vec(v) => v,
-        }
-    }
-}
-
-/// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
-#[serde(rename_all = "snake_case")]
-pub enum Formatter {
-    /// Format code using the current language server.
-    LanguageServer {
-        #[settings_ui(skip)]
-        name: Option<String>,
-    },
-    /// Format code using Zed's Prettier integration.
-    #[default]
-    Prettier,
-    /// Format code using an external command.
-    External {
-        /// The external program to run.
-        #[settings_ui(skip)]
-        command: Arc<str>,
-        /// The arguments to pass to the program.
-        #[settings_ui(skip)]
-        arguments: Option<Arc<[String]>>,
-    },
-    /// Files should be formatted using code actions executed by language servers.
-    CodeActions(#[settings_ui(skip)] HashMap<String, bool>),
 }
 
 /// The settings for indent guides.
@@ -1314,7 +730,48 @@ impl InlayHintKind {
 }
 
 impl settings::Settings for AllLanguageSettings {
-    type FileContent = AllLanguageSettingsContent;
+    fn from_default(content: &settings::SettingsContent, cx: &mut App) -> Option<Self> {
+        let defaults = content.project.all_languages.defaults;
+        let default_language_settings = LanguageSettings {
+            tab_size: defaults.tab_size?,
+            hard_tabs: defaults.hard_tabs?,
+            soft_wrap: defaults.soft_wrap?,
+            preferred_line_length: defaults.preferred_line_length?,
+            show_wrap_guides: defaults.show_wrap_guides?,
+            wrap_guides: defaults.wrap_guides?,
+            indent_guides: defaults.indent_guides?,
+            format_on_save: defaults.format_on_save?,
+            remove_trailing_whitespace_on_save: defaults.remove_trailing_whitespace_on_save?,
+            ensure_final_newline_on_save: defaults.ensure_final_newline_on_save?,
+            formatter: defaults.formatter?,
+            prettier: defaults.prettier?,
+            jsx_tag_auto_close: defaults.jsx_tag_auto_close?,
+            enable_language_server: defaults.enable_language_server?,
+            language_servers: defaults.language_servers?,
+            allow_rewrap: defaults.allow_rewrap?,
+            show_edit_predictions: defaults.show_edit_predictions?,
+            edit_predictions_disabled_in: defaults.edit_predictions_disabled_in?,
+            show_whitespaces: defaults.show_whitespaces?,
+            whitespace_map: defaults.whitespace_map?,
+            extend_comment_on_newline: defaults.extend_comment_on_newline?,
+            inlay_hints: defaults.inlay_hints?,
+            use_autoclose: defaults.use_autoclose?,
+            use_auto_surround: defaults.use_auto_surround?,
+            use_on_type_format: defaults.use_on_type_format?,
+            auto_indent: defaults.auto_indent?,
+            auto_indent_on_paste: defaults.auto_indent_on_paste?,
+            always_treat_brackets_as_autoclosed: defaults.always_treat_brackets_as_autoclosed?,
+            code_actions_on_format: defaults.code_actions_on_format?,
+            linked_edits: defaults.linked_edits?,
+            tasks: defaults.tasks?,
+            show_completions_on_input: defaults.show_completions_on_input?,
+            show_completion_documentation: defaults.show_completion_documentation?,
+            completions: defaults.completions?,
+            debuggers: defaults.debuggers?,
+        };
+
+        todo!();
+    }
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
         let default_value = sources.default;
