@@ -565,11 +565,28 @@ impl AgentConfiguration {
                         .color(Color::Muted),
                     ),
             )
-            .children(
-                context_server_ids.into_iter().map(|context_server_id| {
-                    self.render_context_server(context_server_id, window, cx)
-                }),
-            )
+            .map(|parent| {
+                if context_server_ids.is_empty() {
+                    parent.child(
+                        h_flex()
+                            .p_4()
+                            .justify_center()
+                            .border_1()
+                            .border_dashed()
+                            .border_color(cx.theme().colors().border.opacity(0.6))
+                            .rounded_sm()
+                            .child(
+                                Label::new("No MCP servers added yet.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                } else {
+                    parent.children(context_server_ids.into_iter().map(|context_server_id| {
+                        self.render_context_server(context_server_id, window, cx)
+                    }))
+                }
+            })
             .child(
                 h_flex()
                     .justify_between()
