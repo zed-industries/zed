@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -1584,19 +1584,6 @@ impl AcpThreadView {
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
-            task.command = task
-                .command
-                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
-                .transpose()?;
-            task.args = task
-                .args
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
@@ -5678,6 +5665,23 @@ pub(crate) mod tests {
                 "Expected refusal error to be set"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_spawn_external_agent_login_handles_spaces(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Verify paths with spaces aren't pre-quoted
+        let path_with_spaces = "/Users/test/Library/Application Support/Zed/cli.js";
+        let login_task = task::SpawnInTerminal {
+            command: Some("node".to_string()),
+            args: vec![path_with_spaces.to_string(), "/login".to_string()],
+            ..Default::default()
+        };
+
+        // Args should be passed as-is, not pre-quoted
+        assert!(!login_task.args[0].starts_with('"'));
+        assert!(!login_task.args[0].starts_with('\''));
     }
 
     #[gpui::test]
