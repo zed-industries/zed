@@ -226,6 +226,32 @@ impl<'a> ExcerptSelector<'a> {
         smallest_exceeding_max_len.or(largest)
     }
 
+    // motivation for this and `goto_previous_named_sibling` is to avoid including things like
+    // trailing unnamed "}" in body nodes
+    fn goto_next_named_sibling(cursor: &mut TreeCursor) -> bool {
+        if !cursor.goto_next_sibling() {
+            return false;
+        }
+        while !cursor.node().is_named() {
+            if !cursor.goto_next_sibling() {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    fn goto_previous_named_sibling(cursor: &mut TreeCursor) -> bool {
+        if !cursor.goto_previous_sibling() {
+            return false;
+        }
+        while !cursor.node().is_named() {
+            if !cursor.goto_previous_sibling() {
+                return false;
+            }
+        }
+        return true;
+    }
+
     fn expand_to_siblings(
         &self,
         cursor: &mut TreeCursor,
@@ -233,8 +259,8 @@ impl<'a> ExcerptSelector<'a> {
     ) -> EditPredictionExcerpt {
         let mut forward_cursor = cursor.clone();
         let backward_cursor = cursor;
-        let mut forward_done = !forward_cursor.goto_next_sibling();
-        let mut backward_done = !backward_cursor.goto_previous_sibling();
+        let mut forward_done = !Self::goto_next_named_sibling(&mut forward_cursor);
+        let mut backward_done = !Self::goto_previous_named_sibling(backward_cursor);
         loop {
             if backward_done && forward_done {
                 break;
@@ -254,7 +280,7 @@ impl<'a> ExcerptSelector<'a> {
                         break;
                     }
                 }
-                forward_done = !forward_cursor.goto_next_sibling();
+                forward_done = !Self::goto_next_named_sibling(&mut forward_cursor);
             }
 
             let mut backward = None;
@@ -271,7 +297,7 @@ impl<'a> ExcerptSelector<'a> {
                         break;
                     }
                 }
-                backward_done = !backward_cursor.goto_previous_sibling();
+                backward_done = !Self::goto_previous_named_sibling(backward_cursor);
             }
 
             let go_forward = match (forward, backward) {
@@ -298,9 +324,9 @@ impl<'a> ExcerptSelector<'a> {
             };
 
             if go_forward {
-                forward_done = !forward_cursor.goto_next_sibling();
+                forward_done = !Self::goto_next_named_sibling(&mut forward_cursor);
             } else {
-                backward_done = !backward_cursor.goto_previous_sibling();
+                backward_done = !Self::goto_previous_named_sibling(backward_cursor);
             }
         }
 
