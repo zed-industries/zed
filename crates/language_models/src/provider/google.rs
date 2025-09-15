@@ -33,7 +33,7 @@ use std::sync::{
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKey;
@@ -930,9 +930,14 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {GEMINI_API_KEY_VAR_NAME} environment variable.")
+                            format!("API key set in {} environment variable", API_KEY_ENV_VAR.name)
                         } else {
-                            "API key configured.".to_string()
+                            let api_url = GoogleLanguageModelProvider::api_url(cx);
+                            if api_url == google_ai::API_URL {
+                                "API key configured".to_string()
+                            } else {
+                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
+                            }
                         })),
                 )
                 .child(
