@@ -10,8 +10,9 @@ use futures::{
 use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
+use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
@@ -21,13 +22,13 @@ use std::{
     str::{self, FromStr},
     sync::Arc,
 };
-use util::{ResultExt as _, merge_non_null_json_value_into};
+use util::{ResultExt as _, merge_non_null_json_value_into, schemars::DefaultDenyUnknownFields};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ActiveSettingsProfileName, SettingsJsonSchemaParams, SettingsUiEntry, VsCodeSettings,
-    WorktreeId, parse_json_with_comments, replace_value_in_json_text,
+    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiEntry,
+    VsCodeSettings, WorktreeId, parse_json_with_comments, replace_value_in_json_text,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, ServerSettingsContent, SettingsContent,
         UserSettingsContent,
@@ -886,194 +887,18 @@ impl SettingsStore {
     }
 
     pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams, cx: &App) -> Value {
-        todo!()
-        // let mut generator = schemars::generate::SchemaSettings::draft2019_09()
-        //     .with_transform(DefaultDenyUnknownFields)
-        //     .into_generator();
-        // let mut combined_schema = json!({
-        //     "type": "object",
-        //     "properties": {}
-        // });
+        let mut generator = schemars::generate::SchemaSettings::draft2019_09()
+            .with_transform(DefaultDenyUnknownFields)
+            .into_generator();
 
-        // // Merge together settings schemas, similarly to json schema's "allOf". This merging is
-        // // recursive, though at time of writing this recursive nature isn't used very much. An
-        // // example of it is the schema for `jupyter` having contribution from both `EditorSettings`
-        // // and `JupyterSettings`.
-        // //
-        // // This logic could be removed in favor of "allOf", but then there isn't the opportunity to
-        // // validate and fully control the merge.
-        // for setting_value in self.setting_values.values() {
-        //     let mut setting_schema = setting_value.json_schema(&mut generator);
+        let schema = UserSettingsContent::json_schema(&mut generator);
 
-        //     if let Some(key) = setting_value.key() {
-        //         if let Some(properties) = combined_schema.get_mut("properties")
-        //             && let Some(properties_obj) = properties.as_object_mut()
-        //         {
-        //             if let Some(target) = properties_obj.get_mut(key) {
-        //                 merge_schema(target, setting_schema.to_value());
-        //             } else {
-        //                 properties_obj.insert(key.to_string(), setting_schema.to_value());
-        //             }
-        //         }
-        //     } else {
-        //         setting_schema.remove("description");
-        //         setting_schema.remove("additionalProperties");
-        //         merge_schema(&mut combined_schema, setting_schema.to_value());
-        //     }
-        // }
+        // add schemas which are determined at runtime
+        for parameterized_json_schema in inventory::iter::<ParameterizedJsonSchema>() {
+            (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params, cx);
+        }
 
-        // fn merge_schema(target: &mut serde_json::Value, source: serde_json::Value) {
-        //     let (Some(target_obj), serde_json::Value::Object(source_obj)) =
-        //         (target.as_object_mut(), source)
-        //     else {
-        //         return;
-        //     };
-
-        //     for (source_key, source_value) in source_obj {
-        //         match source_key.as_str() {
-        //             "properties" => {
-        //                 let serde_json::Value::Object(source_properties) = source_value else {
-        //                     log::error!(
-        //                         "bug: expected object for `{}` json schema field, but got: {}",
-        //                         source_key,
-        //                         source_value
-        //                     );
-        //                     continue;
-        //                 };
-        //                 let target_properties =
-        //                     target_obj.entry(source_key.clone()).or_insert(json!({}));
-        //                 let Some(target_properties) = target_properties.as_object_mut() else {
-        //                     log::error!(
-        //                         "bug: expected object for `{}` json schema field, but got: {}",
-        //                         source_key,
-        //                         target_properties
-        //                     );
-        //                     continue;
-        //                 };
-        //                 for (key, value) in source_properties {
-        //                     if let Some(existing) = target_properties.get_mut(&key) {
-        //                         merge_schema(existing, value);
-        //                     } else {
-        //                         target_properties.insert(key, value);
-        //                     }
-        //                 }
-        //             }
-        //             "allOf" | "anyOf" | "oneOf" => {
-        //                 let serde_json::Value::Array(source_array) = source_value else {
-        //                     log::error!(
-        //                         "bug: expected array for `{}` json schema field, but got: {}",
-        //                         source_key,
-        //                         source_value,
-        //                     );
-        //                     continue;
-        //                 };
-        //                 let target_array =
-        //                     target_obj.entry(source_key.clone()).or_insert(json!([]));
-        //                 let Some(target_array) = target_array.as_array_mut() else {
-        //                     log::error!(
-        //                         "bug: expected array for `{}` json schema field, but got: {}",
-        //                         source_key,
-        //                         target_array,
-        //                     );
-        //                     continue;
-        //                 };
-        //                 target_array.extend(source_array);
-        //             }
-        //             "type"
-        //             | "$ref"
-        //             | "enum"
-        //             | "minimum"
-        //             | "maximum"
-        //             | "pattern"
-        //             | "description"
-        //             | "additionalProperties" => {
-        //                 if let Some(old_value) =
-        //                     target_obj.insert(source_key.clone(), source_value.clone())
-        //                     && old_value != source_value
-        //                 {
-        //                     log::error!(
-        //                         "bug: while merging JSON schemas, \
-        //                             mismatch `\"{}\": {}` (before was `{}`)",
-        //                         source_key,
-        //                         old_value,
-        //                         source_value
-        //                     );
-        //                 }
-        //             }
-        //             _ => {
-        //                 log::error!(
-        //                     "bug: while merging settings JSON schemas, \
-        //                     encountered unexpected `\"{}\": {}`",
-        //                     source_key,
-        //                     source_value
-        //                 );
-        //             }
-        //         }
-        //     }
-        // }
-
-        // // add schemas which are determined at runtime
-        // for parameterized_json_schema in inventory::iter::<ParameterizedJsonSchema>() {
-        //     (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params, cx);
-        // }
-
-        // // add merged settings schema to the definitions
-        // const ZED_SETTINGS: &str = "ZedSettings";
-        // let zed_settings_ref = add_new_subschema(&mut generator, ZED_SETTINGS, combined_schema);
-
-        // // add `ZedSettingsOverride` which is the same as `ZedSettings` except that unknown
-        // // fields are rejected. This is used for release stage settings and profiles.
-        // let mut zed_settings_override = zed_settings_ref.clone();
-        // zed_settings_override.insert("unevaluatedProperties".to_string(), false.into());
-        // let zed_settings_override_ref = add_new_subschema(
-        //     &mut generator,
-        //     "ZedSettingsOverride",
-        //     zed_settings_override.to_value(),
-        // );
-
-        // // Remove `"additionalProperties": false` added by `DefaultDenyUnknownFields` so that
-        // // unknown fields can be handled by the root schema and `ZedSettingsOverride`.
-        // let mut definitions = generator.take_definitions(true);
-        // definitions
-        //     .get_mut(ZED_SETTINGS)
-        //     .unwrap()
-        //     .as_object_mut()
-        //     .unwrap()
-        //     .remove("additionalProperties");
-
-        // let meta_schema = generator
-        //     .settings()
-        //     .meta_schema
-        //     .as_ref()
-        //     .expect("meta_schema should be present in schemars settings")
-        //     .to_string();
-
-        // json!({
-        //     "$schema": meta_schema,
-        //     "title": "Zed Settings",
-        //     "unevaluatedProperties": false,
-        //     // ZedSettings + settings overrides for each release stage / OS / profiles
-        //     "allOf": [
-        //         zed_settings_ref,
-        //         {
-        //             "properties": {
-        //                 "dev": zed_settings_override_ref,
-        //                 "nightly": zed_settings_override_ref,
-        //                 "stable": zed_settings_override_ref,
-        //                 "preview": zed_settings_override_ref,
-        //                 "linux": zed_settings_override_ref,
-        //                 "macos": zed_settings_override_ref,
-        //                 "windows": zed_settings_override_ref,
-        //                 "profiles": {
-        //                     "type": "object",
-        //                     "description": "Configures any number of settings profiles.",
-        //                     "additionalProperties": zed_settings_override_ref
-        //                 }
-        //             }
-        //         }
-        //     ],
-        //     "$defs": definitions,
-        // })
+        schema.to_value()
     }
 
     fn recompute_values(
