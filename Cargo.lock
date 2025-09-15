@@ -2678,9 +2678,10 @@ dependencies = [
 [[package]]
 name = "candle-core"
 version = "0.9.1"
-source = "git+https://github.com/dvdsk/candle?branch=9.1-patched#591d35bb503cb93a63bb49d5fe2d9531ee6ad651"
+source = "git+https://github.com/dvdsk/candle?branch=add-operators#eb7ce1cb6a201400c9c5117bf1d041454768bb03"
 dependencies = [
  "byteorder",
+ "float8",
  "gemm 0.17.1",
  "half",
  "memmap2",
@@ -2699,10 +2700,11 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.9.1"
-source = "git+https://github.com/dvdsk/candle?branch=9.1-patched#591d35bb503cb93a63bb49d5fe2d9531ee6ad651"
+source = "git+https://github.com/dvdsk/candle?branch=add-operators#eb7ce1cb6a201400c9c5117bf1d041454768bb03"
 dependencies = [
  "candle-core",
  "half",
+ "libc",
  "num-traits",
  "rayon",
  "safetensors",
@@ -2713,7 +2715,7 @@ dependencies = [
 [[package]]
 name = "candle-onnx"
 version = "0.9.1"
-source = "git+https://github.com/dvdsk/candle?branch=9.1-patched#591d35bb503cb93a63bb49d5fe2d9531ee6ad651"
+source = "git+https://github.com/dvdsk/candle?branch=add-operators#eb7ce1cb6a201400c9c5117bf1d041454768bb03"
 dependencies = [
  "candle-core",
  "candle-nn",
@@ -5947,6 +5949,18 @@ name = "float-ord"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ce81f49ae8a0482e4c55ea62ebbd7e5a686af544c00b9d090bba3ff9be97b3d"
+
+[[package]]
+name = "float8"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4203231de188ebbdfb85c11f3c20ca2b063945710de04e7b59268731e728b462"
+dependencies = [
+ "half",
+ "num-traits",
+ "rand 0.9.1",
+ "rand_distr",
+]
 
 [[package]]
 name = "float_next_after"
