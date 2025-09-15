@@ -261,7 +261,7 @@ impl<'a> ExcerptSelector<'a> {
 
             let mut backward = None;
             while !backward_done {
-                let new_start = node_line_start(forward_cursor.node()).to_offset(&self.buffer);
+                let new_start = node_line_start(backward_cursor.node()).to_offset(&self.buffer);
                 if new_start < excerpt.range.start {
                     let new_excerpt = excerpt.with_expanded_range(new_start..excerpt.range.end);
                     if new_excerpt.size <= self.options.max_bytes {
