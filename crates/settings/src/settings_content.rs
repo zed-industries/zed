@@ -36,6 +36,9 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub helix_mode: Option<bool>,
+
+    /// Configuration of audio in Zed.
+    pub audio: Option<AudioSettingsContent>,
 }
 
 impl SettingsContent {
@@ -164,4 +167,25 @@ pub enum TitleBarVisibilityContent {
     Always,
     Never,
     HideInFullScreen,
+}
+
+/// Configuration of audio in Zed.
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct AudioSettingsContent {
+    /// Opt into the new audio system.
+    #[serde(rename = "experimental.rodio_audio", default)]
+    pub rodio_audio: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Use the new audio systems automatic gain control for your microphone.
+    /// This affects how loud you sound to others.
+    #[serde(rename = "experimental.control_input_volume", default)]
+    pub control_input_volume: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Use the new audio systems automatic gain control on everyone in the
+    /// call. This makes call members who are too quite louder and those who are
+    /// too loud quieter. This only affects how things sound for you.
+    #[serde(rename = "experimental.control_output_volume", default)]
+    pub control_output_volume: Option<bool>,
 }
