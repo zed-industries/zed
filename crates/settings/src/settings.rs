@@ -8,6 +8,8 @@ mod settings_store;
 mod settings_ui_core;
 mod vscode_import;
 
+pub use settings_content::*;
+
 use gpui::{App, Global};
 use rust_embed::RustEmbed;
 use std::{borrow::Cow, fmt, str};
@@ -76,10 +78,7 @@ impl fmt::Display for WorktreeId {
 pub struct SettingsAssets;
 
 pub fn init(cx: &mut App) {
-    let mut settings = SettingsStore::new(cx);
-    settings
-        .set_default_settings(&default_settings(), cx)
-        .unwrap();
+    let settings = SettingsStore::new(cx, &default_settings());
     cx.set_global(settings);
     BaseKeymap::register(cx);
     SettingsStore::observe_active_settings_profile_name(cx).detach();

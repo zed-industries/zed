@@ -1,7 +1,7 @@
 use db::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsContent, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Copy, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
 #[serde(rename_all = "snake_case")]
@@ -11,7 +11,7 @@ pub enum TitleBarVisibility {
     HideInFullScreen,
 }
 
-#[derive(Copy, Clone, Deserialize, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct TitleBarSettings {
     pub show: TitleBarVisibility,
     pub show_branch_icon: bool,
@@ -23,54 +23,34 @@ pub struct TitleBarSettings {
     pub show_menus: bool,
 }
 
-#[derive(
-    Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey,
-)]
-#[settings_ui(group = "Title Bar")]
-#[settings_key(key = "title_bar")]
-pub struct TitleBarSettingsContent {
-    /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
-    ///
-    /// Default: "always"
-    pub show: Option<TitleBarVisibility>,
-    /// Whether to show the branch icon beside branch switcher in the title bar.
-    ///
-    /// Default: false
-    pub show_branch_icon: Option<bool>,
-    /// Whether to show onboarding banners in the title bar.
-    ///
-    /// Default: true
-    pub show_onboarding_banner: Option<bool>,
-    /// Whether to show user avatar in the title bar.
-    ///
-    /// Default: true
-    pub show_user_picture: Option<bool>,
-    /// Whether to show the branch name button in the titlebar.
-    ///
-    /// Default: true
-    pub show_branch_name: Option<bool>,
-    /// Whether to show the project host and name in the titlebar.
-    ///
-    /// Default: true
-    pub show_project_items: Option<bool>,
-    /// Whether to show the sign in button in the title bar.
-    ///
-    /// Default: true
-    pub show_sign_in: Option<bool>,
-    /// Whether to show the menus in the title bar.
-    ///
-    /// Default: false
-    pub show_menus: Option<bool>,
-}
-
 impl Settings for TitleBarSettings {
-    type FileContent = TitleBarSettingsContent;
+    fn from_file(s: &SettingsContent) -> Option<Self> {
+        let content = s.title_bar?;
+        TitleBarSettings {
+            show: content.show?,
+            show_branch_icon: content.show_branch_icon?,
+            show_onboarding_banner: content.show_onboarding_banner?,
+            show_user_picture: content.show_user_picture?,
+            show_branch_name: content.show_branch_name?,
+            show_project_items: content.show_project_items?,
+            show_sign_in: content.show_sign_in?,
+            show_menus: content.show_menus?,
+        }
+    }
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> anyhow::Result<Self>
-    where
-        Self: Sized,
-    {
-        sources.json_merge()
+    fn refine(&mut self, s: &SettingsContent) {
+        let Some(content) = s.title_bar else {
+            return
+        }
+
+        self.show.refine(&content.show);
+        self.show_branch_icon.refine(content.show_branch_icon);
+        self.show_onboarding_banner.refine(content.show_onboarding_banner);
+        self.show_user_picture.refine(content.show_user_picture);
+        self.show_branch_name.refine(content.show_branch_name);
+        self.show_project_items.refine(content.show_project_items);
+        self.show_sign_in.refine(content.show_sign_in);
+        self.show_menus.refine(content.show_menus);
     }
 
     fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut Self::FileContent) {}

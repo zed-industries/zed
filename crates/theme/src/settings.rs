@@ -819,8 +819,6 @@ fn clamp_font_weight(weight: f32) -> FontWeight {
 }
 
 impl settings::Settings for ThemeSettings {
-    type FileContent = ThemeSettingsContent;
-
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut App) -> Result<Self> {
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);

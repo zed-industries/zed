@@ -10,9 +10,8 @@ use futures::{
 use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
-use schemars::JsonSchema;
 use serde::{Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde_json::Value;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
@@ -32,7 +31,8 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiEntry,
-    VsCodeSettings, WorktreeId, parse_json_with_comments, replace_value_in_json_text,
+    VsCodeSettings, WorktreeId, default_settings, parse_json_with_comments,
+    replace_value_in_json_text,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, ServerSettingsContent, SettingsContent,
         UserSettingsContent,
@@ -201,7 +201,7 @@ pub struct SettingsLocation<'a> {
 /// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
-    default_settings: Option<SettingsContent>,
+    default_settings: SettingsContent,
     user_settings: Option<UserSettingsContent>,
     global_settings: Option<SettingsContent>,
 
@@ -276,11 +276,12 @@ trait AnySettingValue: 'static + Send + Sync {
 struct DeserializedSetting(Box<dyn Any>);
 
 impl SettingsStore {
-    pub fn new(cx: &App) -> Self {
+    pub fn new(cx: &App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
+        let default_settings = parse_json_with_comments(default_settings).unwrap();
         Self {
             setting_values: Default::default(),
-            default_settings: Some(Default::default()), // todo!()
+            default_settings,
             global_settings: None,
             server_settings: None,
             user_settings: Some(Default::default()), // todo!()
@@ -347,9 +348,8 @@ impl SettingsStore {
         if let Some(server_settings) = self.server_settings.as_ref() {
             refinements.push(server_settings)
         }
-        let default = self.default_settings.as_ref().unwrap();
         // todo!() unwrap...
-        let mut value = T::from_file(default).unwrap();
+        let mut value = T::from_file(&self.default_settings).unwrap();
         for refinement in refinements {
             value.refine(refinement)
         }
@@ -438,17 +438,13 @@ impl SettingsStore {
     }
 
     /// Access the raw JSON value of the default settings.
-    pub fn raw_default_settings(&self) -> Option<&SettingsContent> {
-        self.default_settings.as_ref()
+    pub fn raw_default_settings(&self) -> &SettingsContent {
+        &self.default_settings
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut App) -> Self {
-        let mut this = Self::new(cx);
-        this.set_default_settings(&crate::test_settings(), cx)
-            .unwrap();
-        this.set_user_settings("{}", cx).unwrap();
-        this
+        Self::new(cx, &crate::test_settings())
     }
 
     /// Updates the value of a setting in the user's global configuration.
@@ -714,6 +710,12 @@ impl SettingsStore {
         } else {
             parse_json_with_comments(server_settings_content)?
         };
+
+        // Rewrite the server settings into a content type
+        self.server_settings = settings.map(|settings| SettingsContent {
+            project: settings.project,
+            ..Default::default()
+        });
 
         todo!();
         // self.server_settings = Some(settings);
@@ -1110,13 +1112,12 @@ impl SettingsStore {
         if let Some(server_settings) = self.server_settings.as_ref() {
             refinements.push(server_settings)
         }
-        let default = self.default_settings.as_ref().unwrap();
 
         for setting_value in self.setting_values.values_mut() {
             // If the global settings file changed, reload the global value for the field.
             if changed_local_path.is_none() {
-                let mut value = setting_value.from_file(&default).unwrap();
-                setting_value.refine(&mut value, &refinements);
+                let mut value = setting_value.from_file(&self.default_settings).unwrap();
+                setting_value.refine(value.as_mut(), &refinements);
                 setting_value.set_global_value(value);
             }
 
@@ -1151,9 +1152,9 @@ impl SettingsStore {
                         continue;
                     }
 
-                    let mut value = setting_value.from_file(&default).unwrap();
-                    setting_value.refine(&mut value, &refinements);
-                    setting_value.refine(&mut value, &project_settings_stack);
+                    let mut value = setting_value.from_file(&self.default_settings).unwrap();
+                    setting_value.refine(value.as_mut(), &refinements);
+                    setting_value.refine(value.as_mut(), &project_settings_stack);
                     setting_value.set_local_value(*root_id, directory_path.clone(), value);
                 }
             }
@@ -1237,10 +1238,12 @@ impl Debug for SettingsStore {
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
     fn from_file(&self, s: &SettingsContent) -> Option<Box<dyn Any>> {
+        dbg!(type_name::<T>(), TypeId::of::<T>());
         T::from_file(s).map(|result| Box::new(result) as _)
     }
 
     fn refine(&self, value: &mut dyn Any, refinements: &[&SettingsContent]) {
+        dbg!(type_name::<T>(), TypeId::of::<T>());
         let value = value.downcast_mut::<T>().unwrap();
         for refinement in refinements {
             value.refine(refinement)
@@ -1336,7 +1339,10 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{VsCodeSettingsSource, settings_content::LanguageSettingsContent};
+    use crate::{
+        TitleBarSettingsContent, TitleBarVisibilityContent, VsCodeSettingsSource,
+        settings_content::LanguageSettingsContent, test_settings,
+    };
 
     use super::*;
     // This is so the SettingsUi macro can still work properly
@@ -1344,138 +1350,186 @@ mod tests {
     use serde::Deserialize;
     use settings_ui_macros::{SettingsKey, SettingsUi};
     use unindent::Unindent;
+    use util::Refine;
 
-    // #[gpui::test]
-    // fn test_settings_store_basic(cx: &mut App) {
-    //     let mut store = SettingsStore::new(cx);
-    //     store.register_setting::<UserSettings>(cx);
-    //     store.register_setting::<TurboSetting>(cx);
-    //     store.register_setting::<MultiKeySettings>(cx);
-    //     store
-    //         .set_default_settings(
-    //             r#"{
-    //                 "turbo": false,
-    //                 "user": {
-    //                     "name": "John Doe",
-    //                     "age": 30,
-    //                     "staff": false
-    //                 }
-    //             }"#,
-    //             cx,
-    //         )
-    //         .unwrap();
+    #[derive(Debug, PartialEq)]
+    struct AutoUpdateSetting {
+        auto_update: bool,
+    }
 
-    //     assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(false));
-    //     assert_eq!(
-    //         store.get::<UserSettings>(None),
-    //         &UserSettings {
-    //             name: "John Doe".to_string(),
-    //             age: 30,
-    //             staff: false,
-    //         }
-    //     );
-    //     assert_eq!(
-    //         store.get::<MultiKeySettings>(None),
-    //         &MultiKeySettings {
-    //             key1: String::new(),
-    //             key2: String::new(),
-    //         }
-    //     );
+    impl Settings for AutoUpdateSetting {
+        fn from_file(content: &SettingsContent) -> Option<Self> {
+            content
+                .auto_update
+                .map(|auto_update| AutoUpdateSetting { auto_update })
+        }
 
-    //     store
-    //         .set_user_settings(
-    //             r#"{
-    //                 "turbo": true,
-    //                 "user": { "age": 31 },
-    //                 "key1": "a"
-    //             }"#,
-    //             cx,
-    //         )
-    //         .unwrap();
+        fn refine(&mut self, content: &SettingsContent) {
+            if let Some(auto_update) = content.auto_update {
+                self.auto_update = auto_update;
+            }
+        }
 
-    //     assert_eq!(store.get::<TurboSetting>(None), &TurboSetting(true));
-    //     assert_eq!(
-    //         store.get::<UserSettings>(None),
-    //         &UserSettings {
-    //             name: "John Doe".to_string(),
-    //             age: 31,
-    //             staff: false
-    //         }
-    //     );
+        fn import_from_vscode(_: &VsCodeSettings, _: &mut SettingsContent) {}
+    }
 
-    //     store
-    //         .set_local_settings(
-    //             WorktreeId::from_usize(1),
-    //             Path::new("/root1").into(),
-    //             LocalSettingsKind::Settings,
-    //             Some(r#"{ "user": { "staff": true } }"#),
-    //             cx,
-    //         )
-    //         .unwrap();
-    //     store
-    //         .set_local_settings(
-    //             WorktreeId::from_usize(1),
-    //             Path::new("/root1/subdir").into(),
-    //             LocalSettingsKind::Settings,
-    //             Some(r#"{ "user": { "name": "Jane Doe" } }"#),
-    //             cx,
-    //         )
-    //         .unwrap();
+    #[derive(Debug, PartialEq)]
+    struct TitleBarSettings {
+        show: TitleBarVisibilityContent,
+    }
 
-    //     store
-    //         .set_local_settings(
-    //             WorktreeId::from_usize(1),
-    //             Path::new("/root2").into(),
-    //             LocalSettingsKind::Settings,
-    //             Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
-    //             cx,
-    //         )
-    //         .unwrap();
+    impl Settings for TitleBarSettings {
+        fn from_file(content: &SettingsContent) -> Option<Self> {
+            let content = content.title_bar?;
+            Some(TitleBarSettings {
+                show: content.show?,
+            })
+        }
 
-    //     assert_eq!(
-    //         store.get::<UserSettings>(Some(SettingsLocation {
-    //             worktree_id: WorktreeId::from_usize(1),
-    //             path: Path::new("/root1/something"),
-    //         })),
-    //         &UserSettings {
-    //             name: "John Doe".to_string(),
-    //             age: 31,
-    //             staff: true
-    //         }
-    //     );
-    //     assert_eq!(
-    //         store.get::<UserSettings>(Some(SettingsLocation {
-    //             worktree_id: WorktreeId::from_usize(1),
-    //             path: Path::new("/root1/subdir/something")
-    //         })),
-    //         &UserSettings {
-    //             name: "Jane Doe".to_string(),
-    //             age: 31,
-    //             staff: true
-    //         }
-    //     );
-    //     assert_eq!(
-    //         store.get::<UserSettings>(Some(SettingsLocation {
-    //             worktree_id: WorktreeId::from_usize(1),
-    //             path: Path::new("/root2/something")
-    //         })),
-    //         &UserSettings {
-    //             name: "John Doe".to_string(),
-    //             age: 42,
-    //             staff: false
-    //         }
-    //     );
-    //     assert_eq!(
-    //         store.get::<MultiKeySettings>(Some(SettingsLocation {
-    //             worktree_id: WorktreeId::from_usize(1),
-    //             path: Path::new("/root2/something")
-    //         })),
-    //         &MultiKeySettings {
-    //             key1: "a".to_string(),
-    //             key2: "b".to_string(),
-    //         }
-    //     );
-    // }
+        fn refine(&mut self, content: &SettingsContent) {
+            let Some(content) = content.title_bar else {
+                return;
+            };
+            self.show.refine(&content.show)
+        }
+
+        fn import_from_vscode(_: &VsCodeSettings, _: &mut SettingsContent) {}
+    }
+
+    #[gpui::test]
+    fn test_settings_store_basic(cx: &mut App) {
+        let mut store = SettingsStore::new(
+            cx,
+            r#"{
+                "auto_update": false,
+                "user": {
+                    "name": "John Doe",
+                    "age": 30,
+                    "staff": false
+                }
+            }"#,
+        );
+        store.register_setting::<AutoUpdateSetting>(cx);
+        store.register_setting::<TitleBarSettings>(cx);
+        // store.register_setting::<MultiKeySettings>(cx);
+
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: false }
+        );
+        // assert_eq!(
+        //     store.get::<UserSettings>(None),
+        //     &UserSettings {
+        //         name: "John Doe".to_string(),
+        //         age: 30,
+        //         staff: false,
+        //     }
+        // );
+        // assert_eq!(
+        //     store.get::<MultiKeySettings>(None),
+        //     &MultiKeySettings {
+        //         key1: String::new(),
+        //         key2: String::new(),
+        //     }
+        // );
+
+        store
+            .set_user_settings(
+                r#"{
+                    "auto_update": true,
+                    "user": { "age": 31 },
+                    "key1": "a"
+                }"#,
+                cx,
+            )
+            .unwrap();
+
+        assert_eq!(
+            store.get::<AutoUpdateSetting>(None),
+            &AutoUpdateSetting { auto_update: true }
+        );
+        // assert_eq!(
+        //     store.get::<UserSettings>(None),
+        //     &UserSettings {
+        //         name: "John Doe".to_string(),
+        //         age: 31,
+        //         staff: false
+        //     }
+        // );
+
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(1),
+                Path::new("/root1").into(),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "user": { "staff": true } }"#),
+                cx,
+            )
+            .unwrap();
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(1),
+                Path::new("/root1/subdir").into(),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "user": { "name": "Jane Doe" } }"#),
+                cx,
+            )
+            .unwrap();
+
+        store
+            .set_local_settings(
+                WorktreeId::from_usize(1),
+                Path::new("/root2").into(),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
+                cx,
+            )
+            .unwrap();
+
+        // assert_eq!(
+        //     store.get::<UserSettings>(Some(SettingsLocation {
+        //         worktree_id: WorktreeId::from_usize(1),
+        //         path: Path::new("/root1/something"),
+        //     })),
+        //     &UserSettings {
+        //         name: "John Doe".to_string(),
+        //         age: 31,
+        //         staff: true
+        //     }
+        // );
+        // assert_eq!(
+        //     store.get::<UserSettings>(Some(SettingsLocation {
+        //         worktree_id: WorktreeId::from_usize(1),
+        //         path: Path::new("/root1/subdir/something")
+        //     })),
+        //     &UserSettings {
+        //         name: "Jane Doe".to_string(),
+        //         age: 31,
+        //         staff: true
+        //     }
+        // );
+        // assert_eq!(
+        //     store.get::<UserSettings>(Some(SettingsLocation {
+        //         worktree_id: WorktreeId::from_usize(1),
+        //         path: Path::new("/root2/something")
+        //     })),
+        //     &UserSettings {
+        //         name: "John Doe".to_string(),
+        //         age: 42,
+        //         staff: false
+        //     }
+        // );
+        // assert_eq!(
+        //     store.get::<MultiKeySettings>(Some(SettingsLocation {
+        //         worktree_id: WorktreeId::from_usize(1),
+        //         path: Path::new("/root2/something")
+        //     })),
+        //     &MultiKeySettings {
+        //         key1: "a".to_string(),
+        //         key2: "b".to_string(),
+        //     }
+        // );
+    }
 
     // #[gpui::test]
     // fn test_setting_store_assign_json_before_register(cx: &mut App) {
@@ -1538,7 +1592,7 @@ mod tests {
 
     #[gpui::test]
     fn test_setting_store_update(cx: &mut App) {
-        let mut store = SettingsStore::new(cx);
+        let mut store = SettingsStore::new(cx, &test_settings());
         // store.register_setting::<MultiKeySettings>(cx);
         // store.register_setting::<UserSettings>(cx);
         // store.register_setting::<LanguageSettings>(cx);

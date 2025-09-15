@@ -3,8 +3,9 @@ use std::env;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+use anyhow::Result;
 use collections::{HashMap, HashSet};
-use gpui::{App, Modifiers, SharedString};
+use gpui::{App, FontFallbacks, FontFeatures, HighlightStyle, Hsla, Modifiers, SharedString};
 use release_channel::ReleaseChannel;
 use schemars::{JsonSchema, json_schema};
 use serde::de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor};
@@ -20,6 +21,10 @@ pub struct SettingsContent {
     pub project: ProjectSettingsContent,
 
     pub base_keymap: Option<BaseKeymapContent>,
+
+    pub auto_update: Option<bool>,
+
+    pub title_bar: Option<TitleBarSettingsContent>,
 }
 
 impl SettingsContent {
@@ -32,7 +37,7 @@ impl SettingsContent {
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ServerSettingsContent {
     #[serde(flatten)]
-    project: ProjectSettingsContent,
+    pub project: ProjectSettingsContent,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
@@ -969,4 +974,362 @@ pub enum IndentGuideBackgroundColoring {
     Disabled,
     /// Use a different color for each indentation level.
     IndentAware,
+}
+
+#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct TitleBarSettingsContent {
+    /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
+    ///
+    /// Default: "always"
+    pub show: Option<TitleBarVisibilityContent>,
+    /// Whether to show the branch icon beside branch switcher in the title bar.
+    ///
+    /// Default: false
+    pub show_branch_icon: Option<bool>,
+    /// Whether to show onboarding banners in the title bar.
+    ///
+    /// Default: true
+    pub show_onboarding_banner: Option<bool>,
+    /// Whether to show user avatar in the title bar.
+    ///
+    /// Default: true
+    pub show_user_picture: Option<bool>,
+    /// Whether to show the branch name button in the titlebar.
+    ///
+    /// Default: true
+    pub show_branch_name: Option<bool>,
+    /// Whether to show the project host and name in the titlebar.
+    ///
+    /// Default: true
+    pub show_project_items: Option<bool>,
+    /// Whether to show the sign in button in the title bar.
+    ///
+    /// Default: true
+    pub show_sign_in: Option<bool>,
+    /// Whether to show the menus in the title bar.
+    ///
+    /// Default: false
+    pub show_menus: Option<bool>,
+}
+
+#[derive(Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleBarVisibilityContent {
+    Always,
+    Never,
+    HideInFullScreen,
+}
+
+/// Settings for rendering text in UI and text buffers.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct ThemeSettingsContent {
+    /// The default font size for text in the UI.
+    #[serde(default)]
+    pub ui_font_size: Option<f32>,
+    /// The name of a font to use for rendering in the UI.
+    #[serde(default)]
+    pub ui_font_family: Option<FontFamilyName>,
+    /// The font fallbacks to use for rendering in the UI.
+    #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
+    #[schemars(extend("uniqueItems" = true))]
+    pub ui_font_fallbacks: Option<Vec<FontFamilyName>>,
+    /// The OpenType features to enable for text in the UI.
+    #[serde(default)]
+    #[schemars(default = "default_font_features")]
+    pub ui_font_features: Option<FontFeatures>,
+    /// The weight of the UI font in CSS units from 100 to 900.
+    #[serde(default)]
+    pub ui_font_weight: Option<f32>,
+    /// The name of a font to use for rendering in text buffers.
+    #[serde(default)]
+    pub buffer_font_family: Option<FontFamilyName>,
+    /// The font fallbacks to use for rendering in text buffers.
+    #[serde(default)]
+    #[schemars(extend("uniqueItems" = true))]
+    pub buffer_font_fallbacks: Option<Vec<FontFamilyName>>,
+    /// The default font size for rendering in text buffers.
+    #[serde(default)]
+    pub buffer_font_size: Option<f32>,
+    /// The weight of the editor font in CSS units from 100 to 900.
+    #[serde(default)]
+    pub buffer_font_weight: Option<f32>,
+    /// The buffer's line height.
+    #[serde(default)]
+    pub buffer_line_height: Option<BufferLineHeight>,
+    /// The OpenType features to enable for rendering in text buffers.
+    #[serde(default)]
+    #[schemars(default = "default_font_features")]
+    pub buffer_font_features: Option<FontFeatures>,
+    /// The font size for the agent panel. Falls back to the UI font size if unset.
+    #[serde(default)]
+    pub agent_font_size: Option<Option<f32>>,
+    /// The name of the Zed theme to use.
+    #[serde(default)]
+    pub theme: Option<ThemeSelection>,
+    /// The name of the icon theme to use.
+    #[serde(default)]
+    pub icon_theme: Option<IconThemeSelection>,
+
+    /// UNSTABLE: Expect many elements to be broken.
+    ///
+    // Controls the density of the UI.
+    #[serde(rename = "unstable.ui_density", default)]
+    pub ui_density: Option<UiDensity>,
+
+    /// How much to fade out unused code.
+    #[serde(default)]
+    pub unnecessary_code_fade: Option<f32>,
+
+    /// EXPERIMENTAL: Overrides for the current theme.
+    ///
+    /// These values will override the ones on the current theme specified in `theme`.
+    #[serde(rename = "experimental.theme_overrides", default)]
+    pub experimental_theme_overrides: Option<ThemeStyleContent>,
+
+    /// Overrides per theme
+    ///
+    /// These values will override the ones on the specified theme
+    #[serde(default)]
+    pub theme_overrides: HashMap<String, ThemeStyleContent>,
+}
+
+fn default_font_features() -> Option<FontFeatures> {
+    Some(FontFeatures::default())
+}
+
+fn default_font_fallbacks() -> Option<FontFallbacks> {
+    Some(FontFallbacks::default())
+}
+
+/// Represents the selection of a theme, which can be either static or dynamic.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ThemeSelection {
+    /// A static theme selection, represented by a single theme name.
+    Static(ThemeName),
+    /// A dynamic theme selection, which can change based the [ThemeMode].
+    Dynamic {
+        /// The mode used to determine which theme to use.
+        #[serde(default)]
+        mode: ThemeMode,
+        /// The theme to use for light mode.
+        light: ThemeName,
+        /// The theme to use for dark mode.
+        dark: ThemeName,
+    },
+}
+
+/// Represents the selection of an icon theme, which can be either static or dynamic.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum IconThemeSelection {
+    /// A static icon theme selection, represented by a single icon theme name.
+    Static(IconThemeName),
+    /// A dynamic icon theme selection, which can change based on the [`ThemeMode`].
+    Dynamic {
+        /// The mode used to determine which theme to use.
+        #[serde(default)]
+        mode: ThemeMode,
+        /// The icon theme to use for light mode.
+        light: IconThemeName,
+        /// The icon theme to use for dark mode.
+        dark: IconThemeName,
+    },
+}
+
+// TODO: Rename ThemeMode -> ThemeAppearanceMode
+/// The mode use to select a theme.
+///
+/// `Light` and `Dark` will select their respective themes.
+///
+/// `System` will select the theme based on the system's appearance.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    /// Use the specified `light` theme.
+    Light,
+
+    /// Use the specified `dark` theme.
+    Dark,
+
+    /// Use the theme based on the system's appearance.
+    #[default]
+    System,
+}
+
+/// Specifies the density of the UI.
+/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
+#[derive(
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Clone,
+    Copy,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum UiDensity {
+    /// A denser UI with tighter spacing and smaller elements.
+    #[serde(alias = "compact")]
+    Compact,
+    #[default]
+    #[serde(alias = "default")]
+    /// The default UI density.
+    Default,
+    #[serde(alias = "comfortable")]
+    /// A looser UI with more spacing and larger elements.
+    Comfortable,
+}
+
+impl UiDensity {
+    /// The spacing ratio of a given density.
+    /// TODO: Standardize usage throughout the app or remove
+    pub fn spacing_ratio(self) -> f32 {
+        match self {
+            UiDensity::Compact => 0.75,
+            UiDensity::Default => 1.0,
+            UiDensity::Comfortable => 1.25,
+        }
+    }
+}
+
+/// Newtype for font family name. Its `ParameterizedJsonSchema` lists the font families known at
+/// runtime.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct FontFamilyName(pub Arc<str>);
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, params, _cx| {
+            replace_subschema::<FontFamilyName>(generator, || {
+                json_schema!({
+                    "type": "string",
+                    "enum": params.font_names,
+                })
+            })
+        }
+    }
+}
+
+/// The buffer's line height.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BufferLineHeight {
+    /// A less dense line height.
+    #[default]
+    Comfortable,
+    /// The default line height.
+    Standard,
+    /// A custom line height, where 1.0 is the font's height. Must be at least 1.0.
+    Custom(#[serde(deserialize_with = "deserialize_line_height")] f32),
+}
+
+fn deserialize_line_height<'de, D>(deserializer: D) -> Result<f32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = f32::deserialize(deserializer)?;
+    if value < 1.0 {
+        return Err(serde::de::Error::custom(
+            "buffer_line_height.custom must be at least 1.0",
+        ));
+    }
+
+    Ok(value)
+}
+
+/// The content of a serialized theme.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(default)]
+pub struct ThemeStyleContent {
+    #[serde(default, rename = "background.appearance")]
+    pub window_background_appearance: Option<WindowBackgroundContent>,
+
+    #[serde(default)]
+    pub accents: Vec<AccentContent>,
+
+    #[serde(flatten, default)]
+    pub colors: ThemeColorsContent,
+
+    #[serde(flatten, default)]
+    pub status: StatusColorsContent,
+
+    #[serde(default)]
+    pub players: Vec<PlayerColorContent>,
+
+    /// The styles for syntax nodes.
+    #[serde(default)]
+    pub syntax: IndexMap<String, HighlightStyleContent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct AccentContent(pub Option<String>);
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct PlayerColorContent {
+    pub cursor: Option<String>,
+    pub background: Option<String>,
+    pub selection: Option<String>,
+}
+
+pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
+    let rgba = gpui::Rgba::try_from(color)?;
+    let rgba = palette::rgb::Srgba::from_components((rgba.r, rgba.g, rgba.b, rgba.a));
+    let hsla = palette::Hsla::from_color(rgba);
+
+    let hsla = gpui::hsla(
+        hsla.hue.into_positive_degrees() / 360.,
+        hsla.saturation,
+        hsla.lightness,
+        hsla.alpha,
+    );
+
+    Ok(hsla)
+}
+
+/// Newtype for a theme name. Its `ParameterizedJsonSchema` lists the theme names known at runtime.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct ThemeName(pub Arc<str>);
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, _params, cx| {
+            todo!()
+            // replace_subschema::<ThemeName>(generator, || json_schema!({
+            //     "type": "string",
+            //     "enum": ThemeRegistry::global(cx).list_names(),
+            // }))
+        }
+    }
+}
+
+/// Newtype for a icon theme name. Its `ParameterizedJsonSchema` lists the icon theme names known at
+/// runtime.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct IconThemeName(pub Arc<str>);
+
+inventory::submit! {
+    ParameterizedJsonSchema {
+        add_and_get_ref: |generator, _params, cx| {
+            todo!()
+            // replace_subschema::<IconThemeName>(generator, || json_schema!({
+            //     "type": "string",
+            //     "enum": ThemeRegistry::global(cx)
+            //         .list_icon_themes()
+            //         .into_iter()
+            //         .map(|icon_theme| icon_theme.name)
+            //         .collect::<Vec<SharedString>>(),
+            // }))
+        }
+    }
 }
