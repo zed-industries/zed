@@ -54,3 +54,13 @@ impl FeatureFlag for ClaudeCodeFeatureFlag {
         true
     }
 }
+
+pub struct GooseAcpFeatureFlag;
+
+impl FeatureFlag for GooseAcpFeatureFlag {
+    const NAME: &'static str = "goose-acp";
+
+    fn enabled_for_all() -> bool {
+        true
+    }
+}

@@ -2,6 +2,7 @@ mod acp;
 mod claude;
 mod custom;
 mod gemini;
+mod goose;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod e2e_tests;
@@ -10,6 +11,7 @@ pub use claude::*;
 pub use custom::*;
 use fs::Fs;
 pub use gemini::*;
+pub use goose::*;
 use project::agent_server_store::AgentServerStore;
 
 use acp_thread::AgentConnection;
