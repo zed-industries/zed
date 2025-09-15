@@ -17,8 +17,8 @@ use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
 use ui::{ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
-use util::ResultExt;
-use vercel::Model;
+use util::{ResultExt, truncate_and_trailoff};
+use vercel::{Model, VERCEL_API_URL};
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::{api_key::ApiKeyState, ui::InstructionListItem};
@@ -114,7 +114,7 @@ impl VercelLanguageModelProvider {
     fn api_url(cx: &App) -> SharedString {
         let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
-            vercel::VERCEL_API_URL.into()
+            VERCEL_API_URL.into()
         } else {
             SharedString::new(api_url.as_str())
         }
@@ -502,9 +502,14 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable.")
+                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
                         } else {
-                            "API key configured.".to_string()
+                            let api_url = VercelLanguageModelProvider::api_url(cx);
+                            if api_url == VERCEL_API_URL {
+                                "API key configured".to_string()
+                            } else {
+                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
+                            }
                         })),
                 )
                 .child(

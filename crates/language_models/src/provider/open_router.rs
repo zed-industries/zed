@@ -14,7 +14,8 @@ use language_model::{
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, Provider, ResponseStreamEvent, list_models,
+    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, Provider, ResponseStreamEvent,
+    list_models,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,7 @@ use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::{api_key::ApiKeyState, ui::InstructionListItem};
@@ -199,7 +200,12 @@ impl OpenRouterLanguageModelProvider {
     }
 
     fn api_url(cx: &App) -> SharedString {
-        SharedString::new(Self::settings(cx).api_url.as_str())
+        let api_url = &Self::settings(cx).api_url;
+        if api_url.is_empty() {
+            OPEN_ROUTER_API_URL.into()
+        } else {
+            SharedString::new(api_url.as_str())
+        }
     }
 
     fn create_language_model(&self, model: open_router::Model) -> Arc<dyn LanguageModel> {
@@ -904,9 +910,14 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable.")
+                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
                         } else {
-                            "API key configured.".to_string()
+                            let api_url = OpenRouterLanguageModelProvider::api_url(cx);
+                            if api_url == OPEN_ROUTER_API_URL {
+                                "API key configured".to_string()
+                            } else {
+                                format!("API key configured for {}", truncate_and_trailoff(&api_url, 32))
+                            }
                         })),
                 )
                 .child(

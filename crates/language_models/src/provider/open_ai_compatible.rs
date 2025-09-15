@@ -17,7 +17,7 @@ use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
-use util::ResultExt;
+use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKeyState;
@@ -488,9 +488,9 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {env_var_name} environment variable.")
+                            format!("API key set in {env_var_name} environment variable")
                         } else {
-                            "API key configured.".to_string()
+                            format!("API key configured for {}", truncate_and_trailoff(&state.settings.api_url, 32))
                         })),
                 )
                 .child(

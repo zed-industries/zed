@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use collections::{BTreeMap, HashMap};
+use deepseek::DEEPSEEK_API_URL;
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future, future::BoxFuture, stream::BoxStream};
@@ -23,7 +24,7 @@ use std::str::FromStr;
 use std::sync::{Arc, LazyLock};
 use theme::ThemeSettings;
 use ui::{Icon, IconName, List, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
 
 use crate::{api_key::ApiKeyState, ui::InstructionListItem};
@@ -70,13 +71,13 @@ impl State {
     }
 
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let api_url = SharedString::new(DeepSeekLanguageModelProvider::api_url(cx));
+        let api_url = DeepSeekLanguageModelProvider::api_url(cx);
         self.api_key_state
             .store(api_url, api_key, |this| &mut this.api_key_state, cx)
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        let api_url = SharedString::new(DeepSeekLanguageModelProvider::api_url(cx));
+        let api_url = DeepSeekLanguageModelProvider::api_url(cx);
         self.api_key_state.load_if_needed(
             api_url,
             &API_KEY_ENV_VAR,
@@ -90,7 +91,7 @@ impl DeepSeekLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut App) -> Self {
         let state = cx.new(|cx| {
             cx.observe_global::<SettingsStore>(|this: &mut State, cx| {
-                let api_url = SharedString::new(Self::api_url(cx));
+                let api_url = Self::api_url(cx);
                 this.api_key_state.handle_url_change(
                     api_url,
                     &API_KEY_ENV_VAR,
@@ -101,7 +102,7 @@ impl DeepSeekLanguageModelProvider {
             })
             .detach();
             State {
-                api_key_state: ApiKeyState::new(SharedString::new(Self::api_url(cx))),
+                api_key_state: ApiKeyState::new(Self::api_url(cx)),
             }
         });
 
@@ -122,8 +123,13 @@ impl DeepSeekLanguageModelProvider {
         &crate::AllLanguageModelSettings::get_global(cx).deepseek
     }
 
-    fn api_url(cx: &App) -> &str {
-        &Self::settings(cx).api_url
+    fn api_url(cx: &App) -> SharedString {
+        let api_url = &Self::settings(cx).api_url;
+        if api_url.is_empty() {
+            DEEPSEEK_API_URL.into()
+        } else {
+            SharedString::new(api_url.as_str())
+        }
     }
 }
 
@@ -222,7 +228,7 @@ impl DeepSeekLanguageModel {
 
         let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
             let api_url = DeepSeekLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(api_url), api_url.to_string())
+            (state.api_key_state.key(&api_url), api_url)
         }) else {
             return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
@@ -691,9 +697,17 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("API key set in {API_KEY_ENV_VAR_NAME}")
+                            format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable")
                         } else {
-                            "API key configured".to_string()
+                            let api_url = DeepSeekLanguageModelProvider::api_url(cx);
+                            if api_url == DEEPSEEK_API_URL {
+                                "API key configured".to_string()
+                            } else {
+                                format!(
+                                    "API key configured for {}",
+                                    truncate_and_trailoff(&api_url, 32)
+                                )
+                            }
                         })),
                 )
                 .child(
