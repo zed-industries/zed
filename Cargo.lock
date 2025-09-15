@@ -13349,6 +13349,7 @@ dependencies = [
  "theme",
  "ui",
  "util",
+ "winreg 0.55.0",
  "workspace",
  "workspace-hack",
  "zed_actions",
