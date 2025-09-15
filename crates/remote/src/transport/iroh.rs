@@ -304,7 +304,7 @@ pub struct ZedIrohTicket {
 
 impl Display for ZedIrohTicket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_string())
+        write!(f, "{}", Ticket::serialize(self))
     }
 }
 

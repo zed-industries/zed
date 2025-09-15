@@ -20,7 +20,7 @@ use project::project_settings::ProjectSettings;
 
 use proto::CrashReport;
 use release_channel::{AppVersion, RELEASE_CHANNEL, ReleaseChannel};
-use remote::RemoteClient;
+use remote::{RemoteClient, ZedIrohTicket};
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
@@ -274,11 +274,7 @@ impl ServerListeners {
     }
 }
 
-fn start_p2p_server(
-    log_rx: Receiver<Vec<u8>>,
-    cx: &mut App,
-    rt: tokio::runtime::Handle,
-) -> AnyProtoClient {
+fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
     log::info!("START P2P SERVER");
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
@@ -288,31 +284,64 @@ fn start_p2p_server(
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
 
     // TODO(b5): create an endpoint & wire up here, thne call start_p2p_server in the main func of remote_server
-    // TODO: track task
 
-    let _task = rt.spawn(async move {
-        let endpoint = iroh::Endpoint::builder()
-            .alpns(vec![remote::ZED_ALPN.to_vec()])
-            .bind()
-            .await?;
+    gpui_tokio::Tokio::spawn(cx, async move {
+        let endpoint = iroh::Endpoint::builder().discovery_n0().bind().await?;
+        let _router = iroh::protocol::Router::builder(endpoint.clone())
+            .accept(remote::ZED_ALPN, P2pProtocol)
+            .spawn();
 
         log::info!("ADDR: iroh started");
+
+        let net_report = endpoint.net_report().initialized().await;
+        log::info!("ADDR: {:?}", net_report);
+
         let home_relay = endpoint.home_relay().initialized().await;
         log::info!("ADDR: home relay: {}", home_relay);
+
         let addr = endpoint.node_addr().initialized().await;
         log::info!("ADDR: {:?}", addr);
 
+        let ticket = ZedIrohTicket::new(addr);
+        log::info!("TICKET: {}", ticket);
+
+        // TODO: better keep alive
+        loop {}
+
         anyhow::Ok(())
-    });
+    })
+    .detach();
 
     RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
+}
+
+#[derive(Debug, Clone)]
+struct P2pProtocol;
+
+impl iroh::protocol::ProtocolHandler for P2pProtocol {
+    async fn accept(
+        &self,
+        connection: iroh::endpoint::Connection,
+    ) -> Result<(), iroh::protocol::AcceptError> {
+        let node_id = connection.remote_node_id()?;
+        log::info!("accepted connection from {node_id}");
+        let (mut send, mut recv) = connection.accept_bi().await?;
+
+        let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+        log::info!("Copied over {bytes_sent} byte(s)");
+
+        send.finish()?;
+
+        connection.closed().await;
+
+        Ok(())
+    }
 }
 
 fn start_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
-    rt: tokio::runtime::Handle,
 ) -> AnyProtoClient {
     log::info!("START SERVER");
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
@@ -322,7 +351,7 @@ fn start_server(
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
 
-    start_p2p_server(log_rx.clone(), cx, rt);
+    start_p2p_server(log_rx.clone(), cx);
 
     cx.on_app_quit(move |_| {
         let mut app_quit_tx = app_quit_tx.clone();
@@ -505,9 +534,9 @@ pub fn execute_run(
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");
-        let rt = tokio::runtime::Runtime::new().expect("failed to start tokio runtime");
 
-        let session = start_server(listeners, log_rx, cx, rt.handle().clone());
+        gpui_tokio::init(cx);
+        let session = start_server(listeners, log_rx, cx);
 
         client::init_settings(cx);
 
