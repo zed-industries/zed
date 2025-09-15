@@ -100,6 +100,7 @@ use std::{
     borrow::Cow,
     cell::RefCell,
     cmp::{Ordering, Reverse},
+    collections::HashMap,
     convert::TryInto,
     ffi::OsStr,
     future::ready,
@@ -10550,6 +10551,7 @@ impl LspStore {
 
         let mut buffer_paths_registered = Vec::new();
         self.buffer_store.clone().update(cx, |buffer_store, cx| {
+            let mut lsp_adapters = HashMap::default();
             for buffer_handle in buffer_store.buffers() {
                 let buffer = buffer_handle.read(cx);
                 let file = match File::from_dyn(buffer.file()) {
@@ -10562,9 +10564,9 @@ impl LspStore {
                 };
 
                 if !worktrees_using_server.contains(&file.worktree.read(cx).id())
-                    || !self
-                        .languages
-                        .lsp_adapters(&language.name())
+                    || !lsp_adapters
+                        .entry(language.name())
+                        .or_insert_with(|| self.languages.lsp_adapters(&language.name()))
                         .iter()
                         .any(|a| a.name == key.name)
                 {
