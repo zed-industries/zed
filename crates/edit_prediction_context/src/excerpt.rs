@@ -231,27 +231,21 @@ impl<'a> ExcerptSelector<'a> {
     // motivation for this and `goto_previous_named_sibling` is to avoid including things like
     // trailing unnamed "}" in body nodes
     fn goto_next_named_sibling(cursor: &mut TreeCursor) -> bool {
-        if !cursor.goto_next_sibling() {
-            return false;
-        }
-        while !cursor.node().is_named() {
-            if !cursor.goto_next_sibling() {
-                return false;
+        while cursor.goto_next_sibling() {
+            if cursor.node().is_named() {
+                return true;
             }
         }
-        return true;
+        false
     }
 
     fn goto_previous_named_sibling(cursor: &mut TreeCursor) -> bool {
-        if !cursor.goto_previous_sibling() {
-            return false;
-        }
-        while !cursor.node().is_named() {
-            if !cursor.goto_previous_sibling() {
-                return false;
+        while cursor.goto_previous_sibling() {
+            if cursor.node().is_named() {
+                return true;
             }
         }
-        return true;
+        false
     }
 
     fn expand_to_siblings(
