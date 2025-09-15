@@ -1956,50 +1956,36 @@ impl AgentPanel {
                                                     }
                                                 });
                                             }
-<<<<<<< HEAD
-                                        }),
-                                )
-                            })
-                            .when(cx.has_flag::<GooseAcpFeatureFlag>(), |menu| {
-                                menu.item(
-                                    ContextMenuEntry::new("New Goose Thread")
-                                        .icon(IconName::Terminal)
-                                        .disabled(is_via_collab)
-                                        .icon_color(Color::Muted)
-                                        .handler({
-                                            let workspace = workspace.clone();
-                                            move |window, cx| {
-                                                if let Some(workspace) = workspace.upgrade() {
-                                                    workspace.update(cx, |workspace, cx| {
-                                                        if let Some(panel) =
-                                                            workspace.panel::<AgentPanel>(cx)
-                                                        {
-                                                            panel.update(cx, |panel, cx| {
-                                                                panel.new_agent_thread(
-                                                                    AgentType::GooseAcp,
-                                                                    window,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
-                                                    });
-                                                }
+                                        }
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Goose Thread")
+                                    .icon(IconName::Terminal)
+                                    .disabled(is_via_collab)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.new_agent_thread(
+                                                                AgentType::GooseAcp,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                });
                                             }
-                                        }),
-                                )
-                            })
-                            .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |mut menu| {
-||||||| bdf44e55aa
-                                        }),
-                                )
-                            })
-                            .when(cx.has_flag::<GeminiAndNativeFeatureFlag>(), |mut menu| {
-=======
                                         }
                                     }),
                             )
                             .map(|mut menu| {
->>>>>>> main
                                 let agent_names = agent_server_store
                                     .read(cx)
                                     .external_agents()
