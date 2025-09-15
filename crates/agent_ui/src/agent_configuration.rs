@@ -274,13 +274,28 @@ impl AgentConfiguration {
                                     *is_expanded = !*is_expanded;
                                 }
                             })),
-                    )
-                    .when(provider.is_authenticated(cx), |parent| {
+                    ),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .px_2()
+                    .gap_1()
+                    .when(is_expanded, |parent| match configuration_view {
+                        Some(configuration_view) => parent.child(configuration_view),
+                        None => parent.child(Label::new(format!(
+                            "No configuration view for {provider_name}",
+                        ))),
+                    })
+                    .when(is_expanded && provider.is_authenticated(cx), |parent| {
                         parent.child(
                             Button::new(
                                 SharedString::from(format!("new-thread-{provider_id}")),
                                 "Start New Thread",
                             )
+                            .full_width()
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface)
                             .icon_position(IconPosition::Start)
                             .icon(IconName::Thread)
                             .icon_size(IconSize::Small)
@@ -295,17 +310,6 @@ impl AgentConfiguration {
                                 }
                             })),
                         )
-                    }),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .px_2()
-                    .when(is_expanded, |parent| match configuration_view {
-                        Some(configuration_view) => parent.child(configuration_view),
-                        None => parent.child(Label::new(format!(
-                            "No configuration view for {provider_name}",
-                        ))),
                     }),
             )
     }
