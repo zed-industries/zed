@@ -1,6 +1,6 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use collections::BTreeMap;
-use futures::{FutureExt, StreamExt, future::BoxFuture};
+use futures::{FutureExt, StreamExt, future, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::HttpClient;
 use language_model::{
@@ -219,16 +219,11 @@ impl VercelLanguageModel {
     {
         let http_client = self.http_client.clone();
 
-        let api_key_and_url = self.state.read_with(cx, |state, cx| {
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
             let api_url = VercelLanguageModelProvider::api_url(cx);
-            let api_key = state.api_key_state.key(&api_url);
-            (api_key, api_url)
-        });
-        let (api_key, api_url) = match api_key_and_url {
-            Ok(api_key_and_url) => api_key_and_url,
-            Err(err) => {
-                return futures::future::ready(Err(err)).boxed();
-            }
+            (state.api_key_state.key(&api_url), api_url)
+        }) else {
+            return future::ready(Err(anyhow!("App state dropped"))).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
@@ -429,6 +424,10 @@ impl ConfigurationView {
             return;
         }
 
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |editor, cx| editor.set_text("", window, cx));
+
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
@@ -439,11 +438,8 @@ impl ConfigurationView {
     }
 
     fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.api_key_editor.update(cx, |input, cx| {
-            input.editor.update(cx, |editor, cx| {
-                editor.set_text("", window, cx);
-            });
-        });
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
 
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
