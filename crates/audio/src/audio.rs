@@ -161,12 +161,14 @@ impl Audio {
             .default_device()?
             .default_config()?
             .prefer_sample_rates([SAMPLE_RATE, SAMPLE_RATE.saturating_mul(nz!(2))])
-            // .prefer_channel_counts([nz!(1), nz!(2)])
+            .prefer_channel_counts([nz!(1), nz!(2)])
             .prefer_buffer_sizes(512..)
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
 
-        let (replay, stream) = UniformSourceIterator::new(stream, CHANNEL_COUNT, SAMPLE_RATE)
+        let (replay, stream) = stream
+            // .suspicious_stereo_to_mono()
+            .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
             .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
                 let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
