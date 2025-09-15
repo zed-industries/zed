@@ -7,12 +7,12 @@ use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
-use futures::future::Shared;
 use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
 use action_log::ActionLog;
@@ -34,7 +34,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
-use util::{ResultExt, get_system_shell};
+use util::{ResultExt, get_default_system_shell};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -786,7 +786,6 @@ pub struct AcpThread {
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
-    determine_shell: Shared<Task<String>>,
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
 }
 
@@ -873,20 +872,6 @@ impl AcpThread {
             }
         });
 
-        let determine_shell = cx
-            .background_spawn(async move {
-                if cfg!(windows) {
-                    return get_system_shell();
-                }
-
-                if which::which("bash").is_ok() {
-                    "bash".into()
-                } else {
-                    get_system_shell()
-                }
-            })
-            .shared();
-
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -901,7 +886,6 @@ impl AcpThread {
             prompt_capabilities,
             _observe_prompt_capabilities: task,
             terminals: HashMap::default(),
-            determine_shell,
         }
     }
 
@@ -1940,28 +1924,13 @@ impl AcpThread {
 
     pub fn create_terminal(
         &self,
-        mut command: String,
+        command: String,
         args: Vec<String>,
         extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        for arg in args {
-            command.push(' ');
-            command.push_str(&arg);
-        }
-
-        let shell_command = if cfg!(windows) {
-            format!("$null | & {{{}}}", command.replace("\"", "'"))
-        } else if let Some(cwd) = cwd.as_ref().and_then(|cwd| cwd.as_os_str().to_str()) {
-            // Make sure once we're *inside* the shell, we cd into `cwd`
-            format!("(cd {cwd}; {}) </dev/null", command)
-        } else {
-            format!("({}) </dev/null", command)
-        };
-        let args = vec!["-c".into(), shell_command];
-
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
                 project.directory_environment(dir.as_path().into(), cx)
@@ -1982,20 +1951,30 @@ impl AcpThread {
 
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
-        let determine_shell = self.determine_shell.clone();
 
         let terminal_id = acp::TerminalId(Uuid::new_v4().to_string().into());
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
-                let program = determine_shell.await;
                 let env = env.await;
+                let (command, args) = ShellBuilder::new(
+                    project
+                        .update(cx, |project, cx| {
+                            project
+                                .remote_client()
+                                .and_then(|r| r.read(cx).default_system_shell())
+                        })?
+                        .as_deref(),
+                    &Shell::Program(get_default_system_shell()),
+                )
+                .redirect_stdin_to_dev_null()
+                .build(Some(command), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
-                                command: Some(program),
-                                args,
+                                command: Some(command.clone()),
+                                args: args.clone(),
                                 cwd: cwd.clone(),
                                 env,
                                 ..Default::default()
@@ -2008,7 +1987,7 @@ impl AcpThread {
                 cx.new(|cx| {
                     Terminal::new(
                         terminal_id,
-                        command,
+                        &format!("{} {}", command, args.join(" ")),
                         cwd,
                         output_byte_limit.map(|l| l as usize),
                         terminal,

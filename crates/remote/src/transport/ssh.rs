@@ -37,6 +37,7 @@ pub(crate) struct SshRemoteConnection {
     ssh_platform: RemotePlatform,
     ssh_path_style: PathStyle,
     ssh_shell: String,
+    ssh_default_system_shell: String,
     _temp_dir: TempDir,
 }
 
@@ -103,6 +104,10 @@ impl RemoteConnection for SshRemoteConnection {
 
     fn shell(&self) -> String {
         self.ssh_shell.clone()
+    }
+
+    fn default_system_shell(&self) -> String {
+        self.ssh_default_system_shell.clone()
     }
 
     fn build_command(
@@ -347,6 +352,7 @@ impl SshRemoteConnection {
             _ => PathStyle::Posix,
         };
         let ssh_shell = socket.shell().await;
+        let ssh_default_system_shell = String::from("/bin/sh");
 
         let mut this = Self {
             socket,
@@ -356,6 +362,7 @@ impl SshRemoteConnection {
             ssh_path_style,
             ssh_platform,
             ssh_shell,
+            ssh_default_system_shell,
         };
 
         let (release_channel, version, commit) = cx.update(|cx| {
