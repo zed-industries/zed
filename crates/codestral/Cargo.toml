@@ -1,0 +1,30 @@
+[package]
+name = "codestral"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/codestral.rs"
+
+[dependencies]
+anyhow.workspace = true
+client.workspace = true
+collections.workspace = true
+futures.workspace = true
+gpui.workspace = true
+http_client.workspace = true
+edit_prediction.workspace = true
+language.workspace = true
+log.workspace = true
+project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+smol.workspace = true
+text.workspace = true
+ui.workspace = true
+util.workspace = true
+
+[dev-dependencies]

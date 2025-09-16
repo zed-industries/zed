@@ -555,6 +555,7 @@ pub fn main() {
             cx,
         );
         supermaven::init(app_state.client.clone(), cx);
+        codestral::init(app_state.client.clone(), cx);
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         agent_settings::init(cx);
