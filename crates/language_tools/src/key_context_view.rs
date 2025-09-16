@@ -62,7 +62,7 @@ impl KeyContextView {
                 .map(|binding| {
                     let match_state = if let Some(predicate) = binding.predicate() {
                         if this.matches(&predicate) {
-                            if this.action_matches(&e.action, binding.action()) {
+                            if this.action_matches(e.action.as_deref(), binding.action()) {
                                 Some(true)
                             } else {
                                 Some(false)
@@ -70,7 +70,7 @@ impl KeyContextView {
                         } else {
                             None
                         }
-                    } else if this.action_matches(&e.action, binding.action()) {
+                    } else if this.action_matches(e.action.as_deref(), binding.action()) {
                         Some(true)
                     } else {
                         Some(false)
@@ -80,10 +80,7 @@ impl KeyContextView {
                     } else {
                         "".to_string()
                     };
-                    let mut name = binding.action().name();
-                    if name == "zed::NoAction" {
-                        name = "(null)"
-                    }
+                    let name = binding.action().map_or("(null)", |action| action.name());
 
                     (
                         name.to_owned().into(),
@@ -130,12 +127,8 @@ impl KeyContextView {
         predicate.depth_of(&self.context_stack).is_some()
     }
 
-    fn action_matches(&self, a: &Option<Box<dyn Action>>, b: &dyn Action) -> bool {
-        if let Some(last_action) = a {
-            last_action.partial_eq(b)
-        } else {
-            b.name() == "zed::NoAction"
-        }
+    fn action_matches(&self, a: Option<&dyn Action>, b: Option<&dyn Action>) -> bool {
+        a.zip(b).is_some_and(|(a, b)| a.partial_eq(b))
     }
 }
 

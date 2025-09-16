@@ -438,7 +438,11 @@ impl DispatchTree {
     ) -> bool {
         let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
         if let Some(found) = bindings.iter().next() {
-            found.action.partial_eq(binding.action.as_ref())
+            match (found.action.as_deref(), binding.action.as_deref()) {
+                (None, None) => true,
+                (Some(f), Some(b)) => f.partial_eq(b),
+                (None, Some(_)) | (Some(_), None) => false,
+            }
         } else {
             false
         }
@@ -677,7 +681,12 @@ mod tests {
 
         let keybinding = tree.bindings_for_action(&TestAction, &contexts);
 
-        assert!(keybinding[0].action.partial_eq(&TestAction))
+        assert!(
+            keybinding[0]
+                .action
+                .as_deref()
+                .is_some_and(|it| it.partial_eq(&TestAction))
+        );
     }
 
     #[crate::test]

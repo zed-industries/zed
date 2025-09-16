@@ -370,7 +370,7 @@ pub struct Pane {
     /// Is None if navigation buttons are permanently turned off (and should not react to setting changes).
     /// Otherwise, when `display_nav_history_buttons` is Some, it determines whether nav buttons should be displayed.
     display_nav_history_buttons: Option<bool>,
-    double_click_dispatch_action: Box<dyn Action>,
+    double_click_dispatch_action: Option<Box<dyn Action>>,
     save_modals_spawned: HashSet<EntityId>,
     close_pane_if_empty: bool,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -458,7 +458,7 @@ impl Pane {
         project: Entity<Project>,
         next_timestamp: Arc<AtomicUsize>,
         can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut Window, &mut App) -> bool + 'static>>,
-        double_click_dispatch_action: Box<dyn Action>,
+        double_click_dispatch_action: Option<Box<dyn Action>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -3066,10 +3066,14 @@ impl Pane {
                             }))
                             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                                 if event.click_count() == 2 {
-                                    window.dispatch_action(
-                                        this.double_click_dispatch_action.boxed_clone(),
-                                        cx,
-                                    );
+                                    if let Some(double_click_dispatch_action) =
+                                        &this.double_click_dispatch_action
+                                    {
+                                        window.dispatch_action(
+                                            double_click_dispatch_action.boxed_clone(),
+                                            cx,
+                                        );
+                                    }
                                 }
                             })),
                     ),
@@ -3744,10 +3748,14 @@ impl Render for Pane {
                                 .on_click(cx.listener(
                                     move |this, event: &ClickEvent, window, cx| {
                                         if event.click_count() == 2 {
-                                            window.dispatch_action(
-                                                this.double_click_dispatch_action.boxed_clone(),
-                                                cx,
-                                            );
+                                            if let Some(double_click_dispatch_action) =
+                                                &this.double_click_dispatch_action
+                                            {
+                                                window.dispatch_action(
+                                                    double_click_dispatch_action.boxed_clone(),
+                                                    cx,
+                                                );
+                                            }
                                         }
                                     },
                                 ));

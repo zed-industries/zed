@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 
 /// A keybinding and its associated metadata, from the keymap.
 pub struct KeyBinding {
-    pub(crate) action: Box<dyn Action>,
+    pub(crate) action: Option<Box<dyn Action>>,
     pub(crate) keystrokes: SmallVec<[KeybindingKeystroke; 2]>,
     pub(crate) context_predicate: Option<Rc<KeyBindingContextPredicate>>,
     pub(crate) meta: Option<KeyBindingMetaIndex>,
@@ -19,7 +19,7 @@ pub struct KeyBinding {
 impl Clone for KeyBinding {
     fn clone(&self) -> Self {
         KeyBinding {
-            action: self.action.boxed_clone(),
+            action: self.action.as_ref().map(|action| action.boxed_clone()),
             keystrokes: self.keystrokes.clone(),
             context_predicate: self.context_predicate.clone(),
             meta: self.meta,
@@ -35,7 +35,22 @@ impl KeyBinding {
             context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
         Self::load(
             keystrokes,
-            Box::new(action),
+            Some(Box::new(action) as Box<dyn Action>),
+            context_predicate,
+            false,
+            None,
+            &DummyKeyboardMapper,
+        )
+        .unwrap()
+    }
+
+    /// Construct a new keybinding from the given data with no action associated to it. Panics on parse error.
+    pub fn new_no_action(keystrokes: &str, context: Option<&str>) -> Self {
+        let context_predicate =
+            context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
+        Self::load(
+            keystrokes,
+            None,
             context_predicate,
             false,
             None,
@@ -47,7 +62,7 @@ impl KeyBinding {
     /// Load a keybinding from the given raw data.
     pub fn load(
         keystrokes: &str,
-        action: Box<dyn Action>,
+        action: impl Into<Option<Box<dyn Action>>>,
         context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         use_key_equivalents: bool,
         action_input: Option<SharedString>,
@@ -67,7 +82,7 @@ impl KeyBinding {
 
         Ok(Self {
             keystrokes,
-            action,
+            action: action.into(),
             context_predicate,
             meta: None,
             action_input,
@@ -106,8 +121,8 @@ impl KeyBinding {
     }
 
     /// Get the action associated with this binding
-    pub fn action(&self) -> &dyn Action {
-        self.action.as_ref()
+    pub fn action(&self) -> Option<&dyn Action> {
+        self.action.as_deref()
     }
 
     /// Get the predicate used to match this binding
@@ -131,7 +146,10 @@ impl std::fmt::Debug for KeyBinding {
         f.debug_struct("KeyBinding")
             .field("keystrokes", &self.keystrokes)
             .field("context_predicate", &self.context_predicate)
-            .field("action", &self.action.name())
+            .field(
+                "action",
+                &self.action.as_deref().map_or("null", |it| it.name()),
+            )
             .finish()
     }
 }

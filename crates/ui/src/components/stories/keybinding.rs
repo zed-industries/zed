@@ -1,4 +1,3 @@
-use gpui::NoAction;
 use gpui::Render;
 use itertools::Itertools;
 use story::Story;
@@ -8,7 +7,7 @@ use crate::{KeyBinding, prelude::*};
 pub struct KeybindingStory;
 
 pub fn binding(key: &str) -> gpui::KeyBinding {
-    gpui::KeyBinding::new(key, NoAction {}, None)
+    gpui::KeyBinding::new_no_action(key, None)
 }
 
 impl Render for KeybindingStory {
@@ -42,7 +41,7 @@ impl Render for KeybindingStory {
                                 .py_3()
                                 .children(chunk.map(|permutation| {
                                     KeyBinding::new_from_gpui(
-                                        binding(&(permutation.join("-") + "-x")),
+                                        binding(&(permutation.into_iter().join("-") + "-x")),
                                         cx,
                                     )
                                 }))
