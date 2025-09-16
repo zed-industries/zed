@@ -1588,7 +1588,7 @@ mod tests {
     use super::*;
     // This is so the SettingsUi macro can still work properly
     use crate as settings;
-    use serde_derive::Deserialize;
+    use serde::Deserialize;
     use settings_ui_macros::{SettingsKey, SettingsUi};
     use unindent::Unindent;
 
@@ -2232,7 +2232,9 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     struct JournalSettings {
+        #[expect(unused)]
         pub path: String,
+        #[expect(unused)]
         pub hour_format: HourFormat,
     }
 

@@ -1,4 +1,4 @@
-use crate::AgentServerDelegate;
+use crate::{AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
@@ -65,6 +65,7 @@ impl crate::AgentServer for CustomAgentServer {
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode(cx);
         let store = delegate.store.downgrade();
+        let extra_env = load_proxy_env(cx);
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -76,7 +77,7 @@ impl crate::AgentServer for CustomAgentServer {
                         })?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),
-                        Default::default(),
+                        extra_env,
                         delegate.status_tx,
                         delegate.new_version_available,
                         &mut cx.to_async(),

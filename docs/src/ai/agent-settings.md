@@ -170,6 +170,21 @@ The default value is `false`.
 
 > This setting is available via the Agent Panel's settings UI.
 
+### Message Editor Size
+
+Use the `message_editor_min_lines` setting to control minimum number of lines of height the agent message editor should have.
+It is set to `4` by default, and the max number of lines is always double of the minimum.
+
+```json
+{
+  "agent": {
+    "message_editor_min_lines": 4
+  }
+}
+```
+
+> This setting is currently available only in Preview.
+
 ### Modifier to Send
 
 Make a modifier (`cmd` on macOS, `ctrl` on Linux) required to send messages.

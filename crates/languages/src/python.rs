@@ -708,7 +708,7 @@ impl ContextProvider for PythonContextProvider {
             // Execute a selection
             TaskTemplate {
                 label: "execute selection".to_owned(),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-c".to_owned(),
                     VariableName::SelectedText.template_value_with_whitespace(),
@@ -719,7 +719,7 @@ impl ContextProvider for PythonContextProvider {
             // Execute an entire file
             TaskTemplate {
                 label: format!("run '{}'", VariableName::File.template_value()),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![VariableName::File.template_value_with_whitespace()],
                 cwd: Some(VariableName::WorktreeRoot.template_value()),
                 ..TaskTemplate::default()
@@ -727,10 +727,10 @@ impl ContextProvider for PythonContextProvider {
             // Execute a file as module
             TaskTemplate {
                 label: format!("run module '{}'", VariableName::File.template_value()),
-                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                 args: vec![
                     "-m".to_owned(),
-                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value_with_whitespace(),
+                    PYTHON_MODULE_NAME_TASK_VARIABLE.template_value(),
                 ],
                 cwd: Some(VariableName::WorktreeRoot.template_value()),
                 tags: vec!["python-module-main-method".to_owned()],
@@ -744,7 +744,7 @@ impl ContextProvider for PythonContextProvider {
                     // Run tests for an entire file
                     TaskTemplate {
                         label: format!("unittest '{}'", VariableName::File.template_value()),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
@@ -756,7 +756,7 @@ impl ContextProvider for PythonContextProvider {
                     // Run test(s) for a specific target within a file
                     TaskTemplate {
                         label: "unittest $ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
@@ -776,7 +776,7 @@ impl ContextProvider for PythonContextProvider {
                     // Run tests for an entire file
                     TaskTemplate {
                         label: format!("pytest '{}'", VariableName::File.template_value()),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
@@ -788,7 +788,7 @@ impl ContextProvider for PythonContextProvider {
                     // Run test(s) for a specific target within a file
                     TaskTemplate {
                         label: "pytest $ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
-                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value_with_whitespace(),
+                        command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
@@ -1131,7 +1131,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     let activate_keyword = match shell {
                         ShellKind::Cmd => ".",
                         ShellKind::Nushell => "overlay use",
-                        ShellKind::Powershell => ".",
+                        ShellKind::PowerShell => ".",
                         ShellKind::Fish => "source",
                         ShellKind::Csh => "source",
                         ShellKind::Posix => "source",
@@ -1141,7 +1141,7 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::Csh => "activate.csh",
                         ShellKind::Fish => "activate.fish",
                         ShellKind::Nushell => "activate.nu",
-                        ShellKind::Powershell => "activate.ps1",
+                        ShellKind::PowerShell => "activate.ps1",
                         ShellKind::Cmd => "activate.bat",
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
@@ -1165,7 +1165,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
                     ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
-                    ShellKind::Powershell => None,
+                    ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
                     ShellKind::Cmd => None,
                 })

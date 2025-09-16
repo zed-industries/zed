@@ -13,7 +13,7 @@ use util::ResultExt as _;
 
 use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
-use std::{path::Path, rc::Rc};
+use std::{path::Path, rc::Rc, sync::Arc};
 use thiserror::Error;
 
 use anyhow::{Context as _, Result};
@@ -156,9 +156,12 @@ impl AcpConnection {
                     fs: acp::FileSystemCapability {
                         read_text_file: true,
                         write_text_file: true,
+                        meta: None,
                     },
                     terminal: true,
+                    meta: None,
                 },
+                meta: None,
             })
             .await?;
 
@@ -226,6 +229,7 @@ impl AgentConnection for AcpConnection {
                                 .map(|(name, value)| acp::EnvVariable {
                                     name: name.clone(),
                                     value: value.clone(),
+                                    meta: None,
                                 })
                                 .collect()
                         } else {
@@ -243,7 +247,7 @@ impl AgentConnection for AcpConnection {
 
         cx.spawn(async move |cx| {
             let response = conn
-                .new_session(acp::NewSessionRequest { mcp_servers, cwd })
+                .new_session(acp::NewSessionRequest { mcp_servers, cwd, meta: None })
                 .await
                 .map_err(|err| {
                     if err.code == acp::ErrorCode::AUTH_REQUIRED.code {
@@ -277,6 +281,7 @@ impl AgentConnection for AcpConnection {
                                 let result = conn.set_session_mode(acp::SetSessionModeRequest {
                                     session_id,
                                     mode_id: default_mode,
+                                    meta: None,
                                 })
                                 .await.log_err();
 
@@ -316,7 +321,7 @@ impl AgentConnection for AcpConnection {
                     action_log,
                     session_id.clone(),
                     // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
-                    watch::Receiver::constant(self.agent_capabilities.prompt_capabilities),
+                    watch::Receiver::constant(self.agent_capabilities.prompt_capabilities.clone()),
                     cx,
                 )
             })?;
@@ -339,13 +344,13 @@ impl AgentConnection for AcpConnection {
     fn authenticate(&self, method_id: acp::AuthMethodId, cx: &mut App) -> Task<Result<()>> {
         let conn = self.connection.clone();
         cx.foreground_executor().spawn(async move {
-            let result = conn
-                .authenticate(acp::AuthenticateRequest {
-                    method_id: method_id.clone(),
-                })
-                .await?;
+            conn.authenticate(acp::AuthenticateRequest {
+                method_id: method_id.clone(),
+                meta: None,
+            })
+            .await?;
 
-            Ok(result)
+            Ok(())
         })
     }
 
@@ -396,6 +401,7 @@ impl AgentConnection for AcpConnection {
                             {
                                 Ok(acp::PromptResponse {
                                     stop_reason: acp::StopReason::Cancelled,
+                                    meta: None,
                                 })
                             } else {
                                 Err(anyhow!(details))
@@ -415,6 +421,7 @@ impl AgentConnection for AcpConnection {
         let conn = self.connection.clone();
         let params = acp::CancelNotification {
             session_id: session_id.clone(),
+            meta: None,
         };
         cx.foreground_executor()
             .spawn(async move { conn.cancel(params).await })
@@ -478,6 +485,7 @@ impl acp_thread::AgentSessionModes for AcpSessionModes {
                 .set_session_mode(acp::SetSessionModeRequest {
                     session_id,
                     mode_id,
+                    meta: None,
                 })
                 .await;
 
@@ -526,13 +534,16 @@ impl acp::Client for ClientDelegate {
 
         let outcome = task.await;
 
-        Ok(acp::RequestPermissionResponse { outcome })
+        Ok(acp::RequestPermissionResponse {
+            outcome,
+            meta: None,
+        })
     }
 
     async fn write_text_file(
         &self,
         arguments: acp::WriteTextFileRequest,
-    ) -> Result<(), acp::Error> {
+    ) -> Result<acp::WriteTextFileResponse, acp::Error> {
         let cx = &mut self.cx.clone();
         let task = self
             .session_thread(&arguments.session_id)?
@@ -542,7 +553,7 @@ impl acp::Client for ClientDelegate {
 
         task.await?;
 
-        Ok(())
+        Ok(Default::default())
     }
 
     async fn read_text_file(
@@ -558,7 +569,10 @@ impl acp::Client for ClientDelegate {
 
         let content = task.await?;
 
-        Ok(acp::ReadTextFileResponse { content })
+        Ok(acp::ReadTextFileResponse {
+            content,
+            meta: None,
+        })
     }
 
     async fn session_notification(
@@ -607,26 +621,49 @@ impl acp::Client for ClientDelegate {
         Ok(
             terminal.read_with(&self.cx, |terminal, _| acp::CreateTerminalResponse {
                 terminal_id: terminal.id().clone(),
+                meta: None,
             })?,
         )
     }
 
-    async fn kill_terminal(&self, args: acp::KillTerminalRequest) -> Result<(), acp::Error> {
+    async fn kill_terminal_command(
+        &self,
+        args: acp::KillTerminalCommandRequest,
+    ) -> Result<acp::KillTerminalCommandResponse, acp::Error> {
         self.session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
                 thread.kill_terminal(args.terminal_id, cx)
             })??;
 
-        Ok(())
+        Ok(Default::default())
     }
 
-    async fn release_terminal(&self, args: acp::ReleaseTerminalRequest) -> Result<(), acp::Error> {
+    async fn ext_method(
+        &self,
+        _name: Arc<str>,
+        _params: Arc<serde_json::value::RawValue>,
+    ) -> Result<Arc<serde_json::value::RawValue>, acp::Error> {
+        Err(acp::Error::method_not_found())
+    }
+
+    async fn ext_notification(
+        &self,
+        _name: Arc<str>,
+        _params: Arc<serde_json::value::RawValue>,
+    ) -> Result<(), acp::Error> {
+        Err(acp::Error::method_not_found())
+    }
+
+    async fn release_terminal(
+        &self,
+        args: acp::ReleaseTerminalRequest,
+    ) -> Result<acp::ReleaseTerminalResponse, acp::Error> {
         self.session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
                 thread.release_terminal(args.terminal_id, cx)
             })??;
 
-        Ok(())
+        Ok(Default::default())
     }
 
     async fn terminal_output(
@@ -655,7 +692,10 @@ impl acp::Client for ClientDelegate {
             })??
             .await;
 
-        Ok(acp::WaitForTerminalExitResponse { exit_status })
+        Ok(acp::WaitForTerminalExitResponse {
+            exit_status,
+            meta: None,
+        })
     }
 }
 

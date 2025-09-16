@@ -30,8 +30,8 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
-    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
+    IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
@@ -492,7 +492,7 @@ impl EditPredictionButton {
                     menu = menu.item(
                         entry
                             .disabled(true)
-                            .documentation_aside(DocumentationSide::Left, move |_cx| {
+                            .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_cx| {
                                 Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
                                     .into_any_element()
                             })
@@ -545,7 +545,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Eager")
                         .toggleable(IconPosition::Start, eager_mode)
-                        .documentation_aside(DocumentationSide::Left, move |_| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
                             Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
                         })
                         .handler({
@@ -558,7 +558,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
-                        .documentation_aside(DocumentationSide::Left, move |_| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
                             Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
                         })
                         .handler({
@@ -589,7 +589,7 @@ impl EditPredictionButton {
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .icon(icon_name)
                         .icon_color(icon_color)
-                        .documentation_aside(DocumentationSide::Left, move |cx| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
                                     "Project identified as open source, and you're sharing data.",
@@ -672,7 +672,7 @@ impl EditPredictionButton {
             ContextMenuEntry::new("Configure Excluded Files")
                 .icon(IconName::LockOutlined)
                 .icon_color(Color::Muted)
-                .documentation_aside(DocumentationSide::Left, |_| {
+                .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, |_| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })

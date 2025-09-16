@@ -471,7 +471,7 @@ impl TerminalPanel {
                 })
                 .ok()?
                 .await
-                .ok()?;
+                .log_err()?;
 
             panel
                 .update_in(cx, move |terminal_panel, window, cx| {
@@ -769,7 +769,7 @@ impl TerminalPanel {
         })
     }
 
-    pub fn add_terminal_shell(
+    fn add_terminal_shell(
         &mut self,
         cwd: Option<PathBuf>,
         reveal_strategy: RevealStrategy,
@@ -779,7 +779,7 @@ impl TerminalPanel {
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
-                anyhow::bail!("terminal not yet supported for remote projects");
+                anyhow::bail!("terminal not yet supported for collaborative projects");
             }
             let pane = terminal_panel.update(cx, |terminal_panel, _| {
                 terminal_panel.pending_terminals_to_add += 1;
