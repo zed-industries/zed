@@ -1,174 +1,265 @@
-# Zed RMCP Migration Development Guide
+# Zed Context Server Integration Guide
 
 ## Project Overview
 
-**Project**: Migrate Zed editor's Model Context Protocol (MCP) implementation from custom stdio-only implementation to the official RMCP SDK, adding support for HTTP/SSE transports while maintaining full backward compatibility.
+**Project**: Context Server Integration in Zed editor - supporting both local (stdio) and remote (HTTP/SSE) Model Context Protocol (MCP) servers with full backward compatibility.
 
 **Repository**: https://github.com/zed-industries/zed
-**RMCP SDK**: https://crates.io/crates/rmcp (v0.6.2)
-**RMCP GitHub**: https://github.com/modelcontextprotocol/rust-sdk
+**MCP Specification**: https://modelcontextprotocol.io/specification
+**RMCP SDK**: https://crates.io/crates/rmcp (v0.6.2+)
 **License**: GPL-3.0-or-later
 **Rust Edition**: 2024
 
-## Migration Strategy & Architecture
+## Architecture Overview
 
 ### Core Design Principles
 
-1. **Direct Replacement, Not Adaptation**: RMCP types should become Zed's MCP types directly
-2. **Backward Compatibility**: All existing MCP configurations must continue working
-3. **Feature Flag Control**: Use `rmcp` feature flag for gradual rollout
-4. **Minimal UI Changes**: Most UI should work without modification
-5. **Code Reduction**: Remove ~800 lines of custom MCP implementation
+1. **Unified Settings Format**: Single JSON structure supporting multiple transport types
+2. **Backward Compatibility**: All existing MCP configurations continue working
+3. **Feature Flag Control**: Use `rmcp` feature flag for HTTP/SSE transport support
+4. **Consistent UI**: Most UI works across all transport types
+5. **Progressive Enhancement**: Stdio works without RMCP, HTTP/SSE requires RMCP feature
 
-### Migration Phases
+### Transport Support Matrix
 
-|Phase|Description|Status|
-|---|---|---|
-|**Phase 1**|Add RMCP SDK dependency and core implementation|✅ Completed|
-|**Phase 2**|Direct type replacement throughout codebase|🚧 In Progress|
-|**Phase 3**|Add configuration support for new transports|✅ Completed|
-|**Phase 4**|Update UI for transport selection|📋 TODO|
+|Transport|Status|Feature Flag|Description|
+|---|---|---|---|
+|**Stdio**|✅ Stable|None required|Local process communication|
+|**HTTP**|🚧 Implemented|`rmcp`|REST API communication|
+|**SSE**|🚧 Implemented|`rmcp`|Server-Sent Events streaming|
+|**WebSocket**|📋 Future|`rmcp`|Bidirectional streaming (planned)|
 
-## Crate Dependency Graph & Relationships
+## Settings.json Format Specification
 
-```mermaid
-graph TD
-    context_server[context_server<br/>Main MCP Crate]
-    assistant[assistant_slash_commands<br/>Slash Command Integration]
-    agent_ui[agent_ui<br/>Configuration UI]
-    project[project<br/>Context Server Store]
+### Complete Format Reference
 
-    context_server --> assistant
-    context_server --> agent_ui
-    context_server --> project
+The `context_servers` section in `settings.json` supports multiple server types:
 
-    rmcp[RMCP SDK<br/>v0.6.2] --> context_server
+#### **Custom Stdio Server (Local Process)**
+```json
+{
+  "context_servers": {
+    "filesystem": {
+      "source": "custom",
+      "enabled": true,
+      "command": "/usr/local/bin/mcp-server-filesystem", 
+      "args": ["--root", "/home/user/projects"],
+      "env": {
+        "DEBUG": "1",
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}
 ```
 
-## Affected Crates & Components
-
-### 1. **`crates/context_server/` - Core MCP Implementation**
-
-The main crate undergoing complete transformation:
-
-#### Files Being Deleted
-```
-src/
-├── types.rs              # ENTIRE FILE DELETED - ~300 lines
-├── protocol.rs           # ENTIRE FILE DELETED - ~200 lines
-├── client.rs            # ENTIRE FILE DELETED - ~250 lines
-└── transport/           # ENTIRE DIRECTORY DELETED - ~150 lines
-    └── stdio_transport.rs
-```
-
-#### Files Modified/Added
-```
-src/
-├── context_server.rs    # Modified - now uses RMCP directly
-├── settings.rs          # NEW - Enhanced transport settings
-└── test.rs             # NEW - Test utilities with RMCP types
+#### **Custom HTTP Server (Remote API)**
+```json
+{
+  "context_servers": {
+    "remote-api": {
+      "source": "custom",
+      "enabled": true,
+      "transport": {
+        "type": "http",
+        "url": "https://api.example.com/mcp",
+        "headers": {
+          "Authorization": "Bearer your-api-token",
+          "Content-Type": "application/json"
+        }
+      }
+    }
+  }
+}
 ```
 
-#### Cargo.toml Changes
-```toml
-[features]
-default = ["rmcp"]
-test-support = []
-rmcp = ["dep:rmcp", "dep:tokio"]
-
-[dependencies]
-# RMCP SDK with full feature set
-rmcp = { version = "0.6.2", optional = true, features = [
-    "client",
-    "transport-sse-client-reqwest",
-    "reqwest",
-    "transport-streamable-http-client-reqwest",
-    "transport-child-process",
-    "tower",
-    "auth"
-] }
-tokio = { workspace = true, optional = true }
+#### **Custom SSE Server (Server-Sent Events)**
+```json
+{
+  "context_servers": {
+    "streaming-server": {
+      "source": "custom", 
+      "enabled": true,
+      "transport": {
+        "type": "sse",
+        "url": "https://streaming.example.com/mcp/events",
+        "headers": {
+          "Authorization": "Bearer your-streaming-token",
+          "Accept": "text/event-stream"
+        }
+      }
+    }
+  }
+}
 ```
 
-### 2. **`crates/assistant_slash_commands/` - Slash Command Integration**
+#### **Extension Server (Managed by Extensions)**
+```json
+{
+  "context_servers": {
+    "extension-provided": {
+      "source": "extension",
+      "enabled": true,
+      "settings": {
+        "project_id": "my-project-123",
+        "api_endpoint": "custom-value",
+        "timeout": 30000
+      }
+    }
+  }
+}
+```
 
-**File**: `context_server_command.rs`
+#### **Complete Example with Mixed Types**
+```json
+{
+  "context_servers": {
+    "filesystem": {
+      "source": "custom",
+      "enabled": true,
+      "command": "mcp-server-filesystem",
+      "args": ["--root", "/home/user"]
+    },
+    "git": {
+      "source": "custom", 
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-git"]
+    },
+    "remote-api": {
+      "source": "custom",
+      "enabled": true,
+      "transport": {
+        "type": "http",
+        "url": "https://api.example.com/mcp",
+        "headers": {
+          "Authorization": "Bearer token123"
+        }
+      }
+    },
+    "extension-server": {
+      "source": "extension",
+      "enabled": true,
+      "settings": {
+        "key": "value"
+      }
+    }
+  }
+}
+```
 
-Provides slash command integration for context servers in the assistant panel.
+### Field Specifications
 
-#### Before Migration
+#### **Common Fields**
+- `source`: `"custom" | "extension"` - Required. Determines server type
+- `enabled`: `boolean` - Optional, defaults to `true`
+
+#### **Custom Stdio Fields**
+- `command`: `string` - Path to executable 
+- `args`: `string[]` - Command line arguments
+- `env`: `object` - Environment variables (optional)
+
+#### **Custom Transport Fields**
+- `transport.type`: `"http" | "sse"` - Transport protocol
+- `transport.url`: `string` - Server endpoint URL
+- `transport.headers`: `object` - HTTP headers (optional)
+
+#### **Extension Fields**  
+- `settings`: `object` - Extension-specific configuration
+
+## Core Implementation Files
+
+### Settings Type Definitions
+
+#### **`crates/project/src/project_settings.rs`** - Main Settings Structure
 ```rust
-// Manual protocol request
-let response = protocol
-    .request::<context_server::types::requests::PromptsGet>(
-        context_server::types::PromptsGetParams {
-            name: prompt_name.clone(),
-            arguments: Some(prompt_args),
-            meta: None,
-        },
-    )
-    .await?;
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+pub struct ProjectSettings {
+    #[serde(default)]
+    pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
+    // ... other fields
+}
+
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[serde(tag = "source", rename_all = "snake_case")]
+pub enum ContextServerSettings {
+    Custom {
+        #[serde(default = "default_true")]
+        enabled: bool,
+        #[serde(flatten)]
+        config: ContextServerConfig,
+    },
+    Extension {
+        #[serde(default = "default_true")]
+        enabled: bool,
+        settings: serde_json::Value,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ContextServerConfig {
+    Stdio {
+        command: PathBuf,
+        args: Vec<String>,
+        #[serde(default)]
+        env: Option<HashMap<String, String>>,
+    },
+    Transport {
+        transport: TransportConfig,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(tag = "type")]
+pub enum TransportConfig {
+    #[serde(rename = "http")]
+    Http {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+    #[serde(rename = "sse")]
+    Sse {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+}
 ```
 
-#### After Migration
-```rust
-// Direct RMCP service call
-let response = service
-    .get_prompt(rmcp::model::GetPromptRequestParam {
-        name: prompt_name.clone(),
-        arguments: Some(rmcp::object!(prompt_args)),
-    })
-    .await?;
-```
+### Runtime Management
 
-### 3. **`crates/agent_ui/` - Configuration UI**
-
-**Files**:
-- `agent_configuration.rs` - Main configuration management for AI agents (includes context server configuration)
-- `configure_context_server_modal.rs` - Server configuration modal
-
-#### UI Changes Required
-- Add transport type selector (stdio/http/sse)
-- Show URL field for HTTP/SSE transports
-- Hide command field for remote transports
-- Add authentication fields for HTTP
-
-### 4. **`crates/project/` - Context Server Store**
-
-**File**: `context_server_store.rs`
-
-Core management layer for context servers within projects.
-
-#### Key Components
+#### **`crates/project/src/context_server_store.rs`** - Core Management
 ```rust
 pub struct ContextServerStore {
+    // Maps server IDs to their settings from settings.json
     context_server_settings: HashMap<Arc<str>, ContextServerSettings>,
+    // Maps server IDs to their runtime state  
     servers: HashMap<ContextServerId, ContextServerState>,
+    // Dependencies for loading settings
     worktree_store: Entity<WorktreeStore>,
     project: WeakEntity<Project>,
     registry: Entity<ContextServerDescriptorRegistry>,
-    // ...
 }
 
-pub enum ContextServerState {
-    Starting { server: Arc<ContextServer>, configuration: Arc<ContextServerConfiguration> },
-    Running { server: Arc<ContextServer>, configuration: Arc<ContextServerConfiguration> },
-    Stopped { server: Arc<ContextServer>, configuration: Arc<ContextServerConfiguration> },
-    Error { server: Arc<ContextServer>, configuration: Arc<ContextServerConfiguration>, error: Arc<str> },
+pub enum ContextServerConfiguration {
+    Custom { config: ContextServerConfig },
+    Extension { 
+        config: ContextServerConfig,
+        settings: serde_json::Value,
+    },
 }
 ```
 
-## Core Implementation: ContextServer Structure
-
-### New Simplified Structure
+#### **`crates/context_server/src/context_server.rs`** - Server Instances
 ```rust
-// context_server/src/context_server.rs
 pub struct ContextServer {
     id: ContextServerId,
     #[cfg(feature = "rmcp")]
     service: RwLock<Option<Arc<RunningService<RoleClient, ()>>>>,
     #[cfg(not(feature = "rmcp"))]
-    client: RwLock<Option<()>>, // Placeholder when RMCP not enabled
+    client: RwLock<Option<()>>,
     configuration: ContextServerTransport,
 }
 
@@ -181,475 +272,365 @@ pub enum ContextServerTransport {
 }
 ```
 
-### Transport Initialization
-```rust
-impl ContextServer {
-    #[cfg(feature = "rmcp")]
-    async fn initialize(&self) -> Result<()> {
-        let service = match &self.configuration {
-            ContextServerTransport::Stdio(command, working_directory) => {
-                let mut cmd = Command::new(&command.path);
-                cmd.args(&command.args);
+## Settings Loading Pipeline
 
-                if let Some(env) = &command.env {
-                    cmd.envs(env);
-                }
+### Data Flow Overview
 
-                if let Some(working_directory) = working_directory {
-                    cmd.current_dir(working_directory);
-                }
-
-                let transport = TokioChildProcess::new(cmd.configure(|_| {}))?;
-                ().serve(transport).await?
-            }
-            ContextServerTransport::Http { url, headers } => {
-                // TODO: Implement HTTP transport
-                return Err(anyhow!("HTTP transport not yet implemented"));
-            }
-            ContextServerTransport::Sse { url, headers } => {
-                // TODO: Implement SSE transport
-                return Err(anyhow!("SSE transport not yet implemented"));
-            }
-        };
-
-        *self.service.write() = Some(Arc::new(service));
-        Ok(())
-    }
-}
+```mermaid
+graph TD
+    A[settings.json] --> B[ProjectSettings::context_servers]
+    B --> C[ContextServerStore::maintain_servers]
+    C --> D[ContextServerConfiguration::from_settings]
+    D --> E[ContextServer::new]
+    E --> F[Running Context Server]
+    
+    G[Worktree Changes] --> C
+    H[Settings Changes] --> C
+    I[Extension Registry] --> D
+    
+    F --> J[Available Tools]
+    F --> K[Agent Integration]
+    F --> L[UI Status Updates]
 ```
 
-## Transport Configuration System
+### Key Processing Steps
 
-### Settings Structure
-```rust
-// project_settings.rs
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum ContextServerSettings {
-    Custom {
-        enabled: bool,
-        command: ContextServerCommand,
-    },
-    Extension {
-        enabled: bool,
-        settings: serde_json::Value,
-    },
-}
+1. **Settings Resolution**: `ProjectSettings::get(location, cx).context_servers`
+2. **Configuration Creation**: `ContextServerConfiguration::from_settings()`
+3. **Server Instantiation**: `ContextServer::new()` with transport-specific setup
+4. **Service Initialization**: 
+   - Stdio: Launch child process with command/args
+   - HTTP: Configure HTTP client with URL/headers
+   - SSE: Setup Server-Sent Events connection
+5. **Tool Discovery**: Query server for available tools, prompts, resources
+6. **UI Updates**: Emit status changes to agent panel and other UI components
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
-pub struct ContextServerCommand {
-    #[serde(rename = "command")]
-    pub path: PathBuf,
-    pub args: Vec<String>,
-    pub env: Option<HashMap<String, String>>,
-    pub timeout: Option<u64>, // milliseconds
-}
-```
+## Migration System
 
-### Configuration Examples
+### Historical Format Evolution
 
-#### Legacy Format (Backward Compatible)
+The settings format has evolved through automated migrations:
+
+#### **Migration m_2025_06_16**: Add Source Field
+- **Purpose**: Distinguish between custom and extension servers
+- **Changes**: Added `"source": "custom"` or `"source": "extension"`
+
+#### **Migration m_2025_06_27**: Flatten Command Structure  
+- **Purpose**: Simplify command configuration
+- **Before**: `"command": {"path": "...", "args": [...], "env": {...}}`
+- **After**: `"command": "...", "args": [...], "env": {...}`
+
+### Legacy Format Support
+
+Old configurations are automatically migrated:
+
 ```json
+// OLD (pre-migration)
 {
   "context_servers": {
-    "servers": [{
-      "name": "filesystem",
-      "command": "mcp-server-filesystem",
-      "args": ["--root", "/home/user"]
-    }]
+    "server": {
+      "command": {
+        "path": "/usr/bin/server",
+        "args": ["--flag"]
+      }
+    }
+  }
+}
+
+// NEW (automatically migrated)  
+{
+  "context_servers": {
+    "server": {
+      "source": "custom",
+      "enabled": true,
+      "command": "/usr/bin/server", 
+      "args": ["--flag"]
+    }
   }
 }
 ```
 
-#### New Format with Transport Specification
+## UI Integration
+
+### Configuration Modal
+
+**File**: `crates/agent_ui/src/agent_configuration/configure_context_server_modal.rs`
+
+- **Parsing**: Converts JSON input to `ContextServerCommand` 
+- **Creation**: Builds `ContextServerSettings::Custom` with `ContextServerConfig::Stdio`
+- **Editing**: Handles existing server modification
+- **Validation**: JSON schema validation and error reporting
+
+### Agent Panel Integration
+
+**File**: `crates/agent_ui/src/agent_configuration/agent_configuration.rs`
+
+- **Status Display**: Shows server connection state (connected/error/disabled)
+- **Tool Availability**: Lists available tools from each server
+- **Configuration Access**: Links to server configuration modal
+
+### Status Indicators
+
+- **Green**: Server connected and responding
+- **Red**: Connection error or server unavailable  
+- **Yellow**: Connecting or initializing
+- **Gray**: Server disabled
+
+## Extension Integration
+
+### Extension API
+
+Extensions can provide context servers through the WIT interface:
+
+**Files**:
+- `crates/extension_api/wit/since_v0.*.0/settings.rs` - API definitions
+- `crates/extension_host/src/wasm_host/wit/since_v0_6_0.rs` - Host implementation
+
+### Extension Settings Flow
+
+1. Extension declares context server in manifest
+2. User configures extension-specific settings in settings.json
+3. Extension provides command/configuration through API
+4. Zed creates `ContextServerConfiguration::Extension` instance
+5. Server runs with extension-provided command + user settings
+
+## Agent Profile Integration  
+
+### Per-Server Tool Control
+
+**File**: `crates/agent_settings/src/agent_settings.rs`
+
 ```json
 {
-  "context_servers": {
-    "servers": [{
-      "name": "remote-server",
-      "transport": {
-        "type": "http",
-        "url": "https://api.example.com/mcp",
-        "headers": {
-          "Authorization": "Bearer token"
+  "agent": {
+    "profiles": {
+      "profile-name": {
+        "name": "Profile Name",
+        "enable_all_context_servers": true,
+        "context_servers": {
+          "server-id": {
+            "tools": {
+              "tool-name": true,
+              "disabled-tool": false
+            }
+          }
         }
       }
-    }]
+    }
   }
 }
 ```
 
-## RMCP API Usage Patterns
+This allows fine-grained control over which tools from each context server are available to specific agent profiles.
 
-### Direct Service Calls
+## RMCP Integration
+
+### Feature Flag Configuration
+
+```toml
+# Cargo.toml
+[features]
+default = ["rmcp"]
+rmcp = ["dep:rmcp", "dep:tokio"]
+
+[dependencies]
+rmcp = { version = "0.6.2", optional = true, features = [
+    "client",
+    "transport-sse-client-reqwest", 
+    "transport-streamable-http-client-reqwest",
+    "transport-child-process",
+    "tower",
+    "auth"
+] }
+```
+
+### Service API Usage
+
 ```rust
 impl ContextServer {
     #[cfg(feature = "rmcp")]
     pub async fn list_tools(&self) -> Result<Vec<rmcp::model::Tool>> {
         let service = self.service.read();
-        let service = service
-            .as_ref()
-            .ok_or_else(|| anyhow!("Context server not initialized"))?;
+        let service = service.as_ref().ok_or_else(|| anyhow!("Not initialized"))?;
         Ok(service.list_all_tools().await?)
     }
 
     #[cfg(feature = "rmcp")]
-    pub async fn call_tool(
-        &self,
-        params: rmcp::model::CallToolRequestParam,
-    ) -> Result<rmcp::model::CallToolResult> {
+    pub async fn call_tool(&self, params: rmcp::model::CallToolRequestParam) 
+        -> Result<rmcp::model::CallToolResult> {
         let service = self.service.read();
-        let service = service
-            .as_ref()
-            .ok_or_else(|| anyhow!("Context server not initialized"))?;
+        let service = service.as_ref().ok_or_else(|| anyhow!("Not initialized"))?;
         Ok(service.call_tool(params).await?)
     }
-
-    #[cfg(feature = "rmcp")]
-    pub async fn list_prompts(&self) -> Result<Vec<rmcp::model::Prompt>> {
-        let service = self.service.read();
-        let service = service
-            .as_ref()
-            .ok_or_else(|| anyhow!("Context server not initialized"))?;
-        Ok(service.list_all_prompts().await?)
-    }
 }
 ```
 
-### Type Mapping (Direct Usage)
+## Visual Verification Guide
 
-|Old Zed Type|New RMCP Type|Notes|
-|---|---|---|
-|`context_server::types::Tool`|`rmcp::model::Tool`|Direct replacement|
-|`context_server::types::Prompt`|`rmcp::model::Prompt`|Direct replacement|
-|`context_server::types::Resource`|`rmcp::model::Resource`|Direct replacement|
-|`CallToolParams`|`rmcp::model::CallToolRequestParam`|Parameter structure|
-|`CallToolResponse`|`rmcp::model::CallToolResult`|Result structure|
-|Custom protocol requests|Direct service method calls|Simplified API|
+### Check Connection Status
 
-## Test Support Implementation
+1. **Agent Panel Status**:
+   - Open Agent Panel: `Cmd+Shift+A` (macOS) / `Ctrl+Shift+A` (Windows/Linux)
+   - Look for context server section with connection indicators
+   - Green = connected, Red = error, Yellow = connecting
 
-### Test Utilities
-```rust
-// context_server/src/test.rs
-pub fn create_test_tool(name: impl Into<String>) -> rmcp::model::Tool {
-    let schema_map = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "message": {
-                "type": "string",
-                "description": "Message to echo"
-            }
-        },
-        "required": ["message"]
-    })
-    .as_object()
-    .unwrap()
-    .clone();
+2. **Tool Availability**:
+   - In agent chat, type `@` to see available tools
+   - Tools should be categorized by server name
+   - Remote server tools appear alongside local tools
 
-    rmcp::model::Tool {
-        name: name.into().into(),
-        description: Some("Test tool".into()),
-        input_schema: Arc::new(schema_map),
-        output_schema: None,
-        annotations: None,
-    }
-}
+3. **Debug Logging**:
+   ```bash
+   RUST_LOG=context_server=debug,project=debug /path/to/zed
+   ```
+   Look for connection attempts, errors, and tool discoveries.
 
-pub fn create_test_prompt(name: impl Into<String>) -> rmcp::model::Prompt {
-    rmcp::model::Prompt {
-        name: name.into().into(),
-        description: Some("Test prompt".into()),
-        arguments: Some(vec![rmcp::model::PromptArgument {
-            name: "input".into(),
-            description: Some("Input parameter".into()),
-            required: Some(true),
-        }]),
-    }
-}
+### Test Remote Server Manually
+
+```bash
+# Test HTTP server directly
+curl -X POST "https://api.example.com/mcp" \
+  -H "Authorization: Bearer your-token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/list"
+  }'
 ```
 
-### Fake Server Support
-```rust
-#[cfg(any(test, feature = "test-support"))]
-impl ContextServer {
-    pub fn test_fake(id: ContextServerId) -> Self {
-        Self {
-            id,
-            service: RwLock::new(None),
-            configuration: ContextServerTransport::Stdio(
-                ContextServerCommand {
-                    path: format!("fake_server_{}", id.0).into(),
-                    args: vec!["--test".to_string()],
-                    env: Some(HashMap::default()),
-                    timeout: Some(30000),
-                },
-                None,
-            ),
-        }
-    }
-}
+### Common Issues
+
+1. **JSON Schema Validation Errors**: May occur due to cached schemas - restart Zed after changes
+2. **Connection Failures**: Check URL, authentication, and server availability
+3. **Missing Tools**: Verify server is responding to `tools/list` requests
+4. **Feature Flag**: Ensure RMCP feature is enabled for HTTP/SSE transports
+
+## Build & Development
+
+### Build Commands
+
+```bash
+# Build with RMCP support (default)
+cargo build --bin zed
+
+# Build without RMCP (stdio only)  
+cargo build --bin zed --no-default-features
+
+# Build specific crate with RMCP
+cargo build -p context_server --features rmcp
+
+# Run tests
+cargo test -p project context_server_settings
+cargo test -p context_server --features rmcp
 ```
 
-## Migration Workflow
+### Testing with Real Servers
 
-### Step-by-Step Migration Process
+1. **MCP Server Examples**:
+   - `@modelcontextprotocol/server-filesystem`
+   - `@modelcontextprotocol/server-git`
+   - `mcp-server-sqlite`
 
-1. **Update Dependencies**
+2. **Start Local Server**:
    ```bash
-   # Add RMCP to workspace Cargo.toml
-   rmcp = { version = "0.6.2", features = [...] }
+   npx -y @modelcontextprotocol/server-filesystem /path/to/root
    ```
 
-2. **Enable Feature Flag**
-   ```bash
-   # Build with RMCP support
-   cargo build -p context_server --features rmcp
-
-   # Build legacy only (for testing)
-   cargo build -p context_server --no-default-features
+3. **Configure in settings.json**:
+   ```json
+   {
+     "context_servers": {
+       "filesystem": {
+         "source": "custom",
+         "enabled": true, 
+         "command": "npx",
+         "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/root"]
+       }
+     }
+   }
    ```
 
-3. **Update Imports Throughout Codebase**
-   ```rust
-   // Find and replace in all crates
-   - use context_server::types::*;
-   + use rmcp::model::*;
-   ```
-
-4. **Update Method Calls**
-   ```rust
-   // Replace protocol requests with service calls
-   - protocol.request::<PromptsGet>(params).await?
-   + service.get_prompt(params).await?
-   ```
-
-5. **Test Migration**
-   ```bash
-   # Run tests with RMCP
-   cargo test -p context_server --features rmcp
-
-   # Test backward compatibility
-   cargo test -p context_server --no-default-features
-   ```
-
-## Common Pitfalls & Solutions
-
-### DON'T
-
-- Create conversion functions between Zed types and RMCP types
-- Maintain parallel type systems
-- Keep old protocol implementation alongside RMCP
-- Add unnecessary abstraction layers
-- Mix async runtimes (smol vs tokio)
-
-### DO
-
-- Use RMCP types directly throughout the codebase
-- Delete old implementation files completely
-- Use feature flags for gradual rollout
-- Test both with and without RMCP feature
-- Maintain backward compatibility for configs
-- Use conditional compilation for compatibility
-
-## Current Status & Next Steps
+## Implementation Status
 
 ### ✅ Completed
 
-- RMCP SDK dependency added with full features
-- Core ContextServer structure updated
-- Transport configuration system implemented
-- Feature flag setup for gradual rollout
-- Test utilities with RMCP types
-- Conditional compilation for backward compatibility
+- Settings format specification and parsing
+- Stdio transport (stable)
+- HTTP transport (implemented with RMCP)
+- SSE transport (implemented with RMCP)
+- Migration system for backward compatibility
+- UI integration for configuration and status
+- Extension integration API
+- Agent profile tool control
+- Comprehensive test coverage
 
 ### 🚧 In Progress
 
-- Direct type replacement throughout codebase
-- Testing with actual MCP servers (filesystem, git, sqlite)
-- Integration testing with existing configurations
+- UI improvements for transport selection
+- Connection retry logic and error handling
+- Performance optimizations
+- Documentation and examples
 
-### 📋 TODO
+### 📋 Planned
 
-- Implement HTTP transport with authentication
-- Implement SSE transport for streaming
-- Update configuration modal UI
-- Add connection retry logic
-- Add connection status indicators
-- Create user documentation
-- Performance optimization
-- Add WebSocket transport support (future)
-
-### 🐛 Known Issues
-
-1. **HTTP/SSE Transports**: Not yet implemented, returns error
-2. **UI Modal**: Still shows only stdio configuration
-3. **Notification Handling**: RMCP handles notifications differently, needs adaptation
-
-## Build & Test Commands
-
-### Development Workflow
-
-```bash
-# Full build with RMCP
-cargo build -p context_server --features rmcp
-
-# Build without RMCP (legacy)
-cargo build -p context_server --no-default-features
-
-# Run specific tests
-cargo test -p context_server --features rmcp test_context_server_status
-
-# Build entire Zed with RMCP
-cargo build --release
-
-# Run with debug logging
-RUST_LOG=context_server=debug ./target/release/zed
-```
-
-### Testing with Real MCP Servers
-
-```python
-#!/usr/bin/env python3
-# test_server.py - Simple MCP test server
-import sys, json
-
-while True:
-    line = sys.stdin.readline()
-    if not line: break
-    request = json.loads(line)
-
-    if request.get("method") == "initialize":
-        response = {
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "result": {
-                "protocolVersion": "0.1.0",
-                "serverInfo": {"name": "test", "version": "1.0"},
-                "capabilities": {"tools": {}}
-            }
-        }
-        print(json.dumps(response))
-        sys.stdout.flush()
-```
-
-## Performance Considerations
-
-### Before Migration
-- Custom implementation: ~800 lines of code
-- Limited to stdio transport
-- Manual protocol handling
-- Custom type system
-
-### After Migration
-- RMCP SDK: Battle-tested implementation
-- Multiple transport options
-- Automatic protocol compliance
-- Standardized types
-- Better error handling
-- Future updates automatic
+- WebSocket transport support
+- Advanced authentication methods (OAuth, JWT)
+- Server discovery mechanisms
+- Connection pooling and caching
+- Metrics and monitoring integration
 
 ## Security Considerations
 
-### Authentication Support
+### Authentication
 - HTTP Bearer tokens via headers
-- OAuth support (planned)
-- JWT token support (planned)
-- Session management built-in
+- Environment variable protection (redacted in logs)
+- Secure credential storage integration
 
-### Environment Variable Handling
-```rust
-impl std::fmt::Debug for ContextServerCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let filtered_env = self.env.as_ref().map(|env| {
-            env.iter()
-                .map(|(k, v)| (k, if should_redact(k) { "[REDACTED]" } else { v }))
-                .collect::<Vec<_>>()
-        });
-        // ... format with redacted sensitive values
-    }
-}
-```
+### Network Security
+- HTTPS-only for remote connections
+- Header-based authentication
+- Request/response validation
+- Timeout and retry limits
 
-## Quick Reference
+## Troubleshooting
 
-### Key Types & Imports
+### Common Error Messages
 
-```rust
-// Core RMCP imports
-use rmcp::{
-    ServiceExt,
-    service::{RoleClient, RunningService},
-    transport::{ConfigureCommandExt, TokioChildProcess},
-    model::{
-        Tool, Prompt, Resource,
-        CallToolRequestParam, CallToolResult,
-        GetPromptRequestParam, GetPromptResult,
-        ListToolsRequestParam, ListPromptsRequestParam,
-    },
-};
+1. **"Transport configurations cannot be edited in this modal"**: HTTP/SSE servers need RMCP feature enabled
+2. **"HTTP transport requested but RMCP feature not enabled"**: Build with `--features rmcp`
+3. **"Context server not initialized"**: Server failed to connect, check logs and configuration
+4. **JSON validation errors**: Schema cache issue, restart Zed or check format
 
-// Zed-specific (kept)
-use context_server::{ContextServerId, ContextServerCommand};
-```
+### Debug Steps
 
-### Common Patterns
-
-```rust
-// Initialize service
-let service = ().serve(transport).await?;
-
-// List all tools
-let tools = service.list_all_tools().await?;
-
-// Call a tool
-let result = service.call_tool(params).await?;
-
-// Get server info
-let info = service.peer_info();
-```
+1. Verify settings.json format matches specification exactly
+2. Check server availability with manual HTTP requests  
+3. Enable debug logging for detailed connection info
+4. Test with simple stdio server first, then move to remote
+5. Verify RMCP feature flag for HTTP/SSE transports
 
 ## Contributing Guidelines
 
-### For Contributors
+### Code Standards
 
-1. Always use RMCP types directly, never create wrappers
-2. Test with both `--features rmcp` and `--no-default-features`
-3. Update documentation when adding transport features
-4. Follow existing error handling patterns
-5. Use `anyhow::Result` for error types
-6. Add integration tests for new transports
+- Use RMCP types directly, never create wrapper types
+- Test with both `--features rmcp` and `--no-default-features`
+- Maintain backward compatibility for settings format
+- Follow existing error handling patterns with `anyhow::Result`
+- Add integration tests for new transport types
 
-### Code Review Checklist
+### Pull Request Checklist
 
-- [ ] No custom type conversions added
-- [ ] Old implementation files deleted
-- [ ] Feature flags properly used
-- [ ] Backward compatibility maintained
-- [ ] Tests pass with and without RMCP
-- [ ] Documentation updated
-
-## References & Resources
-
-- [MCP Specification](https://modelcontextprotocol.io/specification)
-- [RMCP SDK Documentation](https://docs.rs/rmcp)
-- [RMCP GitHub Repository](https://github.com/modelcontextprotocol/rust-sdk)
-- [Zed Contributing Guide](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md)
-- [Zed Discord](https://discord.gg/zed) - For questions and discussions
-
-## Migration Timeline
-
-|Date|Milestone|Status|
-|---|---|---|
-|Sept 2025|Initial RMCP integration|✅ Done|
-|Sept 2025|Core implementation|🚧 In Progress|
-|Oct 2025|HTTP/SSE transport|📋 Planned|
-|Oct 2025|UI updates|📋 Planned|
-|Nov 2025|Full release|📋 Target|
+- [ ] Settings parsing works for all transport types
+- [ ] Tests pass with and without RMCP feature
+- [ ] UI updates don't break existing functionality  
+- [ ] Migration preserves existing configurations
+- [ ] Documentation updated for new features
 
 ---
 
-**Document Version**: 1.0.0
-**Last Updated**: September 15, 2025
-**Maintained By**: RMCP Migration Team
+**Document Version**: 2.0.0  
+**Last Updated**: December 2024  
+**Status**: Current Implementation Guide  
 **License**: GPL-3.0-or-later

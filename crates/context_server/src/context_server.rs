@@ -76,6 +76,8 @@ pub struct ContextServer {
     #[cfg(not(feature = "rmcp"))]
     client: RwLock<Option<()>>, // Placeholder when RMCP not enabled
     configuration: ContextServerTransport,
+    // Add a tokio runtime for RMCP
+    tokio_runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl ContextServer {
@@ -84,6 +86,9 @@ impl ContextServer {
         command: ContextServerCommand,
         working_directory: Option<Arc<Path>>,
     ) -> Self {
+        // Create a tokio runtime for RMCP operations
+        let tokio_runtime =
+            Arc::new(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
         Self {
             id,
             service: RwLock::new(None),
@@ -93,22 +98,29 @@ impl ContextServer {
                 command,
                 working_directory.map(|directory| directory.to_path_buf()),
             ),
+            tokio_runtime,
         }
     }
 
     pub fn http(id: ContextServerId, url: String, headers: HashMap<String, String>) -> Self {
+        let tokio_runtime =
+            Arc::new(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
         Self {
             id,
             service: RwLock::new(None),
             configuration: ContextServerTransport::Http { url, headers },
+            tokio_runtime,
         }
     }
 
     pub fn sse(id: ContextServerId, url: String, headers: HashMap<String, String>) -> Self {
+        let tokio_runtime =
+            Arc::new(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
         Self {
             id,
             service: RwLock::new(None),
             configuration: ContextServerTransport::Sse { url, headers },
+            tokio_runtime,
         }
     }
 
@@ -128,6 +140,9 @@ impl ContextServer {
                     timeout: Some(30000),
                 },
                 None,
+            ),
+            tokio_runtime: Arc::new(
+                tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"),
             ),
         }
     }
