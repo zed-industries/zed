@@ -2,7 +2,8 @@ use crate::{
     p2p_connection::P2pConnection,
     remote_connections::{
         RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettingsContent, SshConnection,
-        SshConnectionHeader, SshProject, SshSettings, connect_over_ssh, open_remote_project,
+        SshConnectionHeader, SshProject, SshSettings, connect_over_p2p, connect_over_ssh,
+        open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -18,7 +19,7 @@ use paths::{global_ssh_config_file, user_ssh_config_file};
 use picker::Picker;
 use project::{Fs, Project};
 use remote::{
-    RemoteClient, RemoteConnectionOptions, SshConnectionOptions,
+    IrohConnectionOptions, RemoteClient, RemoteConnectionOptions, SshConnectionOptions,
     remote_client::ConnectionIdentifier,
 };
 use settings::{Settings, SettingsStore, update_settings_file, watch_config_file};
@@ -580,31 +581,31 @@ impl RemoteServerProjects {
             return;
         }
 
-        let connection_options = match SshConnectionOptions::parse_command_line(&input) {
+        let connection_options = match IrohConnectionOptions::parse_command_line(&input) {
             Ok(c) => c,
             Err(e) => {
-                self.mode = Mode::CreateRemoteServer(CreateRemoteServer {
+                self.mode = Mode::CreateP2pRemote(CreateP2pRemote {
                     address_editor: editor,
                     address_error: Some(format!("could not parse: {:?}", e).into()),
-                    ssh_prompt: None,
+                    p2p_prompt: None,
                     _creating: None,
                 });
                 return;
             }
         };
-        let ssh_prompt = cx.new(|cx| {
+        let p2p_prompt = cx.new(|cx| {
             RemoteConnectionPrompt::new(
-                connection_options.connection_string(),
+                connection_options.ticket.node_addr().node_id.fmt_short(),
                 connection_options.nickname.clone(),
                 window,
                 cx,
             )
         });
 
-        let connection = connect_over_ssh(
+        let connection = connect_over_p2p(
             ConnectionIdentifier::setup(),
             connection_options.clone(),
-            ssh_prompt.clone(),
+            p2p_prompt.clone(),
             window,
             cx,
         )
@@ -617,7 +618,9 @@ impl RemoteServerProjects {
                     .update_in(cx, |this, window, cx| {
                         telemetry::event!("SSH Server Created");
                         this.retained_connections.push(client);
-                        this.add_ssh_server(connection_options, cx);
+                        // TODO: add_p2p_server
+                        // this.add_ssh_server(connection_options, cx);
+
                         this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
                         this.focus_handle(cx).focus(window);
                         cx.notify()
@@ -647,7 +650,7 @@ impl RemoteServerProjects {
         self.mode = Mode::CreateP2pRemote(CreateP2pRemote {
             address_editor: editor,
             address_error: None,
-            p2p_prompt: Some(ssh_prompt),
+            p2p_prompt: Some(p2p_prompt),
             _creating: Some(creating),
         });
     }

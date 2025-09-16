@@ -954,6 +954,7 @@ impl ConnectionPool {
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut App,
     ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
+        log::info!("connect {:?}", opts);
         let connection = self.connections.get(&opts);
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
@@ -979,6 +980,7 @@ impl ConnectionPool {
             .spawn({
                 let opts = opts.clone();
                 let delegate = delegate.clone();
+
                 async move |cx| {
                     let connection = match opts.clone() {
                         RemoteConnectionOptions::Ssh(opts) => {

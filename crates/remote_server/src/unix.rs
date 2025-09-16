@@ -274,39 +274,53 @@ impl ServerListeners {
     }
 }
 
+fn start_server(
+    listeners: Option<ServerListeners>,
+    log_rx: Receiver<Vec<u8>>,
+    cx: &mut App,
+) -> AnyProtoClient {
+    log::info!("START SERVER");
+
+    if let Some(listeners) = listeners {
+        start_ssh_server(listeners, log_rx, cx)
+    } else {
+        start_p2p_server(log_rx, cx)
+    }
+}
+
 fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
     log::info!("START P2P SERVER");
-    // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
-    const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
     let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
 
-    // TODO(b5): create an endpoint & wire up here, thne call start_p2p_server in the main func of remote_server
+    cx.on_app_quit(move |_| {
+        let mut app_quit_tx = app_quit_tx.clone();
+        async move {
+            log::info!("app quitting. sending signal to server main loop");
+            app_quit_tx.send(()).await.ok();
+        }
+    })
+    .detach();
 
     gpui_tokio::Tokio::spawn(cx, async move {
-        let endpoint = iroh::Endpoint::builder().discovery_n0().bind().await?;
-        let _router = iroh::protocol::Router::builder(endpoint.clone())
-            .accept(remote::ZED_ALPN, P2pProtocol)
-            .spawn();
-
+        let iroh = remote::IrohZedListener::accept(incoming_tx, outgoing_rx).await?;
         log::info!("ADDR: iroh started");
 
-        let net_report = endpoint.net_report().initialized().await;
-        log::info!("ADDR: {:?}", net_report);
-
-        let home_relay = endpoint.home_relay().initialized().await;
+        let home_relay = iroh.endpoint().home_relay().initialized().await;
         log::info!("ADDR: home relay: {}", home_relay);
 
-        let addr = endpoint.node_addr().initialized().await;
-        log::info!("ADDR: {:?}", addr);
-
-        let ticket = ZedIrohTicket::new(addr);
+        let ticket = iroh.ticket().await;
         log::info!("TICKET: {}", ticket);
 
-        // TODO: better keep alive
-        loop {}
+        loop {
+            select! {
+                _ = app_quit_rx.next().fuse() => {
+                    break;
+                }
+            }
+        }
 
         anyhow::Ok(())
     })
@@ -315,43 +329,18 @@ fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
     RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
 }
 
-#[derive(Debug, Clone)]
-struct P2pProtocol;
-
-impl iroh::protocol::ProtocolHandler for P2pProtocol {
-    async fn accept(
-        &self,
-        connection: iroh::endpoint::Connection,
-    ) -> Result<(), iroh::protocol::AcceptError> {
-        let node_id = connection.remote_node_id()?;
-        log::info!("accepted connection from {node_id}");
-        let (mut send, mut recv) = connection.accept_bi().await?;
-
-        let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
-        log::info!("Copied over {bytes_sent} byte(s)");
-
-        send.finish()?;
-
-        connection.closed().await;
-
-        Ok(())
-    }
-}
-
-fn start_server(
+fn start_ssh_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
 ) -> AnyProtoClient {
-    log::info!("START SERVER");
+    log::info!("START SSH SERVER");
     // This is the server idle timeout. If no connection comes in this timeout, the server will shut down.
     const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
     let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
-
-    start_p2p_server(log_rx.clone(), cx);
 
     cx.on_app_quit(move |_| {
         let mut app_quit_tx = app_quit_tx.clone();
@@ -400,6 +389,8 @@ fn start_server(
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
 
+            // STDIN -> stdin_msg_tx
+
             let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
             cx.background_spawn(async move {
                 while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
@@ -417,6 +408,8 @@ fn start_server(
                     }
 
                     stdin_message = stdin_msg_rx.next().fuse() => {
+                        // stdin_msg_tx -> incoming_tx
+
                         let Some(message) = stdin_message else {
                             log::warn!("error reading message on stdin. exiting.");
                             break;
@@ -433,6 +426,7 @@ fn start_server(
                             break;
                         };
 
+                        // outgoing_rx -> STDOUT
                         if let Err(error) =
                             write_message(&mut stdout_stream, &mut output_buffer, message).await
                         {
@@ -446,6 +440,8 @@ fn start_server(
                     }
 
                     log_message = log_rx.recv().fuse() => {
+                        // log_rx -> STDERR
+
                         if let Ok(log_message) = log_message {
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
                                 log::error!("failed to write log message to stderr: {:?}", error);
@@ -522,7 +518,11 @@ pub fn execute_run(
     write_pid_file(&pid_file)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
-    let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
+    // TODO: can we skip creating these in the p2p case? currently the proxy startup waits for them to be created
+    let server_listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
+
+    let p2p = true; // TODO: wire up as CLI option?
+    let listeners = if !p2p { Some(server_listeners) } else { None };
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     app.run(move |cx| {
@@ -535,7 +535,6 @@ pub fn execute_run(
 
         log::info!("gpui app started, initializing server");
 
-        gpui_tokio::init(cx);
         let session = start_server(listeners, log_rx, cx);
 
         client::init_settings(cx);
@@ -734,18 +733,21 @@ pub(crate) fn execute_proxy(
         spawn_server(&server_paths).map_err(ExecuteProxyError::SpawnServer)?;
     };
 
+    // STDIN(proxy) -> STDIN(run)
     let stdin_task = smol::spawn(async move {
         let stdin = Async::new(std::io::stdin())?;
         let stream = smol::net::unix::UnixStream::connect(&server_paths.stdin_socket).await?;
         handle_io(stdin, stream, "stdin").await
     });
 
+    // STDOUT(run) -> STDOUT(proxy)
     let stdout_task: smol::Task<Result<()>> = smol::spawn(async move {
         let stdout = Async::new(std::io::stdout())?;
         let stream = smol::net::unix::UnixStream::connect(&server_paths.stdout_socket).await?;
         handle_io(stream, stdout, "stdout").await
     });
 
+    // STDERR(run) -> STDERR(proxy)
     let stderr_task: smol::Task<Result<()>> = smol::spawn(async move {
         let mut stderr = Async::new(std::io::stderr())?;
         let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;

@@ -14543,6 +14543,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "iroh",
  "iroh-base",
  "itertools 0.14.0",

@@ -28,6 +28,7 @@ gpui.workspace = true
 iroh.workspace = true
 iroh-base.workspace = true
 itertools.workspace = true
+gpui_tokio.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true

@@ -16,8 +16,8 @@ use language::CursorShape;
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
-    ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform,
-    SshConnectionOptions, SshPortForwardOption,
+    ConnectionIdentifier, IrohConnectionOptions, RemoteClient, RemoteConnectionOptions,
+    RemotePlatform, SshConnectionOptions, SshPortForwardOption,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -566,6 +566,31 @@ pub fn connect_over_ssh(
     )
 }
 
+pub fn connect_over_p2p(
+    unique_identifier: ConnectionIdentifier,
+    connection_options: IrohConnectionOptions,
+    ui: Entity<RemoteConnectionPrompt>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    let window = window.window_handle();
+    let known_password = None;
+    let (tx, rx) = oneshot::channel();
+    ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
+
+    remote::RemoteClient::p2p(
+        unique_identifier,
+        connection_options,
+        rx,
+        Arc::new(RemoteClientDelegate {
+            window,
+            ui: ui.downgrade(),
+            known_password,
+        }),
+        cx,
+    )
+}
+
 pub async fn open_remote_project(
     connection_options: RemoteConnectionOptions,
     paths: Vec<PathBuf>,
@@ -573,6 +598,8 @@ pub async fn open_remote_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncApp,
 ) -> Result<()> {
+    log::debug!("open remote project {:?}", connection_options);
+
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {

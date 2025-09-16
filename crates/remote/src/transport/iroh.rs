@@ -3,12 +3,13 @@ use crate::{
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
     SinkExt, StreamExt as _, TryStreamExt,
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
+    lock::Mutex,
 };
 use gpui::{App, AppContext as _, AsyncApp, Task};
 use iroh::{
@@ -54,6 +55,17 @@ pub struct IrohConnectionOptions {
     pub ticket: ZedIrohTicket,
     pub port_forwards: Option<Vec<IrohPortForwardOption>>,
     pub nickname: Option<String>,
+}
+
+impl IrohConnectionOptions {
+    pub fn parse_command_line(input: &str) -> Result<Self> {
+        let ticket = input.parse()?;
+        Ok(Self {
+            ticket,
+            port_forwards: None,
+            nickname: None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
@@ -125,8 +137,17 @@ impl RemoteConnection for IrohZedRemote {
         delegate.set_status(Some("Opening stream"), cx);
 
         let addr = self.options.ticket.node.clone();
-
-        self.handle_rpc_messages(addr, incoming_tx, outgoing_rx, connection_activity_tx, cx)
+        match handle_rpc_messages(
+            &self.endpoint,
+            addr,
+            incoming_tx,
+            outgoing_rx,
+            connection_activity_tx,
+            cx,
+        ) {
+            Ok(task) => task,
+            Err(error) => Task::ready(Err(anyhow!("failed to spawn iroh server: {}", error))),
+        }
     }
 
     fn path_style(&self) -> PathStyle {
@@ -142,25 +163,112 @@ impl IrohZedRemote {
     ) -> Result<Self> {
         delegate.set_status(Some("Connecting"), cx);
 
+        let this = gpui_tokio::Tokio::spawn(cx, async move {
+            let endpoint = Endpoint::builder()
+                .discovery_n0()
+                .alpns(vec![ZED_ALPN.to_vec()])
+                .bind()
+                .await?;
+
+            anyhow::Ok(Self {
+                options: connection_options,
+                endpoint,
+                ssh_shell: "todo".into(),
+            })
+        })?
+        .await??;
+        Ok(this)
+    }
+
+    pub async fn ticket(&self) -> ZedIrohTicket {
+        let addr = self.endpoint.node_addr().initialized().await;
+        ZedIrohTicket::new(addr)
+    }
+}
+
+fn handle_rpc_messages(
+    endpoint: &Endpoint,
+    addr: NodeAddr,
+    incoming_tx: UnboundedSender<Envelope>,
+    mut outgoing_rx: UnboundedReceiver<Envelope>,
+    connection_activity_tx: Sender<()>,
+    cx: &mut AsyncApp,
+) -> Result<Task<Result<i32>>> {
+    log::info!("iroh connecting to {:?}", addr);
+
+    let ep = endpoint.clone();
+
+    let task = gpui_tokio::Tokio::spawn(cx, async move {
+        // Open a connection to the accepting node
+        let conn = ep.connect(addr, ZED_ALPN).await?;
+        // Open a bidirectional QUIC stream
+        let bi_stream = conn.open_bi().await?;
+        // Wrap the stream with length-prefixed framing
+        let mut stream = FramedBiStream::new(bi_stream);
+
+        tokio::task::spawn({
+            let mut connection_activity_tx = connection_activity_tx.clone();
+            async move {
+                while let Some(outgoing) = outgoing_rx.next().await {
+                    // TODO(b5): don't swallow errors
+                    let encoded = postcard::to_extend(&outgoing, BytesMut::new())
+                        .unwrap()
+                        .freeze();
+                    connection_activity_tx.try_send(()).ok();
+                    stream.write.send(encoded).await.unwrap();
+                }
+            }
+        });
+
+        tokio::task::spawn({
+            let mut connection_activity_tx = connection_activity_tx.clone();
+            async move {
+                while let Some(env_data) = stream.read.next().await {
+                    // TODO(b5): don't swallow errors
+                    let env_data = env_data.unwrap();
+                    let decoded: Envelope = postcard::from_bytes(&env_data).unwrap();
+                    connection_activity_tx.try_send(()).ok();
+                    incoming_tx.unbounded_send(decoded).ok();
+                }
+            }
+        });
+
+        anyhow::Ok(0)
+    })?;
+
+    let task = cx.background_spawn(async move {
+        let result = task.await??;
+        anyhow::Ok(result)
+    });
+
+    Ok(task)
+}
+
+#[derive(Debug, Clone)]
+pub struct IrohZedListener {
+    endpoint: Endpoint,
+    router: Router,
+}
+
+impl IrohZedListener {
+    pub async fn accept(
+        incoming_tx: UnboundedSender<Envelope>,
+        outgoing_rx: UnboundedReceiver<Envelope>,
+    ) -> Result<Self> {
         let endpoint = Endpoint::builder()
             .discovery_n0()
             .alpns(vec![ZED_ALPN.to_vec()])
             .bind()
             .await?;
 
-        Ok(Self {
-            options: connection_options,
-            endpoint,
-            ssh_shell: "todo".into(),
-        })
-    }
+        let router = Router::builder(endpoint.clone())
+            .accept(
+                ZED_ALPN,
+                IrohZedProtocolHandler::new(incoming_tx, outgoing_rx),
+            )
+            .spawn();
 
-    // TODO(b5) - break providing out into a separate struct.
-    // it should be defined here & consumed in remote_server
-    pub async fn provide(&self) -> Router {
-        Router::builder(self.endpoint.clone())
-            .accept(ZED_ALPN, self.clone())
-            .spawn()
+        Ok(Self { endpoint, router })
     }
 
     pub async fn ticket(&self) -> ZedIrohTicket {
@@ -168,61 +276,30 @@ impl IrohZedRemote {
         ZedIrohTicket::new(addr)
     }
 
-    fn handle_rpc_messages(
-        &self,
-        addr: NodeAddr,
-        mut incoming_tx: UnboundedSender<Envelope>,
-        mut outgoing_rx: UnboundedReceiver<Envelope>,
-        mut connection_activity_tx: Sender<()>,
-        cx: &mut AsyncApp,
-    ) -> Task<Result<i32>> {
-        let ep = self.endpoint.clone();
-
-        // TODO (b5) - I'm using tokio tasks here because it seems
-        // `cx.background_spawn` is intentionally not nestable, but we need an
-        // async block to construct the connection. I'm guessing there's a
-        // better way to do this.
-        cx.background_spawn(async move {
-            // Open a connection to the accepting node
-            let conn = ep.connect(addr, ZED_ALPN).await?;
-            // Open a bidirectional QUIC stream
-            let bi_stream = conn.open_bi().await?;
-            // Wrap the stream with length-prefixed framing
-            let mut stream = FramedBiStream::new(bi_stream);
-
-            tokio::spawn({
-                let mut connection_activity_tx = connection_activity_tx.clone();
-                async move {
-                    while let Some(outgoing) = outgoing_rx.next().await {
-                        // TODO(b5): don't swallow errors
-                        let encoded = postcard::to_extend(&outgoing, BytesMut::new())
-                            .unwrap()
-                            .freeze();
-                        connection_activity_tx.try_send(()).ok();
-                        stream.write.send(encoded).await.unwrap();
-                    }
-                }
-            });
-
-            tokio::spawn({
-                let mut connection_activity_tx = connection_activity_tx.clone();
-                async move {
-                    while let Some(env_data) = stream.read.next().await {
-                        // TODO(b5): don't swallow errors
-                        let env_data = env_data.unwrap();
-                        let decoded: Envelope = postcard::from_bytes(&env_data).unwrap();
-                        connection_activity_tx.try_send(()).ok();
-                        incoming_tx.unbounded_send(decoded).ok();
-                    }
-                }
-            });
-
-            anyhow::Ok(0)
-        })
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
     }
 }
 
-impl ProtocolHandler for IrohZedRemote {
+#[derive(Debug)]
+pub struct IrohZedProtocolHandler {
+    incoming_tx: UnboundedSender<Envelope>,
+    outgoing_rx: Arc<Mutex<UnboundedReceiver<Envelope>>>,
+}
+
+impl IrohZedProtocolHandler {
+    fn new(
+        incoming_tx: UnboundedSender<Envelope>,
+        outgoing_rx: UnboundedReceiver<Envelope>,
+    ) -> Self {
+        Self {
+            incoming_tx,
+            outgoing_rx: Arc::new(Mutex::new(outgoing_rx)),
+        }
+    }
+}
+
+impl ProtocolHandler for IrohZedProtocolHandler {
     /// The `accept` method is called for each incoming connection for our ALPN.
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
@@ -230,17 +307,33 @@ impl ProtocolHandler for IrohZedRemote {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
         // Our protocol is a simple request-response protocol, so we expect the
         // connecting peer to open a single bi-directional stream.
-        let bi_stream = connection.accept_bi().await?;
-        let mut stream = FramedBiStream::new(bi_stream);
+        let (send, recv) = connection.accept_bi().await?;
+        let mut codec = LengthDelimitedCodec::builder();
+        codec.max_frame_length(MAX_MESSAGE_SIZE);
+        let mut write = codec.new_write(send);
+        let mut read = codec.new_read(recv);
 
-        while let Some(encoded_env) = stream.read.try_next().await? {
+        let outgoing_rx = self.outgoing_rx.clone();
+        tokio::task::spawn(async move {
+            while let Some(outgoing_message) = outgoing_rx.lock().await.next().await {
+                let encoded = postcard::to_extend(&outgoing_message, BytesMut::new())
+                    .unwrap()
+                    .freeze();
+
+                if let Err(error) = write.send(encoded).await {
+                    log::error!("failed to write outgoing message: {:?}", error);
+                }
+            }
+        });
+
+        while let Some(encoded_env) = read.try_next().await? {
             let msg: Envelope =
                 postcard::from_bytes(&encoded_env).map_err(AcceptError::from_err)?;
 
             log::info!("received message {:?}", msg);
-            // TODO(b5) - This needs to be wired up on the provide side.
-            // It's likely easiest to do a separate server struct with fields for
-            // the corresponding send & receive message pipes
+            if let Err(error) = self.incoming_tx.unbounded_send(msg) {
+                log::error!("failed to send message to application: {error:?}. exiting.");
+            }
         }
 
         // Wait until the remote closes the connection, which it does once it
@@ -404,82 +497,3 @@ impl<'de> Deserialize<'de> for ZedIrohTicket {
         }
     }
 }
-
-// #[cfg(test)]
-// mod tests {
-//     use std::net::{Ipv4Addr, SocketAddr};
-
-//     use data_encoding::HEXLOWER;
-
-//     use super::*;
-//     use iroh::{PublicKey, SecretKey};
-
-//     fn make_ticket() -> ZedIrohTicket {
-//         let peer = SecretKey::generate(&mut rand::thread_rng()).public();
-//         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
-//         let relay_url = None;
-//         ZedIrohTicket {
-//             node: NodeAddr::from_parts(peer, relay_url, [addr]),
-//         }
-//     }
-
-//     #[test]
-//     fn test_ticket_postcard() {
-//         let ticket = make_ticket();
-//         let bytes = postcard::to_stdvec(&ticket).unwrap();
-//         let ticket2: ZedIrohTicket = postcard::from_bytes(&bytes).unwrap();
-//         assert_eq!(ticket2, ticket);
-//     }
-
-//     #[test]
-//     fn test_ticket_json() {
-//         let ticket = make_ticket();
-//         let json = serde_json::to_string(&ticket).unwrap();
-//         let ticket2: ZedIrohTicket = serde_json::from_str(&json).unwrap();
-//         assert_eq!(ticket2, ticket);
-//     }
-
-//     #[test]
-//     fn test_ticket_base32() {
-//         let node_id =
-//             PublicKey::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
-//                 .unwrap();
-
-//         let ticket = ZedIrohTicket {
-//             node: NodeAddr::from_parts(
-//                 node_id,
-//                 Some("http://derp.me./".parse().unwrap()),
-//                 ["127.0.0.1:1024".parse().unwrap()],
-//             ),
-//         };
-//         let base32 = data_encoding::BASE32_NOPAD
-//             .decode(
-//                 ticket
-//                     .to_string()
-//                     .strip_prefix("node")
-//                     .unwrap()
-//                     .to_ascii_uppercase()
-//                     .as_bytes(),
-//             )
-//             .unwrap();
-//         let expected = [
-//             // variant
-//             "00",
-//             // node id, 32 bytes, see above
-//             "ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6",
-//             // relay url present
-//             "01",
-//             // relay url, 16 bytes, see above
-//             "10",
-//             "687474703a2f2f646572702e6d652e2f",
-//             // one direct address
-//             "01",
-//             // ipv4
-//             "00",
-//             // address, see above
-//             "7f0000018008",
-//         ];
-//         let expected = HEXLOWER.decode(expected.concat().as_bytes()).unwrap();
-//         assert_eq!(base32, expected);
-//     }
-// }
