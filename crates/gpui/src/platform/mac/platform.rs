@@ -1363,19 +1363,17 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
 extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
     unsafe {
         let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
-        let defaults_dict: id = msg_send![class!(NSMutableDictionary), dictionary];
 
         // The autofill heuristic controller causes slowdown and high CPU usage.
         // We don't know exactly why. This disables the full heuristic controller.
         //
         // Adapted from: https://github.com/ghostty-org/ghostty/pull/8625
-        let false_value: id = msg_send![class!(NSNumber), numberWithBool:false];
-        let _: () = msg_send![defaults_dict,
-            setObject: false_value
-            forKey: ns_string("NSAutoFillHeuristicControllerEnabled")
-        ];
-
-        let _: () = msg_send![user_defaults, registerDefaults:defaults_dict];
+        let name = ns_string("NSAutoFillHeuristicControllerEnabled");
+        let existing_value: id = msg_send![user_defaults, objectForKey: name];
+        if existing_value == nil {
+            let false_value: id = msg_send![class!(NSNumber), numberWithBool:false];
+            let _: () = msg_send![user_defaults, setObject: false_value forKey: name];
+        }
     }
 }
 

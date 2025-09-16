@@ -10,7 +10,7 @@ use anyhow::{Context as _, Result};
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, CLAUDE_CODE_NAME};
 
-use crate::{AgentServer, AgentServerDelegate};
+use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 
 #[derive(Clone)]
@@ -60,6 +60,7 @@ impl AgentServer for ClaudeCode {
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
+        let extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
@@ -70,7 +71,7 @@ impl AgentServer for ClaudeCode {
                         .context("Claude Code is not registered")?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),
-                        Default::default(),
+                        extra_env,
                         delegate.status_tx,
                         delegate.new_version_available,
                         &mut cx.to_async(),

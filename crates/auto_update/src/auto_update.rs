@@ -34,7 +34,7 @@ actions!(
         /// Checks for available updates.
         Check,
         /// Dismisses the update error message.
-        DismissErrorMessage,
+        DismissMessage,
         /// Opens the release notes for the current version in a browser.
         ViewReleaseNotes,
     ]
@@ -55,14 +55,14 @@ pub enum VersionCheckType {
     Semantic(SemanticVersion),
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading { version: VersionCheckType },
     Installing { version: VersionCheckType },
     Updated { version: VersionCheckType },
-    Errored,
+    Errored { error: Arc<anyhow::Error> },
 }
 
 impl AutoUpdateStatus {
@@ -383,7 +383,9 @@ impl AutoUpdater {
                         }
                         UpdateCheckType::Manual => {
                             log::error!("auto-update failed: error:{:?}", error);
-                            AutoUpdateStatus::Errored
+                            AutoUpdateStatus::Errored {
+                                error: Arc::new(error),
+                            }
                         }
                     };
 
@@ -402,8 +404,8 @@ impl AutoUpdater {
         self.status.clone()
     }
 
-    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.status == AutoUpdateStatus::Idle {
+    pub fn dismiss(&mut self, cx: &mut Context<Self>) -> bool {
+        if let AutoUpdateStatus::Idle = self.status {
             return false;
         }
         self.status = AutoUpdateStatus::Idle;
@@ -992,7 +994,26 @@ pub fn finalize_auto_update_on_quit() {
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestAppContext;
+    use settings::default_settings;
+
     use super::*;
+
+    #[gpui::test]
+    fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx);
+            store
+                .set_default_settings(&default_settings(), cx)
+                .expect("Unable to set default settings");
+            store
+                .set_user_settings("{}", cx)
+                .expect("Unable to set user settings");
+            cx.set_global(store);
+            AutoUpdateSetting::register(cx);
+            assert!(AutoUpdateSetting::get_global(cx).0);
+        });
+    }
 
     #[test]
     fn test_stable_does_not_update_when_fetched_version_is_not_higher() {

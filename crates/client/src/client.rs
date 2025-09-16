@@ -22,7 +22,7 @@ use futures::{
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
-use http_client::{HttpClient, HttpClientWithUrl, http};
+use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -130,6 +130,20 @@ pub struct ProxySettingsContent {
 #[derive(Deserialize, Default)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
+}
+
+impl ProxySettings {
+    pub fn proxy_url(&self) -> Option<Url> {
+        self.proxy
+            .as_ref()
+            .and_then(|input| {
+                input
+                    .parse::<Url>()
+                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                    .ok()
+            })
+            .or_else(read_proxy_from_env)
+    }
 }
 
 impl Settings for ProxySettings {

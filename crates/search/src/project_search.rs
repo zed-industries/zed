@@ -679,7 +679,18 @@ impl ProjectSearchView {
         self.included_opened_only = !self.included_opened_only;
     }
 
+    pub fn replacement(&self, cx: &App) -> String {
+        self.replacement_editor.read(cx).text(cx)
+    }
+
     fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(last_search_query_text) = &self.entity.read(cx).last_search_query_text
+            && self.query_editor.read(cx).text(cx) != *last_search_query_text
+        {
+            // search query has changed, restart search and bail
+            self.search(cx);
+            return;
+        }
         if self.entity.read(cx).match_ranges.is_empty() {
             return;
         }
@@ -699,14 +710,17 @@ impl ProjectSearchView {
             self.select_match(Direction::Next, window, cx)
         }
     }
-    pub fn replacement(&self, cx: &App) -> String {
-        self.replacement_editor.read(cx).text(cx)
-    }
     fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(last_search_query_text) = &self.entity.read(cx).last_search_query_text
+            && self.query_editor.read(cx).text(cx) != *last_search_query_text
+        {
+            // search query has changed, restart search and bail
+            self.search(cx);
+            return;
+        }
         if self.active_match_index.is_none() {
             return;
         }
-
         let Some(query) = self.entity.read(cx).active_query.as_ref() else {
             return;
         };
