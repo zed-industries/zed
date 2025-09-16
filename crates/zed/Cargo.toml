@@ -25,7 +25,6 @@ agent.workspace = true
 agent_ui.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
-askpass.workspace = true
 assets.workspace = true
 assistant_tools.workspace = true
 audio.workspace = true

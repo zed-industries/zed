@@ -177,12 +177,6 @@ pub fn main() {
         return;
     }
 
-    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
-    if let Some(socket) = &args.askpass {
-        askpass::main(socket);
-        return;
-    }
-
     // `zed --nc` Makes zed operate in nc/netcat mode for use with MCP
     if let Some(socket) = &args.nc {
         match nc::main(socket) {
@@ -1200,11 +1194,6 @@ struct Args {
     /// that prevents Zed from starting, so you can't run `zed: copy system specs to clipboard`
     #[arg(long)]
     system_specs: bool,
-
-    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
-    /// by having Zed act like netcat communicating over a Unix socket.
-    #[arg(long, hide = true)]
-    askpass: Option<String>,
 
     /// Used for the MCP Server, to remove the need for netcat as a dependency,
     /// by having Zed act like netcat communicating over a Unix socket.
