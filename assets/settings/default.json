@@ -914,7 +914,11 @@
     /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
     ///
     /// Default: true
-    "expand_terminal_card": true
+    "expand_terminal_card": true,
+    // Minimum number of lines to display in the agent message editor.
+    //
+    // Default: 4
+    "message_editor_min_lines": 4
   },
   // The settings for slash commands.
   "slash_commands": {
