@@ -234,20 +234,35 @@ impl ContextServer {
                     cmd.current_dir(working_directory);
                 }
 
-                let transport = TokioChildProcess::new(cmd.configure(|_| {}))?;
-                client_info.serve(transport).await?
+                // Run the RMCP operations in Tokio runtime
+                let runtime = self.tokio_runtime.clone();
+                runtime
+                    .block_on(async {
+                        let transport = TokioChildProcess::new(cmd.configure(|_| {}))
+                            .map_err(anyhow::Error::from)?;
+                        client_info
+                            .serve(transport)
+                            .await
+                            .map_err(anyhow::Error::from)
+                    })
+                    .map_err(anyhow::Error::from)?
             }
             ContextServerTransport::Http { url, headers } => {
-                // Correct HTTP implementation using StreamableHttpClientTransport
-                let transport = StreamableHttpClientTransport::from_uri(url.clone());
+                // HTTP transport MUST be created and served within Tokio runtime
+                let url = url.clone();
+                let runtime = self.tokio_runtime.clone();
 
-                // TODO: Add headers support if RMCP supports it
-                let _ = headers; // Suppress unused variable warning
-                // for (key, value) in headers {
-                //     transport.add_header(key, value)?;
-                // }
-
-                client_info.serve(transport).await?
+                runtime
+                    .block_on(async {
+                        let transport = StreamableHttpClientTransport::from_uri(url);
+                        // TODO: Add headers support if RMCP supports it
+                        let _ = headers; // Suppress unused variable warning
+                        client_info
+                            .serve(transport)
+                            .await
+                            .map_err(anyhow::Error::from)
+                    })
+                    .map_err(anyhow::Error::from)?
             }
             ContextServerTransport::Sse { url: _, headers: _ } => {
                 // TODO: Implement SSE transport when needed
