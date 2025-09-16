@@ -1,13 +1,15 @@
 pub mod wit;
 
 use crate::ExtensionManifest;
+use crate::capability_granter::CapabilityGranter;
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_trait::async_trait;
 use dap::{DebugRequest, StartDebuggingRequestArgumentsRequest};
 use extension::{
     CodeLabel, Command, Completion, ContextServerConfiguration, DebugAdapterBinary,
-    DebugTaskDefinition, ExtensionHostProxy, KeyValueStoreDelegate, ProjectDelegate, SlashCommand,
-    SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
+    DebugTaskDefinition, DownloadFileCapability, ExtensionCapability, ExtensionHostProxy,
+    KeyValueStoreDelegate, NpmInstallPackageCapability, ProcessExecCapability, ProjectDelegate,
+    SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput, Symbol, WorktreeDelegate,
 };
 use fs::{Fs, normalize_path};
 use futures::future::LocalBoxFuture;
@@ -35,6 +37,7 @@ use std::{
     sync::Arc,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use util::paths::SanitizedPath;
 use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
@@ -50,6 +53,8 @@ pub struct WasmHost {
     pub(crate) proxy: Arc<ExtensionHostProxy>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
+    /// The capabilities granted to extensions running on the host.
+    pub(crate) granted_capabilities: Vec<ExtensionCapability>,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
@@ -102,7 +107,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn language_server_initialization_options(
@@ -127,7 +132,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn language_server_workspace_configuration(
@@ -150,7 +155,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn language_server_additional_initialization_options(
@@ -175,7 +180,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn language_server_additional_workspace_configuration(
@@ -200,7 +205,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn labels_for_completions(
@@ -226,7 +231,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn labels_for_symbols(
@@ -252,7 +257,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn complete_slash_command_argument(
@@ -271,7 +276,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn run_slash_command(
@@ -297,7 +302,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn context_server_command(
@@ -316,7 +321,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn context_server_configuration(
@@ -343,7 +348,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>> {
@@ -358,7 +363,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn index_docs(
@@ -384,7 +389,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn get_dap_binary(
@@ -406,7 +411,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
     async fn dap_request_kind(
         &self,
@@ -423,7 +428,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn dap_config_to_scenario(&self, config: ZedDebugConfig) -> Result<DebugScenario> {
@@ -437,7 +442,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 
     async fn dap_locator_create_scenario(
@@ -461,7 +466,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
     async fn run_dap_locator(
         &self,
@@ -477,7 +482,7 @@ impl extension::Extension for WasmExtension {
             }
             .boxed()
         })
-        .await
+        .await?
     }
 }
 
@@ -486,6 +491,7 @@ pub struct WasmState {
     pub table: ResourceTable,
     ctx: wasi::WasiCtx,
     pub host: Arc<WasmHost>,
+    pub(crate) capability_granter: CapabilityGranter,
 }
 
 type MainThreadCall = Box<dyn Send + for<'a> FnOnce(&'a mut AsyncApp) -> LocalBoxFuture<'a, ()>>;
@@ -527,7 +533,7 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
                     // `Future::poll`.
                     const EPOCH_INTERVAL: Duration = Duration::from_millis(100);
                     let mut timer = Timer::interval(EPOCH_INTERVAL);
-                    while let Some(_) = timer.next().await {
+                    while (timer.next().await).is_some() {
                         // Exit the loop and thread once the engine is dropped.
                         let Some(engine) = engine_ref.upgrade() else {
                             break;
@@ -571,6 +577,19 @@ impl WasmHost {
             node_runtime,
             proxy,
             release_channel: ReleaseChannel::global(cx),
+            granted_capabilities: vec![
+                ExtensionCapability::ProcessExec(ProcessExecCapability {
+                    command: "*".to_string(),
+                    args: vec!["**".to_string()],
+                }),
+                ExtensionCapability::DownloadFile(DownloadFileCapability {
+                    host: "*".to_string(),
+                    path: vec!["**".to_string()],
+                }),
+                ExtensionCapability::NpmInstallPackage(NpmInstallPackageCapability {
+                    package: "*".to_string(),
+                }),
+            ],
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
         })
@@ -589,7 +608,6 @@ impl WasmHost {
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
-
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
@@ -597,6 +615,10 @@ impl WasmHost {
                     manifest: manifest.clone(),
                     table: ResourceTable::new(),
                     host: this.clone(),
+                    capability_granter: CapabilityGranter::new(
+                        this.granted_capabilities.clone(),
+                        manifest.clone(),
+                    ),
                 },
             );
             // Store will yield after 1 tick, and get a new deadline of 1 tick after each yield.
@@ -644,19 +666,19 @@ impl WasmHost {
 
         let file_perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
+        let path = SanitizedPath::new(&extension_work_dir).to_string();
+        #[cfg(target_os = "windows")]
+        let path = path.replace('\\', "/");
 
-        Ok(wasi::WasiCtxBuilder::new()
-            .inherit_stdio()
-            .preopened_dir(&extension_work_dir, ".", dir_perms, file_perms)?
-            .preopened_dir(
-                &extension_work_dir,
-                extension_work_dir.to_string_lossy(),
-                dir_perms,
-                file_perms,
-            )?
-            .env("PWD", extension_work_dir.to_string_lossy())
-            .env("RUST_BACKTRACE", "full")
-            .build())
+        let mut ctx = wasi::WasiCtxBuilder::new();
+        ctx.inherit_stdio()
+            .env("PWD", &path)
+            .env("RUST_BACKTRACE", "full");
+
+        ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
+        ctx.preopened_dir(&path, &path, dir_perms, file_perms)?;
+
+        Ok(ctx.build())
     }
 
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
@@ -679,16 +701,15 @@ pub fn parse_wasm_extension_version(
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
         if let wasmparser::Payload::CustomSection(s) =
             part.context("error parsing wasm extension")?
+            && s.name() == "zed:api-version"
         {
-            if s.name() == "zed:api-version" {
-                version = parse_wasm_extension_version_custom_section(s.data());
-                if version.is_none() {
-                    bail!(
-                        "extension {} has invalid zed:api-version section: {:?}",
-                        extension_id,
-                        s.data()
-                    );
-                }
+            version = parse_wasm_extension_version_custom_section(s.data());
+            if version.is_none() {
+                bail!(
+                    "extension {} has invalid zed:api-version section: {:?}",
+                    extension_id,
+                    s.data()
+                );
             }
         }
     }
@@ -739,7 +760,7 @@ impl WasmExtension {
             .with_context(|| format!("failed to load wasm extension {}", manifest.id))
     }
 
-    pub async fn call<T, Fn>(&self, f: Fn) -> T
+    pub async fn call<T, Fn>(&self, f: Fn) -> Result<T>
     where
         T: 'static + Send,
         Fn: 'static
@@ -755,8 +776,19 @@ impl WasmExtension {
                 }
                 .boxed()
             }))
-            .expect("wasm extension channel should not be closed yet");
-        return_rx.await.expect("wasm extension channel")
+            .map_err(|_| {
+                anyhow!(
+                    "wasm extension channel should not be closed yet, extension {} (id {})",
+                    self.manifest.name,
+                    self.manifest.id,
+                )
+            })?;
+        return_rx.await.with_context(|| {
+            format!(
+                "wasm extension channel, extension {} (id {})",
+                self.manifest.name, self.manifest.id,
+            )
+        })
     }
 }
 
@@ -777,8 +809,19 @@ impl WasmState {
                 }
                 .boxed_local()
             }))
-            .expect("main thread message channel should not be closed yet");
-        async move { return_rx.await.expect("main thread message channel") }
+            .unwrap_or_else(|_| {
+                panic!(
+                    "main thread message channel should not be closed yet, extension {} (id {})",
+                    self.manifest.name, self.manifest.id,
+                )
+            });
+        let name = self.manifest.name.clone();
+        let id = self.manifest.id.clone();
+        async move {
+            return_rx.await.unwrap_or_else(|_| {
+                panic!("main thread message channel, extension {name} (id {id})")
+            })
+        }
     }
 
     fn work_dir(&self) -> PathBuf {

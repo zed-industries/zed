@@ -1,7 +1,7 @@
 use crate::{
     db::{
         Channel, ChannelId, ChannelRole, Database, NewUserParams, RoomId, UserId,
-        tests::{assert_channel_tree_matches, channel_tree, new_test_connection, new_test_user},
+        tests::{assert_channel_tree_matches, channel_tree, new_test_user},
     },
     test_both_dbs,
 };
@@ -946,41 +946,6 @@ async fn test_user_is_channel_participant(db: &Arc<Database>) {
     assert_channel_tree(
         channels,
         &[(zed_channel, &[]), (public_channel_id, &[zed_channel])],
-    )
-}
-
-test_both_dbs!(
-    test_guest_access,
-    test_guest_access_postgres,
-    test_guest_access_sqlite
-);
-
-async fn test_guest_access(db: &Arc<Database>) {
-    let server = db.create_server("test").await.unwrap();
-
-    let admin = new_test_user(db, "admin@example.com").await;
-    let guest = new_test_user(db, "guest@example.com").await;
-    let guest_connection = new_test_connection(server);
-
-    let zed_channel = db.create_root_channel("zed", admin).await.unwrap();
-    db.set_channel_visibility(zed_channel, crate::db::ChannelVisibility::Public, admin)
-        .await
-        .unwrap();
-
-    assert!(
-        db.join_channel_chat(zed_channel, guest_connection, guest)
-            .await
-            .is_err()
-    );
-
-    db.join_channel(zed_channel, guest, guest_connection)
-        .await
-        .unwrap();
-
-    assert!(
-        db.join_channel_chat(zed_channel, guest_connection, guest)
-            .await
-            .is_ok()
     )
 }
 

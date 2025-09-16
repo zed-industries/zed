@@ -1,10 +1,12 @@
 mod avatar;
+mod badge;
 mod banner;
 mod button;
 mod callout;
 mod chip;
 mod content_group;
 mod context_menu;
+mod data_table;
 mod disclosure;
 mod divider;
 mod dropdown_menu;
@@ -41,12 +43,14 @@ mod tooltip;
 mod stories;
 
 pub use avatar::*;
+pub use badge::*;
 pub use banner::*;
 pub use button::*;
 pub use callout::*;
 pub use chip::*;
 pub use content_group::*;
 pub use context_menu::*;
+pub use data_table::*;
 pub use disclosure::*;
 pub use divider::*;
 pub use dropdown_menu::*;

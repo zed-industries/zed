@@ -1,10 +1,19 @@
 use db::anyhow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+
+#[derive(Copy, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[serde(rename_all = "snake_case")]
+pub enum TitleBarVisibility {
+    Always,
+    Never,
+    HideInFullScreen,
+}
 
 #[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TitleBarSettings {
+    pub show: TitleBarVisibility,
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
     pub show_user_picture: bool,
@@ -14,8 +23,16 @@ pub struct TitleBarSettings {
     pub show_menus: bool,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(
+    Copy, Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey,
+)]
+#[settings_ui(group = "Title Bar")]
+#[settings_key(key = "title_bar")]
 pub struct TitleBarSettingsContent {
+    /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
+    ///
+    /// Default: "always"
+    pub show: Option<TitleBarVisibility>,
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
     /// Default: false
@@ -47,8 +64,6 @@ pub struct TitleBarSettingsContent {
 }
 
 impl Settings for TitleBarSettings {
-    const KEY: Option<&'static str> = Some("title_bar");
-
     type FileContent = TitleBarSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> anyhow::Result<Self>

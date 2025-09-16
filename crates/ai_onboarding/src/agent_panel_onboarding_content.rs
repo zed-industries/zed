@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use client::{Client, UserStore};
-use gpui::{Action, ClickEvent, Entity, IntoElement, ParentElement};
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
+use gpui::{Entity, IntoElement, ParentElement};
 use language_model::{LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
-use ui::{Divider, List, prelude::*};
-use zed_actions::agent::{OpenConfiguration, ToggleModelSelector};
+use ui::prelude::*;
 
-use crate::{AgentPanelOnboardingCard, BulletItem, ZedAiOnboarding};
+use crate::{AgentPanelOnboardingCard, ApiKeysWithoutProviders, ZedAiOnboarding};
 
 pub struct AgentPanelOnboarding {
     user_store: Entity<UserStore>,
@@ -25,7 +25,7 @@ impl AgentPanelOnboarding {
         cx.subscribe(
             &LanguageModelRegistry::global(cx),
             |this: &mut Self, _registry, event: &language_model::Event, cx| match event {
-                language_model::Event::ProviderStateChanged
+                language_model::Event::ProviderStateChanged(_)
                 | language_model::Event::AddedProvider(_)
                 | language_model::Event::RemovedProvider(_) => {
                     this.configured_providers = Self::compute_available_providers(cx)
@@ -50,96 +50,42 @@ impl AgentPanelOnboarding {
             .filter(|provider| {
                 provider.is_authenticated(cx) && provider.id() != ZED_CLOUD_PROVIDER_ID
             })
-            .map(|provider| (provider.icon(), provider.name().0.clone()))
+            .map(|provider| (provider.icon(), provider.name().0))
             .collect()
-    }
-
-    fn configure_providers(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        window.dispatch_action(OpenConfiguration.boxed_clone(), cx);
-        cx.notify();
-    }
-
-    fn render_api_keys_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_existing_providers = self.configured_providers.len() > 0;
-        let configure_provider_label = if has_existing_providers {
-            "Configure Other Provider"
-        } else {
-            "Configure Providers"
-        };
-
-        let content = if has_existing_providers {
-            List::new()
-                    .child(BulletItem::new(
-                        "Or start now using API keys from your environment for the following providers:"
-                    ))
-                    .child(
-                        h_flex()
-                            .px_5()
-                            .gap_2()
-                            .flex_wrap()
-                            .children(self.configured_providers.iter().cloned().map(|(icon, name)|
-                                h_flex()
-                                    .gap_1p5()
-                                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-                                    .child(Label::new(name))
-                            ))
-                    )
-                    .child(BulletItem::new(
-                        "No need for any of the plans or even to sign in",
-                    ))
-        } else {
-            List::new()
-                .child(BulletItem::new(
-                    "You can also use AI in Zed by bringing your own API keys",
-                ))
-                .child(BulletItem::new(
-                    "No need for any of the plans or even to sign in",
-                ))
-        };
-
-        v_flex()
-            .mt_2()
-            .gap_1()
-            .child(
-                h_flex()
-                    .gap_2()
-                    .child(
-                        Label::new("API Keys")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    .child(Divider::horizontal()),
-            )
-            .child(content)
-            .when(has_existing_providers, |this| {
-                this.child(
-                    Button::new("pick-model", "Choose Model")
-                        .full_width()
-                        .style(ButtonStyle::Outlined)
-                        .on_click(|_event, window, cx| {
-                            window.dispatch_action(ToggleModelSelector.boxed_clone(), cx)
-                        }),
-                )
-            })
-            .child(
-                Button::new("configure-providers", configure_provider_label)
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .on_click(cx.listener(Self::configure_providers)),
-            )
     }
 }
 
 impl Render for AgentPanelOnboarding {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let enrolled_in_trial = self.user_store.read(cx).plan().is_some_and(|plan| {
+            matches!(
+                plan,
+                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)
+            )
+        });
+        let is_pro_user = self.user_store.read(cx).plan().is_some_and(|plan| {
+            matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))
+        });
+
         AgentPanelOnboardingCard::new()
-            .child(ZedAiOnboarding::new(
-                self.client.clone(),
-                &self.user_store,
-                self.continue_with_zed_ai.clone(),
-                cx,
-            ))
-            .child(self.render_api_keys_section(cx))
+            .child(
+                ZedAiOnboarding::new(
+                    self.client.clone(),
+                    &self.user_store,
+                    self.continue_with_zed_ai.clone(),
+                    cx,
+                )
+                .with_dismiss({
+                    let callback = self.continue_with_zed_ai.clone();
+                    move |window, cx| callback(window, cx)
+                }),
+            )
+            .map(|this| {
+                if enrolled_in_trial || is_pro_user || !self.configured_providers.is_empty() {
+                    this
+                } else {
+                    this.child(ApiKeysWithoutProviders::new())
+                }
+            })
     }
 }

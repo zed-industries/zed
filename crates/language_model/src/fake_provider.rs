@@ -1,33 +1,34 @@
 use crate::{
-    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice,
+    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, LanguageModelToolChoice,
 };
-use futures::{FutureExt, StreamExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
+use anyhow::anyhow;
+use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
 use http_client::Result;
 use parking_lot::Mutex;
-use std::sync::Arc;
+use smol::stream::StreamExt;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering::SeqCst},
+};
 
-pub fn language_model_id() -> LanguageModelId {
-    LanguageModelId::from("fake".to_string())
+#[derive(Clone)]
+pub struct FakeLanguageModelProvider {
+    id: LanguageModelProviderId,
+    name: LanguageModelProviderName,
 }
 
-pub fn language_model_name() -> LanguageModelName {
-    LanguageModelName::from("Fake".to_string())
+impl Default for FakeLanguageModelProvider {
+    fn default() -> Self {
+        Self {
+            id: LanguageModelProviderId::from("fake".to_string()),
+            name: LanguageModelProviderName::from("Fake".to_string()),
+        }
+    }
 }
-
-pub fn provider_id() -> LanguageModelProviderId {
-    LanguageModelProviderId::from("fake".to_string())
-}
-
-pub fn provider_name() -> LanguageModelProviderName {
-    LanguageModelProviderName::from("Fake".to_string())
-}
-
-#[derive(Clone, Default)]
-pub struct FakeLanguageModelProvider;
 
 impl LanguageModelProviderState for FakeLanguageModelProvider {
     type ObservableEntity = ();
@@ -39,11 +40,11 @@ impl LanguageModelProviderState for FakeLanguageModelProvider {
 
 impl LanguageModelProvider for FakeLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
-        provider_id()
+        self.id.clone()
     }
 
     fn name(&self) -> LanguageModelProviderName {
-        provider_name()
+        self.name.clone()
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -66,7 +67,12 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, _window: &mut Window, _: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: ConfigurationViewTargetAgent,
+        _window: &mut Window,
+        _: &mut App,
+    ) -> AnyView {
         unimplemented!()
     }
 
@@ -76,6 +82,10 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
 }
 
 impl FakeLanguageModelProvider {
+    pub fn new(id: LanguageModelProviderId, name: LanguageModelProviderName) -> Self {
+        Self { id, name }
+    }
+
     pub fn test_model(&self) -> FakeLanguageModel {
         FakeLanguageModel::default()
     }
@@ -89,12 +99,40 @@ pub struct ToolUseRequest {
     pub schema: serde_json::Value,
 }
 
-#[derive(Default)]
 pub struct FakeLanguageModel {
-    current_completion_txs: Mutex<Vec<(LanguageModelRequest, mpsc::UnboundedSender<String>)>>,
+    provider_id: LanguageModelProviderId,
+    provider_name: LanguageModelProviderName,
+    current_completion_txs: Mutex<
+        Vec<(
+            LanguageModelRequest,
+            mpsc::UnboundedSender<
+                Result<LanguageModelCompletionEvent, LanguageModelCompletionError>,
+            >,
+        )>,
+    >,
+    forbid_requests: AtomicBool,
+}
+
+impl Default for FakeLanguageModel {
+    fn default() -> Self {
+        Self {
+            provider_id: LanguageModelProviderId::from("fake".to_string()),
+            provider_name: LanguageModelProviderName::from("Fake".to_string()),
+            current_completion_txs: Mutex::new(Vec::new()),
+            forbid_requests: AtomicBool::new(false),
+        }
+    }
 }
 
 impl FakeLanguageModel {
+    pub fn allow_requests(&self) {
+        self.forbid_requests.store(false, SeqCst);
+    }
+
+    pub fn forbid_requests(&self) {
+        self.forbid_requests.store(true, SeqCst);
+    }
+
     pub fn pending_completions(&self) -> Vec<LanguageModelRequest> {
         self.current_completion_txs
             .lock()
@@ -107,10 +145,21 @@ impl FakeLanguageModel {
         self.current_completion_txs.lock().len()
     }
 
-    pub fn stream_completion_response(
+    pub fn send_completion_stream_text_chunk(
         &self,
         request: &LanguageModelRequest,
         chunk: impl Into<String>,
+    ) {
+        self.send_completion_stream_event(
+            request,
+            LanguageModelCompletionEvent::Text(chunk.into()),
+        );
+    }
+
+    pub fn send_completion_stream_event(
+        &self,
+        request: &LanguageModelRequest,
+        event: impl Into<LanguageModelCompletionEvent>,
     ) {
         let current_completion_txs = self.current_completion_txs.lock();
         let tx = current_completion_txs
@@ -118,7 +167,21 @@ impl FakeLanguageModel {
             .find(|(req, _)| req == request)
             .map(|(_, tx)| tx)
             .unwrap();
-        tx.unbounded_send(chunk.into()).unwrap();
+        tx.unbounded_send(Ok(event.into())).unwrap();
+    }
+
+    pub fn send_completion_stream_error(
+        &self,
+        request: &LanguageModelRequest,
+        error: impl Into<LanguageModelCompletionError>,
+    ) {
+        let current_completion_txs = self.current_completion_txs.lock();
+        let tx = current_completion_txs
+            .iter()
+            .find(|(req, _)| req == request)
+            .map(|(_, tx)| tx)
+            .unwrap();
+        tx.unbounded_send(Err(error.into())).unwrap();
     }
 
     pub fn end_completion_stream(&self, request: &LanguageModelRequest) {
@@ -127,8 +190,22 @@ impl FakeLanguageModel {
             .retain(|(req, _)| req != request);
     }
 
-    pub fn stream_last_completion_response(&self, chunk: impl Into<String>) {
-        self.stream_completion_response(self.pending_completions().last().unwrap(), chunk);
+    pub fn send_last_completion_stream_text_chunk(&self, chunk: impl Into<String>) {
+        self.send_completion_stream_text_chunk(self.pending_completions().last().unwrap(), chunk);
+    }
+
+    pub fn send_last_completion_stream_event(
+        &self,
+        event: impl Into<LanguageModelCompletionEvent>,
+    ) {
+        self.send_completion_stream_event(self.pending_completions().last().unwrap(), event);
+    }
+
+    pub fn send_last_completion_stream_error(
+        &self,
+        error: impl Into<LanguageModelCompletionError>,
+    ) {
+        self.send_completion_stream_error(self.pending_completions().last().unwrap(), error);
     }
 
     pub fn end_last_completion_stream(&self) {
@@ -138,19 +215,19 @@ impl FakeLanguageModel {
 
 impl LanguageModel for FakeLanguageModel {
     fn id(&self) -> LanguageModelId {
-        language_model_id()
+        LanguageModelId::from("fake".to_string())
     }
 
     fn name(&self) -> LanguageModelName {
-        language_model_name()
+        LanguageModelName::from("Fake".to_string())
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
-        provider_id()
+        self.provider_id.clone()
     }
 
     fn provider_name(&self) -> LanguageModelProviderName {
-        provider_name()
+        self.provider_name.clone()
     }
 
     fn supports_tools(&self) -> bool {
@@ -188,14 +265,18 @@ impl LanguageModel for FakeLanguageModel {
             LanguageModelCompletionError,
         >,
     > {
-        let (tx, rx) = mpsc::unbounded();
-        self.current_completion_txs.lock().push((request, tx));
-        async move {
-            Ok(rx
-                .map(|text| Ok(LanguageModelCompletionEvent::Text(text)))
-                .boxed())
+        if self.forbid_requests.load(SeqCst) {
+            async move {
+                Err(LanguageModelCompletionError::Other(anyhow!(
+                    "requests are forbidden"
+                )))
+            }
+            .boxed()
+        } else {
+            let (tx, rx) = mpsc::unbounded();
+            self.current_completion_txs.lock().push((request, tx));
+            async move { Ok(rx.boxed()) }.boxed()
         }
-        .boxed()
     }
 
     fn as_fake(&self) -> &Self {

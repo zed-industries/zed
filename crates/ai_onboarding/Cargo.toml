@@ -16,12 +16,14 @@ default = []
 
 [dependencies]
 client.workspace = true
+cloud_llm_client.workspace = true
 component.workspace = true
+feature_flags.workspace = true
 gpui.workspace = true
 language_model.workspace = true
-proto.workspace = true
 serde.workspace = true
 smallvec.workspace = true
+telemetry.workspace = true
 ui.workspace = true
 workspace-hack.workspace = true
 zed_actions.workspace = true

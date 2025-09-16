@@ -41,6 +41,8 @@ use std::{
 };
 use util::ResultExt as _;
 
+use zed_env_vars::ZED_STATELESS;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
     #[serde(rename = "json")]
@@ -71,7 +73,7 @@ impl Column for DataType {
     }
 }
 
-const RULES_FILE_NAMES: [&'static str; 9] = [
+const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
     ".cursorrules",
     ".windsurfrules",
@@ -200,6 +202,22 @@ impl ThreadStore {
         this.register_context_server_handlers(cx);
         this.reload(cx).detach_and_log_err(cx);
         (this, ready_rx)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake(project: Entity<Project>, cx: &mut App) -> Self {
+        Self {
+            project,
+            tools: cx.new(|_| ToolWorkingSet::default()),
+            prompt_builder: Arc::new(PromptBuilder::new(None).unwrap()),
+            prompt_store: None,
+            context_server_tool_ids: HashMap::default(),
+            threads: Vec::new(),
+            project_context: SharedProjectContext::default(),
+            reload_system_prompt_tx: mpsc::channel(0).0,
+            _reload_system_prompt_task: Task::ready(()),
+            _subscriptions: vec![],
+        }
     }
 
     fn handle_project_event(
@@ -562,33 +580,32 @@ impl ThreadStore {
                 return;
             };
 
-            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
-                if let Some(response) = protocol
+            if protocol.capable(context_server::protocol::ServerCapability::Tools)
+                && let Some(response) = protocol
                     .request::<context_server::types::requests::ListTools>(())
                     .await
                     .log_err()
-                {
-                    let tool_ids = tool_working_set
-                        .update(cx, |tool_working_set, cx| {
-                            tool_working_set.extend(
-                                response.tools.into_iter().map(|tool| {
-                                    Arc::new(ContextServerTool::new(
-                                        context_server_store.clone(),
-                                        server.id(),
-                                        tool,
-                                    )) as Arc<dyn Tool>
-                                }),
-                                cx,
-                            )
-                        })
-                        .log_err();
+            {
+                let tool_ids = tool_working_set
+                    .update(cx, |tool_working_set, cx| {
+                        tool_working_set.extend(
+                            response.tools.into_iter().map(|tool| {
+                                Arc::new(ContextServerTool::new(
+                                    context_server_store.clone(),
+                                    server.id(),
+                                    tool,
+                                )) as Arc<dyn Tool>
+                            }),
+                            cx,
+                        )
+                    })
+                    .log_err();
 
-                    if let Some(tool_ids) = tool_ids {
-                        this.update(cx, |this, _| {
-                            this.context_server_tool_ids.insert(server_id, tool_ids);
-                        })
-                        .log_err();
-                    }
+                if let Some(tool_ids) = tool_ids {
+                    this.update(cx, |this, _| {
+                        this.context_server_tool_ids.insert(server_id, tool_ids);
+                    })
+                    .log_err();
                 }
             }
         })
@@ -678,13 +695,14 @@ impl SerializedThreadV0_1_0 {
         let mut messages: Vec<SerializedMessage> = Vec::with_capacity(self.0.messages.len());
 
         for message in self.0.messages {
-            if message.role == Role::User && !message.tool_results.is_empty() {
-                if let Some(last_message) = messages.last_mut() {
-                    debug_assert!(last_message.role == Role::Assistant);
+            if message.role == Role::User
+                && !message.tool_results.is_empty()
+                && let Some(last_message) = messages.last_mut()
+            {
+                debug_assert!(last_message.role == Role::Assistant);
 
-                    last_message.tool_results = message.tool_results;
-                    continue;
-                }
+                last_message.tool_results = message.tool_results;
+                continue;
             }
 
             messages.push(message);
@@ -874,7 +892,22 @@ impl ThreadsDatabase {
 
         let needs_migration_from_heed = mdb_path.exists();
 
-        let connection = Connection::open_file(&sqlite_path.to_string_lossy());
+        let connection = if *ZED_STATELESS {
+            Connection::open_memory(Some("THREAD_FALLBACK_DB"))
+        } else if cfg!(any(feature = "test-support", test)) {
+            // rust stores the name of the test on the current thread.
+            // We use this to automatically create a database that will
+            // be shared within the test (for the test_retrieve_old_thread)
+            // but not with concurrent tests.
+            let thread = std::thread::current();
+            let test_name = thread.name();
+            Connection::open_memory(Some(&format!(
+                "THREAD_FALLBACK_{}",
+                test_name.unwrap_or_default()
+            )))
+        } else {
+            Connection::open_file(&sqlite_path.to_string_lossy())
+        };
 
         connection.exec(indoc! {"
                 CREATE TABLE IF NOT EXISTS threads (

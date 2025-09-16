@@ -2,6 +2,7 @@ use std::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
+/// A cheaply-cloneable ordered map based on a [SumTree](crate::SumTree).
 #[derive(Clone, PartialEq, Eq)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where
@@ -54,7 +55,7 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
 
     pub fn get(&self, key: &K) -> Option<&V> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
-        cursor.seek(&MapKeyRef(Some(key)), Bias::Left, &());
+        cursor.seek(&MapKeyRef(Some(key)), Bias::Left);
         if let Some(item) = cursor.item() {
             if Some(key) == item.key().0.as_ref() {
                 Some(&item.value)
@@ -71,10 +72,10 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
     }
 
     pub fn extend(&mut self, iter: impl IntoIterator<Item = (K, V)>) {
-        let mut edits = Vec::new();
-        for (key, value) in iter {
-            edits.push(Edit::Insert(MapEntry { key, value }));
-        }
+        let edits: Vec<_> = iter
+            .into_iter()
+            .map(|(key, value)| Edit::Insert(MapEntry { key, value }))
+            .collect();
         self.0.edit(edits, &());
     }
 
@@ -86,12 +87,12 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         let mut removed = None;
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let key = MapKeyRef(Some(key));
-        let mut new_tree = cursor.slice(&key, Bias::Left, &());
-        if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
+        let mut new_tree = cursor.slice(&key, Bias::Left);
+        if key.cmp(&cursor.end(), &()) == Ordering::Equal {
             removed = Some(cursor.item().unwrap().value.clone());
-            cursor.next(&());
+            cursor.next();
         }
-        new_tree.append(cursor.suffix(&()), &());
+        new_tree.append(cursor.suffix(), &());
         drop(cursor);
         self.0 = new_tree;
         removed
@@ -101,9 +102,9 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         let start = MapSeekTargetAdaptor(start);
         let end = MapSeekTargetAdaptor(end);
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
-        let mut new_tree = cursor.slice(&start, Bias::Left, &());
-        cursor.seek(&end, Bias::Left, &());
-        new_tree.append(cursor.suffix(&()), &());
+        let mut new_tree = cursor.slice(&start, Bias::Left);
+        cursor.seek(&end, Bias::Left);
+        new_tree.append(cursor.suffix(), &());
         drop(cursor);
         self.0 = new_tree;
     }
@@ -112,15 +113,15 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
     pub fn closest(&self, key: &K) -> Option<(&K, &V)> {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let key = MapKeyRef(Some(key));
-        cursor.seek(&key, Bias::Right, &());
-        cursor.prev(&());
+        cursor.seek(&key, Bias::Right);
+        cursor.prev();
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
     pub fn iter_from<'a>(&'a self, from: &K) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let from_key = MapKeyRef(Some(from));
-        cursor.seek(&from_key, Bias::Left, &());
+        cursor.seek(&from_key, Bias::Left);
 
         cursor.map(|map_entry| (&map_entry.key, &map_entry.value))
     }
@@ -131,15 +132,15 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
     {
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let key = MapKeyRef(Some(key));
-        let mut new_tree = cursor.slice(&key, Bias::Left, &());
+        let mut new_tree = cursor.slice(&key, Bias::Left);
         let mut result = None;
-        if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
+        if key.cmp(&cursor.end(), &()) == Ordering::Equal {
             let mut updated = cursor.item().unwrap().clone();
             result = Some(f(&mut updated.value));
             new_tree.push(updated, &());
-            cursor.next(&());
+            cursor.next();
         }
-        new_tree.append(cursor.suffix(&()), &());
+        new_tree.append(cursor.suffix(), &());
         drop(cursor);
         self.0 = new_tree;
         result
@@ -149,12 +150,12 @@ impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
         let mut new_map = SumTree::<MapEntry<K, V>>::default();
 
         let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
-        cursor.next(&());
+        cursor.next();
         while let Some(item) = cursor.item() {
             if predicate(&item.key, &item.value) {
                 new_map.push(item.clone(), &());
             }
-            cursor.next(&());
+            cursor.next();
         }
         drop(cursor);
 

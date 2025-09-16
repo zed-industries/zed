@@ -1,36 +1,34 @@
 use anyhow::{Context as _, Result};
-use async_compression::futures::bufread::GzipDecoder;
-use async_tar::Archive;
 use async_trait::async_trait;
 use chrono::{DateTime, Local};
 use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
+use itertools::Itertools as _;
 use language::{
-    ContextLocation, ContextProvider, File, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+    ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
+    LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeRuntime, VersionStrategy};
 use project::{Fs, lsp_store::language_server_settings};
 use serde_json::{Value, json};
-use smol::{fs, io::BufReader, lock::RwLock, stream::StreamExt};
+use smol::{fs, lock::RwLock, stream::StreamExt};
 use std::{
-    any::Any,
     borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::archive::extract_zip;
 use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
 
-use crate::{PackageJson, PackageJsonData};
+use crate::{PackageJson, PackageJsonData, github_download::download_server_binary};
 
-#[derive(Debug)]
 pub(crate) struct TypeScriptContextProvider {
+    fs: Arc<dyn Fs>,
     last_package_json: PackageJsonContents,
 }
 
@@ -255,8 +253,9 @@ impl PackageJsonData {
 }
 
 impl TypeScriptContextProvider {
-    pub fn new() -> Self {
+    pub fn new(fs: Arc<dyn Fs>) -> Self {
         Self {
+            fs,
             last_package_json: PackageJsonContents::default(),
         }
     }
@@ -343,10 +342,10 @@ async fn detect_package_manager(
     fs: Arc<dyn Fs>,
     package_json_data: Option<PackageJsonData>,
 ) -> &'static str {
-    if let Some(package_json_data) = package_json_data {
-        if let Some(package_manager) = package_json_data.package_manager {
-            return package_manager;
-        }
+    if let Some(package_json_data) = package_json_data
+        && let Some(package_manager) = package_json_data.package_manager
+    {
+        return package_manager;
     }
     if fs.is_file(&worktree_root.join("pnpm-lock.yaml")).await {
         return "pnpm";
@@ -360,7 +359,6 @@ async fn detect_package_manager(
 impl ContextProvider for TypeScriptContextProvider {
     fn associated_tasks(
         &self,
-        fs: Arc<dyn Fs>,
         file: Option<Arc<dyn File>>,
         cx: &App,
     ) -> Task<Option<TaskTemplates>> {
@@ -371,8 +369,12 @@ impl ContextProvider for TypeScriptContextProvider {
             return Task::ready(None);
         };
         let file_relative_path = file.path().clone();
-        let package_json_data =
-            self.combined_package_json_data(fs.clone(), &worktree_root, &file_relative_path, cx);
+        let package_json_data = self.combined_package_json_data(
+            self.fs.clone(),
+            &worktree_root,
+            &file_relative_path,
+            cx,
+        );
 
         cx.background_spawn(async move {
             let mut task_templates = TaskTemplates(Vec::new());
@@ -510,12 +512,13 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn replace_test_name_parameters(test_name: &str) -> String {
-    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
-
-    pattern.replace_all(test_name, "(.+?)").to_string()
+    static PATTERN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(\$([A-Za-z0-9_\.]+|[\#])|%[psdifjo#\$%])").unwrap());
+    PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
 pub struct TypeScriptLspAdapter {
+    fs: Arc<dyn Fs>,
     node: NodeRuntime,
 }
 
@@ -525,10 +528,10 @@ impl TypeScriptLspAdapter {
     const SERVER_NAME: LanguageServerName =
         LanguageServerName::new_static("typescript-language-server");
     const PACKAGE_NAME: &str = "typescript";
-    pub fn new(node: NodeRuntime) -> Self {
-        TypeScriptLspAdapter { node }
+    pub fn new(node: NodeRuntime, fs: Arc<dyn Fs>) -> Self {
+        TypeScriptLspAdapter { fs, node }
     }
-    async fn tsdk_path(fs: &dyn Fs, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
+    async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
             .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
             .await
@@ -540,7 +543,8 @@ impl TypeScriptLspAdapter {
             "node_modules/typescript/lib"
         };
 
-        if fs
+        if self
+            .fs
             .is_dir(&adapter.worktree_root_path().join(tsdk_path))
             .await
         {
@@ -551,37 +555,35 @@ impl TypeScriptLspAdapter {
     }
 }
 
-struct TypeScriptVersions {
+pub struct TypeScriptVersions {
     typescript_version: String,
     server_version: String,
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for TypeScriptLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
-    }
+impl LspInstaller for TypeScriptLspAdapter {
+    type BinaryVersion = TypeScriptVersions;
 
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(TypeScriptVersions {
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<TypeScriptVersions> {
+        Ok(TypeScriptVersions {
             typescript_version: self.node.npm_package_latest_version("typescript").await?,
             server_version: self
                 .node
                 .npm_package_latest_version("typescript-language-server")
                 .await?,
-        }) as Box<_>)
+        })
     }
 
     async fn check_if_version_installed(
         &self,
-        version: &(dyn 'static + Send + Any),
+        version: &TypeScriptVersions,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let version = version.downcast_ref::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         let should_install_language_server = self
@@ -589,8 +591,8 @@ impl LspAdapter for TypeScriptLspAdapter {
             .should_install_npm_package(
                 Self::PACKAGE_NAME,
                 &server_path,
-                &container_dir,
-                version.typescript_version.as_str(),
+                container_dir,
+                VersionStrategy::Latest(version.typescript_version.as_str()),
             )
             .await;
 
@@ -607,11 +609,10 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: TypeScriptVersions,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<TypeScriptVersions>().unwrap();
         let server_path = container_dir.join(Self::NEW_SERVER_PATH);
 
         self.node
@@ -643,6 +644,13 @@ impl LspAdapter for TypeScriptLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_ts_server_binary(container_dir, &self.node).await
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for TypeScriptLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
     }
 
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -697,10 +705,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
-        fs: &dyn Fs,
         adapter: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
-        let tsdk_path = Self::tsdk_path(fs, adapter).await;
+        let tsdk_path = self.tsdk_path(adapter).await;
         Ok(Some(json!({
             "provideFormatter": true,
             "hostInfo": "zed",
@@ -722,9 +729,9 @@ impl LspAdapter for TypeScriptLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
+
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
@@ -741,11 +748,11 @@ impl LspAdapter for TypeScriptLspAdapter {
         }))
     }
 
-    fn language_ids(&self) -> HashMap<String, String> {
+    fn language_ids(&self) -> HashMap<LanguageName, String> {
         HashMap::from_iter([
-            ("TypeScript".into(), "typescript".into()),
-            ("JavaScript".into(), "javascript".into()),
-            ("TSX".into(), "typescriptreact".into()),
+            (LanguageName::new("TypeScript"), "typescript".into()),
+            (LanguageName::new("JavaScript"), "javascript".into()),
+            (LanguageName::new("TSX"), "typescriptreact".into()),
         ])
     }
 }
@@ -811,6 +818,99 @@ impl EsLintLspAdapter {
     }
 }
 
+impl LspInstaller for EsLintLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
+
+    async fn fetch_latest_server_version(
+        &self,
+        _delegate: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
+        let url = build_asset_url(
+            "zed-industries/vscode-eslint",
+            Self::CURRENT_VERSION_TAG_NAME,
+            Self::GITHUB_ASSET_KIND,
+        )?;
+
+        Ok(GitHubLspBinaryVersion {
+            name: Self::CURRENT_VERSION.into(),
+            digest: None,
+            url,
+        })
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        version: GitHubLspBinaryVersion,
+        container_dir: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let destination_path = Self::build_destination_path(&container_dir);
+        let server_path = destination_path.join(Self::SERVER_PATH);
+
+        if fs::metadata(&server_path).await.is_err() {
+            remove_matching(&container_dir, |_| true).await;
+
+            download_server_binary(
+                delegate,
+                &version.url,
+                None,
+                &destination_path,
+                Self::GITHUB_ASSET_KIND,
+            )
+            .await?;
+
+            let mut dir = fs::read_dir(&destination_path).await?;
+            let first = dir.next().await.context("missing first file")??;
+            let repo_root = destination_path.join("vscode-eslint");
+            fs::rename(first.path(), &repo_root).await?;
+
+            #[cfg(target_os = "windows")]
+            {
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("client").join("src").join("shared"),
+                )
+                .await?;
+                handle_symlink(
+                    repo_root.join("$shared"),
+                    repo_root.join("server").join("src").join("shared"),
+                )
+                .await?;
+            }
+
+            self.node
+                .run_npm_subcommand(&repo_root, "install", &[])
+                .await?;
+
+            self.node
+                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
+                .await?;
+        }
+
+        Ok(LanguageServerBinary {
+            path: self.node.binary_path().await?,
+            env: None,
+            arguments: eslint_server_binary_arguments(&server_path),
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        container_dir: PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let server_path =
+            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
+        Some(LanguageServerBinary {
+            path: self.node.binary_path().await.ok()?,
+            env: None,
+            arguments: eslint_server_binary_arguments(&server_path),
+        })
+    }
+}
+
 #[async_trait(?Send)]
 impl LspAdapter for EsLintLspAdapter {
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
@@ -822,9 +922,8 @@ impl LspAdapter for EsLintLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
@@ -881,123 +980,7 @@ impl LspAdapter for EsLintLspAdapter {
     }
 
     fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
-    }
-
-    async fn fetch_latest_server_version(
-        &self,
-        _delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        let url = build_asset_url(
-            "zed-industries/vscode-eslint",
-            Self::CURRENT_VERSION_TAG_NAME,
-            Self::GITHUB_ASSET_KIND,
-        )?;
-
-        Ok(Box::new(GitHubLspBinaryVersion {
-            name: Self::CURRENT_VERSION.into(),
-            url,
-        }))
-    }
-
-    async fn fetch_server_binary(
-        &self,
-        version: Box<dyn 'static + Send + Any>,
-        container_dir: PathBuf,
-        delegate: &dyn LspAdapterDelegate,
-    ) -> Result<LanguageServerBinary> {
-        let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = Self::build_destination_path(&container_dir);
-        let server_path = destination_path.join(Self::SERVER_PATH);
-
-        if fs::metadata(&server_path).await.is_err() {
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
-
-            let mut response = delegate
-                .http_client()
-                .get(&version.url, Default::default(), true)
-                .await
-                .context("downloading release")?;
-            match Self::GITHUB_ASSET_KIND {
-                AssetKind::TarGz => {
-                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                    let archive = Archive::new(decompressed_bytes);
-                    archive.unpack(&destination_path).await.with_context(|| {
-                        format!("extracting {} to {:?}", version.url, destination_path)
-                    })?;
-                }
-                AssetKind::Gz => {
-                    let mut decompressed_bytes =
-                        GzipDecoder::new(BufReader::new(response.body_mut()));
-                    let mut file =
-                        fs::File::create(&destination_path).await.with_context(|| {
-                            format!(
-                                "creating a file {:?} for a download from {}",
-                                destination_path, version.url,
-                            )
-                        })?;
-                    futures::io::copy(&mut decompressed_bytes, &mut file)
-                        .await
-                        .with_context(|| {
-                            format!("extracting {} to {:?}", version.url, destination_path)
-                        })?;
-                }
-                AssetKind::Zip => {
-                    extract_zip(&destination_path, response.body_mut())
-                        .await
-                        .with_context(|| {
-                            format!("unzipping {} to {:?}", version.url, destination_path)
-                        })?;
-                }
-            }
-
-            let mut dir = fs::read_dir(&destination_path).await?;
-            let first = dir.next().await.context("missing first file")??;
-            let repo_root = destination_path.join("vscode-eslint");
-            fs::rename(first.path(), &repo_root).await?;
-
-            #[cfg(target_os = "windows")]
-            {
-                handle_symlink(
-                    repo_root.join("$shared"),
-                    repo_root.join("client").join("src").join("shared"),
-                )
-                .await?;
-                handle_symlink(
-                    repo_root.join("$shared"),
-                    repo_root.join("server").join("src").join("shared"),
-                )
-                .await?;
-            }
-
-            self.node
-                .run_npm_subcommand(&repo_root, "install", &[])
-                .await?;
-
-            self.node
-                .run_npm_subcommand(&repo_root, "run-script", &["compile"])
-                .await?;
-        }
-
-        Ok(LanguageServerBinary {
-            path: self.node.binary_path().await?,
-            env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
-        })
-    }
-
-    async fn cached_server_binary(
-        &self,
-        container_dir: PathBuf,
-        _: &dyn LspAdapterDelegate,
-    ) -> Option<LanguageServerBinary> {
-        let server_path =
-            Self::build_destination_path(&container_dir).join(EsLintLspAdapter::SERVER_PATH);
-        Some(LanguageServerBinary {
-            path: self.node.binary_path().await.ok()?,
-            env: None,
-            arguments: eslint_server_binary_arguments(&server_path),
-        })
+        Self::SERVER_NAME
     }
 }
 
@@ -1033,7 +1016,9 @@ mod tests {
     use unindent::Unindent;
     use util::path;
 
-    use crate::typescript::{PackageJsonData, TypeScriptContextProvider};
+    use crate::typescript::{
+        PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+    };
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
@@ -1058,7 +1043,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(
             outline
                 .items
@@ -1112,7 +1097,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(
             outline
                 .items
@@ -1173,7 +1158,7 @@ mod tests {
         )
         .await;
 
-        let provider = TypeScriptContextProvider::new();
+        let provider = TypeScriptContextProvider::new(fs.clone());
         let package_json_data = cx
             .update(|cx| {
                 provider.combined_package_json_data(
@@ -1244,5 +1229,38 @@ mod tests {
                 ),
             ]
         );
+    }
+    #[test]
+    fn test_escaping_name() {
+        let cases = [
+            ("plain test name", "plain test name"),
+            ("test name with $param_name", "test name with (.+?)"),
+            ("test name with $nested.param.name", "test name with (.+?)"),
+            ("test name with $#", "test name with (.+?)"),
+            ("test name with $##", "test name with (.+?)\\#"),
+            ("test name with %p", "test name with (.+?)"),
+            ("test name with %s", "test name with (.+?)"),
+            ("test name with %d", "test name with (.+?)"),
+            ("test name with %i", "test name with (.+?)"),
+            ("test name with %f", "test name with (.+?)"),
+            ("test name with %j", "test name with (.+?)"),
+            ("test name with %o", "test name with (.+?)"),
+            ("test name with %#", "test name with (.+?)"),
+            ("test name with %$", "test name with (.+?)"),
+            ("test name with %%", "test name with (.+?)"),
+            ("test name with %q", "test name with %q"),
+            (
+                "test name with regex chars .*+?^${}()|[]\\",
+                "test name with regex chars \\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\",
+            ),
+            (
+                "test name with multiple $params and %pretty and %b and (.+?)",
+                "test name with multiple (.+?) and (.+?)retty and %b and \\(\\.\\+\\?\\)",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(replace_test_name_parameters(input), expected);
+        }
     }
 }

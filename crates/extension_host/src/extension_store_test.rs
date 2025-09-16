@@ -10,7 +10,7 @@ use fs::{FakeFs, Fs, RealFs};
 use futures::{AsyncReadExt, StreamExt, io::BufReader};
 use gpui::{AppContext as _, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
-use language::{BinaryStatus, LanguageMatcher, LanguageRegistry};
+use language::{BinaryStatus, LanguageMatcher, LanguageName, LanguageRegistry};
 use language_extension::LspAccess;
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
@@ -160,7 +160,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
-                        indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
@@ -191,7 +190,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         language_servers: BTreeMap::default(),
                         context_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
-                        indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
                         capabilities: Vec::new(),
                         debug_adapters: Default::default(),
@@ -306,7 +304,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
         assert_eq!(
             language_registry.language_names(),
-            ["ERB", "Plain Text", "Ruby"]
+            [
+                LanguageName::new("ERB"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Ruby"),
+            ]
         );
         assert_eq!(
             theme_registry.list_names(),
@@ -367,7 +369,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 language_servers: BTreeMap::default(),
                 context_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
-                indexed_docs_providers: BTreeMap::default(),
                 snippets: None,
                 capabilities: Vec::new(),
                 debug_adapters: Default::default(),
@@ -458,7 +459,11 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 
         assert_eq!(
             language_registry.language_names(),
-            ["ERB", "Plain Text", "Ruby"]
+            [
+                LanguageName::new("ERB"),
+                LanguageName::new("Plain Text"),
+                LanguageName::new("Ruby"),
+            ]
         );
         assert_eq!(
             language_registry.grammar_names(),
@@ -513,7 +518,10 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             assert_eq!(actual_language.hidden, expected_language.hidden);
         }
 
-        assert_eq!(language_registry.language_names(), ["Plain Text"]);
+        assert_eq!(
+            language_registry.language_names(),
+            [LanguageName::new("Plain Text")]
+        );
         assert_eq!(language_registry.grammar_names(), []);
     });
 }
@@ -523,7 +531,6 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 // `let fake_server = fake_servers.next().await.unwrap();`.
 // Reenable this test when we figure out why.
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -538,7 +545,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let test_extension_dir = root_dir.join("extensions").join(test_extension_id);
 
     let fs = Arc::new(RealFs::new(None, cx.executor()));
-    let extensions_dir = TempTree::new(json!({
+    let extensions_tree = TempTree::new(json!({
         "installed": {},
         "work": {}
     }));
@@ -546,7 +553,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         "test.gleam": ""
     }));
 
-    let extensions_dir = extensions_dir.path().canonicalize().unwrap();
+    let extensions_dir = extensions_tree.path().canonicalize().unwrap();
     let project_dir = project_dir.path().canonicalize().unwrap();
 
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
@@ -609,6 +616,10 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
                                     },
                                     {
                                         "name": format!("gleam-{version}-aarch64-unknown-linux-musl.tar.gz"),
+                                        "browser_download_url": asset_download_uri
+                                    },
+                                    {
+                                        "name": format!("gleam-{version}-x86_64-pc-windows-msvc.tar.gz"),
                                         "browser_download_url": asset_download_uri
                                     }
                                 ]
@@ -706,12 +717,16 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    // todo(windows)
-    // This test hangs here on Windows.
     let fake_server = fake_servers.next().await.unwrap();
-    let expected_server_path =
-        extensions_dir.join(format!("work/{test_extension_id}/gleam-v1.2.3/gleam"));
+    let work_dir = extensions_dir.join(format!("work/{test_extension_id}"));
+    let expected_server_path = work_dir.join("gleam-v1.2.3/gleam");
     let expected_binary_contents = language_server_version.lock().binary_contents.clone();
+
+    // check that IO operations in extension work correctly
+    assert!(work_dir.join("dir-created-with-rel-path").exists());
+    assert!(work_dir.join("dir-created-with-abs-path").exists());
+    assert!(work_dir.join("file-created-with-abs-path").exists());
+    assert!(work_dir.join("file-created-with-rel-path").exists());
 
     assert_eq!(fake_server.binary.path, expected_server_path);
     assert_eq!(fake_server.binary.arguments, [OsString::from("lsp")]);
@@ -818,7 +833,9 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     // Reload the extension, clearing its cache.
     // Start a new instance of the language server.
     extension_store
-        .update(cx, |store, cx| store.reload(Some("gleam".into()), cx))
+        .update(cx, |store, cx| {
+            store.reload(Some("test-extension".into()), cx)
+        })
         .await;
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {

@@ -6,3 +6,40 @@ kbd.keybinding {
   display: inline-block;
   margin: 0 2px;
 }
+
+#copy-markdown-toggle i {
+  font-weight: 500 !important;
+  -webkit-text-stroke: 0.5px currentColor;
+}
+
+.copy-toast {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  padding: 12px 16px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg);
+  background: var(--toast-bg);
+  border: 1px solid var(--toast-border);
+  z-index: 1000;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: all 0.1s ease-in-out;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  max-width: 280px;
+}
+
+.copy-toast.success {
+  border-color: var(--toast-border-success);
+}
+
+.copy-toast.error {
+  border-color: var(--toast-border-error);
+}
+
+.copy-toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}

@@ -143,7 +143,7 @@ impl SearchQuery {
     pub fn regex(
         query: impl ToString,
         whole_word: bool,
-        case_sensitive: bool,
+        mut case_sensitive: bool,
         include_ignored: bool,
         one_match_per_line: bool,
         files_to_include: PathMatcher,
@@ -153,18 +153,26 @@ impl SearchQuery {
     ) -> Result<Self> {
         let mut query = query.to_string();
         let initial_query = Arc::from(query.as_str());
+
+        if let Some((case_sensitive_from_pattern, new_query)) =
+            Self::case_sensitive_from_pattern(&query)
+        {
+            case_sensitive = case_sensitive_from_pattern;
+            query = new_query
+        }
+
         if whole_word {
             let mut word_query = String::new();
-            if let Some(first) = query.get(0..1) {
-                if WORD_MATCH_TEST.is_match(first).is_ok_and(|x| !x) {
-                    word_query.push_str("\\b");
-                }
+            if let Some(first) = query.get(0..1)
+                && WORD_MATCH_TEST.is_match(first).is_ok_and(|x| !x)
+            {
+                word_query.push_str("\\b");
             }
             word_query.push_str(&query);
-            if let Some(last) = query.get(query.len() - 1..) {
-                if WORD_MATCH_TEST.is_match(last).is_ok_and(|x| !x) {
-                    word_query.push_str("\\b");
-                }
+            if let Some(last) = query.get(query.len() - 1..)
+                && WORD_MATCH_TEST.is_match(last).is_ok_and(|x| !x)
+            {
+                word_query.push_str("\\b");
             }
             query = word_query
         }
@@ -192,7 +200,70 @@ impl SearchQuery {
         })
     }
 
+    /// Extracts case sensitivity settings from pattern items in the provided
+    /// query and returns the same query, with the pattern items removed.
+    ///
+    /// The following pattern modifiers are supported:
+    ///
+    /// - `\c` (case_sensitive: false)
+    /// - `\C` (case_sensitive: true)
+    ///
+    /// If no pattern item were found, `None` will be returned.
+    fn case_sensitive_from_pattern(query: &str) -> Option<(bool, String)> {
+        if !(query.contains("\\c") || query.contains("\\C")) {
+            return None;
+        }
+
+        let mut was_escaped = false;
+        let mut new_query = String::new();
+        let mut is_case_sensitive = None;
+
+        for c in query.chars() {
+            if was_escaped {
+                if c == 'c' {
+                    is_case_sensitive = Some(false);
+                } else if c == 'C' {
+                    is_case_sensitive = Some(true);
+                } else {
+                    new_query.push('\\');
+                    new_query.push(c);
+                }
+                was_escaped = false
+            } else if c == '\\' {
+                was_escaped = true
+            } else {
+                new_query.push(c);
+            }
+        }
+
+        is_case_sensitive.map(|c| (c, new_query))
+    }
+
     pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
+        let files_to_include = if message.files_to_include.is_empty() {
+            message
+                .files_to_include_legacy
+                .split(',')
+                .map(str::trim)
+                .filter(|&glob_str| !glob_str.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        } else {
+            message.files_to_include
+        };
+
+        let files_to_exclude = if message.files_to_exclude.is_empty() {
+            message
+                .files_to_exclude_legacy
+                .split(',')
+                .map(str::trim)
+                .filter(|&glob_str| !glob_str.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        } else {
+            message.files_to_exclude
+        };
+
         if message.regex {
             Self::regex(
                 message.query,
@@ -200,8 +271,8 @@ impl SearchQuery {
                 message.case_sensitive,
                 message.include_ignored,
                 false,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
+                PathMatcher::new(files_to_include)?,
+                PathMatcher::new(files_to_exclude)?,
                 message.match_full_paths,
                 None, // search opened only don't need search remote
             )
@@ -211,8 +282,8 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
-                deserialize_path_matches(&message.files_to_include)?,
-                deserialize_path_matches(&message.files_to_exclude)?,
+                PathMatcher::new(files_to_include)?,
+                PathMatcher::new(files_to_exclude)?,
                 false,
                 None, // search opened only don't need search remote
             )
@@ -236,15 +307,20 @@ impl SearchQuery {
     }
 
     pub fn to_proto(&self) -> proto::SearchQuery {
+        let files_to_include = self.files_to_include().sources().to_vec();
+        let files_to_exclude = self.files_to_exclude().sources().to_vec();
         proto::SearchQuery {
             query: self.as_str().to_string(),
             regex: self.is_regex(),
             whole_word: self.whole_word(),
             case_sensitive: self.case_sensitive(),
             include_ignored: self.include_ignored(),
-            files_to_include: self.files_to_include().sources().join(","),
-            files_to_exclude: self.files_to_exclude().sources().join(","),
+            files_to_include: files_to_include.clone(),
+            files_to_exclude: files_to_exclude.clone(),
             match_full_paths: self.match_full_paths(),
+            // Populate legacy fields for backwards compatibility
+            files_to_include_legacy: files_to_include.join(","),
+            files_to_exclude_legacy: files_to_exclude.join(","),
         }
     }
 
@@ -520,14 +596,6 @@ impl SearchQuery {
     }
 }
 
-pub fn deserialize_path_matches(glob_set: &str) -> anyhow::Result<PathMatcher> {
-    let globs = glob_set
-        .split(',')
-        .map(str::trim)
-        .filter(|&glob_str| !glob_str.is_empty());
-    Ok(PathMatcher::new(globs)?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,5 +642,88 @@ mod tests {
                 Err(e) => panic!("Valid glob should be accepted, but got: {e}"),
             }
         }
+    }
+
+    #[test]
+    fn test_case_sensitive_pattern_items() {
+        let case_sensitive = false;
+        let search_query = SearchQuery::regex(
+            "test\\C",
+            false,
+            case_sensitive,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .expect("Should be able to create a regex SearchQuery");
+
+        assert_eq!(
+            search_query.case_sensitive(),
+            true,
+            "Case sensitivity should be enabled when \\C pattern item is present in the query."
+        );
+
+        let case_sensitive = true;
+        let search_query = SearchQuery::regex(
+            "test\\c",
+            true,
+            case_sensitive,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .expect("Should be able to create a regex SearchQuery");
+
+        assert_eq!(
+            search_query.case_sensitive(),
+            false,
+            "Case sensitivity should be disabled when \\c pattern item is present, even if initially set to true."
+        );
+
+        let case_sensitive = false;
+        let search_query = SearchQuery::regex(
+            "test\\c\\C",
+            false,
+            case_sensitive,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .expect("Should be able to create a regex SearchQuery");
+
+        assert_eq!(
+            search_query.case_sensitive(),
+            true,
+            "Case sensitivity should be enabled when \\C is the last pattern item, even after a \\c."
+        );
+
+        let case_sensitive = false;
+        let search_query = SearchQuery::regex(
+            "tests\\\\C",
+            false,
+            case_sensitive,
+            false,
+            false,
+            Default::default(),
+            Default::default(),
+            false,
+            None,
+        )
+        .expect("Should be able to create a regex SearchQuery");
+
+        assert_eq!(
+            search_query.case_sensitive(),
+            false,
+            "Case sensitivity should not be enabled when \\C pattern item is preceded by a backslash."
+        );
     }
 }

@@ -3,18 +3,24 @@ use std::any::Any;
 use ::settings::Settings;
 use command_palette_hooks::CommandPaletteFilter;
 use commit_modal::CommitModal;
-use editor::Editor;
+use editor::{Editor, actions::DiffClipboardWithSelectionData};
 mod blame_ui;
 use git::{
     repository::{Branch, Upstream, UpstreamTracking, UpstreamTrackingStatus},
     status::{FileStatus, StatusCode, UnmergedStatus, UnmergedStatusCode},
 };
 use git_panel_settings::GitPanelSettings;
-use gpui::{Action, App, Context, FocusHandle, Window, actions};
+use gpui::{
+    Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Window,
+    actions,
+};
 use onboarding::GitOnboardingModal;
 use project_diff::ProjectDiff;
 use ui::prelude::*;
-use workspace::Workspace;
+use workspace::{ModalView, Workspace};
+use zed_actions;
+
+use crate::{git_panel::GitPanel, text_diff_view::TextDiffView};
 
 mod askpass_modal;
 pub mod branch_picker;
@@ -22,7 +28,7 @@ mod commit_modal;
 pub mod commit_tooltip;
 mod commit_view;
 mod conflict_view;
-pub mod diff_view;
+pub mod file_diff_view;
 pub mod git_panel;
 mod git_panel_settings;
 pub mod onboarding;
@@ -30,6 +36,8 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod stash_picker;
+pub mod text_diff_view;
 
 actions!(
     git,
@@ -55,6 +63,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         branch_picker::register(workspace);
+        stash_picker::register(workspace);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
@@ -110,6 +119,30 @@ pub fn init(cx: &mut App) {
                 });
             });
         }
+        workspace.register_action(|workspace, action: &git::StashAll, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_all(action, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, action: &git::StashPop, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_pop(action, window, cx);
+            });
+        });
+        workspace.register_action(|workspace, action: &git::StashApply, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_apply(action, window, cx);
+            });
+        });
         workspace.register_action(|workspace, action: &git::StageAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
@@ -125,6 +158,14 @@ pub fn init(cx: &mut App) {
             panel.update(cx, |panel, cx| {
                 panel.unstage_all(action, window, cx);
             });
+        });
+        workspace.register_action(|workspace, _: &git::Uncommit, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.uncommit(window, cx);
+            })
         });
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&[
@@ -149,9 +190,25 @@ pub fn init(cx: &mut App) {
                 panel.git_init(window, cx);
             });
         });
+        workspace.register_action(|workspace, _action: &git::Clone, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+
+            workspace.toggle_modal(window, cx, |window, cx| {
+                GitCloneModal::show(panel, window, cx)
+            });
+        });
         workspace.register_action(|workspace, _: &git::OpenModifiedFiles, window, cx| {
             open_modified_files(workspace, window, cx);
         });
+        workspace.register_action(
+            |workspace, action: &DiffClipboardWithSelectionData, window, cx| {
+                if let Some(task) = TextDiffView::open(action, workspace, window, cx) {
+                    task.detach();
+                };
+            },
+        );
     })
     .detach();
 }
@@ -206,12 +263,12 @@ fn render_remote_button(
             }
             (0, 0) => None,
             (ahead, 0) => Some(remote_button::render_push_button(
-                keybinding_target.clone(),
+                keybinding_target,
                 id,
                 ahead,
             )),
             (ahead, behind) => Some(remote_button::render_pull_button(
-                keybinding_target.clone(),
+                keybinding_target,
                 id,
                 ahead,
                 behind,
@@ -329,7 +386,7 @@ mod remote_button {
             "Publish",
             0,
             0,
-            Some(IconName::ArrowUpFromLine),
+            Some(IconName::ExpandUp),
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
@@ -356,7 +413,7 @@ mod remote_button {
             "Republish",
             0,
             0,
-            Some(IconName::ArrowUpFromLine),
+            Some(IconName::ExpandUp),
             keybinding_target.clone(),
             move |_, window, cx| {
                 window.dispatch_action(Box::new(git::Push), cx);
@@ -386,16 +443,9 @@ mod remote_button {
         let command = command.into();
 
         if let Some(handle) = focus_handle {
-            Tooltip::with_meta_in(
-                label.clone(),
-                Some(action),
-                command.clone(),
-                &handle,
-                window,
-                cx,
-            )
+            Tooltip::with_meta_in(label, Some(action), command, &handle, window, cx)
         } else {
-            Tooltip::with_meta(label.clone(), Some(action), command.clone(), window, cx)
+            Tooltip::with_meta(label, Some(action), command, window, cx)
         }
     }
 
@@ -411,14 +461,14 @@ mod remote_button {
                     .child(
                         div()
                             .px_1()
-                            .child(Icon::new(IconName::ChevronDownSmall).size(IconSize::XSmall)),
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
                     ),
             )
             .menu(move |window, cx| {
                 Some(ContextMenu::build(window, cx, |context_menu, _, _| {
                     context_menu
                         .when_some(keybinding_target.clone(), |el, keybinding_target| {
-                            el.context(keybinding_target.clone())
+                            el.context(keybinding_target)
                         })
                         .action("Fetch", git::Fetch.boxed_clone())
                         .action("Fetch From", git::FetchFrom.boxed_clone())
@@ -501,7 +551,7 @@ mod remote_button {
         )
         .into_any_element();
 
-        SplitButton { left, right }
+        SplitButton::new(left, right)
     }
 }
 
@@ -586,3 +636,88 @@ impl Component for GitStatusIcon {
         )
     }
 }
+
+struct GitCloneModal {
+    panel: Entity<GitPanel>,
+    repo_input: Entity<Editor>,
+    focus_handle: FocusHandle,
+}
+
+impl GitCloneModal {
+    pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let repo_input = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Enter repository URL…", window, cx);
+            editor
+        });
+        let focus_handle = repo_input.focus_handle(cx);
+
+        window.focus(&focus_handle);
+
+        Self {
+            panel,
+            repo_input,
+            focus_handle,
+        }
+    }
+}
+
+impl Focusable for GitCloneModal {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for GitCloneModal {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .elevation_3(cx)
+            .w(rems(34.))
+            .flex_1()
+            .overflow_hidden()
+            .child(
+                div()
+                    .w_full()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.repo_input.clone()),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .p_2()
+                    .gap_0p5()
+                    .rounded_b_sm()
+                    .bg(cx.theme().colors().editor_background)
+                    .child(
+                        Label::new("Clone a repository from GitHub or other sources.")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .child(
+                        Button::new("learn-more", "Learn More")
+                            .label_size(LabelSize::Small)
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .on_click(|_, _, cx| {
+                                cx.open_url("https://github.com/git-guides/git-clone");
+                            }),
+                    ),
+            )
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
+                cx.emit(DismissEvent);
+            }))
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
+                let repo = this.repo_input.read(cx).text(cx);
+                this.panel.update(cx, |panel, cx| {
+                    panel.git_clone(repo, window, cx);
+                });
+                cx.emit(DismissEvent);
+            }))
+    }
+}
+
+impl EventEmitter<DismissEvent> for GitCloneModal {}
+
+impl ModalView for GitCloneModal {}

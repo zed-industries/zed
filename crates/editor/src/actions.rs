@@ -228,21 +228,38 @@ pub struct ShowCompletions {
 pub struct HandleInput(pub String);
 
 /// Deletes from the cursor to the end of the next word.
+/// Stops before the end of the next word, if whitespace sequences of length >= 2 are encountered.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToNextWordEnd {
     #[serde(default)]
     pub ignore_newlines: bool,
+    // Whether to stop before the end of the next word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
 }
 
 /// Deletes from the cursor to the start of the previous word.
+/// Stops before the start of the previous word, if whitespace sequences of length >= 2 are encountered.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteToPreviousWordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
+    // Whether to stop before the start of the previous word, if language-defined bracket is encountered.
+    #[serde(default)]
+    pub ignore_brackets: bool,
+}
+
+/// Cuts from cursor to end of line.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct CutToEndOfLine {
+    #[serde(default)]
+    pub stop_at_newlines: bool,
 }
 
 /// Folds all code blocks at the specified indentation level.
@@ -259,11 +276,28 @@ pub struct SpawnNearestTask {
     pub reveal: task::RevealStrategy,
 }
 
+#[derive(Clone, PartialEq, Action)]
+#[action(no_json, no_register)]
+pub struct DiffClipboardWithSelectionData {
+    pub clipboard_text: String,
+    pub editor: Entity<Editor>,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
 pub enum UuidVersion {
     #[default]
     V4,
     V7,
+}
+
+/// Splits selection into individual lines.
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct SplitSelectionIntoLines {
+    /// Keep the text selected after splitting instead of collapsing to cursors.
+    #[serde(default)]
+    pub keep_selections: bool,
 }
 
 /// Goes to the next diagnostic in the file.
@@ -308,9 +342,8 @@ actions!(
     [
         /// Accepts the full edit prediction.
         AcceptEditPrediction,
-        /// Accepts a partial Copilot suggestion.
-        AcceptPartialCopilotSuggestion,
         /// Accepts a partial edit prediction.
+        #[action(deprecated_aliases = ["editor::AcceptPartialCopilotSuggestion"])]
         AcceptPartialEditPrediction,
         /// Adds a cursor above the current selection.
         AddSelectionAbove,
@@ -322,6 +355,8 @@ actions!(
         ApplyDiffHunk,
         /// Deletes the character before the cursor.
         Backspace,
+        /// Shows git blame information for the current line.
+        BlameHover,
         /// Cancels the current operation.
         Cancel,
         /// Cancels the running flycheck operation.
@@ -356,6 +391,8 @@ actions!(
         ConvertToLowerCase,
         /// Toggles the case of selected text.
         ConvertToOppositeCase,
+        /// Converts selected text to sentence case.
+        ConvertToSentenceCase,
         /// Converts selected text to snake_case.
         ConvertToSnakeCase,
         /// Converts selected text to Title Case.
@@ -384,8 +421,6 @@ actions!(
         CopyPermalinkToLine,
         /// Cuts selected text to the clipboard.
         Cut,
-        /// Cuts from cursor to end of line.
-        CutToEndOfLine,
         /// Deletes the character after the cursor.
         Delete,
         /// Deletes the current line.
@@ -396,6 +431,8 @@ actions!(
         DeleteToNextSubwordEnd,
         /// Deletes to the start of the previous subword.
         DeleteToPreviousSubwordStart,
+        /// Diffs the text stored in the clipboard against the current selection.
+        DiffClipboardWithSelection,
         /// Displays names of all active cursors.
         DisplayCursorNames,
         /// Duplicates the current line below.
@@ -463,6 +500,10 @@ actions!(
         GoToTypeDefinition,
         /// Goes to type definition in a split pane.
         GoToTypeDefinitionSplit,
+        /// Goes to the next document highlight.
+        GoToNextDocumentHighlight,
+        /// Goes to the previous document highlight.
+        GoToPreviousDocumentHighlight,
         /// Scrolls down by half a page.
         HalfPageDown,
         /// Scrolls up by half a page.
@@ -610,6 +651,10 @@ actions!(
         SelectEnclosingSymbol,
         /// Selects the next larger syntax node.
         SelectLargerSyntaxNode,
+        /// Selects the next syntax node sibling.
+        SelectNextSyntaxNode,
+        /// Selects the previous syntax node sibling.
+        SelectPreviousSyntaxNode,
         /// Extends selection left.
         SelectLeft,
         /// Selects the current line.
@@ -660,8 +705,6 @@ actions!(
         SortLinesCaseInsensitive,
         /// Sorts selected lines case-sensitively.
         SortLinesCaseSensitive,
-        /// Splits selection into individual lines.
-        SplitSelectionIntoLines,
         /// Stops the language server for the current file.
         StopLanguageServer,
         /// Switches between source and header files.
@@ -733,5 +776,8 @@ actions!(
         UniqueLinesCaseInsensitive,
         /// Removes duplicate lines (case-sensitive).
         UniqueLinesCaseSensitive,
+        UnwrapSyntaxNode,
+        /// Wraps selections in tag specified by language.
+        WrapSelectionsInTag
     ]
 );

@@ -1,16 +1,10 @@
-pub mod billing;
 pub mod contributors;
 pub mod events;
 pub mod extensions;
 pub mod ips_file;
 pub mod slack;
 
-use crate::db::Database;
-use crate::{
-    AppState, Error, Result, auth,
-    db::{User, UserId},
-    rpc,
-};
+use crate::{AppState, Error, Result, auth, db::UserId, rpc};
 use anyhow::Context as _;
 use axum::{
     Extension, Json, Router,
@@ -97,12 +91,8 @@ impl std::fmt::Display for SystemIdHeader {
 
 pub fn routes(rpc_server: Arc<rpc::Server>) -> Router<(), Body> {
     Router::new()
-        .route("/user", get(update_or_create_authenticated_user))
-        .route("/users/look_up", get(look_up_user))
         .route("/users/:id/access_tokens", post(create_access_token))
-        .route("/users/:id/refresh_llm_tokens", post(refresh_llm_tokens))
         .route("/rpc_server_snapshot", get(get_rpc_server_snapshot))
-        .merge(billing::router())
         .merge(contributors::router())
         .layer(
             ServiceBuilder::new()
@@ -140,141 +130,6 @@ pub async fn validate_api_token<B>(req: Request<B>, next: Next<B>) -> impl IntoR
     }
 
     Ok::<_, Error>(next.run(req).await)
-}
-
-#[derive(Debug, Deserialize)]
-struct AuthenticatedUserParams {
-    github_user_id: i32,
-    github_login: String,
-    github_email: Option<String>,
-    github_name: Option<String>,
-    github_user_created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Serialize)]
-struct AuthenticatedUserResponse {
-    user: User,
-    metrics_id: String,
-    feature_flags: Vec<String>,
-}
-
-async fn update_or_create_authenticated_user(
-    Query(params): Query<AuthenticatedUserParams>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<AuthenticatedUserResponse>> {
-    let initial_channel_id = app.config.auto_join_channel_id;
-
-    let user = app
-        .db
-        .update_or_create_user_by_github_account(
-            &params.github_login,
-            params.github_user_id,
-            params.github_email.as_deref(),
-            params.github_name.as_deref(),
-            params.github_user_created_at,
-            initial_channel_id,
-        )
-        .await?;
-    let metrics_id = app.db.get_user_metrics_id(user.id).await?;
-    let feature_flags = app.db.get_user_flags(user.id).await?;
-    Ok(Json(AuthenticatedUserResponse {
-        user,
-        metrics_id,
-        feature_flags,
-    }))
-}
-
-#[derive(Debug, Deserialize)]
-struct LookUpUserParams {
-    identifier: String,
-}
-
-#[derive(Debug, Serialize)]
-struct LookUpUserResponse {
-    user: Option<User>,
-}
-
-async fn look_up_user(
-    Query(params): Query<LookUpUserParams>,
-    Extension(app): Extension<Arc<AppState>>,
-) -> Result<Json<LookUpUserResponse>> {
-    let user = resolve_identifier_to_user(&app.db, &params.identifier).await?;
-    let user = if let Some(user) = user {
-        match user {
-            UserOrId::User(user) => Some(user),
-            UserOrId::Id(id) => app.db.get_user_by_id(id).await?,
-        }
-    } else {
-        None
-    };
-
-    Ok(Json(LookUpUserResponse { user }))
-}
-
-enum UserOrId {
-    User(User),
-    Id(UserId),
-}
-
-async fn resolve_identifier_to_user(
-    db: &Arc<Database>,
-    identifier: &str,
-) -> Result<Option<UserOrId>> {
-    if let Some(identifier) = identifier.parse::<i32>().ok() {
-        let user = db.get_user_by_id(UserId(identifier)).await?;
-
-        return Ok(user.map(UserOrId::User));
-    }
-
-    if identifier.starts_with("cus_") {
-        let billing_customer = db
-            .get_billing_customer_by_stripe_customer_id(&identifier)
-            .await?;
-
-        return Ok(billing_customer.map(|billing_customer| UserOrId::Id(billing_customer.user_id)));
-    }
-
-    if identifier.starts_with("sub_") {
-        let billing_subscription = db
-            .get_billing_subscription_by_stripe_subscription_id(&identifier)
-            .await?;
-
-        if let Some(billing_subscription) = billing_subscription {
-            let billing_customer = db
-                .get_billing_customer_by_id(billing_subscription.billing_customer_id)
-                .await?;
-
-            return Ok(
-                billing_customer.map(|billing_customer| UserOrId::Id(billing_customer.user_id))
-            );
-        } else {
-            return Ok(None);
-        }
-    }
-
-    if identifier.contains('@') {
-        let user = db.get_user_by_email(identifier).await?;
-
-        return Ok(user.map(UserOrId::User));
-    }
-
-    if let Some(user) = db.get_user_by_github_login(identifier).await? {
-        return Ok(Some(UserOrId::User(user)));
-    }
-
-    Ok(None)
-}
-
-#[derive(Deserialize, Debug)]
-struct CreateUserParams {
-    github_user_id: i32,
-    github_login: String,
-    email_address: String,
-    email_confirmation_code: Option<String>,
-    #[serde(default)]
-    admin: bool,
-    #[serde(default)]
-    invite_count: i32,
 }
 
 async fn get_rpc_server_snapshot(
@@ -334,16 +189,4 @@ async fn create_access_token(
         user_id: impersonated_user_id.unwrap_or(user_id),
         encrypted_access_token,
     }))
-}
-
-#[derive(Serialize)]
-struct RefreshLlmTokensResponse {}
-
-async fn refresh_llm_tokens(
-    Path(user_id): Path<UserId>,
-    Extension(rpc_server): Extension<Arc<rpc::Server>>,
-) -> Result<Json<RefreshLlmTokensResponse>> {
-    rpc_server.refresh_llm_tokens_for_user(user_id).await;
-
-    Ok(Json(RefreshLlmTokensResponse {}))
 }

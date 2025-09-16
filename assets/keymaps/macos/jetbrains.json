@@ -4,6 +4,7 @@
       "cmd-{": "pane::ActivatePreviousItem",
       "cmd-}": "pane::ActivateNextItem",
       "cmd-0": "git_panel::ToggleFocus", // overrides `cmd-0` zoom reset
+      "shift-escape": null, // Unmap workspace::zoom
       "ctrl-f2": "debugger::Stop",
       "f6": "debugger::Pause",
       "f7": "debugger::StepInto",
@@ -96,7 +97,7 @@
       "cmd-shift-r": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-alt-r": "task::Spawn",
       "cmd-e": "file_finder::Toggle",
-      "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
+      // "cmd-k": "git_panel::ToggleFocus", // bug: This should also focus commit editor
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
@@ -109,9 +110,24 @@
     }
   },
   {
+    "context": "Pane", // this is to override the default Pane mappings to switch tabs
+    "bindings": {
+      "cmd-1": "project_panel::ToggleFocus",
+      "cmd-2": null, // Bookmarks (left dock)
+      "cmd-3": null, // Find Panel (bottom dock)
+      "cmd-4": null, // Run Panel (bottom dock)
+      "cmd-5": "debug_panel::ToggleFocus",
+      "cmd-6": "diagnostics::Deploy",
+      "cmd-7": "outline_panel::ToggleFocus",
+      "cmd-8": null, // Services (bottom dock)
+      "cmd-9": null, // Git History (bottom dock)
+      "cmd-0": "git_panel::ToggleFocus"
+    }
+  },
+  {
     "context": "Workspace || Editor",
     "bindings": {
-      "alt-f12": "terminal_panel::ToggleFocus",
+      "alt-f12": "terminal_panel::Toggle",
       "cmd-shift-k": "git::Push"
     }
   },
@@ -146,11 +162,15 @@
     }
   },
   { "context": "GitPanel", "bindings": { "cmd-0": "workspace::CloseActiveDock" } },
+  { "context": "ProjectPanel", "bindings": { "cmd-1": "workspace::CloseActiveDock" } },
   { "context": "DebugPanel", "bindings": { "cmd-5": "workspace::CloseActiveDock" } },
   { "context": "Diagnostics > Editor", "bindings": { "cmd-6": "pane::CloseActiveItem" } },
   { "context": "OutlinePanel", "bindings": { "cmd-7": "workspace::CloseActiveDock" } },
   {
-    "context": "Dock || Workspace || Terminal || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
-    "bindings": { "escape": "editor::ToggleFocus" }
+    "context": "Dock || Workspace || OutlinePanel || ProjectPanel || CollabPanel || (Editor && mode == auto_height)",
+    "bindings": {
+      "escape": "editor::ToggleFocus",
+      "shift-escape": "workspace::CloseActiveDock"
+    }
   }
 ]

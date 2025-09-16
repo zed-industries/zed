@@ -1,8 +1,9 @@
 use std::{
     cell::RefCell,
+    ffi::OsStr,
     mem::ManuallyDrop,
     path::{Path, PathBuf},
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::Arc,
 };
 
@@ -17,34 +18,36 @@ use windows::{
     UI::ViewManagement::UISettings,
     Win32::{
         Foundation::*,
-        Graphics::{
-            Gdi::*,
-            Imaging::{CLSID_WICImagingFactory, IWICImagingFactory},
-        },
+        Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*, Threading::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
 };
 
-use crate::{platform::blade::BladeContext, *};
+use crate::*;
 
 pub(crate) struct WindowsPlatform {
-    state: RefCell<WindowsPlatformState>,
-    raw_window_handles: RwLock<SmallVec<[HWND; 4]>>,
+    inner: Rc<WindowsPlatformInner>,
+    raw_window_handles: Arc<RwLock<SmallVec<[SafeHwnd; 4]>>>,
     // The below members will never change throughout the entire lifecycle of the app.
-    gpu_context: BladeContext,
     icon: HICON,
-    main_receiver: flume::Receiver<Runnable>,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
-    bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     drop_target_helper: IDropTargetHelper,
+    handle: HWND,
+    disable_direct_composition: bool,
+}
+
+struct WindowsPlatformInner {
+    state: RefCell<WindowsPlatformState>,
+    raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    // The below members will never change throughout the entire lifecycle of the app.
     validation_number: usize,
-    main_thread_id_win32: u32,
+    main_receiver: flume::Receiver<Runnable>,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -53,6 +56,7 @@ pub(crate) struct WindowsPlatformState {
     jump_list: JumpList,
     // NOTE: standard cursor handles don't need to close.
     pub(crate) current_cursor: Option<HCURSOR>,
+    directx_devices: ManuallyDrop<DirectXDevices>,
 }
 
 #[derive(Default)]
@@ -67,15 +71,17 @@ struct PlatformCallbacks {
 }
 
 impl WindowsPlatformState {
-    fn new() -> Self {
+    fn new(directx_devices: DirectXDevices) -> Self {
         let callbacks = PlatformCallbacks::default();
         let jump_list = JumpList::new();
         let current_cursor = load_cursor(CursorStyle::Arrow);
+        let directx_devices = ManuallyDrop::new(directx_devices);
 
         Self {
             callbacks,
             jump_list,
             current_cursor,
+            directx_devices,
             menus: Vec::new(),
         }
     }
@@ -86,67 +92,81 @@ impl WindowsPlatform {
         unsafe {
             OleInitialize(None).context("unable to initialize Windows OLE")?;
         }
+        let directx_devices = DirectXDevices::new().context("Creating DirectX devices")?;
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
-        let validation_number = rand::random::<usize>();
-        let dispatcher = Arc::new(WindowsDispatcher::new(
-            main_sender,
-            main_thread_id_win32,
-            validation_number,
-        ));
-        let background_executor = BackgroundExecutor::new(dispatcher.clone());
-        let foreground_executor = ForegroundExecutor::new(dispatcher);
-        let bitmap_factory = ManuallyDrop::new(unsafe {
-            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)
-                .context("Error creating bitmap factory.")?
-        });
+        let validation_number = if usize::BITS == 64 {
+            rand::random::<u64>() as usize
+        } else {
+            rand::random::<u32>() as usize
+        };
+        let raw_window_handles = Arc::new(RwLock::new(SmallVec::new()));
         let text_system = Arc::new(
-            DirectWriteTextSystem::new(&bitmap_factory)
+            DirectWriteTextSystem::new(&directx_devices)
                 .context("Error creating DirectWriteTextSystem")?,
         );
+        register_platform_window_class();
+        let mut context = PlatformWindowCreateContext {
+            inner: None,
+            raw_window_handles: Arc::downgrade(&raw_window_handles),
+            validation_number,
+            main_receiver: Some(main_receiver),
+            directx_devices: Some(directx_devices),
+        };
+        let result = unsafe {
+            CreateWindowExW(
+                WINDOW_EX_STYLE(0),
+                PLATFORM_WINDOW_CLASS_NAME,
+                None,
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                Some(&context as *const _ as *const _),
+            )
+        };
+        let inner = context.inner.take().unwrap()?;
+        let handle = result?;
+        let dispatcher = Arc::new(WindowsDispatcher::new(
+            main_sender,
+            handle,
+            validation_number,
+        ));
+        let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
+            .is_ok_and(|value| value == "true" || value == "1");
+        let background_executor = BackgroundExecutor::new(dispatcher.clone());
+        let foreground_executor = ForegroundExecutor::new(dispatcher);
+
         let drop_target_helper: IDropTargetHelper = unsafe {
             CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER)
                 .context("Error creating drop target helper.")?
         };
         let icon = load_icon().unwrap_or_default();
-        let state = RefCell::new(WindowsPlatformState::new());
-        let raw_window_handles = RwLock::new(SmallVec::new());
-        let gpu_context = BladeContext::new().context("Unable to init GPU context")?;
         let windows_version = WindowsVersion::new().context("Error retrieve windows version")?;
 
         Ok(Self {
-            state,
+            inner,
+            handle,
             raw_window_handles,
-            gpu_context,
             icon,
-            main_receiver,
             background_executor,
             foreground_executor,
             text_system,
+            disable_direct_composition,
             windows_version,
-            bitmap_factory,
             drop_target_helper,
-            validation_number,
-            main_thread_id_win32,
         })
     }
 
-    fn redraw_all(&self) {
-        for handle in self.raw_window_handles.read().iter() {
-            unsafe {
-                RedrawWindow(Some(*handle), None, None, RDW_INVALIDATE | RDW_UPDATENOW)
-                    .ok()
-                    .log_err();
-            }
-        }
-    }
-
-    pub fn try_get_windows_inner_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowStatePtr>> {
+    pub fn window_from_hwnd(&self, hwnd: HWND) -> Option<Rc<WindowsWindowInner>> {
         self.raw_window_handles
             .read()
             .iter()
-            .find(|entry| *entry == &hwnd)
-            .and_then(|hwnd| try_get_window_inner(*hwnd))
+            .find(|entry| entry.as_raw() == hwnd)
+            .and_then(|hwnd| window_from_hwnd(hwnd.as_raw()))
     }
 
     #[inline]
@@ -155,121 +175,23 @@ impl WindowsPlatform {
             .read()
             .iter()
             .for_each(|handle| unsafe {
-                PostMessageW(Some(*handle), message, wparam, lparam).log_err();
+                PostMessageW(Some(handle.as_raw()), message, wparam, lparam).log_err();
             });
-    }
-
-    fn close_one_window(&self, target_window: HWND) -> bool {
-        let mut lock = self.raw_window_handles.write();
-        let index = lock
-            .iter()
-            .position(|handle| *handle == target_window)
-            .unwrap();
-        lock.remove(index);
-
-        lock.is_empty()
-    }
-
-    #[inline]
-    fn run_foreground_task(&self) {
-        for runnable in self.main_receiver.drain() {
-            runnable.run();
-        }
     }
 
     fn generate_creation_info(&self) -> WindowCreationInfo {
         WindowCreationInfo {
             icon: self.icon,
             executor: self.foreground_executor.clone(),
-            current_cursor: self.state.borrow().current_cursor,
+            current_cursor: self.inner.state.borrow().current_cursor,
             windows_version: self.windows_version,
             drop_target_helper: self.drop_target_helper.clone(),
-            validation_number: self.validation_number,
-            main_receiver: self.main_receiver.clone(),
-            main_thread_id_win32: self.main_thread_id_win32,
+            validation_number: self.inner.validation_number,
+            main_receiver: self.inner.main_receiver.clone(),
+            platform_window_handle: self.handle,
+            disable_direct_composition: self.disable_direct_composition,
+            directx_devices: (*self.inner.state.borrow().directx_devices).clone(),
         }
-    }
-
-    fn handle_dock_action_event(&self, action_idx: usize) {
-        let mut lock = self.state.borrow_mut();
-        if let Some(mut callback) = lock.callbacks.app_menu_action.take() {
-            let Some(action) = lock
-                .jump_list
-                .dock_menus
-                .get(action_idx)
-                .map(|dock_menu| dock_menu.action.boxed_clone())
-            else {
-                lock.callbacks.app_menu_action = Some(callback);
-                log::error!("Dock menu for index {action_idx} not found");
-                return;
-            };
-            drop(lock);
-            callback(&*action);
-            self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
-        }
-    }
-
-    fn handle_input_lang_change(&self) {
-        let mut lock = self.state.borrow_mut();
-        if let Some(mut callback) = lock.callbacks.keyboard_layout_change.take() {
-            drop(lock);
-            callback();
-            self.state
-                .borrow_mut()
-                .callbacks
-                .keyboard_layout_change
-                .get_or_insert(callback);
-        }
-    }
-
-    // Returns true if the app should quit.
-    fn handle_events(&self) -> bool {
-        let mut msg = MSG::default();
-        unsafe {
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                match msg.message {
-                    WM_QUIT => return true,
-                    WM_INPUTLANGCHANGE
-                    | WM_GPUI_CLOSE_ONE_WINDOW
-                    | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
-                    | WM_GPUI_DOCK_MENU_ACTION => {
-                        if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
-                            return true;
-                        }
-                    }
-                    _ => {
-                        DispatchMessageW(&msg);
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    // Returns true if the app should quit.
-    fn handle_gpui_evnets(
-        &self,
-        message: u32,
-        wparam: WPARAM,
-        lparam: LPARAM,
-        msg: *const MSG,
-    ) -> bool {
-        if wparam.0 != self.validation_number {
-            unsafe { DispatchMessageW(msg) };
-            return false;
-        }
-        match message {
-            WM_GPUI_CLOSE_ONE_WINDOW => {
-                if self.close_one_window(HWND(lparam.0 as _)) {
-                    return true;
-                }
-            }
-            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
-            WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
-            WM_INPUTLANGCHANGE => self.handle_input_lang_change(),
-            _ => unreachable!(),
-        }
-        false
     }
 
     fn set_dock_menus(&self, menus: Vec<MenuItem>) {
@@ -279,7 +201,7 @@ impl WindowsPlatform {
                 actions.push(dock_menu);
             }
         });
-        let mut lock = self.state.borrow_mut();
+        let mut lock = self.inner.state.borrow_mut();
         lock.jump_list.dock_menus = actions;
         update_jump_list(&lock.jump_list).log_err();
     }
@@ -295,7 +217,7 @@ impl WindowsPlatform {
                 actions.push(dock_menu);
             }
         });
-        let mut lock = self.state.borrow_mut();
+        let mut lock = self.inner.state.borrow_mut();
         lock.jump_list.dock_menus = actions;
         lock.jump_list.recent_workspaces = entries;
         update_jump_list(&lock.jump_list)
@@ -311,8 +233,39 @@ impl WindowsPlatform {
         self.raw_window_handles
             .read()
             .iter()
-            .find(|&&hwnd| hwnd == active_window_hwnd)
-            .copied()
+            .find(|hwnd| hwnd.as_raw() == active_window_hwnd)
+            .map(|hwnd| hwnd.as_raw())
+    }
+
+    fn begin_vsync_thread(&self) {
+        let mut directx_device = (*self.inner.state.borrow().directx_devices).clone();
+        let platform_window: SafeHwnd = self.handle.into();
+        let validation_number = self.inner.validation_number;
+        let all_windows = Arc::downgrade(&self.raw_window_handles);
+        let text_system = Arc::downgrade(&self.text_system);
+        std::thread::spawn(move || {
+            let vsync_provider = VSyncProvider::new();
+            loop {
+                vsync_provider.wait_for_vsync();
+                if check_device_lost(&directx_device.device) {
+                    handle_gpu_device_lost(
+                        &mut directx_device,
+                        platform_window.as_raw(),
+                        validation_number,
+                        &all_windows,
+                        &text_system,
+                    );
+                }
+                let Some(all_windows) = all_windows.upgrade() else {
+                    break;
+                };
+                for hwnd in all_windows.read().iter() {
+                    unsafe {
+                        let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -337,36 +290,30 @@ impl Platform for WindowsPlatform {
         )
     }
 
+    fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        Rc::new(WindowsKeyboardMapper::new())
+    }
+
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
+        self.inner
+            .state
+            .borrow_mut()
+            .callbacks
+            .keyboard_layout_change = Some(callback);
     }
 
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         on_finish_launching();
-        let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
-        begin_vsync(*vsync_event);
-        'a: loop {
-            let wait_result = unsafe {
-                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
-            };
+        self.begin_vsync_thread();
 
-            match wait_result {
-                // compositor clock ticked so we should draw a frame
-                WAIT_EVENT(0) => self.redraw_all(),
-                // Windows thread messages are posted
-                WAIT_EVENT(1) => {
-                    if self.handle_events() {
-                        break 'a;
-                    }
-                }
-                _ => {
-                    log::error!("Something went wrong while waiting {:?}", wait_result);
-                    break;
-                }
+        let mut msg = MSG::default();
+        unsafe {
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                DispatchMessageW(&msg);
             }
         }
 
-        if let Some(ref mut callback) = self.state.borrow_mut().callbacks.quit {
+        if let Some(ref mut callback) = self.inner.state.borrow_mut().callbacks.quit {
             callback();
         }
     }
@@ -377,9 +324,9 @@ impl Platform for WindowsPlatform {
             .detach();
     }
 
-    fn restart(&self, _: Option<PathBuf>) {
+    fn restart(&self, binary_path: Option<PathBuf>) {
         let pid = std::process::id();
-        let Some(app_path) = self.app_path().log_err() else {
+        let Some(app_path) = binary_path.or(self.app_path().log_err()) else {
             return;
         };
         let script = format!(
@@ -440,13 +387,13 @@ impl Platform for WindowsPlatform {
     #[cfg(feature = "screen-capture")]
     fn screen_capture_sources(
         &self,
-    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>> {
+    ) -> oneshot::Receiver<Result<Vec<Rc<dyn ScreenCaptureSource>>>> {
         crate::platform::scap_screen_capture::scap_screen_sources(&self.foreground_executor)
     }
 
     fn active_window(&self) -> Option<AnyWindowHandle> {
         let active_window_hwnd = unsafe { GetActiveWindow() };
-        self.try_get_windows_inner_from_hwnd(active_window_hwnd)
+        self.window_from_hwnd(active_window_hwnd)
             .map(|inner| inner.handle)
     }
 
@@ -455,14 +402,9 @@ impl Platform for WindowsPlatform {
         handle: AnyWindowHandle,
         options: WindowParams,
     ) -> Result<Box<dyn PlatformWindow>> {
-        let window = WindowsWindow::new(
-            handle,
-            options,
-            self.generate_creation_info(),
-            &self.gpu_context,
-        )?;
+        let window = WindowsWindow::new(handle, options, self.generate_creation_info())?;
         let handle = window.get_raw_handle();
-        self.raw_window_handles.write().push(handle);
+        self.raw_window_handles.write().push(handle.into());
 
         Ok(Box::new(window))
     }
@@ -472,19 +414,21 @@ impl Platform for WindowsPlatform {
     }
 
     fn open_url(&self, url: &str) {
+        if url.is_empty() {
+            return;
+        }
         let url_string = url.to_string();
         self.background_executor()
             .spawn(async move {
-                if url_string.is_empty() {
-                    return;
-                }
-                open_target(url_string.as_str());
+                open_target(&url_string)
+                    .with_context(|| format!("Opening url: {}", url_string))
+                    .log_err();
             })
             .detach();
     }
 
     fn on_open_urls(&self, callback: Box<dyn FnMut(Vec<String>)>) {
-        self.state.borrow_mut().callbacks.open_urls = Some(callback);
+        self.inner.state.borrow_mut().callbacks.open_urls = Some(callback);
     }
 
     fn prompt_for_paths(
@@ -502,13 +446,18 @@ impl Platform for WindowsPlatform {
         rx
     }
 
-    fn prompt_for_new_path(&self, directory: &Path) -> Receiver<Result<Option<PathBuf>>> {
+    fn prompt_for_new_path(
+        &self,
+        directory: &Path,
+        suggested_name: Option<&str>,
+    ) -> Receiver<Result<Option<PathBuf>>> {
         let directory = directory.to_owned();
+        let suggested_name = suggested_name.map(|s| s.to_owned());
         let (tx, rx) = oneshot::channel();
         let window = self.find_current_active_window();
         self.foreground_executor()
             .spawn(async move {
-                let _ = tx.send(file_save_dialog(directory, window));
+                let _ = tx.send(file_save_dialog(directory, suggested_name, window));
             })
             .detach();
 
@@ -521,55 +470,47 @@ impl Platform for WindowsPlatform {
     }
 
     fn reveal_path(&self, path: &Path) {
-        let Ok(file_full_path) = path.canonicalize() else {
-            log::error!("unable to parse file path");
+        if path.as_os_str().is_empty() {
             return;
-        };
+        }
+        let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                let Some(path) = file_full_path.to_str() else {
-                    return;
-                };
-                if path.is_empty() {
-                    return;
-                }
-                open_target_in_explorer(path);
+                open_target_in_explorer(&path)
+                    .with_context(|| format!("Revealing path {} in explorer", path.display()))
+                    .log_err();
             })
             .detach();
     }
 
     fn open_with_system(&self, path: &Path) {
-        let Ok(full_path) = path.canonicalize() else {
-            log::error!("unable to parse file full path: {}", path.display());
+        if path.as_os_str().is_empty() {
             return;
-        };
+        }
+        let path = path.to_path_buf();
         self.background_executor()
             .spawn(async move {
-                let Some(full_path_str) = full_path.to_str() else {
-                    return;
-                };
-                if full_path_str.is_empty() {
-                    return;
-                };
-                open_target(full_path_str);
+                open_target(&path)
+                    .with_context(|| format!("Opening {} with system", path.display()))
+                    .log_err();
             })
             .detach();
     }
 
     fn on_quit(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.quit = Some(callback);
+        self.inner.state.borrow_mut().callbacks.quit = Some(callback);
     }
 
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.reopen = Some(callback);
+        self.inner.state.borrow_mut().callbacks.reopen = Some(callback);
     }
 
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
-        self.state.borrow_mut().menus = menus.into_iter().map(|menu| menu.owned()).collect();
+        self.inner.state.borrow_mut().menus = menus.into_iter().map(|menu| menu.owned()).collect();
     }
 
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
-        Some(self.state.borrow().menus.clone())
+        Some(self.inner.state.borrow().menus.clone())
     }
 
     fn set_dock_menu(&self, menus: Vec<MenuItem>, _keymap: &Keymap) {
@@ -577,15 +518,19 @@ impl Platform for WindowsPlatform {
     }
 
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
-        self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        self.inner.state.borrow_mut().callbacks.app_menu_action = Some(callback);
     }
 
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>) {
-        self.state.borrow_mut().callbacks.will_open_app_menu = Some(callback);
+        self.inner.state.borrow_mut().callbacks.will_open_app_menu = Some(callback);
     }
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
-        self.state.borrow_mut().callbacks.validate_app_menu_command = Some(callback);
+        self.inner
+            .state
+            .borrow_mut()
+            .callbacks
+            .validate_app_menu_command = Some(callback);
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -599,7 +544,7 @@ impl Platform for WindowsPlatform {
 
     fn set_cursor_style(&self, style: CursorStyle) {
         let hcursor = load_cursor(style);
-        let mut lock = self.state.borrow_mut();
+        let mut lock = self.inner.state.borrow_mut();
         if lock.current_cursor.map(|c| c.0) != hcursor.map(|c| c.0) {
             self.post_message(
                 WM_GPUI_CURSOR_STYLE_CHANGED,
@@ -702,10 +647,10 @@ impl Platform for WindowsPlatform {
 
     fn perform_dock_menu_action(&self, action: usize) {
         unsafe {
-            PostThreadMessageW(
-                self.main_thread_id_win32,
+            PostMessageW(
+                Some(self.handle),
                 WM_GPUI_DOCK_MENU_ACTION,
-                WPARAM(self.validation_number),
+                WPARAM(self.inner.validation_number),
                 LPARAM(action as isize),
             )
             .log_err();
@@ -721,11 +666,143 @@ impl Platform for WindowsPlatform {
     }
 }
 
+impl WindowsPlatformInner {
+    fn new(context: &mut PlatformWindowCreateContext) -> Result<Rc<Self>> {
+        let state = RefCell::new(WindowsPlatformState::new(
+            context.directx_devices.take().unwrap(),
+        ));
+        Ok(Rc::new(Self {
+            state,
+            raw_window_handles: context.raw_window_handles.clone(),
+            validation_number: context.validation_number,
+            main_receiver: context.main_receiver.take().unwrap(),
+        }))
+    }
+
+    fn handle_msg(
+        self: &Rc<Self>,
+        handle: HWND,
+        msg: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+    ) -> LRESULT {
+        let handled = match msg {
+            WM_GPUI_CLOSE_ONE_WINDOW
+            | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD
+            | WM_GPUI_DOCK_MENU_ACTION
+            | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
+            | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            _ => None,
+        };
+        if let Some(result) = handled {
+            LRESULT(result)
+        } else {
+            unsafe { DefWindowProcW(handle, msg, wparam, lparam) }
+        }
+    }
+
+    fn handle_gpui_events(&self, message: u32, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        if wparam.0 != self.validation_number {
+            log::error!("Wrong validation number while processing message: {message}");
+            return None;
+        }
+        match message {
+            WM_GPUI_CLOSE_ONE_WINDOW => {
+                if self.close_one_window(HWND(lparam.0 as _)) {
+                    unsafe { PostQuitMessage(0) };
+                }
+                Some(0)
+            }
+            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
+            WM_GPUI_DOCK_MENU_ACTION => self.handle_dock_action_event(lparam.0 as _),
+            WM_GPUI_KEYBOARD_LAYOUT_CHANGED => self.handle_keyboard_layout_change(),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            _ => unreachable!(),
+        }
+    }
+
+    fn close_one_window(&self, target_window: HWND) -> bool {
+        let Some(all_windows) = self.raw_window_handles.upgrade() else {
+            log::error!("Failed to upgrade raw window handles");
+            return false;
+        };
+        let mut lock = all_windows.write();
+        let index = lock
+            .iter()
+            .position(|handle| handle.as_raw() == target_window)
+            .unwrap();
+        lock.remove(index);
+
+        lock.is_empty()
+    }
+
+    #[inline]
+    fn run_foreground_task(&self) -> Option<isize> {
+        for runnable in self.main_receiver.drain() {
+            runnable.run();
+        }
+        Some(0)
+    }
+
+    fn handle_dock_action_event(&self, action_idx: usize) -> Option<isize> {
+        let mut lock = self.state.borrow_mut();
+        let mut callback = lock.callbacks.app_menu_action.take()?;
+        let Some(action) = lock
+            .jump_list
+            .dock_menus
+            .get(action_idx)
+            .map(|dock_menu| dock_menu.action.boxed_clone())
+        else {
+            lock.callbacks.app_menu_action = Some(callback);
+            log::error!("Dock menu for index {action_idx} not found");
+            return Some(1);
+        };
+        drop(lock);
+        callback(&*action);
+        self.state.borrow_mut().callbacks.app_menu_action = Some(callback);
+        Some(0)
+    }
+
+    fn handle_keyboard_layout_change(&self) -> Option<isize> {
+        let mut callback = self
+            .state
+            .borrow_mut()
+            .callbacks
+            .keyboard_layout_change
+            .take()?;
+        callback();
+        self.state.borrow_mut().callbacks.keyboard_layout_change = Some(callback);
+        Some(0)
+    }
+
+    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
+        let mut lock = self.state.borrow_mut();
+        let directx_devices = lparam.0 as *const DirectXDevices;
+        let directx_devices = unsafe { &*directx_devices };
+        unsafe {
+            ManuallyDrop::drop(&mut lock.directx_devices);
+        }
+        lock.directx_devices = ManuallyDrop::new(directx_devices.clone());
+
+        Some(0)
+    }
+}
+
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
-            ManuallyDrop::drop(&mut self.bitmap_factory);
+            DestroyWindow(self.handle)
+                .context("Destroying platform window")
+                .log_err();
             OleUninitialize();
+        }
+    }
+}
+
+impl Drop for WindowsPlatformState {
+    fn drop(&mut self) {
+        unsafe {
+            ManuallyDrop::drop(&mut self.directx_devices);
         }
     }
 }
@@ -738,42 +815,80 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) drop_target_helper: IDropTargetHelper,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
-    pub(crate) main_thread_id_win32: u32,
+    pub(crate) platform_window_handle: HWND,
+    pub(crate) disable_direct_composition: bool,
+    pub(crate) directx_devices: DirectXDevices,
 }
 
-fn open_target(target: &str) {
-    unsafe {
-        let ret = ShellExecuteW(
+struct PlatformWindowCreateContext {
+    inner: Option<Result<Rc<WindowsPlatformInner>>>,
+    raw_window_handles: std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    validation_number: usize,
+    main_receiver: Option<flume::Receiver<Runnable>>,
+    directx_devices: Option<DirectXDevices>,
+}
+
+fn open_target(target: impl AsRef<OsStr>) -> Result<()> {
+    let target = target.as_ref();
+    let ret = unsafe {
+        ShellExecuteW(
             None,
             windows::core::w!("open"),
             &HSTRING::from(target),
             None,
             None,
             SW_SHOWDEFAULT,
-        );
-        if ret.0 as isize <= 32 {
-            log::error!("Unable to open target: {}", std::io::Error::last_os_error());
-        }
+        )
+    };
+    if ret.0 as isize <= 32 {
+        Err(anyhow::anyhow!(
+            "Unable to open target: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
     }
 }
 
-fn open_target_in_explorer(target: &str) {
+fn open_target_in_explorer(target: &Path) -> Result<()> {
+    let dir = target.parent().context("No parent folder found")?;
+    let desktop = unsafe { SHGetDesktopFolder()? };
+
+    let mut dir_item = std::ptr::null_mut();
     unsafe {
-        let ret = ShellExecuteW(
+        desktop.ParseDisplayName(
+            HWND::default(),
             None,
-            windows::core::w!("open"),
-            windows::core::w!("explorer.exe"),
-            &HSTRING::from(format!("/select,{}", target).as_str()),
+            &HSTRING::from(dir),
             None,
-            SW_SHOWDEFAULT,
-        );
-        if ret.0 as isize <= 32 {
-            log::error!(
-                "Unable to open target in explorer: {}",
-                std::io::Error::last_os_error()
-            );
-        }
+            &mut dir_item,
+            std::ptr::null_mut(),
+        )?;
     }
+
+    let mut file_item = std::ptr::null_mut();
+    unsafe {
+        desktop.ParseDisplayName(
+            HWND::default(),
+            None,
+            &HSTRING::from(target),
+            None,
+            &mut file_item,
+            std::ptr::null_mut(),
+        )?;
+    }
+
+    let highlight = [file_item as *const _];
+    unsafe { SHOpenFolderAndSelectItems(dir_item as _, Some(&highlight), 0) }.or_else(|err| {
+        if err.code().0 == ERROR_FILE_NOT_FOUND.0 as i32 {
+            // On some systems, the above call mysteriously fails with "file not
+            // found" even though the file is there.  In these cases, ShellExecute()
+            // seems to work as a fallback (although it won't select the file).
+            open_target(dir).context("Opening target parent folder")
+        } else {
+            Err(anyhow::anyhow!("Can not open target path: {}", err))
+        }
+    })
 }
 
 fn file_open_dialog(
@@ -793,6 +908,12 @@ fn file_open_dialog(
 
     unsafe {
         folder_dialog.SetOptions(dialog_options)?;
+
+        if let Some(prompt) = options.prompt {
+            let prompt: &str = &prompt;
+            folder_dialog.SetOkButtonLabel(&HSTRING::from(prompt))?;
+        }
+
         if folder_dialog.Show(window).is_err() {
             // User cancelled
             return Ok(None);
@@ -815,17 +936,26 @@ fn file_open_dialog(
     Ok(Some(paths))
 }
 
-fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<PathBuf>> {
+fn file_save_dialog(
+    directory: PathBuf,
+    suggested_name: Option<String>,
+    window: Option<HWND>,
+) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
-    if !directory.to_string_lossy().is_empty() {
-        if let Some(full_path) = directory.canonicalize().log_err() {
-            let full_path = SanitizedPath::from(full_path);
-            let full_path_string = full_path.to_string();
-            let path_item: IShellItem =
-                unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
-            unsafe { dialog.SetFolder(&path_item).log_err() };
-        }
+    if !directory.to_string_lossy().is_empty()
+        && let Some(full_path) = directory.canonicalize().log_err()
+    {
+        let full_path = SanitizedPath::new(&full_path);
+        let full_path_string = full_path.to_string();
+        let path_item: IShellItem =
+            unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
+        unsafe { dialog.SetFolder(&path_item).log_err() };
     }
+
+    if let Some(suggested_name) = suggested_name {
+        unsafe { dialog.SetFileName(&HSTRING::from(suggested_name)).log_err() };
+    }
+
     unsafe {
         dialog.SetFileTypes(&[Common::COMDLG_FILTERSPEC {
             pszName: windows::core::w!("All files"),
@@ -844,16 +974,6 @@ fn file_save_dialog(directory: PathBuf, window: Option<HWND>) -> Result<Option<P
         string
     };
     Ok(Some(PathBuf::from(file_path_string)))
-}
-
-fn begin_vsync(vsync_event: HANDLE) {
-    let event: SafeHandle = vsync_event.into();
-    std::thread::spawn(move || unsafe {
-        loop {
-            windows::Win32::Graphics::Dwm::DwmFlush().log_err();
-            SetEvent(*event).log_err();
-        }
-    });
 }
 
 fn load_icon() -> Result<HICON> {
@@ -876,6 +996,135 @@ fn load_icon() -> Result<HICON> {
 fn should_auto_hide_scrollbars() -> Result<bool> {
     let ui_settings = UISettings::new()?;
     Ok(ui_settings.AutoHideScrollBars()?)
+}
+
+fn check_device_lost(device: &ID3D11Device) -> bool {
+    let device_state = unsafe { device.GetDeviceRemovedReason() };
+    match device_state {
+        Ok(_) => false,
+        Err(err) => {
+            log::error!("DirectX device lost detected: {:?}", err);
+            true
+        }
+    }
+}
+
+fn handle_gpu_device_lost(
+    directx_devices: &mut DirectXDevices,
+    platform_window: HWND,
+    validation_number: usize,
+    all_windows: &std::sync::Weak<RwLock<SmallVec<[SafeHwnd; 4]>>>,
+    text_system: &std::sync::Weak<DirectWriteTextSystem>,
+) {
+    // Here we wait a bit to ensure the the system has time to recover from the device lost state.
+    // If we don't wait, the final drawing result will be blank.
+    std::thread::sleep(std::time::Duration::from_millis(350));
+
+    try_to_recover_from_device_lost(
+        || {
+            DirectXDevices::new()
+                .context("Failed to recreate new DirectX devices after device lost")
+        },
+        |new_devices| *directx_devices = new_devices,
+        || {
+            log::error!("Failed to recover DirectX devices after multiple attempts.");
+            // Do something here?
+            // At this point, the device loss is considered unrecoverable.
+            // std::process::exit(1);
+        },
+    );
+    log::info!("DirectX devices successfully recreated.");
+
+    unsafe {
+        SendMessageW(
+            platform_window,
+            WM_GPUI_GPU_DEVICE_LOST,
+            Some(WPARAM(validation_number)),
+            Some(LPARAM(directx_devices as *const _ as _)),
+        );
+    }
+
+    if let Some(text_system) = text_system.upgrade() {
+        text_system.handle_gpu_lost(&directx_devices);
+    }
+    if let Some(all_windows) = all_windows.upgrade() {
+        for window in all_windows.read().iter() {
+            unsafe {
+                SendMessageW(
+                    window.as_raw(),
+                    WM_GPUI_GPU_DEVICE_LOST,
+                    Some(WPARAM(validation_number)),
+                    Some(LPARAM(directx_devices as *const _ as _)),
+                );
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        for window in all_windows.read().iter() {
+            unsafe {
+                SendMessageW(
+                    window.as_raw(),
+                    WM_GPUI_FORCE_UPDATE_WINDOW,
+                    Some(WPARAM(validation_number)),
+                    None,
+                );
+            }
+        }
+    }
+}
+
+const PLATFORM_WINDOW_CLASS_NAME: PCWSTR = w!("Zed::PlatformWindow");
+
+fn register_platform_window_class() {
+    let wc = WNDCLASSW {
+        lpfnWndProc: Some(window_procedure),
+        lpszClassName: PCWSTR(PLATFORM_WINDOW_CLASS_NAME.as_ptr()),
+        ..Default::default()
+    };
+    unsafe { RegisterClassW(&wc) };
+}
+
+unsafe extern "system" fn window_procedure(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == WM_NCCREATE {
+        let params = lparam.0 as *const CREATESTRUCTW;
+        let params = unsafe { &*params };
+        let creation_context = params.lpCreateParams as *mut PlatformWindowCreateContext;
+        let creation_context = unsafe { &mut *creation_context };
+        return match WindowsPlatformInner::new(creation_context) {
+            Ok(inner) => {
+                let weak = Box::new(Rc::downgrade(&inner));
+                unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
+                creation_context.inner = Some(Ok(inner));
+                unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+            }
+            Err(error) => {
+                creation_context.inner = Some(Err(error));
+                LRESULT(0)
+            }
+        };
+    }
+
+    let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsPlatformInner>;
+    if ptr.is_null() {
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+    }
+    let inner = unsafe { &*ptr };
+    let result = if let Some(inner) = inner.upgrade() {
+        inner.handle_msg(hwnd, msg, wparam, lparam)
+    } else {
+        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    };
+
+    if msg == WM_NCDESTROY {
+        unsafe { set_window_long(hwnd, GWLP_USERDATA, 0) };
+        unsafe { drop(Box::from_raw(ptr)) };
+    }
+
+    result
 }
 
 #[cfg(test)]

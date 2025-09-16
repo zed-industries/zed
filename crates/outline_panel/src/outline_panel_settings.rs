@@ -1,8 +1,9 @@
-use editor::ShowScrollbar;
-use gpui::Pixels;
+use editor::EditorSettings;
+use gpui::{App, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -31,6 +32,7 @@ pub struct OutlinePanelSettings {
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
+    pub expand_outlines_with_depth: usize,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -60,7 +62,8 @@ pub struct IndentGuidesSettingsContent {
     pub show: Option<ShowIndentGuides>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "outline_panel")]
 pub struct OutlinePanelSettingsContent {
     /// Whether to show the outline panel button in the status bar.
     ///
@@ -105,11 +108,24 @@ pub struct OutlinePanelSettingsContent {
     pub indent_guides: Option<IndentGuidesSettingsContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Default depth to expand outline items in the current file.
+    /// The default depth to which outline entries are expanded on reveal.
+    /// - Set to 0 to collapse all items that have children
+    /// - Set to 1 or higher to collapse items at that depth or deeper
+    ///
+    /// Default: 100
+    pub expand_outlines_with_depth: Option<usize>,
+}
+
+impl ScrollbarVisibility for OutlinePanelSettings {
+    fn visibility(&self, cx: &App) -> ShowScrollbar {
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
 }
 
 impl Settings for OutlinePanelSettings {
-    const KEY: Option<&'static str> = Some("outline_panel");
-
     type FileContent = OutlinePanelSettingsContent;
 
     fn load(

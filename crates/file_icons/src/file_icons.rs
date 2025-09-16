@@ -33,12 +33,22 @@ impl FileIcons {
         // TODO: Associate a type with the languages and have the file's language
         //       override these associations
 
-        // check if file name is in suffixes
-        // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
-        if let Some(typ) = path.file_name().and_then(|typ| typ.to_str()) {
+        if let Some(mut typ) = path.file_name().and_then(|typ| typ.to_str()) {
+            // check if file name is in suffixes
+            // e.g. catch file named `eslint.config.js` instead of `.eslint.config.js`
             let maybe_path = get_icon_from_suffix(typ);
             if maybe_path.is_some() {
                 return maybe_path;
+            }
+
+            // check if suffix based on first dot is in suffixes
+            // e.g. consider `module.js` as suffix to angular's module file named `auth.module.js`
+            while let Some((_, suffix)) = typ.split_once('.') {
+                let maybe_path = get_icon_from_suffix(suffix);
+                if maybe_path.is_some() {
+                    return maybe_path;
+                }
+                typ = suffix;
             }
         }
 
@@ -62,7 +72,7 @@ impl FileIcons {
                 return maybe_path;
             }
         }
-        return this.get_icon_for_type("default", cx);
+        this.get_icon_for_type("default", cx)
     }
 
     fn default_icon_theme(cx: &App) -> Option<Arc<IconTheme>> {
@@ -83,8 +93,47 @@ impl FileIcons {
         })
     }
 
-    pub fn get_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
-        fn get_folder_icon(icon_theme: &Arc<IconTheme>, expanded: bool) -> Option<SharedString> {
+    pub fn get_folder_icon(expanded: bool, path: &Path, cx: &App) -> Option<SharedString> {
+        fn get_folder_icon(
+            icon_theme: &Arc<IconTheme>,
+            path: &Path,
+            expanded: bool,
+        ) -> Option<SharedString> {
+            let name = path.file_name()?.to_str()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+
+            let directory_icons = icon_theme.named_directory_icons.get(name)?;
+
+            if expanded {
+                directory_icons.expanded.clone()
+            } else {
+                directory_icons.collapsed.clone()
+            }
+        }
+
+        get_folder_icon(
+            &ThemeSettings::get_global(cx).active_icon_theme,
+            path,
+            expanded,
+        )
+        .or_else(|| {
+            Self::default_icon_theme(cx)
+                .and_then(|icon_theme| get_folder_icon(&icon_theme, path, expanded))
+        })
+        .or_else(|| {
+            // If we can't find a specific folder icon for the folder at the given path, fall back to the generic folder
+            // icon.
+            Self::get_generic_folder_icon(expanded, cx)
+        })
+    }
+
+    fn get_generic_folder_icon(expanded: bool, cx: &App) -> Option<SharedString> {
+        fn get_generic_folder_icon(
+            icon_theme: &Arc<IconTheme>,
+            expanded: bool,
+        ) -> Option<SharedString> {
             if expanded {
                 icon_theme.directory_icons.expanded.clone()
             } else {
@@ -92,10 +141,12 @@ impl FileIcons {
             }
         }
 
-        get_folder_icon(&ThemeSettings::get_global(cx).active_icon_theme, expanded).or_else(|| {
-            Self::default_icon_theme(cx)
-                .and_then(|icon_theme| get_folder_icon(&icon_theme, expanded))
-        })
+        get_generic_folder_icon(&ThemeSettings::get_global(cx).active_icon_theme, expanded).or_else(
+            || {
+                Self::default_icon_theme(cx)
+                    .and_then(|icon_theme| get_generic_folder_icon(&icon_theme, expanded))
+            },
+        )
     }
 
     pub fn get_chevron_icon(expanded: bool, cx: &App) -> Option<SharedString> {

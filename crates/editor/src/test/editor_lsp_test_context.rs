@@ -14,7 +14,8 @@ use futures::Future;
 use gpui::{Context, Entity, Focusable as _, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
-    FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries, point_to_lsp,
+    BlockCommentConfig, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
+    point_to_lsp,
 };
 use lsp::{notification, request};
 use multi_buffer::ToPointUtf16;
@@ -28,7 +29,7 @@ pub struct EditorLspTestContext {
     pub cx: EditorTestContext,
     pub lsp: lsp::FakeLanguageServer,
     pub workspace: Entity<Workspace>,
-    pub buffer_lsp_url: lsp::Url,
+    pub buffer_lsp_url: lsp::Uri,
 }
 
 pub(crate) fn rust_lang() -> Arc<Language> {
@@ -188,7 +189,7 @@ impl EditorLspTestContext {
             },
             lsp,
             workspace,
-            buffer_lsp_url: lsp::Url::from_file_path(root.join("dir").join(file_name)).unwrap(),
+            buffer_lsp_url: lsp::Uri::from_file_path(root.join("dir").join(file_name)).unwrap(),
         }
     }
 
@@ -269,7 +270,12 @@ impl EditorLspTestContext {
                     path_suffixes: vec!["html".into()],
                     ..Default::default()
                 },
-                block_comment: Some(("<!-- ".into(), " -->".into())),
+                block_comment: Some(BlockCommentConfig {
+                    start: "<!--".into(),
+                    prefix: "".into(),
+                    end: "-->".into(),
+                    tab_size: 0,
+                }),
                 completion_query_characters: ['-'].into_iter().collect(),
                 ..Default::default()
             },
@@ -294,6 +300,7 @@ impl EditorLspTestContext {
         self.to_lsp_range(ranges[0].clone())
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "This is test code")]
     pub fn to_lsp_range(&mut self, range: Range<usize>) -> lsp::Range {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let start_point = range.start.to_point(&snapshot.buffer_snapshot);
@@ -320,6 +327,7 @@ impl EditorLspTestContext {
         })
     }
 
+    #[expect(clippy::wrong_self_convention, reason = "This is test code")]
     pub fn to_lsp(&mut self, offset: usize) -> lsp::Position {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let point = offset.to_point(&snapshot.buffer_snapshot);
@@ -350,7 +358,7 @@ impl EditorLspTestContext {
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(lsp::Url, T::Params, gpui::AsyncApp) -> Fut,
+        F: 'static + Send + FnMut(lsp::Uri, T::Params, gpui::AsyncApp) -> Fut,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         let url = self.buffer_lsp_url.clone();

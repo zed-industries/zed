@@ -24,8 +24,8 @@ use settings::Settings;
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
-    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, Scrollbar, ScrollbarState,
-    ToggleButton, Tooltip, prelude::*,
+    CheckboxWithLabel, Chip, ContextMenu, PopoverMenu, ScrollableHandle, ToggleButton, Tooltip,
+    WithScrollbar, prelude::*,
 };
 use vim_mode_setting::VimModeSetting;
 use workspace::{
@@ -116,6 +116,7 @@ pub fn init(cx: &mut App) {
                         files: false,
                         directories: true,
                         multiple: false,
+                        prompt: None,
                     },
                     DirectoryLister::Local(
                         workspace.project().clone(),
@@ -289,7 +290,6 @@ pub struct ExtensionsPage {
     _subscriptions: [gpui::Subscription; 2],
     extension_fetch_task: Option<Task<()>>,
     upsells: BTreeSet<Feature>,
-    scrollbar_state: ScrollbarState,
 }
 
 impl ExtensionsPage {
@@ -326,7 +326,7 @@ impl ExtensionsPage {
 
             let query_editor = cx.new(|cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search extensions...", cx);
+                input.set_placeholder_text("Search extensions...", window, cx);
                 if let Some(id) = focus_extension_id {
                     input.set_text(format!("id:{id}"), window, cx);
                 }
@@ -338,7 +338,7 @@ impl ExtensionsPage {
 
             let mut this = Self {
                 workspace: workspace.weak_handle(),
-                list: scroll_handle.clone(),
+                list: scroll_handle,
                 is_fetching_extensions: false,
                 filter: ExtensionFilter::All,
                 dev_extension_entries: Vec::new(),
@@ -350,7 +350,6 @@ impl ExtensionsPage {
                 _subscriptions: subscriptions,
                 query_editor,
                 upsells: BTreeSet::default(),
-                scrollbar_state: ScrollbarState::new(scroll_handle),
             };
             this.fetch_extensions(
                 this.search_query(cx),
@@ -693,7 +692,7 @@ impl ExtensionsPage {
                                 cx.open_url(&repository_url);
                             }
                         }))
-                        .tooltip(Tooltip::text(repository_url.clone()))
+                        .tooltip(Tooltip::text(repository_url))
                     })),
             )
     }
@@ -703,7 +702,7 @@ impl ExtensionsPage {
         extension: &ExtensionMetadata,
         cx: &mut Context<Self>,
     ) -> ExtensionCard {
-        let this = cx.entity().clone();
+        let this = cx.entity();
         let status = Self::extension_status(&extension.id, cx);
         let has_dev_extension = Self::dev_extension_exists(&extension.id, cx);
 
@@ -826,7 +825,7 @@ impl ExtensionsPage {
                                         cx.open_url(&repository_url);
                                     }
                                 }))
-                                .tooltip(Tooltip::text(repository_url.clone())),
+                                .tooltip(Tooltip::text(repository_url)),
                             )
                             .child(
                                 PopoverMenu::new(SharedString::from(format!(
@@ -862,7 +861,7 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<ContextMenu> {
-        let context_menu = ContextMenu::build(window, cx, |context_menu, window, _| {
+        ContextMenu::build(window, cx, |context_menu, window, _| {
             context_menu
                 .entry(
                     "Install Another Version...",
@@ -886,9 +885,7 @@ impl ExtensionsPage {
                         cx.write_to_clipboard(ClipboardItem::new_string(authors.join(", ")));
                     }
                 })
-        });
-
-        context_menu
+        })
     }
 
     fn show_extension_version_list(
@@ -1030,15 +1027,14 @@ impl ExtensionsPage {
                                 .read(cx)
                                 .extension_manifest_for_id(&extension_id)
                                 .cloned()
+                                && let Some(events) = extension::ExtensionEvents::try_global(cx)
                             {
-                                if let Some(events) = extension::ExtensionEvents::try_global(cx) {
-                                    events.update(cx, |this, cx| {
-                                        this.emit(
-                                            extension::Event::ConfigureExtensionRequested(manifest),
-                                            cx,
-                                        )
-                                    });
-                                }
+                                events.update(cx, |this, cx| {
+                                    this.emit(
+                                        extension::Event::ConfigureExtensionRequested(manifest),
+                                        cx,
+                                    )
+                                });
                             }
                         }
                     })
@@ -1347,7 +1343,7 @@ impl ExtensionsPage {
                             this.update_settings::<VimModeSetting>(
                                 selection,
                                 cx,
-                                |setting, value| *setting = Some(value),
+                                |setting, value| setting.vim_mode = Some(value),
                             );
                         }),
                     )),
@@ -1377,7 +1373,7 @@ impl ExtensionsPage {
 }
 
 impl Render for ExtensionsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -1522,25 +1518,24 @@ impl Render for ExtensionsPage {
                         }
 
                         if count == 0 {
-                            return this.py_4().child(self.render_empty_state(cx));
-                        }
-
-                        let scroll_handle = self.list.clone();
-                        this.child(
-                            uniform_list("entries", count, cx.processor(Self::render_extensions))
+                            this.py_4()
+                                .child(self.render_empty_state(cx))
+                                .into_any_element()
+                        } else {
+                            let scroll_handle = self.list.clone();
+                            this.child(
+                                uniform_list(
+                                    "entries",
+                                    count,
+                                    cx.processor(Self::render_extensions),
+                                )
                                 .flex_grow()
                                 .pb_4()
-                                .track_scroll(scroll_handle),
-                        )
-                        .child(
-                            div()
-                                .absolute()
-                                .right_1()
-                                .top_0()
-                                .bottom_0()
-                                .w(px(12.))
-                                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-                        )
+                                .track_scroll(scroll_handle.clone()),
+                            )
+                            .vertical_scrollbar_for(scroll_handle, window, cx)
+                            .into_any_element()
+                        }
                     }),
             )
     }

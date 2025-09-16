@@ -27,7 +27,7 @@ use gpui::StyleRefinement;
 /// ```
 /// use ui::prelude::*;
 ///
-/// let my_label = Label::new("Deleted").strikethrough(true);
+/// let my_label = Label::new("Deleted").strikethrough();
 /// ```
 #[derive(IntoElement, RegisterComponent)]
 pub struct Label {
@@ -89,9 +89,10 @@ impl LabelCommon for Label {
     /// # Examples
     ///
     /// ```
+    /// use gpui::FontWeight;
     /// use ui::prelude::*;
     ///
-    /// let my_label = Label::new("Hello, World!").weight(FontWeight::Bold);
+    /// let my_label = Label::new("Hello, World!").weight(FontWeight::BOLD);
     /// ```
     fn weight(mut self, weight: gpui::FontWeight) -> Self {
         self.base = self.base.weight(weight);
@@ -133,7 +134,7 @@ impl LabelCommon for Label {
     /// ```
     /// use ui::prelude::*;
     ///
-    /// let my_label = Label::new("Hello, World!").strikethrough(true);
+    /// let my_label = Label::new("Hello, World!").strikethrough();
     /// ```
     fn strikethrough(mut self) -> Self {
         self.base = self.base.strikethrough();
@@ -147,7 +148,7 @@ impl LabelCommon for Label {
     /// ```
     /// use ui::prelude::*;
     ///
-    /// let my_label = Label::new("Hello, World!").italic(true);
+    /// let my_label = Label::new("Hello, World!").italic();
     /// ```
     fn italic(mut self) -> Self {
         self.base = self.base.italic();

@@ -15,14 +15,18 @@ path = "src/assistant_tools.rs"
 eval = []
 
 [dependencies]
+action_log.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
 assistant_tool.workspace = true
 buffer_diff.workspace = true
 chrono.workspace = true
+client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 component.workspace = true
 derive_more.workspace = true
+diffy = "0.4.2"
 editor.workspace = true
 feature_flags.workspace = true
 futures.workspace = true
@@ -59,11 +63,8 @@ ui.workspace = true
 util.workspace = true
 watch.workspace = true
 web_search.workspace = true
-which.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
-zed_llm_client.workspace = true
-diffy = "0.4.2"
 
 [dev-dependencies]
 lsp = { workspace = true, features = ["test-support"] }

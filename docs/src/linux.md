@@ -48,7 +48,6 @@ There are several third-party Zed packages for various Linux distributions and p
 - Manjaro: [`zed`](https://packages.manjaro.org/?query=zed)
 - ALT Linux (Sisyphus): [`zed`](https://packages.altlinux.org/en/sisyphus/srpms/zed/)
 - AOSC OS: [`zed`](https://packages.aosc.io/packages/zed)
-- openSUSE Tumbleweed: [`zed`](https://en.opensuse.org/Zed)
 
 See [Repology](https://repology.org/project/zed-editor/versions) for a list of Zed packages in various repositories.
 
@@ -152,7 +151,7 @@ If you're using an AMD GPU and Zed crashes when selecting long lines, try settin
 
 If you're using an AMD GPU, you might get a 'Broken Pipe' error. Try using the RADV or Mesa drivers. (See [#13880](https://github.com/zed-industries/zed/issues/13880))
 
-If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141)).
+If you are using `amdvlk`, the default open-source AMD graphics driver, you may find that Zed consistently fails to launch. This is a known issue for some users, for example on Omarchy (see issue [#28851](https://github.com/zed-industries/zed/issues/28851)). To fix this, you will need to use a different driver. We recommend removing the `amdvlk` and `lib32-amdvlk` packages and installing `vulkan-radeon` instead (see issue [#14141](https://github.com/zed-industries/zed/issues/14141)).
 
 For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps that translate well to most distributions.
 
@@ -294,3 +293,78 @@ If your system uses PipeWire:
    ```
 
 3. **Restart your system**
+
+### Forcing X11 scale factor
+
+On X11 systems, Zed automatically detects the appropriate scale factor for high-DPI displays. The scale factor is determined using the following priority order:
+
+1. `GPUI_X11_SCALE_FACTOR` environment variable (if set)
+2. `Xft.dpi` from X resources database (xrdb)
+3. Automatic detection via RandR based on monitor resolution and physical size
+
+If you want to customize the scale factor beyond what Zed detects automatically, you have several options:
+
+#### Check your current scale factor
+
+You can verify if you have `Xft.dpi` set:
+
+```sh
+xrdb -query | grep Xft.dpi
+```
+
+If this command returns no output, Zed is using RandR (X11's monitor management extension) to automatically calculate the scale factor based on your monitor's reported resolution and physical dimensions.
+
+#### Option 1: Set Xft.dpi (X Resources Database)
+
+`Xft.dpi` is a standard X11 setting that many applications use for consistent font and UI scaling. Setting this ensures Zed scales the same way as other X11 applications that respect this setting.
+
+Edit or create the `~/.Xresources` file:
+
+```sh
+vim ~/.Xresources
+```
+
+Add this line with your desired DPI:
+
+```sh
+Xft.dpi: 96
+```
+
+Common DPI values:
+
+- `96` for standard 1x scaling
+- `144` for 1.5x scaling
+- `192` for 2x scaling
+- `288` for 3x scaling
+
+Load the configuration:
+
+```sh
+xrdb -merge ~/.Xresources
+```
+
+Restart Zed for the changes to take effect.
+
+#### Option 2: Use the GPUI_X11_SCALE_FACTOR environment variable
+
+This Zed-specific environment variable directly sets the scale factor, bypassing all automatic detection.
+
+```sh
+GPUI_X11_SCALE_FACTOR=1.5 zed
+```
+
+You can use decimal values (e.g., `1.25`, `1.5`, `2.0`) or set `GPUI_X11_SCALE_FACTOR=randr` to force RandR-based detection even when `Xft.dpi` is set.
+
+To make this permanent, add it to your shell profile or desktop entry.
+
+#### Option 3: Adjust system-wide RandR DPI
+
+This changes the reported DPI for your entire X11 session, affecting how RandR calculates scaling for all applications that use it.
+
+Add this to your `.xprofile` or `.xinitrc`:
+
+```sh
+xrandr --dpi 192
+```
+
+Replace `192` with your desired DPI value. This affects the system globally and will be used by Zed's automatic RandR detection when `Xft.dpi` is not set.

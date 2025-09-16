@@ -2,19 +2,20 @@ use crate::{
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
+use action_log::ActionLog;
 use agent_settings;
 use anyhow::{Context as _, Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolCard, ToolResult, ToolUseStatus};
-use futures::{FutureExt as _, future::Shared};
+use assistant_tool::{Tool, ToolCard, ToolResult, ToolUseStatus};
+use futures::FutureExt as _;
 use gpui::{
-    Animation, AnimationExt, AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task,
-    TextStyleRefinement, Transformation, WeakEntity, Window, percentage,
+    AnyWindowHandle, App, AppContext, Empty, Entity, EntityId, Task, TextStyleRefinement,
+    WeakEntity, Window,
 };
 use language::LineEnding;
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use project::{Project, terminals::TerminalKind};
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -25,11 +26,12 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use task::{Shell, ShellBuilder};
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{Disclosure, Tooltip, prelude::*};
+use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
 use util::{
-    ResultExt, get_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
+    ResultExt, get_default_system_shell, markdown::MarkdownInlineCode, size::format_file_size,
     time::duration_alt_display,
 };
 use workspace::Workspace;
@@ -44,32 +46,10 @@ pub struct TerminalToolInput {
     cd: String,
 }
 
-pub struct TerminalTool {
-    determine_shell: Shared<Task<String>>,
-}
+pub struct TerminalTool;
 
 impl TerminalTool {
     pub const NAME: &str = "terminal";
-
-    pub(crate) fn new(cx: &mut App) -> Self {
-        let determine_shell = cx.background_spawn(async move {
-            if cfg!(windows) {
-                return get_system_shell();
-            }
-
-            if which::which("bash").is_ok() {
-                log::info!("agent selected bash for terminal tool");
-                "bash".into()
-            } else {
-                let shell = get_system_shell();
-                log::info!("agent selected {shell} for terminal tool");
-                shell
-            }
-        });
-        Self {
-            determine_shell: determine_shell.shared(),
-        }
-    }
 }
 
 impl Tool for TerminalTool {
@@ -77,7 +57,7 @@ impl Tool for TerminalTool {
         Self::NAME.to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &App) -> bool {
+    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
         true
     }
 
@@ -104,7 +84,7 @@ impl Tool for TerminalTool {
                 let first_line = lines.next().unwrap_or_default();
                 let remaining_line_count = lines.count();
                 match remaining_line_count {
-                    0 => MarkdownInlineCode(&first_line).to_string(),
+                    0 => MarkdownInlineCode(first_line).to_string(),
                     1 => MarkdownInlineCode(&format!(
                         "{} - {} more line",
                         first_line, remaining_line_count
@@ -137,19 +117,6 @@ impl Tool for TerminalTool {
             Ok(dir) => dir,
             Err(err) => return Task::ready(Err(err)).into(),
         };
-        let program = self.determine_shell.clone();
-        let command = if cfg!(windows) {
-            format!("$null | & {{{}}}", input.command.replace("\"", "'"))
-        } else if let Some(cwd) = working_dir
-            .as_ref()
-            .and_then(|cwd| cwd.as_os_str().to_str())
-        {
-            // Make sure once we're *inside* the shell, we cd into `cwd`
-            format!("(cd {cwd}; {}) </dev/null", input.command)
-        } else {
-            format!("({}) </dev/null", input.command)
-        };
-        let args = vec!["-c".into(), command];
 
         let cwd = working_dir.clone();
         let env = match &working_dir {
@@ -158,6 +125,11 @@ impl Tool for TerminalTool {
             }),
             None => Task::ready(None).shared(),
         };
+        let remote_shell = project.update(cx, |project, cx| {
+            project
+                .remote_client()
+                .and_then(|r| r.read(cx).default_system_shell())
+        });
 
         let env = cx.spawn(async move |_| {
             let mut env = env.await.unwrap_or_default();
@@ -173,8 +145,13 @@ impl Tool for TerminalTool {
             let task = cx.background_spawn(async move {
                 let env = env.await;
                 let pty_system = native_pty_system();
-                let program = program.await;
-                let mut cmd = CommandBuilder::new(program);
+                let (command, args) = ShellBuilder::new(
+                    remote_shell.as_deref(),
+                    &Shell::Program(get_default_system_shell()),
+                )
+                .redirect_stdin_to_dev_null()
+                .build(Some(input.command.clone()), &[]);
+                let mut cmd = CommandBuilder::new(command);
                 cmd.args(args);
                 for (k, v) in env {
                     cmd.env(k, v);
@@ -210,38 +187,36 @@ impl Tool for TerminalTool {
             };
         };
 
+        let command = input.command.clone();
         let terminal = cx.spawn({
             let project = project.downgrade();
             async move |cx| {
-                let program = program.await;
+                let (command, args) = ShellBuilder::new(
+                    remote_shell.as_deref(),
+                    &Shell::Program(get_default_system_shell()),
+                )
+                .redirect_stdin_to_dev_null()
+                .build(Some(input.command), &[]);
                 let env = env.await;
-                let terminal = project
+                project
                     .update(cx, |project, cx| {
-                        project.create_terminal(
-                            TerminalKind::Task(task::SpawnInTerminal {
-                                command: Some(program),
+                        project.create_terminal_task(
+                            task::SpawnInTerminal {
+                                command: Some(command),
                                 args,
                                 cwd,
                                 env,
                                 ..Default::default()
-                            }),
-                            window,
+                            },
                             cx,
                         )
                     })?
-                    .await;
-                terminal
+                    .await
             }
         });
 
-        let command_markdown = cx.new(|cx| {
-            Markdown::new(
-                format!("```bash\n{}\n```", input.command).into(),
-                None,
-                None,
-                cx,
-            )
-        });
+        let command_markdown =
+            cx.new(|cx| Markdown::new(format!("```bash\n{}\n```", command).into(), None, None, cx));
 
         let card = cx.new(|cx| {
             TerminalToolCard::new(
@@ -292,7 +267,7 @@ impl Tool for TerminalTool {
                 let previous_len = content.len();
                 let (processed_content, finished_with_empty_output) = process_content(
                     &content,
-                    &input.command,
+                    &command,
                     exit_status.map(portable_pty::ExitStatus::from),
                 );
 
@@ -353,7 +328,7 @@ fn process_content(
             if is_empty {
                 "Command executed successfully.".to_string()
             } else {
-                content.to_string()
+                content
             }
         }
         Some(exit_status) => {
@@ -387,7 +362,7 @@ fn working_dir(
     let project = project.read(cx);
     let cd = &input.cd;
 
-    if cd == "." || cd == "" {
+    if cd == "." || cd.is_empty() {
         // Accept "." or "" as meaning "the one worktree" if we only have one worktree.
         let mut worktrees = project.worktrees(cx);
 
@@ -412,10 +387,8 @@ fn working_dir(
             {
                 return Ok(Some(input_path.into()));
             }
-        } else {
-            if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
-                return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
-            }
+        } else if let Some(worktree) = project.worktree_for_root_name(cd, cx) {
+            return Ok(Some(worktree.read(cx).abs_path().to_path_buf()));
         }
 
         anyhow::bail!("`cd` directory {cd:?} was not in any of the project's worktrees.");
@@ -528,11 +501,7 @@ impl ToolCard for TerminalToolCard {
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::XSmall)
                         .color(Color::Info)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(2)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
+                        .with_rotate_animation(2),
                 )
             })
             .when(tool_failed || command_failed, |header| {
@@ -750,7 +719,6 @@ mod tests {
         if cfg!(windows) {
             return;
         }
-
         init_test(&executor, cx);
 
         let fs = Arc::new(RealFs::new(None, executor));
@@ -773,7 +741,7 @@ mod tests {
         };
         let result = cx.update(|cx| {
             TerminalTool::run(
-                Arc::new(TerminalTool::new(cx)),
+                Arc::new(TerminalTool),
                 serde_json::to_value(input).unwrap(),
                 Arc::default(),
                 project.clone(),
@@ -793,7 +761,6 @@ mod tests {
         if cfg!(windows) {
             return;
         }
-
         init_test(&executor, cx);
 
         let fs = Arc::new(RealFs::new(None, executor));
@@ -808,7 +775,7 @@ mod tests {
 
         let check = |input, expected, cx: &mut App| {
             let headless_result = TerminalTool::run(
-                Arc::new(TerminalTool::new(cx)),
+                Arc::new(TerminalTool),
                 serde_json::to_value(input).unwrap(),
                 Arc::default(),
                 project.clone(),

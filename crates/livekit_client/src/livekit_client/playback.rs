@@ -1,10 +1,12 @@
 use anyhow::{Context as _, Result};
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait as _};
+use audio::{AudioSettings, CHANNEL_COUNT, SAMPLE_RATE};
+use cpal::traits::{DeviceTrait, StreamTrait as _};
 use futures::channel::mpsc::UnboundedSender;
 use futures::{Stream, StreamExt as _};
 use gpui::{
-    BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream, Task,
+    AsyncApp, BackgroundExecutor, ScreenCaptureFrame, ScreenCaptureSource, ScreenCaptureStream,
+    Task,
 };
 use libwebrtc::native::{apm, audio_mixer, audio_resampler};
 use livekit::track;
@@ -17,13 +19,19 @@ use livekit::webrtc::{
     video_source::{RtcVideoSource, VideoResolution, native::NativeVideoSource},
     video_stream::native::NativeVideoStream,
 };
+use log::info;
 use parking_lot::Mutex;
+use rodio::Source;
+use serde::{Deserialize, Serialize};
+use settings::Settings;
 use std::cell::RefCell;
 use std::sync::Weak;
-use std::sync::atomic::{self, AtomicI32};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
 use std::{borrow::Cow, collections::VecDeque, sync::Arc, thread};
 use util::{ResultExt as _, maybe};
+
+mod source;
 
 pub(crate) struct AudioStack {
     executor: BackgroundExecutor,
@@ -33,12 +41,36 @@ pub(crate) struct AudioStack {
     next_ssrc: AtomicI32,
 }
 
-// NOTE: We use WebRTC's mixer which only supports
-// 16kHz, 32kHz and 48kHz. As 48 is the most common "next step up"
-// for audio output devices like speakers/bluetooth, we just hard-code
-// this; and downsample when we need to.
-const SAMPLE_RATE: u32 = 48000;
-const NUM_CHANNELS: u32 = 2;
+pub(crate) fn play_remote_audio_track(
+    track: &livekit::track::RemoteAudioTrack,
+    cx: &mut gpui::App,
+) -> Result<AudioStream> {
+    let stop_handle = Arc::new(AtomicBool::new(false));
+    let stop_handle_clone = stop_handle.clone();
+    let stream = source::LiveKitStream::new(cx.background_executor(), track);
+
+    let stream = stream
+        .stoppable()
+        .periodic_access(Duration::from_millis(50), move |s| {
+            if stop_handle.load(Ordering::Relaxed) {
+                s.stop();
+            }
+        });
+
+    let speaker: Speaker = serde_urlencoded::from_str(&track.name()).unwrap_or_else(|_| Speaker {
+        name: track.name(),
+        is_staff: false,
+    });
+    audio::Audio::play_voip_stream(stream, speaker.name, speaker.is_staff, cx)
+        .context("Could not play audio")?;
+
+    let on_drop = util::defer(move || {
+        stop_handle_clone.store(true, Ordering::Relaxed);
+    });
+    Ok(AudioStream::Output {
+        _drop: Box::new(on_drop),
+    })
+}
 
 impl AudioStack {
     pub(crate) fn new(executor: BackgroundExecutor) -> Self {
@@ -61,11 +93,11 @@ impl AudioStack {
     ) -> AudioStream {
         let output_task = self.start_output();
 
-        let next_ssrc = self.next_ssrc.fetch_add(1, atomic::Ordering::Relaxed);
+        let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
-            sample_rate: SAMPLE_RATE,
-            num_channels: NUM_CHANNELS,
+            sample_rate: SAMPLE_RATE.get(),
+            num_channels: CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
@@ -97,49 +129,6 @@ impl AudioStack {
         }
     }
 
-    pub(crate) fn capture_local_microphone_track(
-        &self,
-    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
-        let source = NativeAudioSource::new(
-            // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
-            AudioSourceOptions::default(),
-            SAMPLE_RATE,
-            NUM_CHANNELS,
-            10,
-        );
-
-        let track = track::LocalAudioTrack::create_audio_track(
-            "microphone",
-            RtcAudioSource::Native(source.clone()),
-        );
-
-        let apm = self.apm.clone();
-
-        let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
-        let transmit_task = self.executor.spawn({
-            let source = source.clone();
-            async move {
-                while let Some(frame) = frame_rx.next().await {
-                    source.capture_frame(&frame).await.log_err();
-                }
-            }
-        });
-        let capture_task = self.executor.spawn(async move {
-            Self::capture_input(apm, frame_tx, SAMPLE_RATE, NUM_CHANNELS).await
-        });
-
-        let on_drop = util::defer(|| {
-            drop(transmit_task);
-            drop(capture_task);
-        });
-        return Ok((
-            super::LocalAudioTrack(track),
-            AudioStream::Output {
-                _drop: Box::new(on_drop),
-            },
-        ));
-    }
-
     fn start_output(&self) -> Arc<Task<()>> {
         if let Some(task) = self._output_task.borrow().upgrade() {
             return task;
@@ -148,13 +137,81 @@ impl AudioStack {
             let apm = self.apm.clone();
             let mixer = self.mixer.clone();
             async move {
-                Self::play_output(apm, mixer, SAMPLE_RATE, NUM_CHANNELS)
+                Self::play_output(apm, mixer, SAMPLE_RATE.get(), CHANNEL_COUNT.get().into())
                     .await
                     .log_err();
             }
         }));
         *self._output_task.borrow_mut() = Arc::downgrade(&task);
         task
+    }
+
+    pub(crate) fn capture_local_microphone_track(
+        &self,
+        user_name: String,
+        is_staff: bool,
+        cx: &AsyncApp,
+    ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
+        let source = NativeAudioSource::new(
+            // n.b. this struct's options are always ignored, noise cancellation is provided by apm.
+            AudioSourceOptions::default(),
+            SAMPLE_RATE.get(),
+            CHANNEL_COUNT.get().into(),
+            10,
+        );
+
+        let track_name = serde_urlencoded::to_string(Speaker {
+            name: user_name,
+            is_staff,
+        })
+        .context("Could not encode user information in track name")?;
+
+        let track = track::LocalAudioTrack::create_audio_track(
+            &track_name,
+            RtcAudioSource::Native(source.clone()),
+        );
+
+        let apm = self.apm.clone();
+
+        let (frame_tx, mut frame_rx) = futures::channel::mpsc::unbounded();
+        let transmit_task = self.executor.spawn({
+            async move {
+                while let Some(frame) = frame_rx.next().await {
+                    source.capture_frame(&frame).await.log_err();
+                }
+            }
+        });
+        let rodio_pipeline =
+            AudioSettings::try_read_global(cx, |setting| setting.rodio_audio).unwrap_or_default();
+        let capture_task = if rodio_pipeline {
+            info!("Using experimental.rodio_audio audio pipeline");
+            let voip_parts = audio::VoipParts::new(cx)?;
+            // Audio needs to run real-time and should never be paused. That is why we are using a
+            // normal std::thread and not a background task
+            thread::spawn(move || {
+                // microphone is non send on mac
+                let microphone = audio::Audio::open_microphone(voip_parts)?;
+                send_to_livekit(frame_tx, microphone);
+                Ok::<(), anyhow::Error>(())
+            });
+            Task::ready(Ok(()))
+        } else {
+            self.executor.spawn(async move {
+                Self::capture_input(apm, frame_tx, SAMPLE_RATE.get(), CHANNEL_COUNT.get().into())
+                    .await
+            })
+        };
+
+        let on_drop = util::defer(|| {
+            drop(transmit_task);
+            drop(capture_task);
+        });
+        Ok((
+            super::LocalAudioTrack(track),
+            AudioStream::Output {
+                _drop: Box::new(on_drop),
+            },
+        ))
     }
 
     async fn play_output(
@@ -165,7 +222,7 @@ impl AudioStack {
     ) -> Result<()> {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(false)?;
-            let (output_device, output_config) = default_device(false)?;
+            let (output_device, output_config) = crate::default_device(false)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let mixer = mixer.clone();
             let apm = apm.clone();
@@ -237,7 +294,7 @@ impl AudioStack {
     ) -> Result<()> {
         loop {
             let mut device_change_listener = DeviceChangeListener::new(true)?;
-            let (device, config) = default_device(true)?;
+            let (device, config) = crate::default_device(true)?;
             let (end_on_drop_tx, end_on_drop_rx) = std::sync::mpsc::channel::<()>();
             let apm = apm.clone();
             let frame_tx = frame_tx.clone();
@@ -258,9 +315,15 @@ impl AudioStack {
                     let stream = device
                         .build_input_stream_raw(
                             &config.config(),
-                            cpal::SampleFormat::I16,
+                            config.sample_format(),
                             move |data, _: &_| {
-                                let mut data = data.as_slice::<i16>().unwrap();
+                                let data =
+                                    crate::get_sample_data(config.sample_format(), data).log_err();
+                                let Some(data) = data else {
+                                    return;
+                                };
+                                let mut data = data.as_slice();
+
                                 while data.len() > 0 {
                                     let remainder = (buf.capacity() - buf.len()).min(data.len());
                                     buf.extend_from_slice(&data[..remainder]);
@@ -315,6 +378,36 @@ impl AudioStack {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct Speaker {
+    name: String,
+    is_staff: bool,
+}
+
+fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphone: impl Source) {
+    use cpal::Sample;
+    loop {
+        let sampled: Vec<_> = microphone
+            .by_ref()
+            .take(audio::BUFFER_SIZE)
+            .map(|s| s.to_sample())
+            .collect();
+
+        if frame_tx
+            .unbounded_send(AudioFrame {
+                sample_rate: SAMPLE_RATE.get(),
+                num_channels: CHANNEL_COUNT.get() as u32,
+                samples_per_channel: sampled.len() as u32 / CHANNEL_COUNT.get() as u32,
+                data: Cow::Owned(sampled),
+            })
+            .is_err()
+        {
+            // must rx has dropped or is not consuming
+            break;
+        }
+    }
+}
+
 use super::LocalVideoTrack;
 
 pub enum AudioStream {
@@ -326,11 +419,11 @@ pub(crate) async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
     cx: &mut gpui::AsyncApp,
 ) -> Result<(crate::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
-    let resolution = capture_source.resolution()?;
+    let metadata = capture_source.metadata()?;
     let track_source = gpui_tokio::Tokio::spawn(cx, async move {
         NativeVideoSource::new(VideoResolution {
-            width: resolution.width.0 as u32,
-            height: resolution.height.0 as u32,
+            width: metadata.resolution.width.0 as u32,
+            height: metadata.resolution.height.0 as u32,
         })
     })?
     .await?;
@@ -357,27 +450,6 @@ pub(crate) async fn capture_local_video_track(
         )),
         capture_stream,
     ))
-}
-
-fn default_device(input: bool) -> Result<(cpal::Device, cpal::SupportedStreamConfig)> {
-    let device;
-    let config;
-    if input {
-        device = cpal::default_host()
-            .default_input_device()
-            .context("no audio input device available")?;
-        config = device
-            .default_input_config()
-            .context("failed to get default input config")?;
-    } else {
-        device = cpal::default_host()
-            .default_output_device()
-            .context("no audio output device available")?;
-        config = device
-            .default_output_config()
-            .context("failed to get default output config")?;
-    }
-    Ok((device, config))
 }
 
 #[derive(Clone)]

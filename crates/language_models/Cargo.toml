@@ -16,17 +16,17 @@ ai_onboarding.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
-aws-credential-types = { workspace = true, features = [
-    "hardcoded-credentials",
-] }
+aws-credential-types = { workspace = true, features = ["hardcoded-credentials"] }
 aws_http_client.workspace = true
 bedrock.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 collections.workspace = true
 component.workspace = true
-credentials_provider.workspace = true
+convert_case.workspace = true
 copilot.workspace = true
+credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
 fs.workspace = true
@@ -37,6 +37,7 @@ anthropic_vertex_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
 gpui_tokio.workspace = true
 http_client.workspace = true
+language.workspace = true
 language_model.workspace = true
 lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
@@ -45,10 +46,7 @@ mistral = { workspace = true, features = ["schemars"] }
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 open_router = { workspace = true, features = ["schemars"] }
-vercel = { workspace = true, features = ["schemars"] }
-x_ai = { workspace = true, features = ["schemars"] }
 partial-json-fixer.workspace = true
-proto.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
@@ -63,9 +61,10 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
+vercel = { workspace = true, features = ["schemars"] }
 workspace-hack.workspace = true
-zed_llm_client.workspace = true
-language.workspace = true
+x_ai = { workspace = true, features = ["schemars"] }
+zed_env_vars.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

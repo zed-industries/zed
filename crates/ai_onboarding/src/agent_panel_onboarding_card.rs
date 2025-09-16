@@ -24,7 +24,7 @@ impl ParentElement for AgentPanelOnboardingCard {
 impl RenderOnce for AgentPanelOnboardingCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         div()
-            .m_4()
+            .m_2p5()
             .p(px(3.))
             .elevation_2(cx)
             .rounded_lg()
@@ -49,6 +49,7 @@ impl RenderOnce for AgentPanelOnboardingCard {
                             .right_0()
                             .w(px(400.))
                             .h(px(92.))
+                            .rounded_md()
                             .child(
                                 Vector::new(
                                     VectorName::AiGrid,
@@ -61,11 +62,12 @@ impl RenderOnce for AgentPanelOnboardingCard {
                     .child(
                         div()
                             .absolute()
-                            .top_0()
-                            .right_0()
+                            .top_0p5()
+                            .right_0p5()
                             .w(px(660.))
                             .h(px(401.))
                             .overflow_hidden()
+                            .rounded_md()
                             .bg(linear_gradient(
                                 75.,
                                 linear_color_stop(

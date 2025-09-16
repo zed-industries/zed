@@ -764,7 +764,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
     let network = Arc::new(Mutex::new(Network::new(rng.clone())));
     let mut contexts = Vec::new();
 
-    let num_peers = rng.gen_range(min_peers..=max_peers);
+    let num_peers = rng.random_range(min_peers..=max_peers);
     let context_id = ContextId::new();
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     for i in 0..num_peers {
@@ -806,10 +806,10 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
         || !network.lock().is_idle()
         || network.lock().contains_disconnected_peers()
     {
-        let context_index = rng.gen_range(0..contexts.len());
+        let context_index = rng.random_range(0..contexts.len());
         let context = &contexts[context_index];
 
-        match rng.gen_range(0..100) {
+        match rng.random_range(0..100) {
             0..=29 if mutation_count > 0 => {
                 log::info!("Context {}: edit buffer", context_index);
                 context.update(cx, |context, cx| {
@@ -874,10 +874,10 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         merge_same_roles: true,
                     })];
 
-                    let num_sections = rng.gen_range(0..=3);
+                    let num_sections = rng.random_range(0..=3);
                     let mut section_start = 0;
                     for _ in 0..num_sections {
-                        let mut section_end = rng.gen_range(section_start..=output_text.len());
+                        let mut section_end = rng.random_range(section_start..=output_text.len());
                         while !output_text.is_char_boundary(section_end) {
                             section_end += 1;
                         }
@@ -924,7 +924,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
             75..=84 if mutation_count > 0 => {
                 context.update(cx, |context, cx| {
                     if let Some(message) = context.messages(cx).choose(&mut rng) {
-                        let new_status = match rng.gen_range(0..3) {
+                        let new_status = match rng.random_range(0..3) {
                             0 => MessageStatus::Done,
                             1 => MessageStatus::Pending,
                             _ => MessageStatus::Error(SharedString::from("Random error")),
@@ -971,7 +971,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
 
                     network.lock().broadcast(replica_id, ops_to_send);
                     context.update(cx, |context, cx| context.apply_ops(ops_to_receive, cx));
-                } else if rng.gen_bool(0.1) && replica_id != 0 {
+                } else if rng.random_bool(0.1) && replica_id != 0 {
                     log::info!("Context {}: disconnecting", context_index);
                     network.lock().disconnect_peer(replica_id);
                 } else if network.lock().has_unreceived(replica_id) {
@@ -1055,7 +1055,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     assert_eq!(
         messages_cache(&context, cx)
             .iter()
-            .filter(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .filter(|(_, cache)| cache.as_ref().is_some_and(|cache| cache.is_anchor))
             .count(),
         0,
         "Empty messages should not have any cache anchors."
@@ -1083,7 +1083,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     assert_eq!(
         messages_cache(&context, cx)
             .iter()
-            .filter(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .filter(|(_, cache)| cache.as_ref().is_some_and(|cache| cache.is_anchor))
             .count(),
         0,
         "Messages should not be marked for cache before going over the token minimum."
@@ -1098,7 +1098,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     assert_eq!(
         messages_cache(&context, cx)
             .iter()
-            .map(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .map(|(_, cache)| cache.as_ref().is_some_and(|cache| cache.is_anchor))
             .collect::<Vec<bool>>(),
         vec![true, true, false],
         "Last message should not be an anchor on speculative request."
@@ -1116,7 +1116,7 @@ fn test_mark_cache_anchors(cx: &mut App) {
     assert_eq!(
         messages_cache(&context, cx)
             .iter()
-            .map(|(_, cache)| cache.as_ref().map_or(false, |cache| cache.is_anchor))
+            .map(|(_, cache)| cache.as_ref().is_some_and(|cache| cache.is_anchor))
             .collect::<Vec<bool>>(),
         vec![false, true, true, false],
         "Most recent message should also be cached if not a speculative request."
@@ -1210,8 +1210,8 @@ async fn test_summarization(cx: &mut TestAppContext) {
     });
 
     cx.run_until_parked();
-    fake_model.stream_last_completion_response("Brief");
-    fake_model.stream_last_completion_response(" Introduction");
+    fake_model.send_last_completion_stream_text_chunk("Brief");
+    fake_model.send_last_completion_stream_text_chunk(" Introduction");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -1274,7 +1274,7 @@ async fn test_thread_summary_error_retry(cx: &mut TestAppContext) {
     });
 
     cx.run_until_parked();
-    fake_model.stream_last_completion_response("A successful summary");
+    fake_model.send_last_completion_stream_text_chunk("A successful summary");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 
@@ -1300,7 +1300,7 @@ fn test_summarize_error(
         context.assist(cx);
     });
 
-    simulate_successful_response(&model, cx);
+    simulate_successful_response(model, cx);
 
     context.read_with(cx, |context, _| {
         assert!(!context.summary().content().unwrap().done);
@@ -1321,9 +1321,9 @@ fn test_summarize_error(
 fn setup_context_editor_with_fake_model(
     cx: &mut TestAppContext,
 ) -> (Entity<AssistantContext>, Arc<FakeLanguageModel>) {
-    let registry = Arc::new(LanguageRegistry::test(cx.executor().clone()));
+    let registry = Arc::new(LanguageRegistry::test(cx.executor()));
 
-    let fake_provider = Arc::new(FakeLanguageModelProvider);
+    let fake_provider = Arc::new(FakeLanguageModelProvider::default());
     let fake_model = Arc::new(fake_provider.test_model());
 
     cx.update(|cx| {
@@ -1356,7 +1356,7 @@ fn setup_context_editor_with_fake_model(
 
 fn simulate_successful_response(fake_model: &FakeLanguageModel, cx: &mut TestAppContext) {
     cx.run_until_parked();
-    fake_model.stream_last_completion_response("Assistant response");
+    fake_model.send_last_completion_stream_text_chunk("Assistant response");
     fake_model.end_last_completion_stream();
     cx.run_until_parked();
 }
@@ -1376,7 +1376,7 @@ fn messages_cache(
     context
         .read(cx)
         .messages(cx)
-        .map(|message| (message.id, message.cache.clone()))
+        .map(|message| (message.id, message.cache))
         .collect()
 }
 
@@ -1436,6 +1436,6 @@ impl SlashCommand for FakeSlashCommand {
             sections: vec![],
             run_commands_in_text: false,
         }
-        .to_event_stream()))
+        .into_event_stream()))
     }
 }

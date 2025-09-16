@@ -27,10 +27,12 @@ test-support = [
 ]
 
 [dependencies]
+anyhow.workspace = true
 auto_update.workspace = true
 call.workspace = true
 chrono.workspace = true
 client.workspace = true
+cloud_llm_client.workspace = true
 db.workspace = true
 gpui = { workspace = true, features = ["screen-capture"] }
 notifications.workspace = true
@@ -40,7 +42,6 @@ rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-settings_ui.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
 telemetry.workspace = true

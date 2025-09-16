@@ -1,7 +1,4 @@
-use crate::{
-    ThreadId,
-    thread_store::{SerializedThreadMetadata, ThreadStore},
-};
+use crate::{ThreadId, thread_store::SerializedThreadMetadata};
 use anyhow::{Context as _, Result};
 use assistant_context::SavedContextMetadata;
 use chrono::{DateTime, Utc};
@@ -61,7 +58,6 @@ enum SerializedRecentOpen {
 }
 
 pub struct HistoryStore {
-    thread_store: Entity<ThreadStore>,
     context_store: Entity<assistant_context::ContextStore>,
     recently_opened_entries: VecDeque<HistoryEntryId>,
     _subscriptions: Vec<gpui::Subscription>,
@@ -70,15 +66,11 @@ pub struct HistoryStore {
 
 impl HistoryStore {
     pub fn new(
-        thread_store: Entity<ThreadStore>,
         context_store: Entity<assistant_context::ContextStore>,
         initial_recent_entries: impl IntoIterator<Item = HistoryEntryId>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscriptions = vec![
-            cx.observe(&thread_store, |_, _, cx| cx.notify()),
-            cx.observe(&context_store, |_, _, cx| cx.notify()),
-        ];
+        let subscriptions = vec![cx.observe(&context_store, |_, _, cx| cx.notify())];
 
         cx.spawn(async move |this, cx| {
             let entries = Self::load_recently_opened_entries(cx).await.log_err()?;
@@ -96,7 +88,6 @@ impl HistoryStore {
         .detach();
 
         Self {
-            thread_store,
             context_store,
             recently_opened_entries: initial_recent_entries.into_iter().collect(),
             _subscriptions: subscriptions,
@@ -112,13 +103,6 @@ impl HistoryStore {
             return history_entries;
         }
 
-        history_entries.extend(
-            self.thread_store
-                .read(cx)
-                .reverse_chronological_threads()
-                .cloned()
-                .map(HistoryEntry::Thread),
-        );
         history_entries.extend(
             self.context_store
                 .read(cx)
@@ -141,22 +125,6 @@ impl HistoryStore {
             return Vec::new();
         }
 
-        let thread_entries = self
-            .thread_store
-            .read(cx)
-            .reverse_chronological_threads()
-            .flat_map(|thread| {
-                self.recently_opened_entries
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(index, entry)| match entry {
-                        HistoryEntryId::Thread(id) if &thread.id == id => {
-                            Some((index, HistoryEntry::Thread(thread.clone())))
-                        }
-                        _ => None,
-                    })
-            });
-
         let context_entries =
             self.context_store
                 .read(cx)
@@ -173,8 +141,7 @@ impl HistoryStore {
                         })
                 });
 
-        thread_entries
-            .chain(context_entries)
+        context_entries
             // optimization to halt iteration early
             .take(self.recently_opened_entries.len())
             .sorted_unstable_by_key(|(index, _)| *index)
@@ -212,7 +179,16 @@ impl HistoryStore {
     fn load_recently_opened_entries(cx: &AsyncApp) -> Task<Result<Vec<HistoryEntryId>>> {
         cx.background_spawn(async move {
             let path = paths::data_dir().join(NAVIGATION_HISTORY_PATH);
-            let contents = smol::fs::read_to_string(path).await?;
+            let contents = match smol::fs::read_to_string(path).await {
+                Ok(it) => it,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(Vec::new());
+                }
+                Err(e) => {
+                    return Err(e)
+                        .context("deserializing persisted agent panel navigation history");
+                }
+            };
             let entries = serde_json::from_str::<Vec<SerializedRecentOpen>>(&contents)
                 .context("deserializing persisted agent panel navigation history")?
                 .into_iter()
@@ -245,10 +221,9 @@ impl HistoryStore {
     }
 
     pub fn remove_recently_opened_thread(&mut self, id: ThreadId, cx: &mut Context<Self>) {
-        self.recently_opened_entries.retain(|entry| match entry {
-            HistoryEntryId::Thread(thread_id) if thread_id == &id => false,
-            _ => true,
-        });
+        self.recently_opened_entries.retain(
+            |entry| !matches!(entry, HistoryEntryId::Thread(thread_id) if thread_id == &id),
+        );
         self.save_recently_opened_entries(cx);
     }
 

@@ -4,18 +4,19 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result, anyhow};
 use dap::StackFrameId;
+use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState, MouseButton,
-    Stateful, Subscription, Task, WeakEntity, list,
+    Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
+    Subscription, Task, WeakEntity, list,
 };
 use util::debug_panic;
 
-use crate::StackTraceView;
+use crate::{StackTraceView, ToggleUserFrames};
 use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
-use project::debugger::session::{Session, SessionEvent, StackFrame};
+use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
-use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
+use ui::{Tooltip, WithScrollbar, prelude::*};
 use workspace::{ItemHandle, Workspace};
 
 use super::RunningState;
@@ -24,6 +25,34 @@ use super::RunningState;
 pub enum StackFrameListEvent {
     SelectedStackFrameChanged(StackFrameId),
     BuiltEntries,
+}
+
+/// Represents the filter applied to the stack frame list
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+pub(crate) enum StackFrameFilter {
+    /// Show all frames
+    All,
+    /// Show only frames from the user's code
+    OnlyUserFrames,
+}
+
+impl StackFrameFilter {
+    fn from_str_or_default(s: impl AsRef<str>) -> Self {
+        match s.as_ref() {
+            "user" => StackFrameFilter::OnlyUserFrames,
+            "all" => StackFrameFilter::All,
+            _ => StackFrameFilter::All,
+        }
+    }
+}
+
+impl From<StackFrameFilter> for String {
+    fn from(filter: StackFrameFilter) -> Self {
+        match filter {
+            StackFrameFilter::All => "all".to_string(),
+            StackFrameFilter::OnlyUserFrames => "user".to_string(),
+        }
+    }
 }
 
 pub struct StackFrameList {
@@ -35,8 +64,9 @@ pub struct StackFrameList {
     workspace: WeakEntity<Workspace>,
     selected_ix: Option<usize>,
     opened_stack_frame_id: Option<StackFrameId>,
-    scrollbar_state: ScrollbarState,
     list_state: ListState,
+    list_filter: StackFrameFilter,
+    filter_entries_indices: Vec<usize>,
     error: Option<SharedString>,
     _refresh_task: Task<()>,
 }
@@ -70,14 +100,17 @@ impl StackFrameList {
                 _ => {}
             });
 
-        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.), {
-            let this = cx.weak_entity();
-            move |ix, _window, cx| {
-                this.update(cx, |this, cx| this.render_entry(ix, cx))
-                    .unwrap_or(div().into_any())
-            }
-        });
-        let scrollbar_state = ScrollbarState::new(list_state.clone());
+        let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
+
+        let list_filter = KEY_VALUE_STORE
+            .read_kvp(&format!(
+                "stack-frame-list-filter-{}",
+                session.read(cx).adapter().0
+            ))
+            .ok()
+            .flatten()
+            .map(StackFrameFilter::from_str_or_default)
+            .unwrap_or(StackFrameFilter::All);
 
         let mut this = Self {
             session,
@@ -86,11 +119,12 @@ impl StackFrameList {
             state,
             _subscription,
             entries: Default::default(),
+            filter_entries_indices: Vec::default(),
             error: None,
             selected_ix: None,
             opened_stack_frame_id: None,
+            list_filter,
             list_state,
-            scrollbar_state,
             _refresh_task: Task::ready(()),
         };
         this.schedule_refresh(true, window, cx);
@@ -109,7 +143,15 @@ impl StackFrameList {
     ) -> Vec<dap::StackFrame> {
         self.entries
             .iter()
-            .flat_map(|frame| match frame {
+            .enumerate()
+            .filter(|(ix, _)| {
+                self.list_filter == StackFrameFilter::All
+                    || self
+                        .filter_entries_indices
+                        .binary_search_by_key(&ix, |ix| ix)
+                        .is_ok()
+            })
+            .flat_map(|(_, frame)| match frame {
                 StackFrameEntry::Normal(frame) => vec![frame.clone()],
                 StackFrameEntry::Label(frame) if show_labels => vec![frame.clone()],
                 StackFrameEntry::Collapsed(frames) if show_collapsed => frames.clone(),
@@ -129,11 +171,29 @@ impl StackFrameList {
 
     #[cfg(test)]
     pub(crate) fn dap_stack_frames(&self, cx: &mut App) -> Vec<dap::StackFrame> {
-        self.stack_frames(cx)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|stack_frame| stack_frame.dap.clone())
-            .collect()
+        match self.list_filter {
+            StackFrameFilter::All => self
+                .stack_frames(cx)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|stack_frame| stack_frame.dap)
+                .collect(),
+            StackFrameFilter::OnlyUserFrames => self
+                .filter_entries_indices
+                .iter()
+                .map(|ix| match &self.entries[*ix] {
+                    StackFrameEntry::Label(label) => label,
+                    StackFrameEntry::Collapsed(_) => panic!("Collapsed tabs should not be visible"),
+                    StackFrameEntry::Normal(frame) => frame,
+                })
+                .cloned()
+                .collect(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn list_filter(&self) -> StackFrameFilter {
+        self.list_filter
     }
 
     pub fn opened_stack_frame_id(&self) -> Option<StackFrameId> {
@@ -193,12 +253,34 @@ impl StackFrameList {
                 self.entries.clear();
                 self.selected_ix = None;
                 self.list_state.reset(0);
+                self.filter_entries_indices.clear();
                 cx.emit(StackFrameListEvent::BuiltEntries);
                 cx.notify();
                 return;
             }
         };
-        for stack_frame in &stack_frames {
+
+        let worktree_prefixes: Vec<_> = self
+            .workspace
+            .read_with(cx, |workspace, cx| {
+                workspace
+                    .visible_worktrees(cx)
+                    .map(|tree| tree.read(cx).abs_path())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut filter_entries_indices = Vec::default();
+        for stack_frame in stack_frames.iter() {
+            let frame_in_visible_worktree = stack_frame.dap.source.as_ref().is_some_and(|source| {
+                source.path.as_ref().is_some_and(|path| {
+                    worktree_prefixes
+                        .iter()
+                        .filter_map(|tree| tree.to_str())
+                        .any(|tree| path.starts_with(tree))
+                })
+            });
+
             match stack_frame.dap.presentation_hint {
                 Some(dap::StackFramePresentationHint::Deemphasize)
                 | Some(dap::StackFramePresentationHint::Subtle) => {
@@ -224,15 +306,19 @@ impl StackFrameList {
                         first_stack_frame_with_path.get_or_insert(entries.len());
                     }
                     entries.push(StackFrameEntry::Normal(stack_frame.dap.clone()));
+                    if frame_in_visible_worktree {
+                        filter_entries_indices.push(entries.len() - 1);
+                    }
                 }
             }
         }
 
         let collapsed_entries = std::mem::take(&mut collapsed_entries);
         if !collapsed_entries.is_empty() {
-            entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
+            entries.push(StackFrameEntry::Collapsed(collapsed_entries));
         }
         self.entries = entries;
+        self.filter_entries_indices = filter_entries_indices;
 
         if let Some(ix) = first_stack_frame_with_path
             .or(first_stack_frame)
@@ -248,7 +334,14 @@ impl StackFrameList {
             self.selected_ix = ix;
         }
 
-        self.list_state.reset(self.entries.len());
+        match self.list_filter {
+            StackFrameFilter::All => {
+                self.list_state.reset(self.entries.len());
+            }
+            StackFrameFilter::OnlyUserFrames => {
+                self.list_state.reset(self.filter_entries_indices.len());
+            }
+        }
         cx.emit(StackFrameListEvent::BuiltEntries);
         cx.notify();
     }
@@ -424,7 +517,7 @@ impl StackFrameList {
         let source = stack_frame.source.clone();
         let is_selected_frame = Some(ix) == self.selected_ix;
 
-        let path = source.clone().and_then(|s| s.path.or(s.name));
+        let path = source.and_then(|s| s.path.or(s.name));
         let formatted_path = path.map(|path| format!("{}:{}", path, stack_frame.line,));
         let formatted_path = formatted_path.map(|path| {
             Label::new(path)
@@ -499,7 +592,7 @@ impl StackFrameList {
                             .child(
                                 IconButton::new(
                                     ("restart-stack-frame", stack_frame.id),
-                                    IconName::DebugRestart,
+                                    IconName::RotateCcw,
                                 )
                                 .icon_size(IconSize::Small)
                                 .on_click(cx.listener({
@@ -525,7 +618,16 @@ impl StackFrameList {
         let entries = std::mem::take(stack_frames)
             .into_iter()
             .map(StackFrameEntry::Normal);
+        // HERE
+        let entries_len = entries.len();
         self.entries.splice(ix..ix + 1, entries);
+        let (Ok(filtered_indices_start) | Err(filtered_indices_start)) =
+            self.filter_entries_indices.binary_search(&ix);
+
+        for idx in &mut self.filter_entries_indices[filtered_indices_start..] {
+            *idx += entries_len - 1;
+        }
+
         self.selected_ix = Some(ix);
         self.list_state.reset(self.entries.len());
         cx.emit(StackFrameListEvent::BuiltEntries);
@@ -578,6 +680,11 @@ impl StackFrameList {
     }
 
     fn render_entry(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
+        let ix = match self.list_filter {
+            StackFrameFilter::All => ix,
+            StackFrameFilter::OnlyUserFrames => self.filter_entries_indices[ix],
+        };
+
         match &self.entries[ix] {
             StackFrameEntry::Label(stack_frame) => self.render_label_entry(stack_frame, cx),
             StackFrameEntry::Normal(stack_frame) => self.render_normal_entry(ix, stack_frame, cx),
@@ -587,39 +694,6 @@ impl StackFrameList {
         }
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("stack-frame-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
-    }
-
     fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.selected_ix = ix;
         cx.notify();
@@ -627,7 +701,7 @@ impl StackFrameList {
 
     fn select_next(&mut self, _: &menu::SelectNext, _window: &mut Window, cx: &mut Context<Self>) {
         let ix = match self.selected_ix {
-            _ if self.entries.len() == 0 => None,
+            _ if self.entries.is_empty() => None,
             None => Some(0),
             Some(ix) => {
                 if ix == self.entries.len() - 1 {
@@ -647,7 +721,7 @@ impl StackFrameList {
         cx: &mut Context<Self>,
     ) {
         let ix = match self.selected_ix {
-            _ if self.entries.len() == 0 => None,
+            _ if self.entries.is_empty() => None,
             None => Some(self.entries.len() - 1),
             Some(ix) => {
                 if ix == 0 {
@@ -666,7 +740,7 @@ impl StackFrameList {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ix = if self.entries.len() > 0 {
+        let ix = if !self.entries.is_empty() {
             Some(0)
         } else {
             None
@@ -675,7 +749,7 @@ impl StackFrameList {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
-        let ix = if self.entries.len() > 0 {
+        let ix = if !self.entries.is_empty() {
             Some(self.entries.len() - 1)
         } else {
             None
@@ -708,11 +782,99 @@ impl StackFrameList {
         self.activate_selected_entry(window, cx);
     }
 
-    fn render_list(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .p_1()
-            .size_full()
-            .child(list(self.list_state.clone()).size_full())
+    pub(crate) fn toggle_frame_filter(
+        &mut self,
+        thread_status: Option<ThreadStatus>,
+        cx: &mut Context<Self>,
+    ) {
+        self.list_filter = match self.list_filter {
+            StackFrameFilter::All => StackFrameFilter::OnlyUserFrames,
+            StackFrameFilter::OnlyUserFrames => StackFrameFilter::All,
+        };
+
+        if let Some(database_id) = self
+            .workspace
+            .read_with(cx, |workspace, _| workspace.database_id())
+            .ok()
+            .flatten()
+        {
+            let database_id: i64 = database_id.into();
+            let save_task = KEY_VALUE_STORE.write_kvp(
+                format!(
+                    "stack-frame-list-filter-{}-{}",
+                    self.session.read(cx).adapter().0,
+                    database_id,
+                ),
+                self.list_filter.into(),
+            );
+            cx.background_spawn(save_task).detach();
+        }
+
+        if let Some(ThreadStatus::Stopped) = thread_status {
+            match self.list_filter {
+                StackFrameFilter::All => {
+                    self.list_state.reset(self.entries.len());
+                }
+                StackFrameFilter::OnlyUserFrames => {
+                    self.list_state.reset(self.filter_entries_indices.len());
+                    if !self
+                        .selected_ix
+                        .map(|ix| self.filter_entries_indices.contains(&ix))
+                        .unwrap_or_default()
+                    {
+                        self.selected_ix = None;
+                    }
+                }
+            }
+
+            if let Some(ix) = self.selected_ix {
+                let scroll_to = match self.list_filter {
+                    StackFrameFilter::All => ix,
+                    StackFrameFilter::OnlyUserFrames => self
+                        .filter_entries_indices
+                        .binary_search_by_key(&ix, |ix| *ix)
+                        .expect("This index will always exist"),
+                };
+                self.list_state.scroll_to_reveal_item(scroll_to);
+            }
+
+            cx.emit(StackFrameListEvent::BuiltEntries);
+            cx.notify();
+        }
+    }
+
+    fn render_list(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div().p_1().size_full().child(
+            list(
+                self.list_state.clone(),
+                cx.processor(|this, ix, _window, cx| this.render_entry(ix, cx)),
+            )
+            .size_full(),
+        )
+    }
+
+    pub(crate) fn render_control_strip(&self) -> AnyElement {
+        let tooltip_title = match self.list_filter {
+            StackFrameFilter::All => "Show stack frames from your project",
+            StackFrameFilter::OnlyUserFrames => "Show all stack frames",
+        };
+
+        h_flex()
+            .child(
+                IconButton::new(
+                    "filter-by-visible-worktree-stack-frame-list",
+                    IconName::ListFilter,
+                )
+                .tooltip(move |window, cx| {
+                    Tooltip::for_action(tooltip_title, &ToggleUserFrames, window, cx)
+                })
+                .toggle_state(self.list_filter == StackFrameFilter::OnlyUserFrames)
+                .icon_size(IconSize::Small)
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(ToggleUserFrames.boxed_clone(), cx)
+                }),
+            )
+            .into_any_element()
     }
 }
 
@@ -743,7 +905,7 @@ impl Render for StackFrameList {
                 )
             })
             .child(self.render_list(window, cx))
-            .child(self.render_vertical_scrollbar(cx))
+            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
     }
 }
 

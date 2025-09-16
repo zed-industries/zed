@@ -6,6 +6,7 @@ use gpui::{
 actions!(example, [Tab, TabPrev]);
 
 struct Example {
+    focus_handle: FocusHandle,
     items: Vec<FocusHandle>,
     message: SharedString,
 }
@@ -20,8 +21,11 @@ impl Example {
             cx.focus_handle().tab_index(2).tab_stop(true),
         ];
 
-        window.focus(items.first().unwrap());
+        let focus_handle = cx.focus_handle();
+        window.focus(&focus_handle);
+
         Self {
+            focus_handle,
             items,
             message: SharedString::from("Press `Tab`, `Shift-Tab` to switch focus."),
         }
@@ -40,6 +44,10 @@ impl Example {
 
 impl Render for Example {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn tab_stop_style<T: Styled>(this: T) -> T {
+            this.border_3().border_color(gpui::blue())
+        }
+
         fn button(id: impl Into<ElementId>) -> Stateful<Div> {
             div()
                 .id(id)
@@ -52,12 +60,13 @@ impl Render for Example {
                 .border_color(gpui::black())
                 .bg(gpui::black())
                 .text_color(gpui::white())
-                .focus(|this| this.border_color(gpui::blue()))
+                .focus(tab_stop_style)
                 .shadow_sm()
         }
 
         div()
             .id("app")
+            .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_tab))
             .on_action(cx.listener(Self::on_tab_prev))
             .size_full()
@@ -86,7 +95,7 @@ impl Render for Example {
                             .border_color(gpui::black())
                             .when(
                                 item_handle.tab_stop && item_handle.is_focused(window),
-                                |this| this.border_color(gpui::blue()),
+                                tab_stop_style,
                             )
                             .map(|this| match item_handle.tab_stop {
                                 true => this
@@ -102,8 +111,24 @@ impl Render for Example {
                     .flex_row()
                     .gap_3()
                     .items_center()
-                    .child(button("el1").tab_index(4).child("Button 1"))
-                    .child(button("el2").tab_index(5).child("Button 2")),
+                    .child(
+                        button("el1")
+                            .tab_index(4)
+                            .child("Button 1")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.message = "You have clicked Button 1.".into();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        button("el2")
+                            .tab_index(5)
+                            .child("Button 2")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.message = "You have clicked Button 2.".into();
+                                cx.notify();
+                            })),
+                    ),
             )
     }
 }

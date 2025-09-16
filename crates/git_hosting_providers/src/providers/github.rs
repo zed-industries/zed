@@ -25,22 +25,38 @@ fn pull_request_number_regex() -> &'static Regex {
 
 #[derive(Debug, Deserialize)]
 struct CommitDetails {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     commit: Commit,
     author: Option<User>,
 }
 
 #[derive(Debug, Deserialize)]
 struct Commit {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     author: Author,
 }
 
 #[derive(Debug, Deserialize)]
 struct Author {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     email: String,
 }
 
 #[derive(Debug, Deserialize)]
 struct User {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     pub id: u64,
     pub avatar_url: String,
 }
@@ -159,7 +175,11 @@ impl GitHostingProvider for Github {
         }
 
         let mut path_segments = url.path_segments()?;
-        let owner = path_segments.next()?;
+        let mut owner = path_segments.next()?;
+        if owner.is_empty() {
+            owner = path_segments.next()?;
+        }
+
         let repo = path_segments.next()?.trim_end_matches(".git");
 
         Some(ParsedGitRemote {
@@ -243,6 +263,22 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn test_remote_url_with_root_slash() {
+        let remote_url = "git@github.com:/zed-industries/zed";
+        let parsed_remote = Github::public_instance()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
 
     #[test]
     fn test_invalid_self_hosted_remote_url() {
@@ -454,7 +490,7 @@ mod tests {
 
         assert_eq!(
             github
-                .extract_pull_request(&remote, &message)
+                .extract_pull_request(&remote, message)
                 .unwrap()
                 .url
                 .as_str(),
@@ -468,6 +504,6 @@ mod tests {
             See the original PR, this is a fix.
             "#
         };
-        assert_eq!(github.extract_pull_request(&remote, &message), None);
+        assert_eq!(github.extract_pull_request(&remote, message), None);
     }
 }

@@ -1,4 +1,5 @@
 {
+  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -28,7 +29,9 @@
     "edit_prediction_provider": "zed"
   },
   // The name of a font to use for rendering text in the editor
-  "buffer_font_family": "Zed Plex Mono",
+  // ".ZedMono" currently aliases to Lilex
+  // but this may change in the future.
+  "buffer_font_family": ".ZedMono",
   // Set the buffer text's font fallbacks, this will be merged with
   // the platform's default fallbacks.
   "buffer_font_fallbacks": null,
@@ -54,7 +57,9 @@
   "buffer_line_height": "comfortable",
   // The name of a font to use for rendering text in the UI
   // You can set this to ".SystemUIFont" to use the system font
-  "ui_font_family": "Zed Plex Sans",
+  // ".ZedSans" currently aliases to "IBM Plex Sans", but this may
+  // change in the future
+  "ui_font_family": ".ZedSans",
   // Set the UI's font fallbacks, this will be merged with the platform's
   // default font fallbacks.
   "ui_font_fallbacks": null,
@@ -67,8 +72,8 @@
   "ui_font_weight": 400,
   // The default font size for text in the UI
   "ui_font_size": 16,
-  // The default font size for text in the agent panel
-  "agent_font_size": 16,
+  // The default font size for text in the agent panel. Falls back to the UI font size if unset.
+  "agent_font_size": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -82,10 +87,10 @@
   // Layout mode of the bottom dock. Defaults to "contained"
   //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
-  // The direction that you want to split panes horizontally. Defaults to "up"
-  "pane_split_direction_horizontal": "up",
-  // The direction that you want to split panes vertically. Defaults to "left"
-  "pane_split_direction_vertical": "left",
+  // The direction that you want to split panes horizontally. Defaults to "down"
+  "pane_split_direction_horizontal": "down",
+  // The direction that you want to split panes vertically. Defaults to "right"
+  "pane_split_direction_vertical": "right",
   // Centered layout related settings.
   "centered_layout": {
     // The relative width of the left padding of the central pane from the
@@ -158,6 +163,12 @@
   //  2. Always quit the application
   //         "on_last_window_closed": "quit_app",
   "on_last_window_closed": "platform_default",
+  // Whether to show padding for zoomed panels.
+  // When enabled, zoomed center panels (e.g. code editor) will have padding all around,
+  // while zoomed bottom/left/right panels will have padding to the top/right/left (respectively).
+  //
+  // Default: true
+  "zoomed_padding": true,
   // Whether to use the system provided dialogs for Open and Save As.
   // When set to false, Zed will use the built-in keyboard-first pickers.
   "use_system_path_prompts": true,
@@ -178,8 +189,8 @@
   //  4. A box drawn around the following character
   //     "hollow"
   //
-  // Default: not set, defaults to "bar"
-  "cursor_shape": null,
+  // Default: "bar"
+  "cursor_shape": "bar",
   // Determines when the mouse cursor should be hidden in an editor or input box.
   //
   // 1. Never hide the mouse cursor:
@@ -213,9 +224,25 @@
   "current_line_highlight": "all",
   // Whether to highlight all occurrences of the selected text in an editor.
   "selection_highlight": true,
+  // Whether the text selection should have rounded corners.
+  "rounded_selection": true,
   // The debounce delay before querying highlights from the language
   // server based on the current cursor location.
   "lsp_highlight_debounce": 75,
+  // The minimum APCA perceptual contrast between foreground and background colors.
+  // APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+  // especially for dark mode. Values range from 0 to 106.
+  //
+  // Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+  // https://readtech.org/ARC/tests/bronze-simple-mode/
+  // - 0: No contrast adjustment
+  // - 45: Minimum for large fluent text (36px+)
+  // - 60: Minimum for other content text
+  // - 75: Minimum for body text
+  // - 90: Preferred for body text
+  //
+  // This only affects text drawn over highlight backgrounds in the editor.
+  "minimum_contrast_for_highlights": 45,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
@@ -256,8 +283,8 @@
   //  - "warning"
   //  - "info"
   //  - "hint"
-  //  - null — allow all diagnostics (default)
-  "diagnostics_max_severity": null,
+  //  - "all" — allow all diagnostics (default)
+  "diagnostics_max_severity": "all",
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -269,6 +296,8 @@
   "redact_private_values": false,
   // The default number of lines to expand excerpts in the multibuffer by.
   "expand_excerpt_lines": 5,
+  // The default number of context lines shown in multibuffer excerpts.
+  "excerpt_context_lines": 2,
   // Globs to match against file paths to determine if a file is private.
   "private_files": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"],
   // Whether to use additional LSP queries to format (and amend) the code after
@@ -282,6 +311,8 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
+  /// Whether indentation should be adjusted based on the context whilst typing.
+  "auto_indent": true,
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,
   // Controls how the editor handles the autoclosed characters.
@@ -331,6 +362,11 @@
   // - It is adjacent to an edge (start or end)
   // - It is adjacent to a whitespace (left or right)
   "show_whitespaces": "selection",
+  // Visible characters used to render whitespace when show_whitespaces is enabled.
+  "whitespace_map": {
+    "space": "•",
+    "tab": "→"
+  },
   // Settings related to calls in Zed
   "calls": {
     // Join calls with the microphone live by default
@@ -351,8 +387,12 @@
     // Whether to show code action buttons in the editor toolbar.
     "code_actions": false
   },
+  // Whether to allow windows to tab together based on the user’s tabbing preference (macOS only).
+  "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
+    // When to show the title bar: "always" | "never" | "hide_in_full_screen".
+    "show": "always",
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
     // Whether to show the branch name button in the titlebar.
@@ -596,6 +636,8 @@
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
     "auto_reveal_entries": true,
+    // Whether the project panel should open on startup.
+    "starts_open": true,
     // Whether to fold directories automatically and show compact folders
     // (e.g. "a/b/c" ) when a directory has only one subdirectory inside.
     "auto_fold_dirs": true,
@@ -639,6 +681,8 @@
       //    "never"
       "show": "always"
     },
+    // Whether to enable drag-and-drop operations in the project panel.
+    "drag_and_drop": true,
     // Whether to hide the root entry when only one folder is open in the window.
     "hide_root": false
   },
@@ -691,7 +735,10 @@
       // 5. Never show the scrollbar:
       //    "never"
       "show": null
-    }
+    },
+    // Default depth to expand outline items in the current file.
+    // Set to 0 to collapse all items that have children, 1 or higher to collapse items at that depth or deeper.
+    "expand_outlines_with_depth": 100
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -701,20 +748,10 @@
     // Default width of the collaboration panel.
     "default_width": 240
   },
-  "chat_panel": {
-    // When to show the chat panel button in the status bar.
-    // Can be 'never', 'always', or 'when_in_call',
-    // or a boolean (interpreted as 'never'/'always').
-    "button": "when_in_call",
-    // Where to the chat panel. Can be 'left' or 'right'.
-    "dock": "right",
-    // Default width of the chat panel.
-    "default_width": 240
-  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
-    // Where to show the git panel. Can be 'left' or 'right'.
+    // Where to dock the git panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the git panel.
     "default_width": 360,
@@ -799,6 +836,9 @@
       // }
     ],
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    //
+    // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
+    //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
     // When enabled, the agent will stream edits.
     "stream_edits": false,
@@ -874,15 +914,14 @@
     /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
     ///
     /// Default: true
-    "expand_terminal_card": true
+    "expand_terminal_card": true,
+    // Minimum number of lines to display in the agent message editor.
+    //
+    // Default: 4
+    "message_editor_min_lines": 4
   },
   // The settings for slash commands.
   "slash_commands": {
-    // Settings for the `/docs` slash command.
-    "docs": {
-      // Whether `/docs` is enabled.
-      "enabled": false
-    },
     // Settings for the `/project` slash command.
     "project": {
       // Whether `/project` is enabled.
@@ -928,7 +967,7 @@
     // Show git status colors in the editor tabs.
     "git_status": false,
     // Position of the close button on the editor tabs.
-    // One of: ["right", "left", "hidden"]
+    // One of: ["right", "left"]
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
@@ -1076,6 +1115,10 @@
     // Send anonymized usage data like what languages you're using Zed with.
     "metrics": true
   },
+  // Whether to disable all AI features in Zed.
+  //
+  // Default: false
+  "disable_ai": false,
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
@@ -1123,11 +1166,6 @@
       // The minimum severity of the diagnostics to show inline.
       // Inherits editor's diagnostics' max severity settings when `null`.
       "max_severity": null
-    },
-    "cargo": {
-      // When enabled, Zed disables rust-analyzer's check on save and starts to query
-      // Cargo diagnostics separately.
-      "fetch_cargo_diagnostics": false
     }
   },
   // Files or globs of files that will be excluded by Zed entirely. They will be skipped during file
@@ -1164,10 +1202,17 @@
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       "delay_ms": 0,
+      // The amount of padding between the end of the source line and the start
+      // of the inline blame in units of em widths.
+      "padding": 7,
       // Whether or not to display the git commit summary on the same line.
       "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
       "min_column": 0
+    },
+    // Control which information is shown in the branch picker.
+    "branch_picker": {
+      "show_author_name": true
     },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:
@@ -1198,7 +1243,18 @@
     // Any addition to this list will be merged with the default list.
     // Globs are matched relative to the worktree root,
     // except when starting with a slash (/) or equivalent in Windows.
-    "disabled_globs": ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/.dev.vars", "**/secrets.yml"],
+    "disabled_globs": [
+      "**/.env*",
+      "**/*.pem",
+      "**/*.key",
+      "**/*.cert",
+      "**/*.crt",
+      "**/.dev.vars",
+      "**/secrets.yml",
+      "**/.zed/settings.json", // zed project settings
+      "/**/zed/settings.json", // zed user settings
+      "/**/zed/keymap.json"
+    ],
     // When to show edit predictions previews in buffer.
     // This setting takes two possible values:
     // 1. Display predictions inline when there are no language server completions available.
@@ -1225,6 +1281,13 @@
     // 1. hour12
     // 2. hour24
     "hour_format": "hour12"
+  },
+  // Status bar-related settings.
+  "status_bar": {
+    // Whether to show the active language button in the status bar.
+    "active_language_button": true,
+    // Whether to show the cursor position button in the status bar.
+    "cursor_position_button": true
   },
   // Settings specific to the terminal
   "terminal": {
@@ -1374,7 +1437,7 @@
     // "font_size": 15,
     // Set the terminal's font family. If this option is not included,
     // the terminal will default to matching the buffer's font family.
-    // "font_family": "Zed Plex Mono",
+    // "font_family": ".ZedMono",
     // Set the terminal's font fallbacks. If this option is not included,
     // the terminal will default to matching the buffer's font fallbacks.
     // This will be merged with the platform's default font fallbacks
@@ -1472,6 +1535,11 @@
     //
     // Default: fallback
     "words": "fallback",
+    // Minimum number of characters required to automatically trigger word-based completions.
+    // Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+    //
+    // Default: 3
+    "words_min_length": 3,
     // Whether to fetch LSP completions or not.
     //
     // Default: true
@@ -1544,7 +1612,7 @@
       "ensure_final_newline_on_save": false
     },
     "Elixir": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "Elm": {
       "tab_size": 4
@@ -1569,7 +1637,7 @@
       }
     },
     "HEEX": {
-      "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
+      "language_servers": ["elixir-ls", "!expert", "!next-ls", "!lexical", "..."]
     },
     "HTML": {
       "prettier": {
@@ -1598,6 +1666,9 @@
         "allowed": true
       }
     },
+    "Kotlin": {
+      "language_servers": ["kotlin-language-server", "!kotlin-lsp", "..."]
+    },
     "LaTeX": {
       "formatter": "language_server",
       "language_servers": ["texlab", "..."],
@@ -1611,9 +1682,6 @@
       "use_on_type_format": false,
       "allow_rewrap": "anywhere",
       "soft_wrap": "editor_width",
-      "completions": {
-        "words": "disabled"
-      },
       "prettier": {
         "allowed": true
       }
@@ -1627,12 +1695,14 @@
       }
     },
     "Plain Text": {
-      "completions": {
-        "words": "disabled"
-      },
       "allow_rewrap": "anywhere"
     },
     "Python": {
+      "formatter": {
+        "language_server": {
+          "name": "ruff"
+        }
+      },
       "debuggers": ["Debugpy"]
     },
     "Ruby": {
@@ -1712,6 +1782,7 @@
     "openai": {
       "api_url": "https://api.openai.com/v1"
     },
+    "openai_compatible": {},
     "open_router": {
       "api_url": "https://openrouter.ai/api/v1"
     },
@@ -1719,7 +1790,7 @@
       "api_url": "http://localhost:1234/api/v0"
     },
     "deepseek": {
-      "api_url": "https://api.deepseek.com"
+      "api_url": "https://api.deepseek.com/v1"
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1"
@@ -1776,6 +1847,15 @@
     //    "python": "conda-base"
     //    "typescript": "deno"
     // }
+  },
+  // REPL settings.
+  "repl": {
+    // Maximum number of columns to keep in REPL's scrollback buffer.
+    // Clamped with [20, 512] range.
+    "max_columns": 128,
+    // Maximum number of lines to keep in REPL's scrollback buffer.
+    // Clamped with [4, 256] range.
+    "max_lines": 32
   },
   // Vim settings
   "vim": {
@@ -1867,7 +1947,30 @@
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,
+    "timeout": 2000,
     "dock": "bottom",
+    "log_dap_communications": true,
+    "format_dap_log_messages": true,
     "button": true
-  }
+  },
+  // Configures any number of settings profiles that are temporarily applied on
+  // top of your existing user settings when selected from
+  // `settings profile selector: toggle`.
+  // Examples:
+  // "profiles": {
+  //   "Presenting": {
+  //     "agent_font_size": 20.0,
+  //     "buffer_font_size": 20.0,
+  //     "theme": "One Light",
+  //     "ui_font_size": 20.0
+  //   },
+  //   "Python (ty)": {
+  //     "languages": {
+  //       "Python": {
+  //         "language_servers": ["ty"]
+  //       }
+  //     }
+  //   }
+  // }
+  "profiles": []
 }

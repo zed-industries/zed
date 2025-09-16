@@ -8,9 +8,8 @@ use dap::{
 use editor::Editor;
 use gpui::{
     Action, AnyElement, ClickEvent, ClipboardItem, Context, DismissEvent, Empty, Entity,
-    FocusHandle, Focusable, Hsla, MouseButton, MouseDownEvent, Point, Stateful, Subscription,
-    TextStyleRefinement, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
-    uniform_list,
+    FocusHandle, Focusable, Hsla, MouseDownEvent, Point, Subscription, TextStyleRefinement,
+    UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::debugger::{
@@ -18,7 +17,7 @@ use project::debugger::{
     session::{Session, SessionEvent, Watcher},
 };
 use std::{collections::HashMap, ops::Range, sync::Arc};
-use ui::{ContextMenu, ListItem, ScrollableHandle, Scrollbar, ScrollbarState, Tooltip, prelude::*};
+use ui::{ContextMenu, ListItem, ScrollableHandle, Tooltip, WithScrollbar, prelude::*};
 use util::{debug_panic, maybe};
 
 actions!(
@@ -189,7 +188,6 @@ pub struct VariableList {
     entry_states: HashMap<EntryPath, EntryState>,
     selected_stack_frame_id: Option<StackFrameId>,
     list_handle: UniformListScrollHandle,
-    scrollbar_state: ScrollbarState,
     session: Entity<Session>,
     selection: Option<EntryPath>,
     open_context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
@@ -235,7 +233,6 @@ impl VariableList {
         let list_state = UniformListScrollHandle::default();
 
         Self {
-            scrollbar_state: ScrollbarState::new(list_state.clone()),
             list_handle: list_state,
             session,
             focus_handle,
@@ -272,7 +269,7 @@ impl VariableList {
         let mut entries = vec![];
 
         let scopes: Vec<_> = self.session.update(cx, |session, cx| {
-            session.scopes(stack_frame_id, cx).iter().cloned().collect()
+            session.scopes(stack_frame_id, cx).to_vec()
         });
 
         let mut contains_local_scope = false;
@@ -291,7 +288,7 @@ impl VariableList {
                 }
 
                 self.session.update(cx, |session, cx| {
-                    session.variables(scope.variables_reference, cx).len() > 0
+                    !session.variables(scope.variables_reference, cx).is_empty()
                 })
             })
             .map(|scope| {
@@ -313,7 +310,7 @@ impl VariableList {
                         watcher.variables_reference,
                         watcher.variables_reference,
                         EntryPath::for_watcher(watcher.expression.clone()),
-                        DapEntry::Watcher(watcher.clone()),
+                        DapEntry::Watcher(watcher),
                     )
                 })
                 .collect::<Vec<_>>(),
@@ -947,7 +944,7 @@ impl VariableList {
     #[track_caller]
     #[cfg(test)]
     pub(crate) fn assert_visual_entries(&self, expected: Vec<&str>) {
-        const INDENT: &'static str = "    ";
+        const INDENT: &str = "    ";
 
         let entries = &self.entries;
         let mut visual_entries = Vec::with_capacity(entries.len());
@@ -997,7 +994,7 @@ impl VariableList {
                 DapEntry::Watcher { .. } => continue,
                 DapEntry::Variable(dap) => scopes[idx].1.push(dap.clone()),
                 DapEntry::Scope(scope) => {
-                    if scopes.len() > 0 {
+                    if !scopes.is_empty() {
                         idx += 1;
                     }
 
@@ -1107,7 +1104,7 @@ impl VariableList {
                                     let variable_value = value.clone();
                                     this.on_click(cx.listener(
                                         move |this, click: &ClickEvent, window, cx| {
-                                            if click.down.click_count < 2 {
+                                            if click.click_count() < 2 {
                                                 return;
                                             }
                                             let editor = Self::create_variable_editor(
@@ -1289,7 +1286,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &entry,
+                            entry,
                             &variable_color,
                             watcher.value.to_string(),
                             cx,
@@ -1301,8 +1298,6 @@ impl VariableList {
                         IconName::Close,
                     )
                     .on_click({
-                        let weak = weak.clone();
-                        let path = path.clone();
                         move |_, window, cx| {
                             weak.update(cx, |variable_list, cx| {
                                 variable_list.selection = Some(path.clone());
@@ -1470,7 +1465,6 @@ impl VariableList {
                     }))
                 })
                 .on_secondary_mouse_down(cx.listener({
-                    let path = path.clone();
                     let entry = variable.clone();
                     move |this, event: &MouseDownEvent, window, cx| {
                         this.selection = Some(path.clone());
@@ -1494,7 +1488,7 @@ impl VariableList {
                             }),
                         )
                         .child(self.render_variable_value(
-                            &variable,
+                            variable,
                             &variable_color,
                             dap.value.clone(),
                             cx,
@@ -1502,39 +1496,6 @@ impl VariableList {
                 ),
             )
             .into_any()
-    }
-
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("variable-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
     }
 }
 
@@ -1545,7 +1506,7 @@ impl Focusable for VariableList {
 }
 
 impl Render for VariableList {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .track_focus(&self.focus_handle)
             .key_context("VariableList")
@@ -1590,7 +1551,7 @@ impl Render for VariableList {
                 )
                 .with_priority(1)
             }))
-            .child(self.render_vertical_scrollbar(cx))
+            .vertical_scrollbar_for(self.list_handle.clone(), window, cx)
     }
 }
 

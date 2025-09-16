@@ -162,6 +162,22 @@ impl BufferDiffSnapshot {
         }
     }
 
+    fn unchanged(
+        buffer: &text::BufferSnapshot,
+        base_text: language::BufferSnapshot,
+    ) -> BufferDiffSnapshot {
+        debug_assert_eq!(buffer.text(), base_text.text());
+        BufferDiffSnapshot {
+            inner: BufferDiffInner {
+                base_text,
+                hunks: SumTree::new(buffer),
+                pending_hunks: SumTree::new(buffer),
+                base_text_exists: false,
+            },
+            secondary_diff: None,
+        }
+    }
+
     fn new_with_base_text(
         buffer: text::BufferSnapshot,
         base_text: Option<Arc<String>>,
@@ -175,12 +191,8 @@ impl BufferDiffSnapshot {
         if let Some(text) = &base_text {
             let base_text_rope = Rope::from(text.as_str());
             base_text_pair = Some((text.clone(), base_text_rope.clone()));
-            let snapshot = language::Buffer::build_snapshot(
-                base_text_rope,
-                language.clone(),
-                language_registry.clone(),
-                cx,
-            );
+            let snapshot =
+                language::Buffer::build_snapshot(base_text_rope, language, language_registry, cx);
             base_text_snapshot = cx.background_spawn(snapshot);
             base_text_exists = true;
         } else {
@@ -217,7 +229,10 @@ impl BufferDiffSnapshot {
         cx: &App,
     ) -> impl Future<Output = Self> + use<> {
         let base_text_exists = base_text.is_some();
-        let base_text_pair = base_text.map(|text| (text, base_text_snapshot.as_rope().clone()));
+        let base_text_pair = base_text.map(|text| {
+            debug_assert_eq!(&*text, &base_text_snapshot.text());
+            (text, base_text_snapshot.as_rope().clone())
+        });
         cx.background_executor()
             .spawn_labeled(*CALCULATE_DIFF_TASK, async move {
                 Self {
@@ -343,8 +358,7 @@ impl BufferDiffInner {
             ..
         } in hunks.iter().cloned()
         {
-            let preceding_pending_hunks =
-                old_pending_hunks.slice(&buffer_range.start, Bias::Left, buffer);
+            let preceding_pending_hunks = old_pending_hunks.slice(&buffer_range.start, Bias::Left);
             pending_hunks.append(preceding_pending_hunks, buffer);
 
             // Skip all overlapping or adjacent old pending hunks
@@ -355,7 +369,7 @@ impl BufferDiffInner {
                     .cmp(&buffer_range.end, buffer)
                     .is_le()
             }) {
-                old_pending_hunks.next(buffer);
+                old_pending_hunks.next();
             }
 
             if (stage && secondary_status == DiffHunkSecondaryStatus::NoSecondaryHunk)
@@ -379,10 +393,10 @@ impl BufferDiffInner {
             );
         }
         // append the remainder
-        pending_hunks.append(old_pending_hunks.suffix(buffer), buffer);
+        pending_hunks.append(old_pending_hunks.suffix(), buffer);
 
         let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
-        unstaged_hunk_cursor.next(buffer);
+        unstaged_hunk_cursor.next();
 
         // then, iterate over all pending hunks (both new ones and the existing ones) and compute the edits
         let mut prev_unstaged_hunk_buffer_end = 0;
@@ -397,8 +411,7 @@ impl BufferDiffInner {
         }) = pending_hunks_iter.next()
         {
             // Advance unstaged_hunk_cursor to skip unstaged hunks before current hunk
-            let skipped_unstaged =
-                unstaged_hunk_cursor.slice(&buffer_range.start, Bias::Left, buffer);
+            let skipped_unstaged = unstaged_hunk_cursor.slice(&buffer_range.start, Bias::Left);
 
             if let Some(unstaged_hunk) = skipped_unstaged.last() {
                 prev_unstaged_hunk_base_text_end = unstaged_hunk.diff_base_byte_range.end;
@@ -425,7 +438,7 @@ impl BufferDiffInner {
                         buffer_offset_range.end =
                             buffer_offset_range.end.max(unstaged_hunk_offset_range.end);
 
-                        unstaged_hunk_cursor.next(buffer);
+                        unstaged_hunk_cursor.next();
                         continue;
                     }
                 }
@@ -514,7 +527,7 @@ impl BufferDiffInner {
             });
 
         let anchor_iter = iter::from_fn(move || {
-            cursor.next(buffer);
+            cursor.next();
             cursor.item()
         })
         .flat_map(move |hunk| {
@@ -531,12 +544,12 @@ impl BufferDiffInner {
         });
 
         let mut pending_hunks_cursor = self.pending_hunks.cursor::<DiffHunkSummary>(buffer);
-        pending_hunks_cursor.next(buffer);
+        pending_hunks_cursor.next();
 
         let mut secondary_cursor = None;
         if let Some(secondary) = secondary.as_ref() {
             let mut cursor = secondary.hunks.cursor::<DiffHunkSummary>(buffer);
-            cursor.next(buffer);
+            cursor.next();
             secondary_cursor = Some(cursor);
         }
 
@@ -564,7 +577,7 @@ impl BufferDiffInner {
                     .cmp(&pending_hunks_cursor.start().buffer_range.start, buffer)
                     .is_gt()
                 {
-                    pending_hunks_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
+                    pending_hunks_cursor.seek_forward(&start_anchor, Bias::Left);
                 }
 
                 if let Some(pending_hunk) = pending_hunks_cursor.item() {
@@ -574,14 +587,14 @@ impl BufferDiffInner {
                         pending_range.end.column = 0;
                     }
 
-                    if pending_range == (start_point..end_point) {
-                        if !buffer.has_edits_since_in_range(
+                    if pending_range == (start_point..end_point)
+                        && !buffer.has_edits_since_in_range(
                             &pending_hunk.buffer_version,
                             start_anchor..end_anchor,
-                        ) {
-                            has_pending = true;
-                            secondary_status = pending_hunk.new_status;
-                        }
+                        )
+                    {
+                        has_pending = true;
+                        secondary_status = pending_hunk.new_status;
                     }
                 }
 
@@ -590,7 +603,7 @@ impl BufferDiffInner {
                         .cmp(&secondary_cursor.start().buffer_range.start, buffer)
                         .is_gt()
                     {
-                        secondary_cursor.seek_forward(&start_anchor, Bias::Left, buffer);
+                        secondary_cursor.seek_forward(&start_anchor, Bias::Left);
                     }
 
                     if let Some(secondary_hunk) = secondary_cursor.item() {
@@ -635,7 +648,7 @@ impl BufferDiffInner {
             });
 
         iter::from_fn(move || {
-            cursor.prev(buffer);
+            cursor.prev();
 
             let hunk = cursor.item()?;
             let range = hunk.buffer_range.to_point(buffer);
@@ -653,8 +666,8 @@ impl BufferDiffInner {
     fn compare(&self, old: &Self, new_snapshot: &text::BufferSnapshot) -> Option<Range<Anchor>> {
         let mut new_cursor = self.hunks.cursor::<()>(new_snapshot);
         let mut old_cursor = old.hunks.cursor::<()>(new_snapshot);
-        old_cursor.next(new_snapshot);
-        new_cursor.next(new_snapshot);
+        old_cursor.next();
+        new_cursor.next();
         let mut start = None;
         let mut end = None;
 
@@ -669,7 +682,7 @@ impl BufferDiffInner {
                         Ordering::Less => {
                             start.get_or_insert(new_hunk.buffer_range.start);
                             end.replace(new_hunk.buffer_range.end);
-                            new_cursor.next(new_snapshot);
+                            new_cursor.next();
                         }
                         Ordering::Equal => {
                             if new_hunk != old_hunk {
@@ -686,25 +699,25 @@ impl BufferDiffInner {
                                 }
                             }
 
-                            new_cursor.next(new_snapshot);
-                            old_cursor.next(new_snapshot);
+                            new_cursor.next();
+                            old_cursor.next();
                         }
                         Ordering::Greater => {
                             start.get_or_insert(old_hunk.buffer_range.start);
                             end.replace(old_hunk.buffer_range.end);
-                            old_cursor.next(new_snapshot);
+                            old_cursor.next();
                         }
                     }
                 }
                 (Some(new_hunk), None) => {
                     start.get_or_insert(new_hunk.buffer_range.start);
                     end.replace(new_hunk.buffer_range.end);
-                    new_cursor.next(new_snapshot);
+                    new_cursor.next();
                 }
                 (None, Some(old_hunk)) => {
                     start.get_or_insert(old_hunk.buffer_range.start);
                     end.replace(old_hunk.buffer_range.end);
-                    old_cursor.next(new_snapshot);
+                    old_cursor.next();
                 }
                 (None, None) => break,
             }
@@ -879,6 +892,18 @@ impl BufferDiff {
         }
     }
 
+    pub fn new_unchanged(
+        buffer: &text::BufferSnapshot,
+        base_text: language::BufferSnapshot,
+    ) -> Self {
+        debug_assert_eq!(buffer.text(), base_text.text());
+        BufferDiff {
+            buffer_id: buffer.remote_id(),
+            inner: BufferDiffSnapshot::unchanged(buffer, base_text).inner,
+            secondary_diff: None,
+        }
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_with_base_text(
         base_text: &str,
@@ -930,7 +955,7 @@ impl BufferDiff {
         let new_index_text = self.inner.stage_or_unstage_hunks_impl(
             &self.secondary_diff.as_ref()?.read(cx).inner,
             stage,
-            &hunks,
+            hunks,
             buffer,
             file_exists,
         );
@@ -954,12 +979,12 @@ impl BufferDiff {
         cx: &App,
     ) -> Option<Range<Anchor>> {
         let start = self
-            .hunks_intersecting_range(range.clone(), &buffer, cx)
+            .hunks_intersecting_range(range.clone(), buffer, cx)
             .next()?
             .buffer_range
             .start;
         let end = self
-            .hunks_intersecting_range_rev(range.clone(), &buffer)
+            .hunks_intersecting_range_rev(range, buffer)
             .next()?
             .buffer_range
             .end;
@@ -1033,21 +1058,20 @@ impl BufferDiff {
                         && state.base_text.syntax_update_count()
                             == new_state.base_text.syntax_update_count() =>
                 {
-                    (false, new_state.compare(&state, buffer))
+                    (false, new_state.compare(state, buffer))
                 }
                 _ => (true, Some(text::Anchor::MIN..text::Anchor::MAX)),
             };
 
-        if let Some(secondary_changed_range) = secondary_diff_change {
-            if let Some(secondary_hunk_range) =
-                self.range_to_hunk_range(secondary_changed_range, &buffer, cx)
-            {
-                if let Some(range) = &mut changed_range {
-                    range.start = secondary_hunk_range.start.min(&range.start, &buffer);
-                    range.end = secondary_hunk_range.end.max(&range.end, &buffer);
-                } else {
-                    changed_range = Some(secondary_hunk_range);
-                }
+        if let Some(secondary_changed_range) = secondary_diff_change
+            && let Some(secondary_hunk_range) =
+                self.range_to_hunk_range(secondary_changed_range, buffer, cx)
+        {
+            if let Some(range) = &mut changed_range {
+                range.start = secondary_hunk_range.start.min(&range.start, buffer);
+                range.end = secondary_hunk_range.end.max(&range.end, buffer);
+            } else {
+                changed_range = Some(secondary_hunk_range);
             }
         }
 
@@ -1059,8 +1083,8 @@ impl BufferDiff {
             if let Some((first, last)) = state.pending_hunks.first().zip(state.pending_hunks.last())
             {
                 if let Some(range) = &mut changed_range {
-                    range.start = range.start.min(&first.buffer_range.start, &buffer);
-                    range.end = range.end.max(&last.buffer_range.end, &buffer);
+                    range.start = range.start.min(&first.buffer_range.start, buffer);
+                    range.end = range.end.max(&last.buffer_range.end, buffer);
                 } else {
                     changed_range = Some(first.buffer_range.start..last.buffer_range.end);
                 }
@@ -1444,7 +1468,7 @@ mod tests {
         .unindent();
 
         let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
-        let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text.clone(), cx);
+        let unstaged_diff = BufferDiffSnapshot::new_sync(buffer.clone(), index_text, cx);
         let mut uncommitted_diff =
             BufferDiffSnapshot::new_sync(buffer.clone(), head_text.clone(), cx);
         uncommitted_diff.secondary_diff = Some(Box::new(unstaged_diff));
@@ -1799,7 +1823,7 @@ mod tests {
 
             uncommitted_diff.update(cx, |diff, cx| {
                 let hunks = diff
-                    .hunks_intersecting_range(hunk_range.clone(), &buffer, &cx)
+                    .hunks_intersecting_range(hunk_range.clone(), &buffer, cx)
                     .collect::<Vec<_>>();
                 for hunk in &hunks {
                     assert_ne!(
@@ -1814,7 +1838,7 @@ mod tests {
                     .to_string();
 
                 let hunks = diff
-                    .hunks_intersecting_range(hunk_range.clone(), &buffer, &cx)
+                    .hunks_intersecting_range(hunk_range.clone(), &buffer, cx)
                     .collect::<Vec<_>>();
                 for hunk in &hunks {
                     assert_eq!(
@@ -1872,7 +1896,7 @@ mod tests {
                 .to_string();
             assert_eq!(new_index_text, buffer_text);
 
-            let hunk = diff.hunks(&buffer, &cx).next().unwrap();
+            let hunk = diff.hunks(&buffer, cx).next().unwrap();
             assert_eq!(
                 hunk.secondary_status,
                 DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
@@ -1884,7 +1908,7 @@ mod tests {
                 .to_string();
             assert_eq!(index_text, head_text);
 
-            let hunk = diff.hunks(&buffer, &cx).next().unwrap();
+            let hunk = diff.hunks(&buffer, cx).next().unwrap();
             // optimistically unstaged (fine, could also be HasSecondaryHunk)
             assert_eq!(
                 hunk.secondary_status,
@@ -2020,10 +2044,10 @@ mod tests {
     #[gpui::test(iterations = 100)]
     async fn test_staging_and_unstaging_hunks(cx: &mut TestAppContext, mut rng: StdRng) {
         fn gen_line(rng: &mut StdRng) -> String {
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 "\n".to_owned()
             } else {
-                let c = rng.gen_range('A'..='Z');
+                let c = rng.random_range('A'..='Z');
                 format!("{c}{c}{c}\n")
             }
         }
@@ -2031,8 +2055,8 @@ mod tests {
         fn gen_working_copy(rng: &mut StdRng, head: &str) -> String {
             let mut old_lines = {
                 let mut old_lines = Vec::new();
-                let mut old_lines_iter = head.lines();
-                while let Some(line) = old_lines_iter.next() {
+                let old_lines_iter = head.lines();
+                for line in old_lines_iter {
                     assert!(!line.ends_with("\n"));
                     old_lines.push(line.to_owned());
                 }
@@ -2042,7 +2066,7 @@ mod tests {
                 old_lines.into_iter()
             };
             let mut result = String::new();
-            let unchanged_count = rng.gen_range(0..=old_lines.len());
+            let unchanged_count = rng.random_range(0..=old_lines.len());
             result +=
                 &old_lines
                     .by_ref()
@@ -2052,14 +2076,14 @@ mod tests {
                         s
                     });
             while old_lines.len() > 0 {
-                let deleted_count = rng.gen_range(0..=old_lines.len());
+                let deleted_count = rng.random_range(0..=old_lines.len());
                 let _advance = old_lines
                     .by_ref()
                     .take(deleted_count)
                     .map(|line| line.len() + 1)
                     .sum::<usize>();
                 let minimum_added = if deleted_count == 0 { 1 } else { 0 };
-                let added_count = rng.gen_range(minimum_added..=5);
+                let added_count = rng.random_range(minimum_added..=5);
                 let addition = (0..added_count).map(|_| gen_line(rng)).collect::<String>();
                 result += &addition;
 
@@ -2068,7 +2092,8 @@ mod tests {
                     if blank_lines == old_lines.len() {
                         break;
                     };
-                    let unchanged_count = rng.gen_range((blank_lines + 1).max(1)..=old_lines.len());
+                    let unchanged_count =
+                        rng.random_range((blank_lines + 1).max(1)..=old_lines.len());
                     result += &old_lines.by_ref().take(unchanged_count).fold(
                         String::new(),
                         |mut s, line| {
@@ -2125,7 +2150,7 @@ mod tests {
             )
         });
         let working_copy = working_copy.read_with(cx, |working_copy, _| working_copy.snapshot());
-        let mut index_text = if rng.r#gen() {
+        let mut index_text = if rng.random() {
             Rope::from(head_text.as_str())
         } else {
             working_copy.as_rope().clone()
@@ -2136,12 +2161,12 @@ mod tests {
             diff.hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &working_copy, cx)
                 .collect::<Vec<_>>()
         });
-        if hunks.len() == 0 {
+        if hunks.is_empty() {
             return;
         }
 
         for _ in 0..operations {
-            let i = rng.gen_range(0..hunks.len());
+            let i = rng.random_range(0..hunks.len());
             let hunk = &mut hunks[i];
             let hunk_to_change = hunk.clone();
             let stage = match hunk.secondary_status {

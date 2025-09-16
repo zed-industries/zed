@@ -54,8 +54,42 @@ To use the Deno Language Server with TypeScript and TSX files, you will likely w
 See [Configuring supported languages](../configuring-languages.md) in the Zed documentation for more information.
 
 <!--
-TBD: Deno Typescript REPL instructions [docs/repl#typescript-deno](../repl.md#typescript-deno)
+TBD: Deno TypeScript REPL instructions [docs/repl#typescript-deno](../repl.md#typescript-deno)
 -->
+
+## DAP support
+
+To debug deno programs, add this to `.zed/debug.json`
+
+```json
+[
+  {
+    "adapter": "JavaScript",
+    "label": "Deno",
+    "request": "launch",
+    "type": "pwa-node",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "program": "$ZED_FILE",
+    "runtimeExecutable": "deno",
+    "runtimeArgs": ["run", "--allow-all", "--inspect-wait"],
+    "attachSimplePort": 9229
+  }
+]
+```
+
+## Runnable support
+
+To run deno tasks like tests from the ui, add this to `.zed/tasks.json`
+
+```json
+[
+  {
+    "label": "deno test",
+    "command": "deno test -A --filter '/^$ZED_CUSTOM_DENO_TEST_NAME$/' $ZED_FILE",
+    "tags": ["js-test"]
+  }
+]
+```
 
 ## See also:
 
