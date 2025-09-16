@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use candle_core::{Device, IndexOp, Tensor};
 use candle_onnx::onnx::ModelProto;
-use prost::Message;
+use candle_onnx::prost::Message;
 use realfft::RealFftPlanner;
 use rustfft::num_complex::Complex;
 

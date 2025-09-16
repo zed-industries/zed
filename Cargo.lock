@@ -2690,7 +2690,7 @@ dependencies = [
 [[package]]
 name = "candle-core"
 version = "0.9.1"
-source = "git+https://github.com/dvdsk/candle?branch=add-operators#eb7ce1cb6a201400c9c5117bf1d041454768bb03"
+source = "git+https://github.com/dvdsk/candle?branch=9.1-patched#da481404dbcfff6ae4c2a5e0a64f73f6fb69bde9"
 dependencies = [
  "byteorder",
  "float8",
@@ -2712,7 +2712,7 @@ dependencies = [
 [[package]]
 name = "candle-nn"
 version = "0.9.1"
-source = "git+https://github.com/dvdsk/candle?branch=add-operators#eb7ce1cb6a201400c9c5117bf1d041454768bb03"
+source = "git+https://github.com/dvdsk/candle?branch=9.1-patched#da481404dbcfff6ae4c2a5e0a64f73f6fb69bde9"
 dependencies = [
  "candle-core",
  "half",
@@ -2727,12 +2727,13 @@ dependencies = [
 [[package]]
 name = "candle-onnx"
 version = "0.9.1"
-source = "git+https://github.com/dvdsk/candle?branch=add-operators#eb7ce1cb6a201400c9c5117bf1d041454768bb03"
+source = "git+https://github.com/dvdsk/candle?branch=9.1-patched#da481404dbcfff6ae4c2a5e0a64f73f6fb69bde9"
 dependencies = [
  "candle-core",
  "candle-nn",
  "prost 0.12.6",
  "prost-build 0.12.6",
+ "protobuf-src",
 ]
 
 [[package]]
@@ -4691,7 +4692,6 @@ version = "0.1.0"
 dependencies = [
  "candle-core",
  "candle-onnx",
- "prost 0.12.6",
  "realfft",
  "rodio",
  "rustfft",
@@ -13299,6 +13299,15 @@ dependencies = [
  "once_cell",
  "protobuf-support",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "protobuf-src"
+version = "2.1.1+27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6217c3504da19b85a3a4b2e9a5183d635822d83507ba0986624b5c05b83bfc40"
+dependencies = [
+ "cmake",
 ]
 
 [[package]]

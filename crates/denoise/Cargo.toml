@@ -9,15 +9,12 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [dependencies]
-candle-core = { version = "0.9.1", git ="https://github.com/dvdsk/candle", branch = "add-operators" }
-candle-onnx = { version = "0.9.1", git ="https://github.com/dvdsk/candle", branch = "add-operators" }
+candle-core = { version = "0.9.1", git ="https://github.com/dvdsk/candle", branch = "9.1-patched" }
+candle-onnx = { version = "0.9.1", git ="https://github.com/dvdsk/candle", branch = "9.1-patched" }
 
 rodio = { workspace = true, features = ["wav_output"] }
 
 rustfft = { version = "6.2.0", features = ["avx"] }
 realfft = "3.4.0"
 thiserror.workspace = true
-# Must match version used by candle-onnx
-# todo dvdsk make pr @candle to re-export prost
-prost = { version = "0.12.6", default-features = false, features = ["std"] }
 workspace-hack.workspace = true
