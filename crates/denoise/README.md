@@ -1,4 +1,4 @@
-Real time streaming audio denoising using a Dual-Signal Transformation LSTM Network for Real-Time Noise Suppression.
+Real time streaming audio denoising using a [Dual-Signal Transformation LSTM Network for Real-Time Noise Suppression](https://arxiv.org/abs/2005.07551).
 
 Trivial to build as it uses the native rust Candle crate for inference. Easy to integrate into any Rodio pipeline.
 

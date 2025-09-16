@@ -4692,6 +4692,7 @@ version = "0.1.0"
 dependencies = [
  "candle-core",
  "candle-onnx",
+ "log",
  "realfft",
  "rodio",
  "rustfft",

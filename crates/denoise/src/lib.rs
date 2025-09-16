@@ -1,11 +1,7 @@
 mod engine;
 
 use core::fmt;
-use std::{
-    collections::VecDeque,
-    sync::mpsc::{self},
-    thread,
-};
+use std::{collections::VecDeque, sync::mpsc, thread};
 
 pub use engine::Engine;
 use rodio::{ChannelCount, Sample, SampleRate, Source, nz};
@@ -164,28 +160,47 @@ impl<S: Source> Iterator for Denoiser<S> {
         // This is a separate function to prevent it from being inlined
         // as this code only runs once every 128 samples
         self.prepare_next_ready()
+            .inspect_err(|_| {
+                log::error!("Denoise engine crashed");
+            })
+            .ok()
+            .flatten()
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("Could not send or receive from denoise thread. It must have crashed")]
+struct DenoiseEngineCrashed;
+
 impl<S: Source> Denoiser<S> {
     #[cold]
-    fn prepare_next_ready(&mut self) -> Option<f32> {
+    fn prepare_next_ready(&mut self) -> Result<Option<f32>, DenoiseEngineCrashed> {
         self.state = match self.state {
             IterState::Startup { enabled } => {
                 // guaranteed to be coming from silence
                 for _ in 0..3 {
-                    let sub_block = read_sub_block(&mut self.inner)?;
+                    let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                        return Ok(None);
+                    };
                     self.queued.push(sub_block);
-                    self.input_tx.send(sub_block).unwrap();
+                    self.input_tx
+                        .send(sub_block)
+                        .map_err(|_| DenoiseEngineCrashed)?;
                 }
-                let sub_block = read_sub_block(&mut self.inner)?;
+                let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    return Ok(None);
+                };
                 self.queued.push(sub_block);
-                self.input_tx.send(sub_block).unwrap();
+                self.input_tx
+                    .send(sub_block)
+                    .map_err(|_| DenoiseEngineCrashed)?;
                 // throw out old blocks that are denoised silence
                 let _ = self.denoised_rx.iter().take(3).count();
-                self.ready = self.denoised_rx.recv().unwrap();
+                self.ready = self.denoised_rx.recv().map_err(|_| DenoiseEngineCrashed)?;
 
-                let sub_block = read_sub_block(&mut self.inner)?;
+                let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    return Ok(None);
+                };
                 self.queued.push(sub_block);
                 self.feed(sub_block);
 
@@ -196,17 +211,23 @@ impl<S: Source> Denoiser<S> {
                 }
             }
             IterState::Enabled => {
-                self.ready = self.denoised_rx.recv().unwrap();
-                let sub_block = read_sub_block(&mut self.inner)?;
+                self.ready = self.denoised_rx.recv().map_err(|_| DenoiseEngineCrashed)?;
+                let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    return Ok(None);
+                };
                 self.queued.push(sub_block);
-                self.input_tx.send(sub_block).unwrap();
+                self.input_tx
+                    .send(sub_block)
+                    .map_err(|_| DenoiseEngineCrashed)?;
                 IterState::Enabled
             }
             IterState::Disabled => {
                 // Need to maintain the same 512 samples delay such that
                 // we can re-enable at any point.
                 self.ready = self.queued.pop();
-                let sub_block = read_sub_block(&mut self.inner)?;
+                let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    return Ok(None);
+                };
                 self.queued.push(sub_block);
                 IterState::Disabled
             }
@@ -214,9 +235,13 @@ impl<S: Source> Denoiser<S> {
                 fed_to_denoiser: mut sub_blocks_fed,
             } => {
                 self.ready = self.queued.pop();
-                let sub_block = read_sub_block(&mut self.inner)?;
+                let Some(sub_block) = read_sub_block(&mut self.inner) else {
+                    return Ok(None);
+                };
                 self.queued.push(sub_block);
-                self.input_tx.send(sub_block).unwrap();
+                self.input_tx
+                    .send(sub_block)
+                    .map_err(|_| DenoiseEngineCrashed)?;
                 sub_blocks_fed += 1;
                 if sub_blocks_fed > 4 {
                     // throw out partially denoised blocks,
@@ -232,7 +257,7 @@ impl<S: Source> Denoiser<S> {
         };
 
         self.next = 0;
-        Some(self.ready[0])
+        Ok(Some(self.ready[0]))
     }
 }
 

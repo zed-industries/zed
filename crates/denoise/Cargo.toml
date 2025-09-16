@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 candle-core = { version = "0.9.1", git ="https://github.com/zed-industries/candle", branch = "9.1-patched" }
 candle-onnx = { version = "0.9.1", git ="https://github.com/zed-industries/candle", branch = "9.1-patched" }
+log.workspace = true
 
 rodio = { workspace = true, features = ["wav_output"] }
 
