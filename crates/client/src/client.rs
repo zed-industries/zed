@@ -103,14 +103,22 @@ pub struct ClientSettings {
 
 impl Settings for ClientSettings {
     fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        if let Some(server_url) = &*ZED_SERVER_URL {
+            return Self {
+                server_url: server_url.clone(),
+            };
+        }
         Self {
             server_url: content.server_url.clone().unwrap(),
         }
     }
 
     fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
+        if ZED_SERVER_URL.is_some() {
+            return;
+        }
         if let Some(server_url) = content.server_url.clone() {
-            self.server_url = server_url
+            self.server_url = server_url;
         }
     }
 
@@ -528,7 +536,7 @@ impl settings::Settings for TelemetrySettings {
         }
     }
 
-    fn refine(&mut self, content: &SettingsContent, cx: &mut App) {
+    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
         let Some(telemetry) = &content.telemetry else {
             return;
         };
