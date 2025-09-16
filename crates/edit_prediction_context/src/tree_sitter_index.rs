@@ -7,6 +7,7 @@ use project::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use slotmap::SlotMap;
 use std::borrow::Cow;
+use std::num::NonZeroU64;
 use std::ops::Range;
 use std::sync::Arc;
 use text::{Anchor, OffsetRangeExt as _};
@@ -42,6 +43,8 @@ use crate::outline::{Identifier, OutlineDeclaration, declarations_in_buffer};
 // * Use something similar to slotmap without key versions.
 //
 // * Concurrent slotmap
+//
+// * Use queue for parsing
 
 slotmap::new_key_type! {
     struct DeclarationId;
@@ -127,7 +130,6 @@ impl TreeSitterIndex {
             .map(|w| w.read(cx).snapshot())
             .collect::<Vec<_>>()
         {
-            // todo! bg?
             for entry in worktree.files(false, 0) {
                 this.update_file(
                     entry.id,
@@ -288,26 +290,40 @@ impl TreeSitterIndex {
         }
     }
 
-    fn update_buffer(&mut self, buffer_entity: Entity<Buffer>, cx: &Context<Self>) {
-        let buffer = buffer_entity.read(cx);
+    fn update_buffer(&mut self, buffer: Entity<Buffer>, cx: &Context<Self>) {
+        let mut parse_status = buffer.read(cx).parse_status();
+        let snapshot_task = cx.spawn({
+            let weak_buffer = buffer.downgrade();
+            async move |_, cx| {
+                while *parse_status.borrow() != language::ParseStatus::Idle {
+                    parse_status.changed().await?;
+                }
+                weak_buffer.read_with(cx, |buffer, _cx| buffer.snapshot())
+            }
+        });
 
-        let snapshot = buffer.snapshot();
         let parse_task = cx.background_spawn(async move {
-            declarations_in_buffer(&snapshot)
-                .into_iter()
-                .map(|item| {
-                    (
-                        item.parent_index,
-                        BufferDeclaration::from_outline(item, &snapshot),
-                    )
-                })
-                .collect::<Vec<_>>()
+            let snapshot = snapshot_task.await?;
+
+            anyhow::Ok(
+                declarations_in_buffer(&snapshot)
+                    .into_iter()
+                    .map(|item| {
+                        (
+                            item.parent_index,
+                            BufferDeclaration::from_outline(item, &snapshot),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
         });
 
         let task = cx.spawn({
-            let weak_buffer = buffer_entity.downgrade();
+            let weak_buffer = buffer.downgrade();
             async move |this, cx| {
-                let declarations = parse_task.await;
+                let Ok(declarations) = parse_task.await else {
+                    return;
+                };
 
                 this.update(cx, |this, _cx| {
                     let buffer_state = this
@@ -354,7 +370,7 @@ impl TreeSitterIndex {
         });
 
         self.buffers
-            .entry(buffer_entity.downgrade())
+            .entry(buffer.downgrade())
             .or_insert_with(Default::default)
             .task = Some(task);
     }
@@ -388,6 +404,12 @@ impl TreeSitterIndex {
                     buffer.set_language(language, cx);
                     buffer
                 })?;
+
+                let mut parse_status = buffer.read_with(cx, |buffer, _| buffer.parse_status())?;
+                while *parse_status.borrow() != language::ParseStatus::Idle {
+                    parse_status.changed().await?;
+                }
+
                 buffer.read_with(cx, |buffer, _cx| buffer.snapshot())
             })
         });
