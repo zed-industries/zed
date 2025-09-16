@@ -314,6 +314,7 @@ image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
+file_size = { path = "crates/file_size" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }

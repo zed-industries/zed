@@ -5818,6 +5818,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "file_size"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "language",
+ "project",
+ "schemars",
+ "serde",
+ "serde_json",
+ "settings",
+ "text",
+ "theme",
+ "ui",
+ "util",
+ "workspace",
+ "workspace-hack",
+]
+
+[[package]]
 name = "filedescriptor"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20571,6 +20592,7 @@ dependencies = [
  "feature_flags",
  "feedback",
  "file_finder",
+ "file_size",
  "fs",
  "futures 0.3.31",
  "git",

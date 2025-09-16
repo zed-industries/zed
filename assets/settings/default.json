@@ -1289,6 +1289,13 @@
     // Whether to show the cursor position button in the status bar.
     "cursor_position_button": true
   },
+  // File size indicator settings.
+  "file_size": {
+    // Whether to show the file size indicator in the status bar.
+    "enabled": true,
+    // File size format: "decimal" (KB, MB, GB) or "iec" (KiB, MiB, GiB).
+    "format": "decimal"
+  },
   // Settings specific to the terminal
   "terminal": {
     // What shell to use when opening a terminal. May take 3 values:
