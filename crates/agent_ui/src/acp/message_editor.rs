@@ -1122,13 +1122,7 @@ impl MessageEditor {
             return;
         };
         self.editor.update(cx, |message_editor, cx| {
-            message_editor.edit(
-                [(
-                    cursor_anchor..cursor_anchor,
-                    completion.new_text,
-                )],
-                cx,
-            );
+            message_editor.edit([(cursor_anchor..cursor_anchor, completion.new_text)], cx);
         });
         if let Some(confirm) = completion.confirm {
             confirm(CompletionIntent::Complete, window, cx);
