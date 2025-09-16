@@ -42,7 +42,7 @@ impl Drop for FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> anyhow::Result<()> {
-        let root_path = SanitizedPath::from(path);
+        let root_path = SanitizedPath::new_arc(path);
 
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
@@ -70,7 +70,7 @@ impl Watcher for FsWatcher {
                             .paths
                             .iter()
                             .filter_map(|event_path| {
-                                let event_path = SanitizedPath::from(event_path);
+                                let event_path = SanitizedPath::new(event_path);
                                 event_path.starts_with(&root_path).then(|| PathEvent {
                                     path: event_path.as_path().to_path_buf(),
                                     kind,
@@ -114,19 +114,11 @@ impl Watcher for FsWatcher {
 pub struct WatcherRegistrationId(u32);
 
 struct WatcherRegistrationState {
-    callback: Box<dyn Fn(&notify::Event) + Send + Sync>,
+    callback: Arc<dyn Fn(&notify::Event) + Send + Sync>,
     path: Arc<std::path::Path>,
 }
 
 struct WatcherState {
-    // two mutexes because calling watcher.add triggers an watcher.event, which needs watchers.
-    #[cfg(target_os = "linux")]
-    watcher: notify::INotifyWatcher,
-    #[cfg(target_os = "freebsd")]
-    watcher: notify::KqueueWatcher,
-    #[cfg(target_os = "windows")]
-    watcher: notify::ReadDirectoryChangesWatcher,
-
     watchers: HashMap<WatcherRegistrationId, WatcherRegistrationState>,
     path_registrations: HashMap<Arc<std::path::Path>, u32>,
     last_registration: WatcherRegistrationId,
@@ -134,6 +126,15 @@ struct WatcherState {
 
 pub struct GlobalWatcher {
     state: Mutex<WatcherState>,
+
+    // DANGER: never keep the state lock while holding the watcher lock
+    // two mutexes because calling watcher.add triggers an watcher.event, which needs watchers.
+    #[cfg(target_os = "linux")]
+    watcher: Mutex<notify::INotifyWatcher>,
+    #[cfg(target_os = "freebsd")]
+    watcher: Mutex<notify::KqueueWatcher>,
+    #[cfg(target_os = "windows")]
+    watcher: Mutex<notify::ReadDirectoryChangesWatcher>,
 }
 
 impl GlobalWatcher {
@@ -145,19 +146,20 @@ impl GlobalWatcher {
         cb: impl Fn(&notify::Event) + Send + Sync + 'static,
     ) -> anyhow::Result<WatcherRegistrationId> {
         use notify::Watcher;
-        let mut state = self.state.lock();
 
-        state.watcher.watch(&path, mode)?;
+        self.watcher.lock().watch(&path, mode)?;
+
+        let mut state = self.state.lock();
 
         let id = state.last_registration;
         state.last_registration = WatcherRegistrationId(id.0 + 1);
 
         let registration_state = WatcherRegistrationState {
-            callback: Box::new(cb),
+            callback: Arc::new(cb),
             path: path.clone(),
         };
         state.watchers.insert(id, registration_state);
-        *state.path_registrations.entry(path.clone()).or_insert(0) += 1;
+        *state.path_registrations.entry(path).or_insert(0) += 1;
 
         Ok(id)
     }
@@ -174,8 +176,13 @@ impl GlobalWatcher {
         };
         *count -= 1;
         if *count == 0 {
-            state.watcher.unwatch(&registration_state.path).log_err();
             state.path_registrations.remove(&registration_state.path);
+
+            drop(state);
+            self.watcher
+                .lock()
+                .unwatch(&registration_state.path)
+                .log_err();
         }
     }
 }
@@ -193,9 +200,15 @@ fn handle_event(event: Result<notify::Event, notify::Error>) {
         return;
     };
     global::<()>(move |watcher| {
-        let state = watcher.state.lock();
-        for registration in state.watchers.values() {
-            let callback = &registration.callback;
+        let callbacks = {
+            let state = watcher.state.lock();
+            state
+                .watchers
+                .values()
+                .map(|r| r.callback.clone())
+                .collect::<Vec<_>>()
+        };
+        for callback in callbacks {
             callback(&event);
         }
     })
@@ -206,11 +219,11 @@ pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
     let result = FS_WATCHER_INSTANCE.get_or_init(|| {
         notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
             state: Mutex::new(WatcherState {
-                watcher: file_watcher,
                 watchers: Default::default(),
                 path_registrations: Default::default(),
                 last_registration: Default::default(),
             }),
+            watcher: Mutex::new(file_watcher),
         })
     });
     match result {

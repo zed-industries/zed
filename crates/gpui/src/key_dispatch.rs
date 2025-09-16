@@ -1,54 +1,54 @@
-/// KeyDispatch is where GPUI deals with binding actions to key events.
-///
-/// The key pieces to making a key binding work are to define an action,
-/// implement a method that takes that action as a type parameter,
-/// and then to register the action during render on a focused node
-/// with a keymap context:
-///
-/// ```rust
-/// actions!(editor,[Undo, Redo]);
-///
-/// impl Editor {
-///   fn undo(&mut self, _: &Undo, _window: &mut Window, _cx: &mut Context<Self>) { ... }
-///   fn redo(&mut self, _: &Redo, _window: &mut Window, _cx: &mut Context<Self>) { ... }
-/// }
-///
-/// impl Render for Editor {
-///   fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-///     div()
-///       .track_focus(&self.focus_handle(cx))
-///       .key_context("Editor")
-///       .on_action(cx.listener(Editor::undo))
-///       .on_action(cx.listener(Editor::redo))
-///     ...
-///    }
-/// }
-///```
-///
-/// The keybindings themselves are managed independently by calling cx.bind_keys().
-/// (Though mostly when developing Zed itself, you just need to add a new line to
-///  assets/keymaps/default-{platform}.json).
-///
-/// ```rust
-/// cx.bind_keys([
-///   KeyBinding::new("cmd-z", Editor::undo, Some("Editor")),
-///   KeyBinding::new("cmd-shift-z", Editor::redo, Some("Editor")),
-/// ])
-/// ```
-///
-/// With all of this in place, GPUI will ensure that if you have an Editor that contains
-/// the focus, hitting cmd-z will Undo.
-///
-/// In real apps, it is a little more complicated than this, because typically you have
-/// several nested views that each register keyboard handlers. In this case action matching
-/// bubbles up from the bottom. For example in Zed, the Workspace is the top-level view, which contains Pane's, which contain Editors. If there are conflicting keybindings defined
-/// then the Editor's bindings take precedence over the Pane's bindings, which take precedence over the Workspace.
-///
-/// In GPUI, keybindings are not limited to just single keystrokes, you can define
-/// sequences by separating the keys with a space:
-///
-///  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
-///
+//! KeyDispatch is where GPUI deals with binding actions to key events.
+//!
+//! The key pieces to making a key binding work are to define an action,
+//! implement a method that takes that action as a type parameter,
+//! and then to register the action during render on a focused node
+//! with a keymap context:
+//!
+//! ```ignore
+//! actions!(editor,[Undo, Redo]);
+//!
+//! impl Editor {
+//!   fn undo(&mut self, _: &Undo, _window: &mut Window, _cx: &mut Context<Self>) { ... }
+//!   fn redo(&mut self, _: &Redo, _window: &mut Window, _cx: &mut Context<Self>) { ... }
+//! }
+//!
+//! impl Render for Editor {
+//!   fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+//!     div()
+//!       .track_focus(&self.focus_handle(cx))
+//!       .key_context("Editor")
+//!       .on_action(cx.listener(Editor::undo))
+//!       .on_action(cx.listener(Editor::redo))
+//!     ...
+//!    }
+//! }
+//!```
+//!
+//! The keybindings themselves are managed independently by calling cx.bind_keys().
+//! (Though mostly when developing Zed itself, you just need to add a new line to
+//!  assets/keymaps/default-{platform}.json).
+//!
+//! ```ignore
+//! cx.bind_keys([
+//!   KeyBinding::new("cmd-z", Editor::undo, Some("Editor")),
+//!   KeyBinding::new("cmd-shift-z", Editor::redo, Some("Editor")),
+//! ])
+//! ```
+//!
+//! With all of this in place, GPUI will ensure that if you have an Editor that contains
+//! the focus, hitting cmd-z will Undo.
+//!
+//! In real apps, it is a little more complicated than this, because typically you have
+//! several nested views that each register keyboard handlers. In this case action matching
+//! bubbles up from the bottom. For example in Zed, the Workspace is the top-level view, which contains Pane's, which contain Editors. If there are conflicting keybindings defined
+//! then the Editor's bindings take precedence over the Pane's bindings, which take precedence over the Workspace.
+//!
+//! In GPUI, keybindings are not limited to just single keystrokes, you can define
+//! sequences by separating the keys with a space:
+//!
+//!  KeyBinding::new("cmd-k left", pane::SplitLeft, Some("Pane"))
+
 use crate::{
     Action, ActionRegistry, App, DispatchPhase, EntityId, FocusId, KeyBinding, KeyContext, Keymap,
     Keystroke, ModifiersChangedEvent, Window,
@@ -408,7 +408,7 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                Self::binding_matches_predicate_and_not_shadowed(&keymap, &binding, context_stack)
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, binding, context_stack)
             })
             .cloned()
             .collect()
@@ -426,7 +426,7 @@ impl DispatchTree {
             .bindings_for_action(action)
             .rev()
             .find(|binding| {
-                Self::binding_matches_predicate_and_not_shadowed(&keymap, &binding, context_stack)
+                Self::binding_matches_predicate_and_not_shadowed(&keymap, binding, context_stack)
             })
             .cloned()
     }
@@ -458,7 +458,7 @@ impl DispatchTree {
             .keymap
             .borrow()
             .bindings_for_input(input, &context_stack);
-        return (bindings, partial, context_stack);
+        (bindings, partial, context_stack)
     }
 
     /// dispatch_key processes the keystroke
@@ -552,7 +552,7 @@ impl DispatchTree {
         let mut current_node_id = Some(target);
         while let Some(node_id) = current_node_id {
             dispatch_path.push(node_id);
-            current_node_id = self.nodes[node_id.0].parent;
+            current_node_id = self.nodes.get(node_id.0).and_then(|node| node.parent);
         }
         dispatch_path.reverse(); // Reverse the path so it goes from the root to the focused node.
         dispatch_path
@@ -611,9 +611,17 @@ impl DispatchTree {
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use crate::{
+        self as gpui, Element, ElementId, GlobalElementId, InspectorElementId, LayoutId, Style,
+    };
+    use core::panic;
+    use std::{cell::RefCell, ops::Range, rc::Rc};
 
-    use crate::{Action, ActionRegistry, DispatchTree, KeyBinding, KeyContext, Keymap};
+    use crate::{
+        Action, ActionRegistry, App, Bounds, Context, DispatchTree, FocusHandle, InputHandler,
+        IntoElement, KeyBinding, KeyContext, Keymap, Pixels, Point, Render, TestAppContext,
+        UTF16Selection, Window,
+    };
 
     #[derive(PartialEq, Eq)]
     struct TestAction;
@@ -631,10 +639,7 @@ mod tests {
         }
 
         fn partial_eq(&self, action: &dyn Action) -> bool {
-            action
-                .as_any()
-                .downcast_ref::<Self>()
-                .map_or(false, |a| self == a)
+            action.as_any().downcast_ref::<Self>() == Some(self)
         }
 
         fn boxed_clone(&self) -> std::boxed::Box<dyn Action> {
@@ -673,5 +678,166 @@ mod tests {
         let keybinding = tree.bindings_for_action(&TestAction, &contexts);
 
         assert!(keybinding[0].action.partial_eq(&TestAction))
+    }
+
+    #[crate::test]
+    fn test_input_handler_pending(cx: &mut TestAppContext) {
+        #[derive(Clone)]
+        struct CustomElement {
+            focus_handle: FocusHandle,
+            text: Rc<RefCell<String>>,
+        }
+        impl CustomElement {
+            fn new(cx: &mut Context<Self>) -> Self {
+                Self {
+                    focus_handle: cx.focus_handle(),
+                    text: Rc::default(),
+                }
+            }
+        }
+        impl Element for CustomElement {
+            type RequestLayoutState = ();
+
+            type PrepaintState = ();
+
+            fn id(&self) -> Option<ElementId> {
+                Some("custom".into())
+            }
+            fn source_location(&self) -> Option<&'static panic::Location<'static>> {
+                None
+            }
+            fn request_layout(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> (LayoutId, Self::RequestLayoutState) {
+                (window.request_layout(Style::default(), [], cx), ())
+            }
+            fn prepaint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                window: &mut Window,
+                cx: &mut App,
+            ) -> Self::PrepaintState {
+                window.set_focus_handle(&self.focus_handle, cx);
+            }
+            fn paint(
+                &mut self,
+                _: Option<&GlobalElementId>,
+                _: Option<&InspectorElementId>,
+                _: Bounds<Pixels>,
+                _: &mut Self::RequestLayoutState,
+                _: &mut Self::PrepaintState,
+                window: &mut Window,
+                cx: &mut App,
+            ) {
+                let mut key_context = KeyContext::default();
+                key_context.add("Terminal");
+                window.set_key_context(key_context);
+                window.handle_input(&self.focus_handle, self.clone(), cx);
+                window.on_action(std::any::TypeId::of::<TestAction>(), |_, _, _, _| {});
+            }
+        }
+        impl IntoElement for CustomElement {
+            type Element = Self;
+
+            fn into_element(self) -> Self::Element {
+                self
+            }
+        }
+
+        impl InputHandler for CustomElement {
+            fn selected_text_range(
+                &mut self,
+                _: bool,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<UTF16Selection> {
+                None
+            }
+
+            fn marked_text_range(&mut self, _: &mut Window, _: &mut App) -> Option<Range<usize>> {
+                None
+            }
+
+            fn text_for_range(
+                &mut self,
+                _: Range<usize>,
+                _: &mut Option<Range<usize>>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<String> {
+                None
+            }
+
+            fn replace_text_in_range(
+                &mut self,
+                replacement_range: Option<Range<usize>>,
+                text: &str,
+                _: &mut Window,
+                _: &mut App,
+            ) {
+                if replacement_range.is_some() {
+                    unimplemented!()
+                }
+                self.text.borrow_mut().push_str(text)
+            }
+
+            fn replace_and_mark_text_in_range(
+                &mut self,
+                replacement_range: Option<Range<usize>>,
+                new_text: &str,
+                _: Option<Range<usize>>,
+                _: &mut Window,
+                _: &mut App,
+            ) {
+                if replacement_range.is_some() {
+                    unimplemented!()
+                }
+                self.text.borrow_mut().push_str(new_text)
+            }
+
+            fn unmark_text(&mut self, _: &mut Window, _: &mut App) {}
+
+            fn bounds_for_range(
+                &mut self,
+                _: Range<usize>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<Bounds<Pixels>> {
+                None
+            }
+
+            fn character_index_for_point(
+                &mut self,
+                _: Point<Pixels>,
+                _: &mut Window,
+                _: &mut App,
+            ) -> Option<usize> {
+                None
+            }
+        }
+        impl Render for CustomElement {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                self.clone()
+            }
+        }
+
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("ctrl-b", TestAction, Some("Terminal"))]);
+            cx.bind_keys([KeyBinding::new("ctrl-b h", TestAction, Some("Terminal"))]);
+        });
+        let (test, cx) = cx.add_window_view(|_, cx| CustomElement::new(cx));
+        cx.update(|window, cx| {
+            window.focus(&test.read(cx).focus_handle);
+            window.activate_window();
+        });
+        cx.simulate_keystrokes("ctrl-b [");
+        test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
     }
 }

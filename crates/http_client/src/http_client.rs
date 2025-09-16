@@ -318,6 +318,12 @@ pub fn read_proxy_from_env() -> Option<Url> {
         .and_then(|env| env.parse().ok())
 }
 
+pub fn read_no_proxy_from_env() -> Option<String> {
+    const ENV_VARS: &[&str] = &["NO_PROXY", "no_proxy"];
+
+    ENV_VARS.iter().find_map(|var| std::env::var(var).ok())
+}
+
 pub struct BlockedHttpClient;
 
 impl BlockedHttpClient {
@@ -435,8 +441,7 @@ impl HttpClient for FakeHttpClient {
         &self,
         req: Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
-        let future = (self.handler.lock().as_ref().unwrap())(req);
-        future
+        ((self.handler.lock().as_ref().unwrap())(req)) as _
     }
 
     fn user_agent(&self) -> Option<&HeaderValue> {

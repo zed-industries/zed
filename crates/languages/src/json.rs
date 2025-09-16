@@ -7,19 +7,18 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageToolchainStore, LocalFile as _, LspAdapter,
-    LspAdapterDelegate,
+    ContextProvider, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile as _,
+    LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
-use node_runtime::NodeRuntime;
-use project::{Fs, lsp_store::language_server_settings};
+use node_runtime::{NodeRuntime, VersionStrategy};
+use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
 use smol::{
     fs::{self},
     io::BufReader,
 };
 use std::{
-    any::Any,
     env::consts,
     ffi::OsString,
     path::{Path, PathBuf},
@@ -39,7 +38,6 @@ pub(crate) struct JsonTaskProvider;
 impl ContextProvider for JsonTaskProvider {
     fn associated_tasks(
         &self,
-        _: Arc<dyn Fs>,
         file: Option<Arc<dyn language::File>>,
         cx: &App,
     ) -> gpui::Task<Option<TaskTemplates>> {
@@ -139,16 +137,24 @@ impl JsonLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for JsonLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        LanguageServerName("json-language-server".into())
+impl LspInstaller for JsonLspAdapter {
+    type BinaryVersion = String;
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<String> {
+        self.node
+            .npm_package_latest_version(Self::PACKAGE_NAME)
+            .await
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate
@@ -163,29 +169,22 @@ impl LspAdapter for JsonLspAdapter {
         })
     }
 
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        Ok(Box::new(
-            self.node
-                .npm_package_latest_version(Self::PACKAGE_NAME)
-                .await?,
-        ) as Box<_>)
-    }
-
     async fn check_if_version_installed(
         &self,
-        version: &(dyn 'static + Send + Any),
+        version: &String,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let version = version.downcast_ref::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
 
         let should_install_language_server = self
             .node
-            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .should_install_npm_package(
+                Self::PACKAGE_NAME,
+                &server_path,
+                container_dir,
+                VersionStrategy::Latest(version),
+            )
             .await;
 
         if should_install_language_server {
@@ -201,11 +200,10 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: String,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
 
         self.node
@@ -229,10 +227,16 @@ impl LspAdapter for JsonLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &self.node).await
     }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for JsonLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName("json-language-server".into())
+    }
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -242,9 +246,8 @@ impl LspAdapter for JsonLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         cx: &mut AsyncApp,
     ) -> Result<Value> {
         let mut config = cx.update(|cx| {
@@ -327,16 +330,15 @@ impl NodeVersionAdapter {
         LanguageServerName::new_static("package-version-server");
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for NodeVersionAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
-    }
+impl LspInstaller for NodeVersionAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
 
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
         let release = latest_github_release(
             "zed-industries/package-version-server",
             true,
@@ -361,17 +363,17 @@ impl LspAdapter for NodeVersionAdapter {
             .iter()
             .find(|asset| asset.name == asset_name)
             .with_context(|| format!("no asset found matching `{asset_name:?}`"))?;
-        Ok(Box::new(GitHubLspBinaryVersion {
+        Ok(GitHubLspBinaryVersion {
             name: release.tag_name,
             url: asset.browser_download_url.clone(),
             digest: asset.digest.clone(),
-        }))
+        })
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
+        _: Option<Toolchain>,
         _: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -384,11 +386,11 @@ impl LspAdapter for NodeVersionAdapter {
 
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let version = latest_version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let version = &latest_version;
         let destination_path = container_dir.join(format!(
             "{}-{}{}",
             Self::SERVER_NAME,
@@ -435,6 +437,13 @@ impl LspAdapter for NodeVersionAdapter {
         _delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_version_server_binary(container_dir).await
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for NodeVersionAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
     }
 }
 

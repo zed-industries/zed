@@ -157,7 +157,7 @@ impl SlashCommand for TabSlashCommand {
             for (full_path, buffer, _) in tab_items_search.await? {
                 append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
             }
-            Ok(output.to_event_stream())
+            Ok(output.into_event_stream())
         })
     }
 }
@@ -195,16 +195,14 @@ fn tab_items_for_queries(
                     }
 
                     for editor in workspace.items_of_type::<Editor>(cx) {
-                        if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
-                            if let Some(timestamp) =
+                        if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton()
+                            && let Some(timestamp) =
                                 timestamps_by_entity_id.get(&editor.entity_id())
-                            {
-                                if visited_buffers.insert(buffer.read(cx).remote_id()) {
-                                    let snapshot = buffer.read(cx).snapshot();
-                                    let full_path = snapshot.resolve_file_path(cx, true);
-                                    open_buffers.push((full_path, snapshot, *timestamp));
-                                }
-                            }
+                            && visited_buffers.insert(buffer.read(cx).remote_id())
+                        {
+                            let snapshot = buffer.read(cx).snapshot();
+                            let full_path = snapshot.resolve_file_path(cx, true);
+                            open_buffers.push((full_path, snapshot, *timestamp));
                         }
                     }
 

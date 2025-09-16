@@ -8,7 +8,7 @@ use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
 use project::lsp_store::clangd_ext;
 use serde_json::json;
 use smol::fs;
-use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
+use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 use crate::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -19,32 +19,18 @@ impl CLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("clangd");
 }
 
-#[async_trait(?Send)]
-impl super::LspAdapter for CLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME.clone()
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        _: Arc<dyn LanguageToolchainStore>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-        Some(LanguageServerBinary {
-            path,
-            arguments: Vec::new(),
-            env: None,
-        })
-    }
+impl LspInstaller for CLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
 
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
+        pre_release: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
         let release =
-            latest_github_release("clangd/clangd", true, false, delegate.http_client()).await?;
+            latest_github_release("clangd/clangd", true, pre_release, delegate.http_client())
+                .await?;
         let os_suffix = match consts::OS {
             "macos" => "mac",
             "linux" => "linux",
@@ -62,17 +48,34 @@ impl super::LspAdapter for CLspAdapter {
             url: asset.browser_download_url.clone(),
             digest: asset.digest.clone(),
         };
-        Ok(Box::new(version) as Box<_>)
+        Ok(version)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: Vec::new(),
+            env: None,
+        })
     }
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let GitHubLspBinaryVersion { name, url, digest } =
-            &*version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        let GitHubLspBinaryVersion {
+            name,
+            url,
+            digest: expected_digest,
+        } = version;
         let version_dir = container_dir.join(format!("clangd_{name}"));
         let binary_path = version_dir.join("bin/clangd");
 
@@ -99,7 +102,9 @@ impl super::LspAdapter for CLspAdapter {
                         log::warn!("Unable to run {binary_path:?} asset, redownloading: {err}",)
                     })
             };
-            if let (Some(actual_digest), Some(expected_digest)) = (&metadata.digest, digest) {
+            if let (Some(actual_digest), Some(expected_digest)) =
+                (&metadata.digest, &expected_digest)
+            {
                 if actual_digest == expected_digest {
                     if validity_check().await.is_ok() {
                         return Ok(binary);
@@ -115,8 +120,8 @@ impl super::LspAdapter for CLspAdapter {
         }
         download_server_binary(
             delegate,
-            url,
-            digest.as_deref(),
+            &url,
+            expected_digest.as_deref(),
             &container_dir,
             AssetKind::Zip,
         )
@@ -125,7 +130,7 @@ impl super::LspAdapter for CLspAdapter {
         GithubBinaryMetadata::write_to_file(
             &GithubBinaryMetadata {
                 metadata_version: 1,
-                digest: digest.clone(),
+                digest: expected_digest,
             },
             &metadata_path,
         )
@@ -140,6 +145,13 @@ impl super::LspAdapter for CLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
+    }
+}
+
+#[async_trait(?Send)]
+impl super::LspAdapter for CLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
     }
 
     async fn label_for_completion(
@@ -248,8 +260,7 @@ impl super::LspAdapter for CLspAdapter {
                     .grammar()
                     .and_then(|g| g.highlight_id_for_name(highlight_name?))
                 {
-                    let mut label =
-                        CodeLabel::plain(label.to_string(), completion.filter_text.as_deref());
+                    let mut label = CodeLabel::plain(label, completion.filter_text.as_deref());
                     label.runs.push((
                         0..label.text.rfind('(').unwrap_or(label.text.len()),
                         highlight_id,
@@ -259,10 +270,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             _ => {}
         }
-        Some(CodeLabel::plain(
-            label.to_string(),
-            completion.filter_text.as_deref(),
-        ))
+        Some(CodeLabel::plain(label, completion.filter_text.as_deref()))
     }
 
     async fn label_for_symbol(

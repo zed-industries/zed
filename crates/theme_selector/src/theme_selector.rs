@@ -345,7 +345,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let theme_match = &self.matches[ix];
+        let theme_match = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)
@@ -376,7 +376,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
                     Button::new("docs", "View Theme Docs")
                         .icon(IconName::ArrowUpRight)
                         .icon_position(IconPosition::End)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .icon_color(Color::Muted)
                         .on_click(cx.listener(|_, _, _, cx| {
                             cx.open_url("https://zed.dev/docs/themes");

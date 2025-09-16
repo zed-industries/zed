@@ -130,17 +130,17 @@ impl UserBackfiller {
             .and_then(|value| value.parse::<i64>().ok())
             .and_then(|value| DateTime::from_timestamp(value, 0));
 
-        if rate_limit_remaining == Some(0) {
-            if let Some(reset_at) = rate_limit_reset {
-                let now = Utc::now();
-                if reset_at > now {
-                    let sleep_duration = reset_at - now;
-                    log::info!(
-                        "rate limit reached. Sleeping for {} seconds",
-                        sleep_duration.num_seconds()
-                    );
-                    self.executor.sleep(sleep_duration.to_std().unwrap()).await;
-                }
+        if rate_limit_remaining == Some(0)
+            && let Some(reset_at) = rate_limit_reset
+        {
+            let now = Utc::now();
+            if reset_at > now {
+                let sleep_duration = reset_at - now;
+                log::info!(
+                    "rate limit reached. Sleeping for {} seconds",
+                    sleep_duration.num_seconds()
+                );
+                self.executor.sleep(sleep_duration.to_std().unwrap()).await;
             }
         }
 
@@ -157,5 +157,9 @@ impl UserBackfiller {
 struct GithubUser {
     id: i32,
     created_at: DateTime<Utc>,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     name: Option<String>,
 }

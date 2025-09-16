@@ -6,7 +6,7 @@ pub struct YoungAccountBanner;
 
 impl RenderOnce for YoungAccountBanner {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        const YOUNG_ACCOUNT_DISCLAIMER: &str = "To prevent abuse of our service, we cannot offer plans to GitHub accounts created fewer than 30 days ago. To request an exception, reach out to billing-support@zed.dev.";
+        const YOUNG_ACCOUNT_DISCLAIMER: &str = "To prevent abuse of our service, GitHub accounts created fewer than 30 days ago are not eligible for free plan usage or Pro plan free trial. To request an exception, reach out to billing-support@zed.dev.";
 
         let label = div()
             .w_full()
@@ -17,6 +17,6 @@ impl RenderOnce for YoungAccountBanner {
         div()
             .max_w_full()
             .my_1()
-            .child(Banner::new().severity(ui::Severity::Warning).child(label))
+            .child(Banner::new().severity(Severity::Warning).child(label))
     }
 }

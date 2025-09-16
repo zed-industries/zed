@@ -1,4 +1,5 @@
 (comment) @annotation
+
 (type_declaration
     "type" @context
     [
@@ -42,13 +43,13 @@
     (var_declaration
         "var" @context
         [
+            ; The declaration may define multiple variables, and so @item is on
+            ; the identifier so they get distinct ranges.
             (var_spec
-                name: (identifier) @name) @item
+                name: (identifier) @name @item)
             (var_spec_list
-                "("
                 (var_spec
-                    name: (identifier) @name) @item
-                ")"
+                    name: (identifier) @name @item)
             )
         ]
      )
@@ -60,5 +61,7 @@
       "(" @context
       ")" @context)) @item
 
+; Fields declarations may define multiple fields, and so @item is on the
+; declarator so they each get distinct ranges.
 (field_declaration
-    name: (_) @name) @item
+    name: (_) @name @item)

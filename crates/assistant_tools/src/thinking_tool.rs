@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use crate::schema::json_schema_for;
+use action_log::ActionLog;
 use anyhow::{Result, anyhow};
-use assistant_tool::{ActionLog, Tool, ToolResult};
+use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
 use project::Project;

@@ -1,5 +1,5 @@
 use gpui::Hsla;
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
 use crate::{
     AccentContent, amber, blue, cyan, gold, grass, indigo, iris, jade, lime, orange, pink, purple,

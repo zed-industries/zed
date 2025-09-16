@@ -44,6 +44,7 @@ rpc = { workspace = true, features = ["gpui"] }
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_urlencoded.workspace = true
 settings.workspace = true
 sha2.workspace = true
 smol.workspace = true
@@ -74,7 +75,7 @@ util = { workspace = true, features = ["test-support"] }
 windows.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
-cocoa.workspace = true
+objc2-foundation.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tokio-native-tls = "0.3"

@@ -4,9 +4,9 @@ use alacritty_terminal::vte::ansi::{
 use collections::HashMap;
 use gpui::{AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
-use settings::SettingsSources;
+use settings::{SettingsKey, SettingsSources, SettingsUi};
 use std::path::PathBuf;
 use task::Shell;
 use theme::FontFamilyName;
@@ -135,7 +135,8 @@ pub enum ActivateScript {
     Pyenv,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "terminal")]
 pub struct TerminalSettingsContent {
     /// What shell to use when opening a terminal.
     ///
@@ -253,8 +254,6 @@ pub struct TerminalSettingsContent {
 }
 
 impl settings::Settings for TerminalSettings {
-    const KEY: Option<&'static str> = Some("terminal");
-
     type FileContent = TerminalSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
@@ -325,10 +324,10 @@ impl settings::Settings for TerminalSettings {
             .and_then(|v| v.as_object())
         {
             for (k, v) in env {
-                if v.is_null() {
-                    if let Some(zed_env) = current.env.as_mut() {
-                        zed_env.remove(k);
-                    }
+                if v.is_null()
+                    && let Some(zed_env) = current.env.as_mut()
+                {
+                    zed_env.remove(k);
                 }
                 let Some(v) = v.as_str() else { continue };
                 if let Some(zed_env) = current.env.as_mut() {

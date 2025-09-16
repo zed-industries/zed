@@ -24,8 +24,6 @@ test-support = ["fs/test-support"]
 [dependencies]
 anyhow.workspace = true
 askpass.workspace = true
-backtrace = "0.3"
-chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 dap_adapters.workspace = true
@@ -61,10 +59,10 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 sysinfo.workspace = true
-telemetry_events.workspace = true
 util.workspace = true
 watch.workspace = true
 worktree.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(not(windows))'.dependencies]
 crashes.workspace = true
@@ -74,6 +72,7 @@ libc.workspace = true
 minidumper.workspace = true
 
 [dev-dependencies]
+action_log.workspace = true
 assistant_tool.workspace = true
 assistant_tools.workspace = true
 client = { workspace = true, features = ["test-support"] }

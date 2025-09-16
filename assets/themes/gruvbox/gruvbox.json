@@ -94,7 +94,7 @@
         "terminal.ansi.bright_cyan": "#45603eff",
         "terminal.ansi.dim_cyan": "#c7dfbdff",
         "terminal.ansi.white": "#fbf1c7ff",
-        "terminal.ansi.bright_white": "#fbf1c7ff",
+        "terminal.ansi.bright_white": "#ffffffff",
         "terminal.ansi.dim_white": "#b0a189ff",
         "link_text.hover": "#83a598ff",
         "version_control.added": "#b7bb26ff",
@@ -325,6 +325,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "punctuation.markup": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "punctuation.special": {
             "color": "#e5d5adff",
             "font_style": null,
@@ -494,7 +499,7 @@
         "terminal.ansi.bright_cyan": "#45603eff",
         "terminal.ansi.dim_cyan": "#c7dfbdff",
         "terminal.ansi.white": "#fbf1c7ff",
-        "terminal.ansi.bright_white": "#fbf1c7ff",
+        "terminal.ansi.bright_white": "#ffffffff",
         "terminal.ansi.dim_white": "#b0a189ff",
         "link_text.hover": "#83a598ff",
         "version_control.added": "#b7bb26ff",
@@ -725,6 +730,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "punctuation.markup": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "punctuation.special": {
             "color": "#e5d5adff",
             "font_style": null,
@@ -894,7 +904,7 @@
         "terminal.ansi.bright_cyan": "#45603eff",
         "terminal.ansi.dim_cyan": "#c7dfbdff",
         "terminal.ansi.white": "#fbf1c7ff",
-        "terminal.ansi.bright_white": "#fbf1c7ff",
+        "terminal.ansi.bright_white": "#ffffffff",
         "terminal.ansi.dim_white": "#b0a189ff",
         "link_text.hover": "#83a598ff",
         "version_control.added": "#b7bb26ff",
@@ -1125,6 +1135,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "punctuation.markup": {
+            "color": "#83a598ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "punctuation.special": {
             "color": "#e5d5adff",
             "font_style": null,
@@ -1294,7 +1309,7 @@
         "terminal.ansi.bright_cyan": "#9fbca8ff",
         "terminal.ansi.dim_cyan": "#253e2eff",
         "terminal.ansi.white": "#fbf1c7ff",
-        "terminal.ansi.bright_white": "#fbf1c7ff",
+        "terminal.ansi.bright_white": "#ffffffff",
         "terminal.ansi.dim_white": "#b0a189ff",
         "link_text.hover": "#0b6678ff",
         "version_control.added": "#797410ff",
@@ -1522,6 +1537,11 @@
           },
           "punctuation.list_marker": {
             "color": "#282828ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
@@ -1694,7 +1714,7 @@
         "terminal.ansi.bright_cyan": "#9fbca8ff",
         "terminal.ansi.dim_cyan": "#253e2eff",
         "terminal.ansi.white": "#f9f5d7ff",
-        "terminal.ansi.bright_white": "#f9f5d7ff",
+        "terminal.ansi.bright_white": "#ffffffff",
         "terminal.ansi.dim_white": "#b0a189ff",
         "link_text.hover": "#0b6678ff",
         "version_control.added": "#797410ff",
@@ -1922,6 +1942,11 @@
           },
           "punctuation.list_marker": {
             "color": "#282828ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },
@@ -2094,7 +2119,7 @@
         "terminal.ansi.bright_cyan": "#9fbca8ff",
         "terminal.ansi.dim_cyan": "#253e2eff",
         "terminal.ansi.white": "#f2e5bcff",
-        "terminal.ansi.bright_white": "#f2e5bcff",
+        "terminal.ansi.bright_white": "#ffffffff",
         "terminal.ansi.dim_white": "#b0a189ff",
         "link_text.hover": "#0b6678ff",
         "version_control.added": "#797410ff",
@@ -2322,6 +2347,11 @@
           },
           "punctuation.list_marker": {
             "color": "#282828ff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
+            "color": "#066578ff",
             "font_style": null,
             "font_weight": null
           },

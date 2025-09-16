@@ -37,6 +37,7 @@ use std::{
     sync::Arc,
 };
 use task::{DebugScenario, SpawnInTerminal, TaskTemplate, ZedDebugConfig};
+use util::paths::SanitizedPath;
 use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
@@ -532,7 +533,7 @@ fn wasm_engine(executor: &BackgroundExecutor) -> wasmtime::Engine {
                     // `Future::poll`.
                     const EPOCH_INTERVAL: Duration = Duration::from_millis(100);
                     let mut timer = Timer::interval(EPOCH_INTERVAL);
-                    while let Some(_) = timer.next().await {
+                    while (timer.next().await).is_some() {
                         // Exit the loop and thread once the engine is dropped.
                         let Some(engine) = engine_ref.upgrade() else {
                             break;
@@ -607,7 +608,6 @@ impl WasmHost {
 
             let component = Component::from_binary(&this.engine, &wasm_bytes)
                 .context("failed to compile wasm component")?;
-
             let mut store = wasmtime::Store::new(
                 &this.engine,
                 WasmState {
@@ -666,19 +666,19 @@ impl WasmHost {
 
         let file_perms = wasi::FilePerms::all();
         let dir_perms = wasi::DirPerms::all();
+        let path = SanitizedPath::new(&extension_work_dir).to_string();
+        #[cfg(target_os = "windows")]
+        let path = path.replace('\\', "/");
 
-        Ok(wasi::WasiCtxBuilder::new()
-            .inherit_stdio()
-            .preopened_dir(&extension_work_dir, ".", dir_perms, file_perms)?
-            .preopened_dir(
-                &extension_work_dir,
-                extension_work_dir.to_string_lossy(),
-                dir_perms,
-                file_perms,
-            )?
-            .env("PWD", extension_work_dir.to_string_lossy())
-            .env("RUST_BACKTRACE", "full")
-            .build())
+        let mut ctx = wasi::WasiCtxBuilder::new();
+        ctx.inherit_stdio()
+            .env("PWD", &path)
+            .env("RUST_BACKTRACE", "full");
+
+        ctx.preopened_dir(&path, ".", dir_perms, file_perms)?;
+        ctx.preopened_dir(&path, &path, dir_perms, file_perms)?;
+
+        Ok(ctx.build())
     }
 
     pub fn writeable_path_from_extension(&self, id: &Arc<str>, path: &Path) -> Result<PathBuf> {
@@ -701,16 +701,15 @@ pub fn parse_wasm_extension_version(
     for part in wasmparser::Parser::new(0).parse_all(wasm_bytes) {
         if let wasmparser::Payload::CustomSection(s) =
             part.context("error parsing wasm extension")?
+            && s.name() == "zed:api-version"
         {
-            if s.name() == "zed:api-version" {
-                version = parse_wasm_extension_version_custom_section(s.data());
-                if version.is_none() {
-                    bail!(
-                        "extension {} has invalid zed:api-version section: {:?}",
-                        extension_id,
-                        s.data()
-                    );
-                }
+            version = parse_wasm_extension_version_custom_section(s.data());
+            if version.is_none() {
+                bail!(
+                    "extension {} has invalid zed:api-version section: {:?}",
+                    extension_id,
+                    s.data()
+                );
             }
         }
     }

@@ -24,8 +24,8 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
-    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
+    IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
@@ -127,7 +127,7 @@ impl Render for EditPredictionButton {
                             }),
                     );
                 }
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 div().child(
                     PopoverMenu::new("copilot")
@@ -168,7 +168,7 @@ impl Render for EditPredictionButton {
                         let account_status = agent.account_status.clone();
                         match account_status {
                             AccountStatus::NeedsActivation { activate_url } => {
-                                SupermavenButtonStatus::NeedsActivation(activate_url.clone())
+                                SupermavenButtonStatus::NeedsActivation(activate_url)
                             }
                             AccountStatus::Unknown => SupermavenButtonStatus::Initializing,
                             AccountStatus::Ready => SupermavenButtonStatus::Ready,
@@ -182,10 +182,10 @@ impl Render for EditPredictionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let has_menu = status.has_menu();
-                let this = cx.entity().clone();
+                let this = cx.entity();
                 let fs = self.fs.clone();
 
-                return div().child(
+                div().child(
                     PopoverMenu::new("supermaven")
                         .menu(move |window, cx| match &status {
                             SupermavenButtonStatus::NeedsActivation(activate_url) => {
@@ -230,7 +230,7 @@ impl Render for EditPredictionButton {
                             },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
-                );
+                )
             }
 
             EditPredictionProvider::Zed => {
@@ -242,13 +242,9 @@ impl Render for EditPredictionButton {
                     IconName::ZedPredictDisabled
                 };
 
-                if zeta::should_show_upsell_modal(&self.user_store, cx) {
+                if zeta::should_show_upsell_modal() {
                     let tooltip_meta = if self.user_store.read(cx).current_user().is_some() {
-                        if self.user_store.read(cx).has_accepted_terms_of_service() {
-                            "Choose a Plan"
-                        } else {
-                            "Accept the Terms of Service"
-                        }
+                        "Choose a Plan"
                     } else {
                         "Sign In"
                     };
@@ -331,7 +327,7 @@ impl Render for EditPredictionButton {
                         })
                     });
 
-                let this = cx.entity().clone();
+                let this = cx.entity();
 
                 let mut popover_menu = PopoverMenu::new("zeta")
                     .menu(move |window, cx| {
@@ -343,7 +339,7 @@ impl Render for EditPredictionButton {
                 let is_refreshing = self
                     .edit_prediction_provider
                     .as_ref()
-                    .map_or(false, |provider| provider.is_refreshing(cx));
+                    .is_some_and(|provider| provider.is_refreshing(cx));
 
                 if is_refreshing {
                     popover_menu = popover_menu.trigger(
@@ -451,7 +447,7 @@ impl EditPredictionButton {
                     menu = menu.item(
                         entry
                             .disabled(true)
-                            .documentation_aside(DocumentationSide::Left, move |_cx| {
+                            .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_cx| {
                                 Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
                                     .into_any_element()
                             })
@@ -503,7 +499,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Eager")
                         .toggleable(IconPosition::Start, eager_mode)
-                        .documentation_aside(DocumentationSide::Left, move |_| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
                             Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
                         })
                         .handler({
@@ -516,7 +512,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
-                        .documentation_aside(DocumentationSide::Left, move |_| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
                             Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
                         })
                         .handler({
@@ -547,7 +543,7 @@ impl EditPredictionButton {
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .icon(icon_name)
                         .icon_color(icon_color)
-                        .documentation_aside(DocumentationSide::Left, move |cx| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
                                     "Project identified as open source, and you're sharing data.",
@@ -630,7 +626,7 @@ impl EditPredictionButton {
             ContextMenuEntry::new("Configure Excluded Files")
                 .icon(IconName::LockOutlined)
                 .icon_color(Color::Muted)
-                .documentation_aside(DocumentationSide::Left, |_| {
+                .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, |_| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })

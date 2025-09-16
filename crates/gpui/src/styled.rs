@@ -1,8 +1,8 @@
 use crate::{
     self as gpui, AbsoluteLength, AlignContent, AlignItems, BorderStyle, CursorStyle,
-    DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla,
-    JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement, TextAlign,
-    TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
+    DefiniteLength, Display, Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight,
+    GridPlacement, Hsla, JustifyContent, Length, SharedString, StrikethroughStyle, StyleRefinement,
+    TextAlign, TextOverflow, TextStyleRefinement, UnderlineStyle, WhiteSpace, px, relative, rems,
 };
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
@@ -43,6 +43,13 @@ pub trait Styled: Sized {
     /// [Docs](https://tailwindcss.com/docs/display)
     fn flex(mut self) -> Self {
         self.style().display = Some(Display::Flex);
+        self
+    }
+
+    /// Sets the display type of the element to `grid`.
+    /// [Docs](https://tailwindcss.com/docs/display)
+    fn grid(mut self) -> Self {
+        self.style().display = Some(Display::Grid);
         self
     }
 
@@ -637,6 +644,102 @@ pub trait Styled: Sized {
     /// Sets the opacity of this element and its children.
     fn opacity(mut self, opacity: f32) -> Self {
         self.style().opacity = Some(opacity);
+        self
+    }
+
+    /// Sets the grid columns of this element.
+    fn grid_cols(mut self, cols: u16) -> Self {
+        self.style().grid_cols = Some(cols);
+        self
+    }
+
+    /// Sets the grid rows of this element.
+    fn grid_rows(mut self, rows: u16) -> Self {
+        self.style().grid_rows = Some(rows);
+        self
+    }
+
+    /// Sets the column start of this element.
+    fn col_start(mut self, start: i16) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column.start = GridPlacement::Line(start);
+        self
+    }
+
+    /// Sets the column start of this element to auto.
+    fn col_start_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column.start = GridPlacement::Auto;
+        self
+    }
+
+    /// Sets the column end of this element.
+    fn col_end(mut self, end: i16) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column.end = GridPlacement::Line(end);
+        self
+    }
+
+    /// Sets the column end of this element to auto.
+    fn col_end_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column.end = GridPlacement::Auto;
+        self
+    }
+
+    /// Sets the column span of this element.
+    fn col_span(mut self, span: u16) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column = GridPlacement::Span(span)..GridPlacement::Span(span);
+        self
+    }
+
+    /// Sets the row span of this element.
+    fn col_span_full(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.column = GridPlacement::Line(1)..GridPlacement::Line(-1);
+        self
+    }
+
+    /// Sets the row start of this element.
+    fn row_start(mut self, start: i16) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row.start = GridPlacement::Line(start);
+        self
+    }
+
+    /// Sets the row start of this element to "auto"
+    fn row_start_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row.start = GridPlacement::Auto;
+        self
+    }
+
+    /// Sets the row end of this element.
+    fn row_end(mut self, end: i16) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row.end = GridPlacement::Line(end);
+        self
+    }
+
+    /// Sets the row end of this element to "auto"
+    fn row_end_auto(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row.end = GridPlacement::Auto;
+        self
+    }
+
+    /// Sets the row span of this element.
+    fn row_span(mut self, span: u16) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row = GridPlacement::Span(span)..GridPlacement::Span(span);
+        self
+    }
+
+    /// Sets the row span of this element.
+    fn row_span_full(mut self) -> Self {
+        let grid_location = self.style().grid_location_mut();
+        grid_location.row = GridPlacement::Line(1)..GridPlacement::Line(-1);
         self
     }
 

@@ -13,11 +13,8 @@ use anyhow::{Context as _, Result, anyhow};
 use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
 use dap::debugger_settings::DebugPanelDockPosition;
-use dap::{
-    ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, StoppedEvent, ThreadEvent,
-    client::SessionId, debugger_settings::DebuggerSettings,
-};
 use dap::{DapRegistry, StartDebuggingRequestArguments};
+use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::Editor;
 use gpui::{
     Action, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity, EntityId,
@@ -36,7 +33,7 @@ use settings::Settings;
 use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
-use ui::{ContextMenu, Divider, PopoverMenuHandle, Tooltip, prelude::*};
+use ui::{ContextMenu, Divider, PopoverMenuHandle, Tab, Tooltip, prelude::*};
 use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
 use workspace::item::SaveOptions;
@@ -45,23 +42,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::ToggleFocus;
-
-pub enum DebugPanelEvent {
-    Exited(SessionId),
-    Terminated(SessionId),
-    Stopped {
-        client_id: SessionId,
-        event: StoppedEvent,
-        go_to_stack_frame: bool,
-    },
-    Thread((SessionId, ThreadEvent)),
-    Continued((SessionId, ContinuedEvent)),
-    Output((SessionId, OutputEvent)),
-    Module((SessionId, ModuleEvent)),
-    LoadedSource((SessionId, LoadedSourceEvent)),
-    ClientShutdown(SessionId),
-    CapabilitiesChanged(SessionId),
-}
 
 pub struct DebugPanel {
     size: Pixels,
@@ -257,7 +237,7 @@ impl DebugPanel {
                                         .as_ref()
                                         .map(|entity| entity.downgrade()),
                                     task_context: task_context.clone(),
-                                    worktree_id: worktree_id,
+                                    worktree_id,
                                 });
                             };
                             running.resolve_scenario(
@@ -386,10 +366,10 @@ impl DebugPanel {
             return;
         };
 
-        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let dap_store_handle = self.project.read(cx).dap_store();
         let label = curr_session.read(cx).label();
         let quirks = curr_session.read(cx).quirks();
-        let adapter = curr_session.read(cx).adapter().clone();
+        let adapter = curr_session.read(cx).adapter();
         let binary = curr_session.read(cx).binary().cloned().unwrap();
         let task_context = curr_session.read(cx).task_context().clone();
 
@@ -447,9 +427,9 @@ impl DebugPanel {
             return;
         };
 
-        let dap_store_handle = self.project.read(cx).dap_store().clone();
+        let dap_store_handle = self.project.read(cx).dap_store();
         let label = self.label_for_child_session(&parent_session, request, cx);
-        let adapter = parent_session.read(cx).adapter().clone();
+        let adapter = parent_session.read(cx).adapter();
         let quirks = parent_session.read(cx).quirks();
         let Some(mut binary) = parent_session.read(cx).binary().cloned() else {
             log::error!("Attempted to start a child-session without a binary");
@@ -530,10 +510,9 @@ impl DebugPanel {
                     .active_session
                     .as_ref()
                     .map(|session| session.entity_id())
+                    && active_session_id == entity_id
                 {
-                    if active_session_id == entity_id {
-                        this.active_session = this.sessions_with_children.keys().next().cloned();
-                    }
+                    this.active_session = this.sessions_with_children.keys().next().cloned();
                 }
                 cx.notify()
             })
@@ -642,14 +621,16 @@ impl DebugPanel {
                     }
                 })
         };
+
         let documentation_button = || {
             IconButton::new("debug-open-documentation", IconName::CircleHelp)
                 .icon_size(IconSize::Small)
                 .on_click(move |_, _, cx| cx.open_url("https://zed.dev/docs/debugger"))
                 .tooltip(Tooltip::text("Open Documentation"))
         };
+
         let logs_button = || {
-            IconButton::new("debug-open-logs", IconName::ScrollText)
+            IconButton::new("debug-open-logs", IconName::Notepad)
                 .icon_size(IconSize::Small)
                 .on_click(move |_, window, cx| {
                     window.dispatch_action(debugger_tools::OpenDebugAdapterLogs.boxed_clone(), cx)
@@ -658,16 +639,18 @@ impl DebugPanel {
         };
 
         Some(
-            div.border_b_1()
-                .border_color(cx.theme().colors().border)
-                .p_1()
+            div.w_full()
+                .py_1()
+                .px_1p5()
                 .justify_between()
-                .w_full()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
                 .when(is_side, |this| this.gap_1())
                 .child(
                     h_flex()
+                        .justify_between()
                         .child(
-                            h_flex().gap_2().w_full().when_some(
+                            h_flex().gap_1().w_full().when_some(
                                 active_session
                                     .as_ref()
                                     .map(|session| session.read(cx).running_state()),
@@ -679,6 +662,7 @@ impl DebugPanel {
                                     let capabilities = running_state.read(cx).capabilities(cx);
                                     let supports_detach =
                                         running_state.read(cx).session().read(cx).is_attached();
+
                                     this.map(|this| {
                                         if thread_status == ThreadStatus::Running {
                                             this.child(
@@ -686,10 +670,9 @@ impl DebugPanel {
                                                     "debug-pause",
                                                     IconName::DebugPause,
                                                 )
-                                                .icon_size(IconSize::XSmall)
-                                                .shape(ui::IconButtonShape::Square)
+                                                .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _window, cx| {
                                                         this.pause_thread(cx);
                                                     },
@@ -698,7 +681,7 @@ impl DebugPanel {
                                                     let focus_handle = focus_handle.clone();
                                                     move |window, cx| {
                                                         Tooltip::for_action_in(
-                                                            "Pause program",
+                                                            "Pause Program",
                                                             &Pause,
                                                             &focus_handle,
                                                             window,
@@ -713,10 +696,9 @@ impl DebugPanel {
                                                     "debug-continue",
                                                     IconName::DebugContinue,
                                                 )
-                                                .icon_size(IconSize::XSmall)
-                                                .shape(ui::IconButtonShape::Square)
+                                                .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _window, cx| this.continue_thread(cx),
                                                 ))
                                                 .disabled(thread_status != ThreadStatus::Stopped)
@@ -724,7 +706,7 @@ impl DebugPanel {
                                                     let focus_handle = focus_handle.clone();
                                                     move |window, cx| {
                                                         Tooltip::for_action_in(
-                                                            "Continue program",
+                                                            "Continue Program",
                                                             &Continue,
                                                             &focus_handle,
                                                             window,
@@ -737,10 +719,9 @@ impl DebugPanel {
                                     })
                                     .child(
                                         IconButton::new("debug-step-over", IconName::ArrowRight)
-                                            .icon_size(IconSize::XSmall)
-                                            .shape(ui::IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     this.step_over(cx);
                                                 },
@@ -750,7 +731,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Step over",
+                                                        "Step Over",
                                                         &StepOver,
                                                         &focus_handle,
                                                         window,
@@ -764,10 +745,9 @@ impl DebugPanel {
                                             "debug-step-into",
                                             IconName::ArrowDownRight,
                                         )
-                                        .icon_size(IconSize::XSmall)
-                                        .shape(ui::IconButtonShape::Square)
+                                        .icon_size(IconSize::Small)
                                         .on_click(window.listener_for(
-                                            &running_state,
+                                            running_state,
                                             |this, _, _window, cx| {
                                                 this.step_in(cx);
                                             },
@@ -777,7 +757,7 @@ impl DebugPanel {
                                             let focus_handle = focus_handle.clone();
                                             move |window, cx| {
                                                 Tooltip::for_action_in(
-                                                    "Step in",
+                                                    "Step In",
                                                     &StepInto,
                                                     &focus_handle,
                                                     window,
@@ -788,10 +768,9 @@ impl DebugPanel {
                                     )
                                     .child(
                                         IconButton::new("debug-step-out", IconName::ArrowUpRight)
-                                            .icon_size(IconSize::XSmall)
-                                            .shape(ui::IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     this.step_out(cx);
                                                 },
@@ -801,7 +780,7 @@ impl DebugPanel {
                                                 let focus_handle = focus_handle.clone();
                                                 move |window, cx| {
                                                     Tooltip::for_action_in(
-                                                        "Step out",
+                                                        "Step Out",
                                                         &StepOut,
                                                         &focus_handle,
                                                         window,
@@ -812,10 +791,10 @@ impl DebugPanel {
                                     )
                                     .child(Divider::vertical())
                                     .child(
-                                        IconButton::new("debug-restart", IconName::DebugRestart)
-                                            .icon_size(IconSize::XSmall)
+                                        IconButton::new("debug-restart", IconName::RotateCcw)
+                                            .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, window, cx| {
                                                     this.rerun_session(window, cx);
                                                 },
@@ -835,9 +814,9 @@ impl DebugPanel {
                                     )
                                     .child(
                                         IconButton::new("debug-stop", IconName::Power)
-                                            .icon_size(IconSize::XSmall)
+                                            .icon_size(IconSize::Small)
                                             .on_click(window.listener_for(
-                                                &running_state,
+                                                running_state,
                                                 |this, _, _window, cx| {
                                                     if this.session().read(cx).is_building() {
                                                         this.session().update(cx, |session, cx| {
@@ -890,9 +869,9 @@ impl DebugPanel {
                                                     thread_status != ThreadStatus::Stopped
                                                         && thread_status != ThreadStatus::Running,
                                                 )
-                                                .icon_size(IconSize::XSmall)
+                                                .icon_size(IconSize::Small)
                                                 .on_click(window.listener_for(
-                                                    &running_state,
+                                                    running_state,
                                                     |this, _, _, cx| {
                                                         this.detach_client(cx);
                                                     },
@@ -915,7 +894,6 @@ impl DebugPanel {
                                 },
                             ),
                         )
-                        .justify_around()
                         .when(is_side, |this| {
                             this.child(new_session_button())
                                 .child(logs_button())
@@ -924,7 +902,7 @@ impl DebugPanel {
                 )
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_0p5()
                         .when(is_side, |this| this.justify_between())
                         .child(
                             h_flex().when_some(
@@ -934,7 +912,6 @@ impl DebugPanel {
                                     .cloned(),
                                 |this, running_state| {
                                     this.children({
-                                        let running_state = running_state.clone();
                                         let threads =
                                             running_state.update(cx, |running_state, cx| {
                                                 let session = running_state.session();
@@ -954,12 +931,15 @@ impl DebugPanel {
                                             )
                                         })
                                     })
-                                    .when(!is_side, |this| this.gap_2().child(Divider::vertical()))
+                                    .when(!is_side, |this| {
+                                        this.gap_0p5().child(Divider::vertical())
+                                    })
                                 },
                             ),
                         )
                         .child(
                             h_flex()
+                                .gap_0p5()
                                 .children(self.render_session_menu(
                                     self.active_session(),
                                     self.running_state(cx),
@@ -1158,7 +1138,7 @@ impl DebugPanel {
                         workspace
                             .project()
                             .read(cx)
-                            .project_path_for_absolute_path(&path, cx)
+                            .project_path_for_absolute_path(path, cx)
                             .context(
                                 "Couldn't get project path for .zed/debug.json in active worktree",
                             )
@@ -1300,10 +1280,10 @@ impl DebugPanel {
         cx: &mut Context<'_, Self>,
     ) -> Option<SharedString> {
         let adapter = parent_session.read(cx).adapter();
-        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter) {
-            if let Some(label) = adapter.label_for_child_session(request) {
-                return Some(label.into());
-            }
+        if let Some(adapter) = DapRegistry::global(cx).adapter(&adapter)
+            && let Some(label) = adapter.label_for_child_session(request)
+        {
+            return Some(label.into());
         }
         None
     }
@@ -1407,7 +1387,6 @@ async fn register_session_inner(
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
-impl EventEmitter<DebugPanelEvent> for DebugPanel {}
 
 impl Focusable for DebugPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -1644,7 +1623,6 @@ impl Render for DebugPanel {
                 }
             })
             .on_action({
-                let this = this.clone();
                 move |_: &ToggleSessionPicker, window, cx| {
                     this.update(cx, |this, cx| {
                         this.toggle_session_picker(window, cx);
@@ -1702,6 +1680,7 @@ impl Render for DebugPanel {
                     this.child(active_session)
                 } else {
                     let docked_to_bottom = self.position(window, cx) == DockPosition::Bottom;
+
                     let welcome_experience = v_flex()
                         .when_else(
                             docked_to_bottom,
@@ -1767,54 +1746,58 @@ impl Render for DebugPanel {
                                 );
                             }),
                         );
-                    let breakpoint_list =
-                        v_flex()
-                            .group("base-breakpoint-list")
-                            .items_start()
-                            .when_else(
-                                docked_to_bottom,
-                                |this| this.min_w_1_3().h_full(),
-                                |this| this.w_full().h_2_3(),
-                            )
-                            .p_1()
-                            .child(
-                                h_flex()
-                                    .pl_1()
-                                    .w_full()
-                                    .justify_between()
-                                    .child(Label::new("Breakpoints").size(LabelSize::Small))
-                                    .child(h_flex().visible_on_hover("base-breakpoint-list").child(
+
+                    let breakpoint_list = v_flex()
+                        .group("base-breakpoint-list")
+                        .when_else(
+                            docked_to_bottom,
+                            |this| this.min_w_1_3().h_full(),
+                            |this| this.size_full().h_2_3(),
+                        )
+                        .child(
+                            h_flex()
+                                .track_focus(&self.breakpoint_list.focus_handle(cx))
+                                .h(Tab::container_height(cx))
+                                .p_1p5()
+                                .w_full()
+                                .justify_between()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(Label::new("Breakpoints").size(LabelSize::Small))
+                                .child(
+                                    h_flex().visible_on_hover("base-breakpoint-list").child(
                                         self.breakpoint_list.read(cx).render_control_strip(),
-                                    ))
-                                    .track_focus(&self.breakpoint_list.focus_handle(cx)),
-                            )
-                            .child(Divider::horizontal())
-                            .child(self.breakpoint_list.clone());
+                                    ),
+                                ),
+                        )
+                        .child(self.breakpoint_list.clone());
+
                     this.child(
                         v_flex()
-                            .h_full()
+                            .size_full()
                             .gap_1()
                             .items_center()
                             .justify_center()
-                            .child(
-                                div()
-                                    .when_else(docked_to_bottom, Div::h_flex, Div::v_flex)
-                                    .size_full()
-                                    .map(|this| {
-                                        if docked_to_bottom {
-                                            this.items_start()
-                                                .child(breakpoint_list)
-                                                .child(Divider::vertical())
-                                                .child(welcome_experience)
-                                                .child(Divider::vertical())
-                                        } else {
-                                            this.items_end()
-                                                .child(welcome_experience)
-                                                .child(Divider::horizontal())
-                                                .child(breakpoint_list)
-                                        }
-                                    }),
-                            ),
+                            .map(|this| {
+                                if docked_to_bottom {
+                                    this.child(
+                                        h_flex()
+                                            .size_full()
+                                            .child(breakpoint_list)
+                                            .child(Divider::vertical())
+                                            .child(welcome_experience)
+                                            .child(Divider::vertical()),
+                                    )
+                                } else {
+                                    this.child(
+                                        v_flex()
+                                            .size_full()
+                                            .child(welcome_experience)
+                                            .child(Divider::horizontal())
+                                            .child(breakpoint_list),
+                                    )
+                                }
+                            }),
                     )
                 }
             })

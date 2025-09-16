@@ -1,6 +1,6 @@
 use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, PLAIN_TEXT, ToolchainLister,
+    LanguageServerName, LspAdapter, ManifestName, PLAIN_TEXT, ToolchainLister,
     language_settings::{
         AllLanguageSettingsContent, LanguageSettingsContent, all_language_settings,
     },
@@ -49,7 +49,7 @@ impl LanguageName {
     pub fn from_proto(s: String) -> Self {
         Self(SharedString::from(s))
     }
-    pub fn to_proto(self) -> String {
+    pub fn to_proto(&self) -> String {
         self.0.to_string()
     }
     pub fn lsp_id(&self) -> String {
@@ -172,6 +172,7 @@ pub struct AvailableLanguage {
     hidden: bool,
     load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     loaded: bool,
+    manifest_name: Option<ManifestName>,
 }
 
 impl AvailableLanguage {
@@ -259,6 +260,7 @@ pub struct LoadedLanguage {
     pub queries: LanguageQueries,
     pub context_provider: Option<Arc<dyn ContextProvider>>,
     pub toolchain_provider: Option<Arc<dyn ToolchainLister>>,
+    pub manifest_name: Option<ManifestName>,
 }
 
 impl LanguageRegistry {
@@ -349,12 +351,14 @@ impl LanguageRegistry {
             config.grammar.clone(),
             config.matcher.clone(),
             config.hidden,
+            None,
             Arc::new(move || {
                 Ok(LoadedLanguage {
                     config: config.clone(),
                     queries: Default::default(),
                     toolchain_provider: None,
                     context_provider: None,
+                    manifest_name: None,
                 })
             }),
         )
@@ -370,14 +374,23 @@ impl LanguageRegistry {
     pub fn register_available_lsp_adapter(
         &self,
         name: LanguageServerName,
-        load: impl Fn() -> Arc<dyn LspAdapter> + 'static + Send + Sync,
+        adapter: Arc<dyn LspAdapter>,
     ) {
-        self.state.write().available_lsp_adapters.insert(
+        let mut state = self.state.write();
+
+        if adapter.is_extension()
+            && let Some(existing_adapter) = state.all_lsp_adapters.get(&name)
+            && !existing_adapter.adapter.is_extension()
+        {
+            log::warn!(
+                "not registering extension-provided language server {name:?}, since a builtin language server exists with that name",
+            );
+            return;
+        }
+
+        state.available_lsp_adapters.insert(
             name,
-            Arc::new(move || {
-                let lsp_adapter = load();
-                CachedLspAdapter::new(lsp_adapter)
-            }),
+            Arc::new(move || CachedLspAdapter::new(adapter.clone())),
         );
     }
 
@@ -392,13 +405,21 @@ impl LanguageRegistry {
         Some(load_lsp_adapter())
     }
 
-    pub fn register_lsp_adapter(
-        &self,
-        language_name: LanguageName,
-        adapter: Arc<dyn LspAdapter>,
-    ) -> Arc<CachedLspAdapter> {
-        let cached = CachedLspAdapter::new(adapter);
+    pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
         let mut state = self.state.write();
+
+        if adapter.is_extension()
+            && let Some(existing_adapter) = state.all_lsp_adapters.get(&adapter.name())
+            && !existing_adapter.adapter.is_extension()
+        {
+            log::warn!(
+                "not registering extension-provided language server {:?} for language {language_name:?}, since a builtin language server exists with that name",
+                adapter.name(),
+            );
+            return;
+        }
+
+        let cached = CachedLspAdapter::new(adapter);
         state
             .lsp_adapters
             .entry(language_name)
@@ -407,8 +428,6 @@ impl LanguageRegistry {
         state
             .all_lsp_adapters
             .insert(cached.name.clone(), cached.clone());
-
-        cached
     }
 
     /// Register a fake language server and adapter
@@ -428,7 +447,7 @@ impl LanguageRegistry {
             let mut state = self.state.write();
             state
                 .lsp_adapters
-                .entry(language_name.clone())
+                .entry(language_name)
                 .or_default()
                 .push(adapter.clone());
             state.all_lsp_adapters.insert(adapter.name(), adapter);
@@ -450,7 +469,7 @@ impl LanguageRegistry {
         let cached_adapter = CachedLspAdapter::new(Arc::new(adapter));
         state
             .lsp_adapters
-            .entry(language_name.clone())
+            .entry(language_name)
             .or_default()
             .push(cached_adapter.clone());
         state
@@ -487,6 +506,7 @@ impl LanguageRegistry {
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
         hidden: bool,
+        manifest_name: Option<ManifestName>,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     ) {
         let state = &mut *self.state.write();
@@ -496,6 +516,7 @@ impl LanguageRegistry {
                 existing_language.grammar = grammar_name;
                 existing_language.matcher = matcher;
                 existing_language.load = load;
+                existing_language.manifest_name = manifest_name;
                 return;
             }
         }
@@ -508,6 +529,7 @@ impl LanguageRegistry {
             load,
             hidden,
             loaded: false,
+            manifest_name,
         });
         state.version += 1;
         state.reload_count += 1;
@@ -575,6 +597,7 @@ impl LanguageRegistry {
             grammar: language.config.grammar.clone(),
             matcher: language.config.matcher.clone(),
             hidden: language.config.hidden,
+            manifest_name: None,
             load: Arc::new(|| Err(anyhow!("already loaded"))),
             loaded: true,
         });
@@ -765,7 +788,7 @@ impl LanguageRegistry {
             };
 
             let content_matches = || {
-                config.first_line_pattern.as_ref().map_or(false, |pattern| {
+                config.first_line_pattern.as_ref().is_some_and(|pattern| {
                     content
                         .as_ref()
                         .is_some_and(|content| pattern.is_match(content))
@@ -914,10 +937,12 @@ impl LanguageRegistry {
                                 Language::new_with_id(id, loaded_language.config, grammar)
                                     .with_context_provider(loaded_language.context_provider)
                                     .with_toolchain_lister(loaded_language.toolchain_provider)
+                                    .with_manifest(loaded_language.manifest_name)
                                     .with_queries(loaded_language.queries)
                             } else {
                                 Ok(Language::new_with_id(id, loaded_language.config, None)
                                     .with_context_provider(loaded_language.context_provider)
+                                    .with_manifest(loaded_language.manifest_name)
                                     .with_toolchain_lister(loaded_language.toolchain_provider))
                             }
                         }
@@ -1092,7 +1117,7 @@ impl LanguageRegistry {
         use gpui::AppContext as _;
 
         let mut state = self.state.write();
-        let fake_entry = state.fake_server_entries.get_mut(&name)?;
+        let fake_entry = state.fake_server_entries.get_mut(name)?;
         let (server, mut fake_server) = lsp::FakeLanguageServer::new(
             server_id,
             binary,
@@ -1157,8 +1182,7 @@ impl LanguageRegistryState {
                 soft_wrap: language.config.soft_wrap,
                 auto_indent_on_paste: language.config.auto_indent_on_paste,
                 ..Default::default()
-            }
-            .clone(),
+            },
         );
         self.languages.push(language);
         self.version += 1;
