@@ -36,7 +36,7 @@ use std::{
 };
 use ui::{
     IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Scrollbar, ScrollbarState, Section, Tooltip, prelude::*,
+    Section, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt,
@@ -2134,11 +2134,6 @@ impl RemoteServerProjects {
 
                 cx.notify();
             }));
-
-        let handle = &**scroll_state.scroll_handle() as &dyn Any;
-        let Some(scroll_handle) = handle.downcast_ref::<ScrollHandle>() else {
-            unreachable!()
-        };
 
         let modal_section = v_flex()
             .track_focus(&self.focus_handle(cx))
