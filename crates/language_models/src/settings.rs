@@ -10,10 +10,12 @@ use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use crate::provider::{
     self,
     anthropic::AnthropicSettings,
+    anthropic_vertex::AnthropicVertexSettings,
     bedrock::AmazonBedrockSettings,
     cloud::{self, ZedDotDevSettings},
     deepseek::DeepSeekSettings,
     google::GoogleSettings,
+    google_vertex::GoogleVertexSettings,
     lmstudio::LmStudioSettings,
     mistral::MistralSettings,
     ollama::OllamaSettings,
@@ -35,6 +37,8 @@ pub struct AllLanguageModelSettings {
     pub bedrock: AmazonBedrockSettings,
     pub deepseek: DeepSeekSettings,
     pub google: GoogleSettings,
+    pub google_vertex: GoogleVertexSettings,
+    pub anthropic_vertex: AnthropicVertexSettings,
     pub lmstudio: LmStudioSettings,
     pub mistral: MistralSettings,
     pub ollama: OllamaSettings,
@@ -55,6 +59,8 @@ pub struct AllLanguageModelSettingsContent {
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    pub google_vertex: Option<GoogleVertexSettingsContent>,
+    pub anthropic_vertex: Option<AnthropicVertexSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
@@ -128,6 +134,22 @@ pub struct VercelSettingsContent {
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::google::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct GoogleVertexSettingsContent {
+    pub api_url: Option<String>,
+    pub project_id: Option<String>,  // ADDED
+    pub location_id: Option<String>, // ADDED
+    pub available_models: Option<Vec<provider::google_vertex::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct AnthropicVertexSettingsContent {
+    pub api_url: Option<String>,
+    pub project_id: Option<String>,  // ADDED
+    pub location_id: Option<String>, // ADDED
+    pub available_models: Option<Vec<provider::anthropic_vertex::AvailableModel>>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -316,6 +338,49 @@ impl settings::Settings for AllLanguageModelSettings {
                 open_router
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
+            );
+
+            // Google Vertex AI
+            merge(
+                &mut settings.google_vertex.api_url,
+                value.google_vertex.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.google_vertex.project_id,
+                value
+                    .google_vertex
+                    .as_ref()
+                    .and_then(|s| s.project_id.clone()),
+            );
+            merge(
+                &mut settings.google_vertex.location_id,
+                value
+                    .google_vertex
+                    .as_ref()
+                    .and_then(|s| s.location_id.clone()),
+            );
+
+            // Anthropic Vertex AI
+            merge(
+                &mut settings.anthropic_vertex.api_url,
+                value
+                    .anthropic_vertex
+                    .as_ref()
+                    .and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.anthropic_vertex.project_id,
+                value
+                    .anthropic_vertex
+                    .as_ref()
+                    .and_then(|s| s.project_id.clone()),
+            );
+            merge(
+                &mut settings.anthropic_vertex.location_id,
+                value
+                    .anthropic_vertex
+                    .as_ref()
+                    .and_then(|s| s.location_id.clone()),
             );
         }
 
