@@ -342,12 +342,21 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
 
     #[cfg(target_os = "windows")]
     let zed_cli_path = {
-        let possible_locations = [parent.join("bin").join("zed.exe"), parent.join("cli.exe")];
+        // bin/zed.exe is for installed builds, ./cli.exe is for development builds.
+        let possible_locations = ["bin/zed.exe", "./cli.exe"];
         possible_locations
-            .into_iter()
-            .find(|p| p.exists())
-            .filter(|p| p != &zed_path)
-            .context("Failed to find zed-cli executable next to zed executable.")?
+            .iter()
+            .find_map(|p| {
+                parent
+                    .join(p)
+                    .canonicalize()
+                    .ok()
+                    .filter(|p| p != &zed_path)
+            })
+            .context(format!(
+                "could not find any of: {}",
+                possible_locations.join(", ")
+            ))?
             .to_string_lossy()
             .to_string()
     };
