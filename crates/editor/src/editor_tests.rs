@@ -19265,7 +19265,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     // When the start of a hunk coincides with the start of its excerpt,
-    // the hunk is expanded. When the start of a a hunk is earlier than
+    // the hunk is expanded. When the start of a hunk is earlier than
     // the start of its excerpt, the hunk is not expanded.
     cx.assert_state_with_diff(
         "
