@@ -356,8 +356,8 @@ impl AcpThreadView {
                 agent.name(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
-                    min_lines: AgentSettings::get_global(cx).input_min_lines,
-                    max_lines: Some(AgentSettings::get_global(cx).input_max_lines),
+                    min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
+                    max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
                 },
                 window,
                 cx,
@@ -860,8 +860,8 @@ impl AcpThreadView {
                 let agent_settings = AgentSettings::get_global(cx);
                 editor.set_mode(
                     EditorMode::AutoHeight {
-                        min_lines: agent_settings.input_min_lines,
-                        max_lines: Some(agent_settings.input_max_lines),
+                        min_lines: agent_settings.message_editor_min_lines,
+                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
                     },
                     cx,
                 )
