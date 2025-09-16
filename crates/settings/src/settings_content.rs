@@ -132,10 +132,13 @@ pub enum BaseKeymapContent {
     None,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
     pub all_languages: AllLanguageSettingsContent,
+
+    #[serde(flatten)]
+    pub worktree: WorktreeSettingsContent,
 }
 
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -224,4 +227,41 @@ pub enum GitHostingProviderKind {
     Github,
     Gitlab,
     Bitbucket,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct WorktreeSettingsContent {
+    /// The displayed name of this project. If not set, the root directory name
+    /// will be displayed.
+    ///
+    /// Default: none
+    pub project_name: Option<String>,
+
+    /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
+    /// `file_scan_inclusions`.
+    ///
+    /// Default: [
+    ///   "**/.git",
+    ///   "**/.svn",
+    ///   "**/.hg",
+    ///   "**/.jj",
+    ///   "**/CVS",
+    ///   "**/.DS_Store",
+    ///   "**/Thumbs.db",
+    ///   "**/.classpath",
+    ///   "**/.settings"
+    /// ]
+    pub file_scan_exclusions: Option<Vec<String>>,
+
+    /// Always include files that match these globs when scanning for files, even if they're
+    /// ignored by git. This setting is overridden by `file_scan_exclusions`.
+    /// Default: [
+    ///  ".env*",
+    ///  "docker-compose.*.yml",
+    /// ]
+    pub file_scan_inclusions: Option<Vec<String>>,
+
+    /// Treat the files matching these globs as `.env` files.
+    /// Default: [ "**/.env*" ]
+    pub private_files: Option<Vec<String>>,
 }

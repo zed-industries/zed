@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsUi};
 use util::paths::PathMatcher;
 
 #[derive(Clone, PartialEq, Eq)]
@@ -32,50 +32,14 @@ impl WorktreeSettings {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set, the root directory name
-    /// will be displayed.
-    ///
-    /// Default: none
-    #[serde(default)]
-    pub project_name: Option<String>,
-
-    /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
-    /// `file_scan_inclusions`.
-    ///
-    /// Default: [
-    ///   "**/.git",
-    ///   "**/.svn",
-    ///   "**/.hg",
-    ///   "**/.jj",
-    ///   "**/CVS",
-    ///   "**/.DS_Store",
-    ///   "**/Thumbs.db",
-    ///   "**/.classpath",
-    ///   "**/.settings"
-    /// ]
-    #[serde(default)]
-    pub file_scan_exclusions: Option<Vec<String>>,
-
-    /// Always include files that match these globs when scanning for files, even if they're
-    /// ignored by git. This setting is overridden by `file_scan_exclusions`.
-    /// Default: [
-    ///  ".env*",
-    ///  "docker-compose.*.yml",
-    /// ]
-    #[serde(default)]
-    pub file_scan_inclusions: Option<Vec<String>>,
-
-    /// Treat the files matching these globs as `.env` files.
-    /// Default: [ "**/.env*" ]
-    pub private_files: Option<Vec<String>>,
-}
-
 impl Settings for WorktreeSettings {
-    type FileContent = WorktreeSettingsContent;
-
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            project_name: None,
+            file_scan_exclusions: content.project.worktree.file_scan_exclusions.unwrap(),
+            file_scan_inclusions: PathMatcher::default(),
+        }
+    }
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         let result: WorktreeSettingsContent = sources.json_merge()?;
         let mut file_scan_exclusions = result.file_scan_exclusions.unwrap_or_default();
