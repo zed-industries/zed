@@ -1,28 +1,12 @@
 use dap_types::SteppingGranularity;
-use gpui::{App, Global};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use gpui::App;
+use settings::{Settings, SettingsContent};
+use util::MergeFrom;
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
-#[serde(rename_all = "snake_case")]
-pub enum DebugPanelDockPosition {
-    Left,
-    Bottom,
-    Right,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, SettingsUi, SettingsKey)]
-#[serde(default)]
-// todo(settings_ui) @ben: I'm pretty sure not having the fields be optional here is a bug,
-// it means the defaults will override previously set values if a single key is missing
-#[settings_ui(group = "Debugger")]
-#[settings_key(key = "debugger")]
 pub struct DebuggerSettings {
     /// Determines the stepping granularity.
     ///
     /// Default: line
-    #[settings_ui(skip)]
     pub stepping_granularity: SteppingGranularity,
     /// Whether the breakpoints should be reused across Zed sessions.
     ///
@@ -47,31 +31,53 @@ pub struct DebuggerSettings {
     /// The dock position of the debug panel
     ///
     /// Default: Bottom
-    pub dock: DebugPanelDockPosition,
-}
-
-impl Default for DebuggerSettings {
-    fn default() -> Self {
-        Self {
-            button: true,
-            save_breakpoints: true,
-            stepping_granularity: SteppingGranularity::Line,
-            timeout: 2000,
-            log_dap_communications: true,
-            format_dap_log_messages: true,
-            dock: DebugPanelDockPosition::Bottom,
-        }
-    }
+    pub dock: settings::DockPosition,
 }
 
 impl Settings for DebuggerSettings {
-    type FileContent = Self;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        sources.json_merge()
+    fn from_defaults(content: &SettingsContent, _cx: &mut App) -> Self {
+        let content = content.debugger.clone().unwrap();
+        Self {
+            stepping_granularity: dap_granularity_from_settings(
+                content.stepping_granularity.unwrap(),
+            ),
+            save_breakpoints: content.save_breakpoints.unwrap(),
+            button: content.button.unwrap(),
+            timeout: content.timeout.unwrap(),
+            log_dap_communications: content.log_dap_communications.unwrap(),
+            format_dap_log_messages: content.format_dap_log_messages.unwrap(),
+            dock: content.dock.unwrap(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
+        let Some(content) = &content.debugger else {
+            return;
+        };
+        self.stepping_granularity.merge_from(
+            &content
+                .stepping_granularity
+                .map(dap_granularity_from_settings),
+        );
+        self.save_breakpoints.merge_from(&content.save_breakpoints);
+        self.button.merge_from(&content.button);
+        self.timeout.merge_from(&content.timeout);
+        self.log_dap_communications
+            .merge_from(&content.log_dap_communications);
+        self.format_dap_log_messages
+            .merge_from(&content.format_dap_log_messages);
+        self.dock.merge_from(&content.dock);
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }
 
-impl Global for DebuggerSettings {}
+fn dap_granularity_from_settings(
+    granularity: settings::SteppingGranularity,
+) -> dap_types::SteppingGranularity {
+    match granularity {
+        settings::SteppingGranularity::Instruction => dap_types::SteppingGranularity::Instruction,
+        settings::SteppingGranularity::Line => dap_types::SteppingGranularity::Line,
+        settings::SteppingGranularity::Statement => dap_types::SteppingGranularity::Statement,
+    }
+}

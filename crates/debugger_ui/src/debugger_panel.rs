@@ -29,7 +29,7 @@ use project::debugger::session::{Session, SessionQuirks, SessionState, SessionSt
 use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
-use settings::Settings;
+use settings::{DockPosition, Settings};
 use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
@@ -1401,9 +1401,9 @@ impl Panel for DebugPanel {
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
         match DebuggerSettings::get_global(cx).dock {
-            DebugPanelDockPosition::Left => DockPosition::Left,
-            DebugPanelDockPosition::Bottom => DockPosition::Bottom,
-            DebugPanelDockPosition::Right => DockPosition::Right,
+            DockPosition::Left => DockPosition::Left,
+            DockPosition::Bottom => DockPosition::Bottom,
+            DockPosition::Right => DockPosition::Right,
         }
     }
 
