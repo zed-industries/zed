@@ -374,45 +374,49 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
 }
 
 impl settings::Settings for AllLanguageSettings {
-    fn from_default(content: &settings::SettingsContent, cx: &mut App) -> Option<Self> {
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let all_languages = &content.project.all_languages;
-        let defaults = &all_languages.defaults;
+        let defaults = all_languages.defaults.clone();
         let default_language_settings = LanguageSettings {
-            tab_size: defaults.tab_size?,
-            hard_tabs: defaults.hard_tabs?,
-            soft_wrap: defaults.soft_wrap?,
-            preferred_line_length: defaults.preferred_line_length?,
-            show_wrap_guides: defaults.show_wrap_guides?,
-            wrap_guides: defaults.wrap_guides.clone()?,
-            indent_guides: defaults.indent_guides.clone()?,
-            format_on_save: defaults.format_on_save.clone()?,
-            remove_trailing_whitespace_on_save: defaults.remove_trailing_whitespace_on_save?,
-            ensure_final_newline_on_save: defaults.ensure_final_newline_on_save?,
-            formatter: defaults.formatter.clone()?,
-            prettier: defaults.prettier.clone()?,
-            jsx_tag_auto_close: defaults.jsx_tag_auto_close.clone()?,
-            enable_language_server: defaults.enable_language_server?,
-            language_servers: defaults.language_servers.clone()?,
-            allow_rewrap: defaults.allow_rewrap?,
-            show_edit_predictions: defaults.show_edit_predictions?,
-            edit_predictions_disabled_in: defaults.edit_predictions_disabled_in.clone()?,
-            show_whitespaces: defaults.show_whitespaces?,
-            whitespace_map: defaults.whitespace_map.clone()?,
-            extend_comment_on_newline: defaults.extend_comment_on_newline?,
-            inlay_hints: defaults.inlay_hints.clone()?,
-            use_autoclose: defaults.use_autoclose?,
-            use_auto_surround: defaults.use_auto_surround?,
-            use_on_type_format: defaults.use_on_type_format?,
-            auto_indent: defaults.auto_indent?,
-            auto_indent_on_paste: defaults.auto_indent_on_paste?,
-            always_treat_brackets_as_autoclosed: defaults.always_treat_brackets_as_autoclosed?,
-            code_actions_on_format: defaults.code_actions_on_format.clone()?,
-            linked_edits: defaults.linked_edits?,
-            tasks: defaults.tasks.clone()?,
-            show_completions_on_input: defaults.show_completions_on_input?,
-            show_completion_documentation: defaults.show_completion_documentation?,
-            completions: defaults.completions.clone()?,
-            debuggers: defaults.debuggers.clone()?,
+            tab_size: defaults.tab_size.unwrap(),
+            hard_tabs: defaults.hard_tabs.unwrap(),
+            soft_wrap: defaults.soft_wrap.unwrap(),
+            preferred_line_length: defaults.preferred_line_length.unwrap(),
+            show_wrap_guides: defaults.show_wrap_guides.unwrap(),
+            wrap_guides: defaults.wrap_guides.unwrap(),
+            indent_guides: defaults.indent_guides.unwrap(),
+            format_on_save: defaults.format_on_save.unwrap(),
+            remove_trailing_whitespace_on_save: defaults
+                .remove_trailing_whitespace_on_save
+                .unwrap(),
+            ensure_final_newline_on_save: defaults.ensure_final_newline_on_save.unwrap(),
+            formatter: defaults.formatter.unwrap(),
+            prettier: defaults.prettier.unwrap(),
+            jsx_tag_auto_close: defaults.jsx_tag_auto_close.unwrap(),
+            enable_language_server: defaults.enable_language_server.unwrap(),
+            language_servers: defaults.language_servers.unwrap(),
+            allow_rewrap: defaults.allow_rewrap.unwrap(),
+            show_edit_predictions: defaults.show_edit_predictions.unwrap(),
+            edit_predictions_disabled_in: defaults.edit_predictions_disabled_in.unwrap(),
+            show_whitespaces: defaults.show_whitespaces.unwrap(),
+            whitespace_map: defaults.whitespace_map.unwrap(),
+            extend_comment_on_newline: defaults.extend_comment_on_newline.unwrap(),
+            inlay_hints: defaults.inlay_hints.unwrap(),
+            use_autoclose: defaults.use_autoclose.unwrap(),
+            use_auto_surround: defaults.use_auto_surround.unwrap(),
+            use_on_type_format: defaults.use_on_type_format.unwrap(),
+            auto_indent: defaults.auto_indent.unwrap(),
+            auto_indent_on_paste: defaults.auto_indent_on_paste.unwrap(),
+            always_treat_brackets_as_autoclosed: defaults
+                .always_treat_brackets_as_autoclosed
+                .unwrap(),
+            code_actions_on_format: defaults.code_actions_on_format.unwrap(),
+            linked_edits: defaults.linked_edits.unwrap(),
+            tasks: defaults.tasks.unwrap(),
+            show_completions_on_input: defaults.show_completions_on_input.unwrap(),
+            show_completion_documentation: defaults.show_completion_documentation.unwrap(),
+            completions: defaults.completions.unwrap(),
+            debuggers: defaults.debuggers.unwrap(),
         };
 
         let mut languages = HashMap::default();
@@ -426,16 +430,17 @@ impl settings::Settings for AllLanguageSettings {
             .features
             .as_ref()
             .and_then(|f| f.edit_prediction_provider);
-        let edit_predictions_mode = all_languages
-            .edit_predictions
-            .as_ref()
-            .map(|edit_predictions| edit_predictions.mode)?;
+        let edit_predictions_mode = all_languages.edit_predictions.as_ref().unwrap().mode;
 
         let disabled_globs: HashSet<&String> = all_languages
             .edit_predictions
             .as_ref()
-            .and_then(|c| c.disabled_globs.as_ref())
-            .map(|globs| globs.iter().collect())?;
+            .unwrap()
+            .disabled_globs
+            .as_ref()
+            .unwrap()
+            .iter()
+            .collect();
 
         let copilot_settings = all_languages
             .edit_predictions
@@ -460,14 +465,14 @@ impl settings::Settings for AllLanguageSettings {
             let mut builder = GlobSetBuilder::new();
 
             for pattern in patterns {
-                builder.add(Glob::new(pattern).log_err()?);
+                builder.add(Glob::new(pattern).unwrap());
             }
 
-            file_types.insert(language.clone(), builder.build().log_err()?);
+            file_types.insert(language.clone(), builder.build().unwrap());
             file_globs.insert(language.clone(), patterns.clone());
         }
 
-        Some(Self {
+        Self {
             edit_predictions: EditPredictionSettings {
                 provider: if let Some(provider) = edit_prediction_provider {
                     provider
@@ -492,7 +497,7 @@ impl settings::Settings for AllLanguageSettings {
             languages,
             file_types,
             file_globs,
-        })
+        }
     }
 
     fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {

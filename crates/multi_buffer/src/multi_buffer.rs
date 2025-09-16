@@ -5913,7 +5913,7 @@ impl MultiBufferSnapshot {
                             end_row: last_row,
                             depth: next_depth,
                             tab_size,
-                            settings: settings.indent_guides,
+                            settings: settings.indent_guides.clone(),
                         });
                     }
                 }

@@ -4,7 +4,7 @@ use gpui::App;
 use settings::{Settings, SettingsStore};
 use util::MergeFrom as _;
 
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct AudioSettings {
     /// Opt into the new audio system.
     pub rodio_audio: bool, // default is false
@@ -23,13 +23,13 @@ pub struct AudioSettings {
 
 /// Configuration of audio in Zed
 impl Settings for AudioSettings {
-    fn from_default(content: &settings::SettingsContent, _cx: &mut App) -> Option<Self> {
-        let audio = &content.audio.as_ref()?;
-        Some(AudioSettings {
-            control_input_volume: audio.control_input_volume?,
-            control_output_volume: audio.control_output_volume?,
-            rodio_audio: audio.rodio_audio?,
-        })
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let audio = &content.audio.as_ref().unwrap();
+        AudioSettings {
+            control_input_volume: audio.control_input_volume.unwrap(),
+            control_output_volume: audio.control_output_volume.unwrap(),
+            rodio_audio: audio.rodio_audio.unwrap(),
+        }
     }
 
     fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {

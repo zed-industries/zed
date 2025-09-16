@@ -796,31 +796,37 @@ fn font_fallbacks_from_settings(
 }
 
 impl settings::Settings for ThemeSettings {
-    fn from_default(content: &settings::SettingsContent, cx: &mut App) -> Option<Self> {
+    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
         let content = &content.theme;
-        dbg!(&content);
+        // todo(settings_refactor). This should *not* require cx...
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
-        let theme_selection: ThemeSelection = content.theme.clone()?.into();
-        let icon_theme_selection: IconThemeSelection = content.icon_theme.clone()?.into();
-        let this = Self {
-            ui_font_size: content.ui_font_size?.into(),
+        let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
+        let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
+        Self {
+            ui_font_size: content.ui_font_size.unwrap().into(),
             ui_font: Font {
-                family: content.ui_font_family.as_ref()?.0.clone().into(),
-                features: content.ui_font_features.clone()?,
+                family: content.ui_font_family.as_ref().unwrap().0.clone().into(),
+                features: content.ui_font_features.clone().unwrap(),
                 fallbacks: font_fallbacks_from_settings(content.ui_font_fallbacks.clone()),
-                weight: content.ui_font_weight.map(FontWeight)?,
+                weight: content.ui_font_weight.map(FontWeight).unwrap(),
                 style: Default::default(),
             },
             buffer_font: Font {
-                family: content.buffer_font_family.as_ref()?.0.clone().into(),
-                features: content.buffer_font_features.clone()?,
+                family: content
+                    .buffer_font_family
+                    .as_ref()
+                    .unwrap()
+                    .0
+                    .clone()
+                    .into(),
+                features: content.buffer_font_features.clone().unwrap(),
                 fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: content.buffer_font_weight.map(FontWeight)?,
+                weight: content.buffer_font_weight.map(FontWeight).unwrap(),
                 style: FontStyle::default(),
             },
-            buffer_font_size: content.buffer_font_size?.into(),
-            buffer_line_height: content.buffer_line_height?.into(),
+            buffer_font_size: content.buffer_font_size.unwrap().into(),
+            buffer_line_height: content.buffer_line_height.unwrap().into(),
             agent_font_size: content.agent_font_size.flatten().map(Into::into),
             active_theme: themes
                 .get(theme_selection.theme(*system_appearance))
@@ -831,13 +837,12 @@ impl settings::Settings for ThemeSettings {
             theme_overrides: HashMap::default(),
             active_icon_theme: themes
                 .get_icon_theme(icon_theme_selection.icon_theme(*system_appearance))
-                .ok()?,
+                .ok()
+                .unwrap(),
             icon_theme_selection: Some(icon_theme_selection),
             ui_density: content.ui_density.unwrap_or_default().into(),
-            unnecessary_code_fade: content.unnecessary_code_fade?,
-        };
-
-        Some(this)
+            unnecessary_code_fade: content.unnecessary_code_fade.unwrap(),
+        }
     }
 
     fn refine(&mut self, content: &SettingsContent, cx: &mut App) {

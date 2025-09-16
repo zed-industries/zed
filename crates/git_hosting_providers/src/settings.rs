@@ -2,12 +2,7 @@ use std::sync::Arc;
 
 use git::GitHostingProviderRegistry;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{
-    GitHostingProviderConfig, GitHostingProviderKind, Settings, SettingsKey, SettingsStore,
-    SettingsUi,
-};
+use settings::{GitHostingProviderConfig, GitHostingProviderKind, Settings, SettingsStore};
 use url::Url;
 use util::ResultExt as _;
 
@@ -57,19 +52,16 @@ fn update_git_hosting_providers_from_settings(cx: &mut App) {
     provider_registry.set_setting_providers(iter);
 }
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
+#[derive(Debug, Clone)]
 pub struct GitHostingProviderSettings {
-    /// The list of custom Git hosting providers.
-    #[serde(default)]
     pub git_hosting_providers: Vec<GitHostingProviderConfig>,
 }
 
 impl Settings for GitHostingProviderSettings {
-    fn from_default(content: &settings::SettingsContent, _cx: &mut App) -> Option<Self> {
-        Some(Self {
-            git_hosting_providers: content.git_hosting_providers.clone()?,
-        })
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            git_hosting_providers: content.git_hosting_providers.clone().unwrap(),
+        }
     }
 
     fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {

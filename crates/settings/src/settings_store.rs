@@ -57,8 +57,15 @@ pub trait Settings: 'static + Send + Sync + Sized {
     /// user settings match the current version of the settings.
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
-    fn from_default(content: &SettingsContent, cx: &mut App) -> Option<Self>;
+    /// Read the value from default.json.
+    /// This function *should* panic if default values are missing,
+    /// and you should add a default to default.json for documentation.
+    fn from_defaults(content: &SettingsContent, cx: &mut App) -> Self;
 
+    /// Update the value based on the content from the current file.
+    ///
+    /// This function *should not* panic if there are problems, as the
+    /// content of user-provided settings files may be incomplete or invalid.
     fn refine(&mut self, content: &SettingsContent, cx: &mut App);
 
     fn missing_default() -> anyhow::Error {
@@ -186,7 +193,7 @@ struct SettingValue<T> {
 trait AnySettingValue: 'static + Send + Sync {
     fn setting_type_name(&self) -> &'static str;
 
-    fn from_default(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>>;
+    fn from_default(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any>;
     fn refine(&self, value: &mut dyn Any, s: &[&SettingsContent], cx: &mut App);
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
@@ -277,12 +284,7 @@ impl SettingsStore {
         if let Some(server_settings) = self.server_settings.as_ref() {
             refinements.push(server_settings)
         }
-        let Some(mut value) = T::from_default(&self.default_settings, cx) else {
-            panic!(
-                "{}::from_default return None for default.json",
-                type_name::<T>()
-            )
-        };
+        let mut value = T::from_defaults(&self.default_settings, cx);
         for refinement in refinements {
             value.refine(refinement, cx)
         }
@@ -864,9 +866,7 @@ impl SettingsStore {
         for setting_value in self.setting_values.values_mut() {
             // If the global settings file changed, reload the global value for the field.
             if changed_local_path.is_none() {
-                let mut value = setting_value
-                    .from_default(&self.default_settings, cx)
-                    .unwrap();
+                let mut value = setting_value.from_default(&self.default_settings, cx);
                 setting_value.refine(value.as_mut(), &refinements, cx);
                 setting_value.set_global_value(value);
             }
@@ -898,9 +898,7 @@ impl SettingsStore {
                     continue;
                 }
 
-                let mut value = setting_value
-                    .from_default(&self.default_settings, cx)
-                    .unwrap();
+                let mut value = setting_value.from_default(&self.default_settings, cx);
                 setting_value.refine(value.as_mut(), &refinements, cx);
                 setting_value.refine(value.as_mut(), &project_settings_stack, cx);
                 setting_value.set_local_value(*root_id, directory_path.clone(), value);
@@ -984,8 +982,8 @@ impl Debug for SettingsStore {
 }
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
-    fn from_default(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>> {
-        T::from_default(s, cx).map(|result| Box::new(result) as _)
+    fn from_default(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any> {
+        Box::new(T::from_defaults(s, cx)) as _
     }
 
     fn refine(&self, value: &mut dyn Any, refinements: &[&SettingsContent], cx: &mut App) {
@@ -1063,10 +1061,10 @@ mod tests {
     }
 
     impl Settings for AutoUpdateSetting {
-        fn from_default(content: &SettingsContent, _: &mut App) -> Option<Self> {
-            content
-                .auto_update
-                .map(|auto_update| AutoUpdateSetting { auto_update })
+        fn from_defaults(content: &SettingsContent, _: &mut App) -> Self {
+            AutoUpdateSetting {
+                auto_update: content.auto_update.unwrap(),
+            }
         }
 
         fn refine(&mut self, content: &SettingsContent, _: &mut App) {
@@ -1085,12 +1083,12 @@ mod tests {
     }
 
     impl Settings for TitleBarSettings {
-        fn from_default(content: &SettingsContent, _: &mut App) -> Option<Self> {
-            let content = content.title_bar.clone()?;
-            Some(TitleBarSettings {
-                show: content.show?,
-                show_branch_name: content.show_branch_name?,
-            })
+        fn from_defaults(content: &SettingsContent, _: &mut App) -> Self {
+            let content = content.title_bar.clone().unwrap();
+            TitleBarSettings {
+                show: content.show.unwrap(),
+                show_branch_name: content.show_branch_name.unwrap(),
+            }
         }
 
         fn refine(&mut self, content: &SettingsContent, _: &mut App) {
@@ -1121,12 +1119,12 @@ mod tests {
     }
 
     impl Settings for DefaultLanguageSettings {
-        fn from_default(content: &SettingsContent, _: &mut App) -> Option<Self> {
+        fn from_defaults(content: &SettingsContent, _: &mut App) -> Self {
             let content = &content.project.all_languages.defaults;
-            Some(DefaultLanguageSettings {
-                tab_size: content.tab_size?,
-                preferred_line_length: content.preferred_line_length?,
-            })
+            DefaultLanguageSettings {
+                tab_size: content.tab_size.unwrap(),
+                preferred_line_length: content.preferred_line_length.unwrap(),
+            }
         }
 
         fn refine(&mut self, content: &SettingsContent, _: &mut App) {
