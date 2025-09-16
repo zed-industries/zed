@@ -9321,6 +9321,7 @@ dependencies = [
  "pet-fs",
  "pet-poetry",
  "pet-reporter",
+ "pet-virtualenv",
  "pretty_assertions",
  "project",
  "regex",
