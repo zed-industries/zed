@@ -1099,11 +1099,18 @@ impl MessageEditor {
     }
 
     pub fn insert_selections(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let buffer = self.editor.read(cx).buffer().clone();
-        let Some(buffer) = buffer.read(cx).as_singleton() else {
+        let cursor_position = self.editor.read(cx).selections.newest_anchor().head();
+        let multi_buffer = self.editor.read(cx).buffer().clone();
+        let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+        let Some(buffer) = multi_buffer.read(cx).as_singleton() else {
             return;
         };
-        let anchor = buffer.update(cx, |buffer, _cx| buffer.anchor_before(buffer.len()));
+        let anchor = buffer.update(cx, |buffer, _cx| {
+            buffer.anchor_at(
+                cursor_position.to_offset(&multi_buffer_snapshot),
+                text::Bias::Left,
+            )
+        });
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -1116,12 +1123,10 @@ impl MessageEditor {
         ) else {
             return;
         };
+
         self.editor.update(cx, |message_editor, cx| {
             message_editor.edit(
-                [(
-                    multi_buffer::Anchor::max()..multi_buffer::Anchor::max(),
-                    completion.new_text,
-                )],
+                [(cursor_position..cursor_position, completion.new_text)],
                 cx,
             );
         });
