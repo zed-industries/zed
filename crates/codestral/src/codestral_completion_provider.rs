@@ -22,14 +22,16 @@ use crate::{Codestral, CodestralRequest, CodestralResponse};
 use anyhow::Result;
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use futures::AsyncReadExt;
-use gpui::{App, Context, Entity, Task};
+use gpui::{App, Context, Entity, EntityId, Task};
 use http_client::HttpClient;
+use language::unified_diff;
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview,
     ToOffset, ToPoint,
 };
 use project::Project;
 use std::{
+    collections::{HashMap, VecDeque},
     ops::Range,
     sync::Arc,
     time::{Duration, Instant},
@@ -66,11 +68,19 @@ impl CurrentCompletion {
     }
 }
 
+#[derive(Clone)]
+struct RecentEdit {
+    path: String,
+    diff: String,
+}
+
 pub struct CodestralCompletionProvider {
     codestral: Entity<Codestral>,
     http_client: Arc<dyn HttpClient>,
     pending_request: Option<Task<Result<()>>>,
     current_completion: Option<CurrentCompletion>,
+    snapshot_cache: HashMap<EntityId, BufferSnapshot>,
+    recent_edits: VecDeque<RecentEdit>,
 }
 
 impl CodestralCompletionProvider {
@@ -80,7 +90,102 @@ impl CodestralCompletionProvider {
             http_client,
             pending_request: None,
             current_completion: None,
+            snapshot_cache: HashMap::new(),
+            recent_edits: VecDeque::new(),
         }
+    }
+
+    const MAX_RECENT_EDITS: usize = 5;
+    const MAX_DIFF_LINES: usize = 80;
+    const MAX_HEADER_CHARS: usize = 2_000;
+
+    fn record_buffer_change(&mut self, buffer: &Entity<Buffer>, snapshot: &BufferSnapshot) {
+        let buffer_id = buffer.entity_id();
+
+        let prev_snapshot = self.snapshot_cache.get(&buffer_id);
+        if let Some(prev_snapshot) = prev_snapshot {
+            if prev_snapshot.version == snapshot.version {
+                return;
+            }
+
+            let old_text = prev_snapshot.text();
+            let new_text = snapshot.text();
+
+            if old_text != new_text {
+                let diff = unified_diff(&old_text, &new_text);
+                if !diff.is_empty() {
+                    let trimmed: String = diff
+                        .lines()
+                        .take(Self::MAX_DIFF_LINES)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    if !trimmed.is_empty() {
+                        let path = snapshot
+                            .file()
+                            .map(|f| f.path().to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "untitled".to_string());
+
+                        self.recent_edits.push_front(RecentEdit {
+                            path: path.clone(),
+                            diff: trimmed,
+                        });
+                        while self.recent_edits.len() > Self::MAX_RECENT_EDITS {
+                            self.recent_edits.pop_back();
+                        }
+                        log::info!(
+                            "Codestral: queued recent edit for {} ({} total)",
+                            path,
+                            self.recent_edits.len()
+                        );
+                    }
+                }
+            }
+        }
+
+        self.snapshot_cache.insert(buffer_id, snapshot.clone());
+    }
+
+    fn build_context_header(&self) -> Option<String> {
+        if self.recent_edits.is_empty() {
+            return None;
+        }
+
+        let mut header = String::from("/* RECENT EDITS:\n");
+        for edit in &self.recent_edits {
+            if header.len() >= Self::MAX_HEADER_CHARS {
+                break;
+            }
+
+            header.push_str("File: ");
+            header.push_str(&edit.path);
+            header.push('\n');
+            header.push_str("```diff\n");
+
+            let remaining = Self::MAX_HEADER_CHARS.saturating_sub(header.len());
+            if remaining == 0 {
+                break;
+            }
+
+            if edit.diff.len() > remaining {
+                header.push_str(&edit.diff[..remaining]);
+            } else {
+                header.push_str(&edit.diff);
+            }
+            header.push('\n');
+            header.push_str("```\n");
+
+            if header.len() >= Self::MAX_HEADER_CHARS {
+                break;
+            }
+        }
+
+        header.push_str("*/");
+        log::info!(
+            "Codestral: built recent edits header with {} entries ({} chars)",
+            self.recent_edits.len(),
+            header.len()
+        );
+        Some(header)
     }
 
     /// Uses Codestral's Fill-in-the-Middle API for code completion.
@@ -272,6 +377,8 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         let snapshot = buffer_handle.read(cx).snapshot();
         let cursor_point = cursor_position.to_point(&snapshot);
 
+        self.record_buffer_change(&buffer_handle, &snapshot);
+
         // Check if current completion is still valid
         if let Some(current_completion) = self.current_completion.as_ref() {
             if current_completion.interpolate(&snapshot).is_some() {
@@ -286,6 +393,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             .unwrap_or_else(|| "untitled".to_string());
 
         let http_client = self.http_client.clone();
+        let context_header = self.build_context_header();
 
         // Get settings
         let settings = all_language_settings(None, cx);
@@ -307,13 +415,16 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             }
 
             // Generate input excerpt with cursor position
-            let input_excerpt = excerpt_for_cursor_position(
+            let mut input_excerpt = excerpt_for_cursor_position(
                 cursor_point,
                 &path_str,
                 &snapshot,
                 MAX_REWRITE_TOKENS,
                 MAX_CONTEXT_TOKENS,
             );
+            if let Some(header) = context_header {
+                input_excerpt.prompt = format!("{header}\n{}", input_excerpt.prompt);
+            }
 
             let outline = prompt_for_outline(&snapshot);
 
@@ -337,6 +448,15 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                     return Err(e);
                 }
             };
+
+            if completion_text.trim().is_empty() {
+                log::info!("Codestral: Completion was empty after trimming; ignoring");
+                this.update(cx, |this, cx| {
+                    this.pending_request = None;
+                    cx.notify();
+                })?;
+                return Ok(());
+            }
 
             // Create a simple insertion edit at the cursor position
             let edits = match Self::parse_edits(completion_text, cursor_offset, &snapshot) {
