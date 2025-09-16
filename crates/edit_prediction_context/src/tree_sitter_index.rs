@@ -1,15 +1,18 @@
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
-use language::{Buffer, BufferEvent, BufferSnapshot, Language, OutlineItem};
+use language::{Buffer, BufferEvent, BufferSnapshot, Language, LanguageId, OutlineItem};
 use project::buffer_store::{BufferStore, BufferStoreEvent};
 use project::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use slotmap::SlotMap;
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 use text::{Anchor, OffsetRangeExt as _};
-use util::{ResultExt as _, debug_panic};
+use util::{ResultExt as _, debug_panic, some_or_debug_panic};
+
+use crate::outline::{Identifier, OutlineDeclaration, declarations_in_buffer};
 
 // To discuss: Strings in FileDeclaration?
 
@@ -18,6 +21,8 @@ use util::{ResultExt as _, debug_panic};
 // * Need an efficient way to get outline parents (see parents field / outline_id in
 // `zeta_context/src/outline.rs`, as well as logic for figuring it out). Could be indexes into
 // `declarations` instead of the OutlineId mechanism.
+//
+// * signature_text
 //
 // * Skip for remote projects
 
@@ -30,7 +35,9 @@ use util::{ResultExt as _, debug_panic};
 //
 // * Cache of buffers for files
 //
-// * Parse files directly instead of loading into a Rope.
+// * Parse files directly instead of loading into a Rope. Make SyntaxMap generic to handle embedded
+// languages? Will also need to find line boundaries, but that can be done by scanning characters in
+// the flat representation.
 //
 // * Use something similar to slotmap without key versions.
 //
@@ -83,35 +90,21 @@ impl Declaration {
 
 #[derive(Debug, Clone)]
 pub struct FileDeclaration {
+    parent: Option<DeclarationId>,
     identifier: Identifier,
     item_range: Range<usize>,
     annotation_range: Option<Range<usize>>,
     signature_range: Range<usize>,
-    signature_text: String,
+    signature_text: Arc<str>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BufferDeclaration {
+    parent: Option<DeclarationId>,
     identifier: Identifier,
     item_range: Range<Anchor>,
     annotation_range: Option<Range<Anchor>>,
     signature_range: Range<Anchor>,
-    signature_text: String,
-}
-
-pub struct DeclarationText {
-    text: String,
-    // Offset range within the `text` field containing the lines of the signature.
-    signature_range: Range<usize>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Identifier(Arc<str>);
-
-impl<T: Into<Arc<str>>> From<T> for Identifier {
-    fn from(value: T) -> Self {
-        Identifier(value.into())
-    }
 }
 
 impl TreeSitterIndex {
@@ -157,9 +150,13 @@ impl TreeSitterIndex {
         this
     }
 
+    pub fn declaration(&self, id: DeclarationId) -> Option<&Declaration> {
+        self.declarations.get(id)
+    }
+
     pub fn declarations_for_identifier<const N: usize>(
         &self,
-        identifier: impl Into<Identifier>,
+        identifier: Identifier,
         cx: &App,
     ) -> Vec<Declaration> {
         // make sure to not have a large stack allocation
@@ -177,8 +174,7 @@ impl TreeSitterIndex {
 
         for declaration_id in declaration_ids {
             let declaration = self.declarations.get(*declaration_id);
-            let Some(declaration) = declaration else {
-                debug_panic!("bug: declaration not found");
+            let Some(declaration) = some_or_debug_panic(declaration) else {
                 continue;
             };
             match declaration {
@@ -296,13 +292,16 @@ impl TreeSitterIndex {
         let buffer = buffer_entity.read(cx);
 
         let snapshot = buffer.snapshot();
-        let parse_task: Task<Vec<BufferDeclaration>> = cx.background_spawn(async move {
-            snapshot
-                .outline(None)
-                .items
+        let parse_task = cx.background_spawn(async move {
+            declarations_in_buffer(&snapshot)
                 .into_iter()
-                .filter_map(BufferDeclaration::try_from_outline_item)
-                .collect()
+                .map(|item| {
+                    (
+                        item.parent_index,
+                        BufferDeclaration::from_outline(item, &snapshot),
+                    )
+                })
+                .collect::<Vec<_>>()
         });
 
         let task = cx.spawn({
@@ -331,13 +330,17 @@ impl TreeSitterIndex {
 
                     let mut new_ids = Vec::with_capacity(declarations.len());
                     this.declarations.reserve(declarations.len());
-                    for declaration in declarations {
+                    for (parent_index, mut declaration) in declarations {
+                        declaration.parent = parent_index
+                            .and_then(|ix| some_or_debug_panic(new_ids.get(ix).copied()));
+
                         let identifier = declaration.identifier.clone();
                         let declaration_id = this.declarations.insert(Declaration::Buffer {
                             buffer: weak_buffer.clone(),
                             declaration,
                         });
                         new_ids.push(declaration_id);
+
                         this.identifiers
                             .entry(identifier)
                             .or_default()
@@ -389,15 +392,18 @@ impl TreeSitterIndex {
             })
         });
 
-        let parse_task: Task<Result<Vec<FileDeclaration>>> = cx.background_spawn(async move {
+        let parse_task = cx.background_spawn(async move {
             let snapshot = snapshot_task.await?;
-            Ok(snapshot
-                .outline(None)
-                .items
+            let declarations = declarations_in_buffer(&snapshot)
                 .into_iter()
-                .filter_map(BufferDeclaration::try_from_outline_item)
-                .map(|declaration| declaration.into_file_declaration(&snapshot))
-                .collect())
+                .map(|item| {
+                    (
+                        item.parent_index,
+                        FileDeclaration::from_outline(item, &snapshot),
+                    )
+                })
+                .collect::<Vec<_>>();
+            anyhow::Ok(declarations)
         });
 
         let task = cx.spawn({
@@ -424,13 +430,18 @@ impl TreeSitterIndex {
 
                     let mut new_ids = Vec::with_capacity(declarations.len());
                     this.declarations.reserve(declarations.len());
-                    for declaration in declarations {
+
+                    for (parent_index, mut declaration) in declarations {
+                        declaration.parent = parent_index
+                            .and_then(|ix| some_or_debug_panic(new_ids.get(ix).copied()));
+
                         let identifier = declaration.identifier.clone();
                         let declaration_id = this.declarations.insert(Declaration::File {
                             project_entry_id: entry_id,
                             declaration,
                         });
                         new_ids.push(declaration_id);
+
                         this.identifiers
                             .entry(identifier)
                             .or_default()
@@ -451,26 +462,38 @@ impl TreeSitterIndex {
 }
 
 impl BufferDeclaration {
-    pub fn try_from_outline_item(item: OutlineItem<Anchor>) -> Option<Self> {
-        // todo! what to do about multiple names?
-        let name_range = item.name_ranges.get(0)?;
-        Some(BufferDeclaration {
-            identifier: Identifier(item.text[name_range.clone()].into()),
-            item_range: item.range,
-            annotation_range: item.annotation_range,
-            signature_range: item.signature_range?,
-            // todo! this should instead be the signature_range but expanded to line boundaries.
-            signature_text: item.text.clone(),
-        })
+    pub fn from_outline(declaration: OutlineDeclaration, snapshot: &BufferSnapshot) -> Self {
+        // use of anchor_before is a guess that the proper behavior is to expand to include
+        // insertions immediately before the declaration, but not for insertions immediately after
+        Self {
+            parent: None,
+            identifier: declaration.identifier,
+            item_range: snapshot.anchor_before(declaration.item_range.start)
+                ..snapshot.anchor_before(declaration.item_range.end),
+            // todo!
+            annotation_range: None,
+            signature_range: snapshot.anchor_before(declaration.signature_range.start)
+                ..snapshot.anchor_before(declaration.signature_range.end),
+        }
     }
+}
 
-    pub fn into_file_declaration(self, snapshot: &BufferSnapshot) -> FileDeclaration {
+impl FileDeclaration {
+    pub fn from_outline(
+        declaration: OutlineDeclaration,
+        snapshot: &BufferSnapshot,
+    ) -> FileDeclaration {
         FileDeclaration {
-            identifier: self.identifier,
-            item_range: self.item_range.to_offset(snapshot),
-            annotation_range: self.annotation_range.map(|range| range.to_offset(snapshot)),
-            signature_range: self.signature_range.to_offset(snapshot),
-            signature_text: self.signature_text.clone(),
+            parent: None,
+            identifier: declaration.identifier,
+            item_range: declaration.item_range,
+            // todo!
+            annotation_range: None,
+            signature_text: snapshot
+                .text_for_range(declaration.signature_range.clone())
+                .collect::<String>()
+                .into(),
+            signature_range: declaration.signature_range,
         }
     }
 }
@@ -493,36 +516,62 @@ mod tests {
 
     #[gpui::test]
     async fn test_unopen_indexed_files(cx: &mut TestAppContext) {
-        let (project, index) = init_test(cx).await;
+        let (project, index, rust_lang_id) = init_test(cx).await;
+        let main = Identifier {
+            name: "main".into(),
+            language_id: rust_lang_id,
+        };
 
         index.read_with(cx, |index, cx| {
-            let decls = index.declarations_for_identifier::<8>("main", cx);
+            let decls = index.declarations_for_identifier::<8>(main.clone(), cx);
             assert_eq!(decls.len(), 2);
 
             let decl = expect_file_decl("c.rs", &decls[0], &project, cx);
-            assert_eq!(decl.identifier, "main".into());
+            assert_eq!(decl.identifier, main.clone());
             assert_eq!(decl.item_range, 32..279);
 
             let decl = expect_file_decl("a.rs", &decls[1], &project, cx);
-            assert_eq!(decl.identifier, "main".into());
+            assert_eq!(decl.identifier, main);
             assert_eq!(decl.item_range, 0..97);
         });
     }
 
     #[gpui::test]
-    async fn test_declarations_limt(cx: &mut TestAppContext) {
-        let (_, index) = init_test(cx).await;
+    async fn test_parents_in_file(cx: &mut TestAppContext) {
+        let (project, index, rust_lang_id) = init_test(cx).await;
+        let test_process_data = Identifier {
+            name: "test_process_data".into(),
+            language_id: rust_lang_id,
+        };
 
-        // todo! test with buffers
         index.read_with(cx, |index, cx| {
-            let decls = index.declarations_for_identifier::<1>("main", cx);
+            let decls = index.declarations_for_identifier::<8>(test_process_data.clone(), cx);
             assert_eq!(decls.len(), 1);
+
+            let decl = expect_file_decl("c.rs", &decls[0], &project, cx);
+            assert_eq!(decl.identifier, test_process_data);
+
+            let parent_id = decl.parent.unwrap();
+            let parent = index.declaration(parent_id).unwrap();
+            let parent_decl = expect_file_decl("c.rs", &parent, &project, cx);
+            assert_eq!(
+                parent_decl.identifier,
+                Identifier {
+                    name: "tests".into(),
+                    language_id: rust_lang_id
+                }
+            );
+            assert_eq!(parent_decl.parent, None);
         });
     }
 
     #[gpui::test]
-    async fn test_buffer_shadow(cx: &mut TestAppContext) {
-        let (project, index) = init_test(cx).await;
+    async fn test_parents_in_buffer(cx: &mut TestAppContext) {
+        let (project, index, rust_lang_id) = init_test(cx).await;
+        let test_process_data = Identifier {
+            name: "test_process_data".into(),
+            language_id: rust_lang_id,
+        };
 
         let buffer = project
             .update(cx, |project, cx| {
@@ -535,11 +584,68 @@ mod tests {
         cx.run_until_parked();
 
         index.read_with(cx, |index, cx| {
-            let decls = index.declarations_for_identifier::<8>("main", cx);
-            assert_eq!(decls.len(), 2);
+            let decls = index.declarations_for_identifier::<8>(test_process_data.clone(), cx);
+            assert_eq!(decls.len(), 1);
 
             let decl = expect_buffer_decl("c.rs", &decls[0], cx);
-            assert_eq!(decl.identifier, "main".into());
+            assert_eq!(decl.identifier, test_process_data);
+
+            let parent_id = decl.parent.unwrap();
+            let parent = index.declaration(parent_id).unwrap();
+            let parent_decl = expect_buffer_decl("c.rs", &parent, cx);
+            assert_eq!(
+                parent_decl.identifier,
+                Identifier {
+                    name: "tests".into(),
+                    language_id: rust_lang_id
+                }
+            );
+            assert_eq!(parent_decl.parent, None);
+        });
+
+        drop(buffer);
+    }
+
+    #[gpui::test]
+    async fn test_declarations_limt(cx: &mut TestAppContext) {
+        let (_, index, rust_lang_id) = init_test(cx).await;
+
+        index.read_with(cx, |index, cx| {
+            let decls = index.declarations_for_identifier::<1>(
+                Identifier {
+                    name: "main".into(),
+                    language_id: rust_lang_id,
+                },
+                cx,
+            );
+            assert_eq!(decls.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_buffer_shadow(cx: &mut TestAppContext) {
+        let (project, index, rust_lang_id) = init_test(cx).await;
+
+        let main = Identifier {
+            name: "main".into(),
+            language_id: rust_lang_id,
+        };
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let project_path = project.find_project_path("c.rs", cx).unwrap();
+                project.open_buffer(project_path, cx)
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        index.read_with(cx, |index, cx| {
+            let decls = index.declarations_for_identifier::<8>(main.clone(), cx);
+            assert_eq!(decls.len(), 2);
+            let decl = expect_buffer_decl("c.rs", &decls[0], cx);
+            assert_eq!(decl.identifier, main);
             assert_eq!(decl.item_range.to_offset(&buffer.read(cx)), 32..279);
 
             expect_file_decl("a.rs", &decls[1], &project, cx);
@@ -559,7 +665,7 @@ mod tests {
         cx.run_until_parked();
 
         index.read_with(cx, |index, cx| {
-            let decls = index.declarations_for_identifier::<8>("main", cx);
+            let decls = index.declarations_for_identifier::<8>(main, cx);
             assert_eq!(decls.len(), 2);
             expect_file_decl("c.rs", &decls[0], &project, cx);
             expect_file_decl("a.rs", &decls[1], &project, cx);
@@ -619,7 +725,9 @@ mod tests {
         }
     }
 
-    async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<TreeSitterIndex>) {
+    async fn init_test(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Project>, Entity<TreeSitterIndex>, LanguageId) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -693,12 +801,14 @@ mod tests {
         .await;
         let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        language_registry.add(Arc::new(rust_lang()));
+        let lang = rust_lang();
+        let lang_id = lang.id();
+        language_registry.add(Arc::new(lang));
 
         let index = cx.new(|cx| TreeSitterIndex::new(&project, cx));
         cx.run_until_parked();
 
-        (project, index)
+        (project, index, lang_id)
     }
 
     fn rust_lang() -> Language {
@@ -717,64 +827,3 @@ mod tests {
         .unwrap()
     }
 }
-
-/*
-#[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize)]
-#[serde(transparent)]
-pub struct Identifier(pub Arc<str>);
-
-#[derive(Debug)]
-pub struct IdentifierIndex {
-    pub identifier_to_definitions:
-        HashMap<(Identifier, LanguageName), MultiMap<Arc<Path>, OutlineItem>>,
-    pub path_to_source: HashMap<Arc<Path>, String>,
-    pub path_to_items: HashMap<Arc<Path>, Vec<OutlineItem>>,
-    pub outline_id_to_item: HashMap<OutlineId, OutlineItem>,
-}
-
-impl IdentifierIndex {
-    pub fn index_path(languages: &[Arc<Language>], path: &Path) -> Result<IdentifierIndex> {
-        let mut identifier_to_definitions = HashMap::new();
-        let mut path_to_source = HashMap::new();
-        let mut path_to_items = HashMap::new();
-        let mut outline_id_to_item = HashMap::new();
-
-        for entry in Walk::new(path)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.metadata().unwrap().is_file())
-        {
-            let file_path = entry.path();
-            let Some(language) = language_for_file(languages, file_path) else {
-                continue;
-            };
-            if !language.supports_references {
-                continue;
-            }
-            let source = fs::read_to_string(file_path)
-                .map_err(|e| anyhow!("Failed to read file {:?}: {}", file_path, e))?;
-            let tree = parse_source(&language, &source);
-
-            let mut outline_items = query_outline_items(&language, &tree, &source);
-            outline_items.sort_by_key(|item| item.item_range.start);
-            for outline_item in outline_items.iter() {
-                let identifier = Identifier(outline_item.name(&source).into());
-                let definitions: &mut MultiMap<Arc<Path>, OutlineItem> = identifier_to_definitions
-                    .entry((identifier, language.name.clone()))
-                    .or_default();
-                definitions.insert(file_path.into(), outline_item.clone());
-                outline_id_to_item.insert(outline_item.id, outline_item.clone());
-            }
-            path_to_source.insert(file_path.into(), source);
-            path_to_items.insert(file_path.into(), outline_items);
-        }
-
-        Ok(IdentifierIndex {
-            identifier_to_definitions,
-            path_to_source,
-            path_to_items,
-            outline_id_to_item,
-        })
-    }
-}
-*/
