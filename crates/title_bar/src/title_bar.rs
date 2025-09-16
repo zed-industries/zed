@@ -637,9 +637,9 @@ impl TitleBar {
                     Some(AutoUpdateStatus::Installing { .. })
                     | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
-                    Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
-                        "Please update Zed to Collaborate"
-                    }
+                    Some(AutoUpdateStatus::Idle)
+                    | Some(AutoUpdateStatus::Errored { .. })
+                    | None => "Please update Zed to Collaborate",
                 };
 
                 Some(

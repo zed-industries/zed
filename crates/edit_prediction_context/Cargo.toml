@@ -1,0 +1,29 @@
+[package]
+name = "edit_prediction_context"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/edit_prediction_context.rs"
+
+[dependencies]
+language.workspace = true
+workspace-hack.workspace = true
+tree-sitter.workspace = true
+text.workspace = true
+log.workspace = true
+util.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
+language = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+text = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

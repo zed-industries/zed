@@ -300,6 +300,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "gpui_tokio",
+ "http_client",
  "indoc",
  "language",
  "language_model",
@@ -5037,6 +5038,22 @@ dependencies = [
  "workspace-hack",
  "zed_actions",
  "zeta",
+]
+
+[[package]]
+name = "edit_prediction_context"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "pretty_assertions",
+ "text",
+ "tree-sitter",
+ "util",
+ "workspace-hack",
+ "zlog",
 ]
 
 [[package]]
