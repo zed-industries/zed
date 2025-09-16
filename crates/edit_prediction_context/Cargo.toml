@@ -13,12 +13,13 @@ path = "src/edit_prediction_context.rs"
 
 [dependencies]
 anyhow.workspace = true
+arrayvec.workspace = true
 collections.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
 project.workspace = true
-arrayvec.workspace = true
+slotmap.workspace = true
 text.workspace = true
 tree-sitter.workspace = true
 util.workspace = true

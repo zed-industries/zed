@@ -5055,6 +5055,7 @@ dependencies = [
  "project",
  "serde_json",
  "settings",
+ "slotmap",
  "text",
  "tree-sitter",
  "util",

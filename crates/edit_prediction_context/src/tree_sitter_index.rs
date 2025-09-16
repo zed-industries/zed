@@ -1,14 +1,17 @@
 use anyhow::Result;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
-use language::{Buffer, BufferEvent, BufferSnapshot, OutlineItem};
+use language::{Buffer, BufferEvent, BufferSnapshot, Language, OutlineItem};
 use project::buffer_store::{BufferStore, BufferStoreEvent};
 use project::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use project::{PathChange, Project, ProjectEntryId, ProjectPath};
+use slotmap::SlotMap;
 use std::ops::Range;
 use std::sync::Arc;
 use text::{Anchor, OffsetRangeExt as _};
-use util::ResultExt as _;
+use util::{ResultExt as _, debug_panic};
+
+// To discuss: Strings in FileDeclaration?
 
 // TODO:
 //
@@ -18,13 +21,28 @@ use util::ResultExt as _;
 //
 // * Skip for remote projects
 
+// Potential future improvements:
+//
+// * Send multiple selected excerpt ranges. Challenge is that excerpt ranges influence which
+// references are present and their scores.
+
 // Potential future optimizations:
 //
 // * Cache of buffers for files
 //
 // * Parse files directly instead of loading into a Rope.
+//
+// * Use something similar to slotmap without key versions.
+//
+// * Concurrent slotmap
+
+slotmap::new_key_type! {
+    struct DeclarationId;
+}
 
 pub struct TreeSitterIndex {
+    declarations: SlotMap<DeclarationId, Declaration>,
+    identifiers: HashMap<Identifier, HashSet<DeclarationId>>,
     files: HashMap<ProjectEntryId, FileState>,
     buffers: HashMap<WeakEntity<Buffer>, BufferState>,
     project: WeakEntity<Project>,
@@ -32,26 +50,35 @@ pub struct TreeSitterIndex {
 
 #[derive(Debug, Default)]
 struct FileState {
-    declarations: Vec<FileDeclaration>,
+    declarations: Vec<DeclarationId>,
     task: Option<Task<()>>,
 }
 
 #[derive(Default)]
 struct BufferState {
-    declarations: Vec<BufferDeclaration>,
+    declarations: Vec<DeclarationId>,
     task: Option<Task<()>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Declaration {
     File {
-        file: ProjectEntryId,
+        project_entry_id: ProjectEntryId,
         declaration: FileDeclaration,
     },
     Buffer {
         buffer: WeakEntity<Buffer>,
         declaration: BufferDeclaration,
     },
+}
+
+impl Declaration {
+    fn identifier(&self) -> &Identifier {
+        match self {
+            Declaration::File { declaration, .. } => &declaration.identifier,
+            Declaration::Buffer { declaration, .. } => &declaration.identifier,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +117,8 @@ impl<T: Into<Arc<str>>> From<T> for Identifier {
 impl TreeSitterIndex {
     pub fn new(project: &Entity<Project>, cx: &mut Context<Self>) -> Self {
         let mut this = Self {
+            declarations: SlotMap::with_key(),
+            identifiers: HashMap::default(),
             project: project.downgrade(),
             files: HashMap::default(),
             buffers: HashMap::default(),
@@ -133,57 +162,65 @@ impl TreeSitterIndex {
         identifier: impl Into<Identifier>,
         cx: &App,
     ) -> Vec<Declaration> {
+        // make sure to not have a large stack allocation
         assert!(N < 32);
 
         let identifier = identifier.into();
-        let mut declarations = Vec::with_capacity(N);
-        // THEORY: set would be slower given the avg. number of buffers
+
+        let Some(declaration_ids) = self.identifiers.get(&identifier) else {
+            return vec![];
+        };
+
+        let mut result = Vec::with_capacity(N);
         let mut included_buffer_entry_ids = arrayvec::ArrayVec::<_, N>::new();
+        let mut file_declarations = Vec::new();
 
-        for (buffer, buffer_state) in &self.buffers {
-            let mut included = false;
-            for declaration in &buffer_state.declarations {
-                if declaration.identifier == identifier {
-                    declarations.push(Declaration::Buffer {
-                        buffer: buffer.clone(),
-                        declaration: declaration.clone(),
-                    });
-                    included = true;
-
-                    if declarations.len() == N {
-                        return declarations;
-                    }
-                }
-            }
-            if included
-                && let Ok(Some(entry)) = buffer.read_with(cx, |buffer, cx| {
-                    project::File::from_dyn(buffer.file()).and_then(|f| f.project_entry_id(cx))
-                })
-            {
-                included_buffer_entry_ids.push(entry);
-            }
-        }
-
-        for (file, file_state) in &self.files {
-            if included_buffer_entry_ids.contains(file) {
+        for declaration_id in declaration_ids {
+            let declaration = self.declarations.get(*declaration_id);
+            let Some(declaration) = declaration else {
+                debug_panic!("bug: declaration not found");
                 continue;
-            }
-
-            for declaration in &file_state.declarations {
-                if declaration.identifier == identifier {
-                    declarations.push(Declaration::File {
-                        file: *file,
-                        declaration: declaration.clone(),
-                    });
-
-                    if declarations.len() == N {
-                        return declarations;
+            };
+            match declaration {
+                Declaration::Buffer { buffer, .. } => {
+                    if let Ok(Some(entry_id)) = buffer.read_with(cx, |buffer, cx| {
+                        project::File::from_dyn(buffer.file()).and_then(|f| f.project_entry_id(cx))
+                    }) {
+                        included_buffer_entry_ids.push(entry_id);
+                        result.push(declaration.clone());
+                        if result.len() == N {
+                            return result;
+                        }
+                    }
+                }
+                Declaration::File {
+                    project_entry_id, ..
+                } => {
+                    if !included_buffer_entry_ids.contains(project_entry_id) {
+                        file_declarations.push(declaration.clone());
                     }
                 }
             }
         }
 
-        declarations
+        for declaration in file_declarations {
+            match declaration {
+                Declaration::File {
+                    project_entry_id, ..
+                } => {
+                    if !included_buffer_entry_ids.contains(&project_entry_id) {
+                        result.push(declaration);
+
+                        if result.len() == N {
+                            return result;
+                        }
+                    }
+                }
+                Declaration::Buffer { .. } => {}
+            }
+        }
+
+        result
     }
 
     fn handle_worktree_store_event(
@@ -259,7 +296,7 @@ impl TreeSitterIndex {
         let buffer = buffer_entity.read(cx);
 
         let snapshot = buffer.snapshot();
-        let parse_task = cx.background_spawn(async move {
+        let parse_task: Task<Vec<BufferDeclaration>> = cx.background_spawn(async move {
             snapshot
                 .outline(None)
                 .items
@@ -272,11 +309,42 @@ impl TreeSitterIndex {
             let weak_buffer = buffer_entity.downgrade();
             async move |this, cx| {
                 let declarations = parse_task.await;
+
                 this.update(cx, |this, _cx| {
-                    this.buffers
-                        .entry(weak_buffer)
-                        .or_insert_with(Default::default)
-                        .declarations = declarations;
+                    let buffer_state = this
+                        .buffers
+                        .entry(weak_buffer.clone())
+                        .or_insert_with(Default::default);
+
+                    for old_declaration_id in &buffer_state.declarations {
+                        let Some(declaration) = this.declarations.remove(*old_declaration_id)
+                        else {
+                            debug_panic!("declaration not found");
+                            continue;
+                        };
+                        if let Some(identifier_declarations) =
+                            this.identifiers.get_mut(declaration.identifier())
+                        {
+                            identifier_declarations.remove(old_declaration_id);
+                        }
+                    }
+
+                    let mut new_ids = Vec::with_capacity(declarations.len());
+                    this.declarations.reserve(declarations.len());
+                    for declaration in declarations {
+                        let identifier = declaration.identifier.clone();
+                        let declaration_id = this.declarations.insert(Declaration::Buffer {
+                            buffer: weak_buffer.clone(),
+                            declaration,
+                        });
+                        new_ids.push(declaration_id);
+                        this.identifiers
+                            .entry(identifier)
+                            .or_default()
+                            .insert(declaration_id);
+                    }
+
+                    buffer_state.declarations = new_ids;
                 })
                 .ok();
             }
@@ -339,10 +407,37 @@ impl TreeSitterIndex {
                     return;
                 };
                 this.update(cx, |this, _cx| {
-                    this.files
-                        .entry(entry_id)
-                        .or_insert_with(Default::default)
-                        .declarations = declarations;
+                    let file_state = this.files.entry(entry_id).or_insert_with(Default::default);
+
+                    for old_declaration_id in &file_state.declarations {
+                        let Some(declaration) = this.declarations.remove(*old_declaration_id)
+                        else {
+                            debug_panic!("declaration not found");
+                            continue;
+                        };
+                        if let Some(identifier_declarations) =
+                            this.identifiers.get_mut(declaration.identifier())
+                        {
+                            identifier_declarations.remove(old_declaration_id);
+                        }
+                    }
+
+                    let mut new_ids = Vec::with_capacity(declarations.len());
+                    this.declarations.reserve(declarations.len());
+                    for declaration in declarations {
+                        let identifier = declaration.identifier.clone();
+                        let declaration_id = this.declarations.insert(Declaration::File {
+                            project_entry_id: entry_id,
+                            declaration,
+                        });
+                        new_ids.push(declaration_id);
+                        this.identifiers
+                            .entry(identifier)
+                            .or_default()
+                            .insert(declaration_id);
+                    }
+
+                    file_state.declarations = new_ids;
                 })
                 .ok();
             }
@@ -504,7 +599,11 @@ mod tests {
         project: &Entity<Project>,
         cx: &App,
     ) -> &'a FileDeclaration {
-        if let Declaration::File { declaration, file } = declaration {
+        if let Declaration::File {
+            declaration,
+            project_entry_id: file,
+        } = declaration
+        {
             assert_eq!(
                 project
                     .read(cx)
