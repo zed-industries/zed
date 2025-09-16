@@ -26,6 +26,7 @@ workspace-hack.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }

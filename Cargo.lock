@@ -5046,6 +5046,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "collections",
+ "futures 0.3.31",
  "gpui",
  "indoc",
  "language",

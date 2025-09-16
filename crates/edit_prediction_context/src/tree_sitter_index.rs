@@ -385,10 +385,11 @@ mod tests {
     use super::*;
     use std::{path::Path, sync::Arc};
 
+    use futures::channel::oneshot;
     use gpui::TestAppContext;
     use indoc::indoc;
     use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
-    use project::{FakeFs, Project};
+    use project::{FakeFs, Project, ProjectItem};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -397,7 +398,135 @@ mod tests {
 
     #[gpui::test]
     async fn test_unopen_indexed_files(cx: &mut TestAppContext) {
-        init_test(cx);
+        let (project, index) = init_test(cx).await;
+
+        index.read_with(cx, |index, cx| {
+            let decls = index.declarations_for_identifier::<8>("main", cx);
+            assert_eq!(decls.len(), 2);
+
+            let decl = expect_file_decl("c.rs", &decls[0], &project, cx);
+            assert_eq!(decl.identifier, "main".into());
+            assert_eq!(decl.item_range, 32..279);
+
+            let decl = expect_file_decl("a.rs", &decls[1], &project, cx);
+            assert_eq!(decl.identifier, "main".into());
+            assert_eq!(decl.item_range, 0..97);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_declarations_limt(cx: &mut TestAppContext) {
+        let (_, index) = init_test(cx).await;
+
+        // todo! test with buffers
+        index.read_with(cx, |index, cx| {
+            let decls = index.declarations_for_identifier::<1>("main", cx);
+            assert_eq!(decls.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_buffer_shadow(cx: &mut TestAppContext) {
+        let (project, index) = init_test(cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let project_path = project.find_project_path("c.rs", cx).unwrap();
+                project.open_buffer(project_path, cx)
+            })
+            .await
+            .unwrap();
+
+        cx.run_until_parked();
+
+        index.read_with(cx, |index, cx| {
+            let decls = index.declarations_for_identifier::<8>("main", cx);
+            assert_eq!(decls.len(), 2);
+
+            let decl = expect_buffer_decl("c.rs", &decls[0], cx);
+            assert_eq!(decl.identifier, "main".into());
+            assert_eq!(decl.item_range.to_offset(&buffer.read(cx)), 32..279);
+
+            expect_file_decl("a.rs", &decls[1], &project, cx);
+        });
+
+        // Drop the buffer and wait for release
+        let (release_tx, release_rx) = oneshot::channel();
+        cx.update(|cx| {
+            cx.observe_release(&buffer, |_, _| {
+                release_tx.send(()).ok();
+            })
+            .detach();
+        });
+        drop(buffer);
+        cx.run_until_parked();
+        release_rx.await.ok();
+        cx.run_until_parked();
+
+        index.read_with(cx, |index, cx| {
+            let decls = index.declarations_for_identifier::<8>("main", cx);
+            assert_eq!(decls.len(), 2);
+            expect_file_decl("c.rs", &decls[0], &project, cx);
+            expect_file_decl("a.rs", &decls[1], &project, cx);
+        });
+    }
+
+    fn expect_buffer_decl<'a>(
+        path: &str,
+        declaration: &'a Declaration,
+        cx: &App,
+    ) -> &'a BufferDeclaration {
+        if let Declaration::Buffer {
+            declaration,
+            buffer,
+        } = declaration
+        {
+            assert_eq!(
+                buffer
+                    .upgrade()
+                    .unwrap()
+                    .read(cx)
+                    .project_path(cx)
+                    .unwrap()
+                    .path
+                    .as_ref(),
+                Path::new(path),
+            );
+            declaration
+        } else {
+            panic!("Expected a buffer declaration, found {:?}", declaration);
+        }
+    }
+
+    fn expect_file_decl<'a>(
+        path: &str,
+        declaration: &'a Declaration,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> &'a FileDeclaration {
+        if let Declaration::File { declaration, file } = declaration {
+            assert_eq!(
+                project
+                    .read(cx)
+                    .path_for_entry(*file, cx)
+                    .unwrap()
+                    .path
+                    .as_ref(),
+                Path::new(path),
+            );
+            declaration
+        } else {
+            panic!("Expected a file declaration, found {:?}", declaration);
+        }
+    }
+
+    async fn init_test(cx: &mut TestAppContext) -> (Entity<Project>, Entity<TreeSitterIndex>) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -469,42 +598,8 @@ mod tests {
 
         let index = cx.new(|cx| TreeSitterIndex::new(&project, cx));
         cx.run_until_parked();
-        index.read_with(cx, |index, cx| {
-            let decls = index.declarations_for_identifier::<8>("main", cx);
-            assert_eq!(decls.len(), 2);
 
-            if let Declaration::File { declaration, file } = &decls[0] {
-                assert_eq!(
-                    project
-                        .read(cx)
-                        .path_for_entry(*file, cx)
-                        .unwrap()
-                        .path
-                        .as_ref(),
-                    Path::new("c.rs"),
-                );
-                assert_eq!(declaration.identifier, "main".into());
-                assert_eq!(declaration.item_range, 32..279);
-            } else {
-                panic!();
-            }
-
-            if let Declaration::File { declaration, file } = &decls[1] {
-                assert_eq!(
-                    project
-                        .read(cx)
-                        .path_for_entry(*file, cx)
-                        .unwrap()
-                        .path
-                        .as_ref(),
-                    Path::new("a.rs"),
-                );
-                assert_eq!(declaration.identifier, "main".into());
-                assert_eq!(declaration.item_range, 0..97);
-            } else {
-                panic!();
-            }
-        });
+        (project, index)
     }
 
     fn rust_lang() -> Language {
@@ -521,15 +616,6 @@ mod tests {
         )
         .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
         .unwrap()
-    }
-
-    fn init_test(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
-            cx.set_global(settings_store);
-            language::init(cx);
-            Project::init_settings(cx);
-        });
     }
 }
 
