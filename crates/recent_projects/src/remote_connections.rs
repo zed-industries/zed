@@ -30,6 +30,8 @@ use ui::{
 use util::serde::default_true;
 use workspace::{AppState, ModalView, Workspace};
 
+use crate::p2p_connection::P2pConnection;
+
 #[derive(Deserialize)]
 pub struct SshSettings {
     pub ssh_connections: Option<Vec<SshConnection>>,
@@ -124,6 +126,7 @@ pub struct SshProject {
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
+    pub p2p_connections: Option<Vec<P2pConnection>>,
     pub read_ssh_config: Option<bool>,
 }
 

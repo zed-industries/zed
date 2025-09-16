@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use tokio_util::{
-    bytes::BytesMut,
+    bytes::Bytes,
     codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
 };
 use util::paths::{PathStyle, RemotePathBuf};
@@ -191,7 +191,7 @@ fn handle_rpc_messages(
     addr: NodeAddr,
     incoming_tx: UnboundedSender<Envelope>,
     mut outgoing_rx: UnboundedReceiver<Envelope>,
-    connection_activity_tx: Sender<()>,
+    mut connection_activity_tx: Sender<()>,
     cx: &mut AsyncApp,
 ) -> Result<Task<Result<i32>>> {
     log::info!("iroh connecting to {:?}", addr);
@@ -206,29 +206,40 @@ fn handle_rpc_messages(
         // Wrap the stream with length-prefixed framing
         let mut stream = FramedBiStream::new(bi_stream);
 
-        tokio::task::spawn({
-            let mut connection_activity_tx = connection_activity_tx.clone();
-            async move {
-                while let Some(outgoing) = outgoing_rx.next().await {
-                    // TODO(b5): don't swallow errors
-                    let encoded = postcard::to_extend(&outgoing, BytesMut::new())
-                        .unwrap()
-                        .freeze();
-                    connection_activity_tx.try_send(()).ok();
-                    stream.write.send(encoded).await.unwrap();
-                }
-            }
-        });
+        log::info!("opened iroh connection");
 
         tokio::task::spawn({
             let mut connection_activity_tx = connection_activity_tx.clone();
             async move {
-                while let Some(env_data) = stream.read.next().await {
-                    // TODO(b5): don't swallow errors
-                    let env_data = env_data.unwrap();
-                    let decoded: Envelope = postcard::from_bytes(&env_data).unwrap();
+                while let Some(outgoing) = outgoing_rx.next().await {
+                    log::debug!("sending {:?}", outgoing);
+                    let encoded = postcard::to_stdvec(&outgoing).expect("invalid encoding");
                     connection_activity_tx.try_send(()).ok();
-                    incoming_tx.unbounded_send(decoded).ok();
+                    if let Err(error) = stream.write.send(Bytes::from(encoded)).await {
+                        log::error!("failed to send rpc message: {:?}", error);
+                    }
+                }
+            }
+        });
+
+        tokio::task::spawn(async move {
+            while let Some(env_data) = stream.read.next().await {
+                connection_activity_tx.try_send(()).ok();
+                match env_data {
+                    Ok(data) => match postcard::from_bytes(&data) {
+                        Ok(envelope) => {
+                            log::debug!("receiving {:?}", envelope);
+                            if let Err(error) = incoming_tx.unbounded_send(envelope) {
+                                log::error!("failed to propagate rpc message: {:?}", error);
+                            }
+                        }
+                        Err(error) => {
+                            log::error!("invalid rpc message: {:?}", error);
+                        }
+                    },
+                    Err(error) => {
+                        log::error!("invalid incoming message: {:?}", error);
+                    }
                 }
             }
         });
@@ -251,6 +262,12 @@ pub struct IrohZedListener {
 }
 
 impl IrohZedListener {
+    pub async fn shutdown(self) {
+        if let Err(err) = self.router.shutdown().await {
+            log::warn!("failed to shutdown iroh: {:?}", err);
+        }
+    }
+
     pub async fn accept(
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
@@ -316,23 +333,26 @@ impl ProtocolHandler for IrohZedProtocolHandler {
         let outgoing_rx = self.outgoing_rx.clone();
         tokio::task::spawn(async move {
             while let Some(outgoing_message) = outgoing_rx.lock().await.next().await {
-                let encoded = postcard::to_extend(&outgoing_message, BytesMut::new())
-                    .unwrap()
-                    .freeze();
+                let encoded = postcard::to_stdvec(&outgoing_message).expect("invalid encoding");
 
-                if let Err(error) = write.send(encoded).await {
+                if let Err(error) = write.send(Bytes::from(encoded)).await {
                     log::error!("failed to write outgoing message: {:?}", error);
                 }
             }
         });
 
         while let Some(encoded_env) = read.try_next().await? {
-            let msg: Envelope =
-                postcard::from_bytes(&encoded_env).map_err(AcceptError::from_err)?;
-
-            log::info!("received message {:?}", msg);
-            if let Err(error) = self.incoming_tx.unbounded_send(msg) {
-                log::error!("failed to send message to application: {error:?}. exiting.");
+            match postcard::from_bytes(&encoded_env) {
+                Ok(envelope) => {
+                    log::info!("received message {:?}", envelope);
+                    if let Err(error) = self.incoming_tx.unbounded_send(envelope) {
+                        log::error!("failed to send message to application: {error:?}. exiting.");
+                        break;
+                    }
+                }
+                Err(error) => {
+                    log::error!("received in valid message: {error:?}.");
+                }
             }
         }
 

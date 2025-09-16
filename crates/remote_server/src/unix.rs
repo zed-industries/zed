@@ -292,7 +292,7 @@ fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
     log::info!("START P2P SERVER");
 
     let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-    let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded::<Envelope>();
+    let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
     let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
 
     cx.on_app_quit(move |_| {
@@ -317,6 +317,7 @@ fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
         loop {
             select! {
                 _ = app_quit_rx.next().fuse() => {
+                    iroh.shutdown().await;
                     break;
                 }
             }

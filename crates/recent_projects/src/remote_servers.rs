@@ -26,7 +26,6 @@ use settings::{Settings, SettingsStore, update_settings_file, watch_config_file}
 use smol::stream::StreamExt as _;
 use std::{
     any::Any,
-    borrow::Cow,
     collections::BTreeSet,
     path::PathBuf,
     rc::Rc,
@@ -56,6 +55,7 @@ pub struct RemoteServerProjects {
     retained_connections: Vec<Entity<RemoteClient>>,
     ssh_config_updates: Task<()>,
     ssh_config_servers: BTreeSet<SharedString>,
+    p2p_config_servers: BTreeSet<SharedString>,
     create_new_window: bool,
     _subscription: Subscription,
 }
@@ -104,6 +104,37 @@ impl CreateP2pRemote {
     }
 }
 
+#[derive(Debug)]
+enum ConnectionOptions {
+    Ssh(SshConnectionOptions),
+    P2p(IrohConnectionOptions),
+}
+
+impl ConnectionOptions {
+    fn connection_string(&self) -> String {
+        match self {
+            Self::Ssh(opts) => opts.connection_string(),
+            Self::P2p(opts) => opts.ticket.node_addr().node_id.to_string(),
+        }
+    }
+
+    fn nickname(&self) -> Option<&String> {
+        match self {
+            Self::Ssh(opts) => opts.nickname.as_ref(),
+            Self::P2p(opts) => opts.nickname.as_ref(),
+        }
+    }
+}
+
+impl From<ConnectionOptions> for RemoteConnectionOptions {
+    fn from(value: ConnectionOptions) -> Self {
+        match value {
+            ConnectionOptions::Ssh(opts) => RemoteConnectionOptions::Ssh(opts.into()),
+            ConnectionOptions::P2p(opts) => RemoteConnectionOptions::Iroh(opts.into()),
+        }
+    }
+}
+
 struct ProjectPicker {
     connection_string: SharedString,
     nickname: Option<SharedString>,
@@ -148,7 +179,7 @@ impl ProjectPicker {
     fn new(
         create_new_window: bool,
         ix: usize,
-        connection: SshConnectionOptions,
+        connection: ConnectionOptions,
         project: Entity<Project>,
         home_dir: RemotePathBuf,
         path_style: PathStyle,
@@ -168,7 +199,7 @@ impl ProjectPicker {
             picker
         });
         let connection_string = connection.connection_string().into();
-        let nickname = connection.nickname.clone().map(|nick| nick.into());
+        let nickname = connection.nickname().clone().map(|nick| nick.into());
         let _path_task = cx
             .spawn_in(window, {
                 let workspace = workspace;
@@ -229,7 +260,7 @@ impl ProjectPicker {
                         .log_err()?;
 
                     open_remote_project_with_existing_connection(
-                        RemoteConnectionOptions::Ssh(connection),
+                        connection.into(),
                         project,
                         paths,
                         app_state,
@@ -453,6 +484,7 @@ impl RemoteServerProjects {
             retained_connections: Vec::new(),
             ssh_config_updates,
             ssh_config_servers: BTreeSet::new(),
+            p2p_config_servers: BTreeSet::new(),
             create_new_window,
             _subscription,
         }
@@ -461,7 +493,7 @@ impl RemoteServerProjects {
     pub fn project_picker(
         create_new_window: bool,
         ix: usize,
-        connection_options: remote::SshConnectionOptions,
+        connection_options: ConnectionOptions,
         project: Entity<Project>,
         home_dir: RemotePathBuf,
         path_style: PathStyle,
@@ -616,10 +648,9 @@ impl RemoteServerProjects {
             match connection.await {
                 Some(Some(client)) => this
                     .update_in(cx, |this, window, cx| {
-                        telemetry::event!("SSH Server Created");
+                        telemetry::event!("P2P Server Created");
                         this.retained_connections.push(client);
-                        // TODO: add_p2p_server
-                        // this.add_ssh_server(connection_options, cx);
+                        this.add_p2p_server(connection_options, cx);
 
                         this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
                         this.focus_handle(cx).focus(window);
@@ -673,7 +704,7 @@ impl RemoteServerProjects {
     fn create_ssh_project(
         &mut self,
         ix: usize,
-        ssh_connection: RemoteConnection,
+        conn: SshConnection,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -682,10 +713,8 @@ impl RemoteServerProjects {
         };
 
         let create_new_window = self.create_new_window;
-        let connection_options: SshConnectionOptions = match ssh_connection {
-            RemoteConnection::Ssh(conn) => conn.into(),
-            RemoteConnection::P2p(_) => todo!(),
-        };
+        let connection_options: SshConnectionOptions = conn.into();
+
         workspace.update(cx, |_, cx| {
             cx.defer_in(window, move |workspace, window, cx| {
                 let app_state = workspace.app_state().clone();
@@ -766,7 +795,123 @@ impl RemoteServerProjects {
                                 RemoteServerProjects::project_picker(
                                     create_new_window,
                                     ix,
-                                    connection_options,
+                                    ConnectionOptions::Ssh(connection_options),
+                                    project,
+                                    home_dir,
+                                    path_style,
+                                    window,
+                                    cx,
+                                    weak,
+                                )
+                            });
+                        })
+                        .ok();
+                    Ok(())
+                })
+                .detach();
+            })
+        })
+    }
+
+    fn create_p2p_project(
+        &mut self,
+        ix: usize,
+        conn: P2pConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        log::info!("CREATE P2P project");
+
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+
+        let create_new_window = self.create_new_window;
+        let connection_options: IrohConnectionOptions = conn.into();
+
+        workspace.update(cx, |_, cx| {
+            cx.defer_in(window, move |workspace, window, cx| {
+                let app_state = workspace.app_state().clone();
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    RemoteConnectionModal::new(
+                        &RemoteConnectionOptions::Iroh(connection_options.clone()),
+                        Vec::new(),
+                        window,
+                        cx,
+                    )
+                });
+                let prompt = workspace
+                    .active_modal::<RemoteConnectionModal>(cx)
+                    .unwrap()
+                    .read(cx)
+                    .prompt
+                    .clone();
+
+                let connect = connect_over_p2p(
+                    ConnectionIdentifier::setup(),
+                    connection_options.clone(),
+                    prompt,
+                    window,
+                    cx,
+                )
+                .prompt_err("Failed to connect", window, cx, |_, _, _| None);
+
+                cx.spawn_in(window, async move |workspace, cx| {
+                    let session = connect.await;
+                    log::info!("CONNECTED");
+
+                    workspace.update(cx, |workspace, cx| {
+                        if let Some(prompt) = workspace.active_modal::<RemoteConnectionModal>(cx) {
+                            prompt.update(cx, |prompt, cx| prompt.finished(cx))
+                        }
+                    })?;
+
+                    let Some(Some(session)) = session else {
+                        return workspace.update_in(cx, |workspace, window, cx| {
+                            let weak = cx.entity().downgrade();
+                            let fs = workspace.project().read(cx).fs().clone();
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                RemoteServerProjects::new(create_new_window, fs, window, weak, cx)
+                            });
+                        });
+                    };
+
+                    log::info!("opening remote project");
+                    let (path_style, project) = cx.update(|_, cx| {
+                        (
+                            session.read(cx).path_style(),
+                            project::Project::remote(
+                                session,
+                                app_state.client.clone(),
+                                app_state.node_runtime.clone(),
+                                app_state.user_store.clone(),
+                                app_state.languages.clone(),
+                                app_state.fs.clone(),
+                                cx,
+                            ),
+                        )
+                    })?;
+
+                    let home_dir = project
+                        .read_with(cx, |project, cx| project.resolve_abs_path("~", cx))?
+                        .await
+                        .and_then(|path| path.into_abs_path())
+                        .map(|path| RemotePathBuf::new(path, path_style))
+                        .unwrap_or_else(|| match path_style {
+                            PathStyle::Posix => RemotePathBuf::from_str("/", PathStyle::Posix),
+                            PathStyle::Windows => {
+                                RemotePathBuf::from_str("C:\\", PathStyle::Windows)
+                            }
+                        });
+
+                    workspace
+                        .update_in(cx, |workspace, window, cx| {
+                            let weak = cx.entity().downgrade();
+                            workspace.toggle_modal(window, cx, |window, cx| {
+                                RemoteServerProjects::project_picker(
+                                    create_new_window,
+                                    ix,
+                                    ConnectionOptions::P2p(connection_options),
                                     project,
                                     home_dir,
                                     path_style,
@@ -922,12 +1067,7 @@ impl RemoteServerProjects {
                             .on_action(cx.listener({
                                 let ssh_connection = connection.clone();
                                 move |this, _: &menu::Confirm, window, cx| {
-                                    this.create_ssh_project(
-                                        ix,
-                                        RemoteConnection::Ssh(ssh_connection.clone()),
-                                        window,
-                                        cx,
-                                    );
+                                    this.create_ssh_project(ix, ssh_connection.clone(), window, cx);
                                 }
                             }))
                             .child(
@@ -944,7 +1084,7 @@ impl RemoteServerProjects {
                                         move |this, _, window, cx| {
                                             this.create_ssh_project(
                                                 ix,
-                                                RemoteConnection::Ssh(ssh_connection.clone()),
+                                                ssh_connection.clone(),
                                                 window,
                                                 cx,
                                             );
@@ -994,7 +1134,9 @@ impl RemoteServerProjects {
                         .track_focus(&open_folder.focus_handle)
                         .anchor_scroll(open_folder.scroll_anchor.clone())
                         .on_action(cx.listener({
-                            let ssh_connection = connection.clone();
+                            let RemoteConnection::Ssh(ssh_connection) = connection.clone() else {
+                                panic!("invalid conn");
+                            };
                             let host = host.clone();
                             move |this, _: &menu::Confirm, window, cx| {
                                 let new_ix = this.create_host_from_ssh_config(&host, cx);
@@ -1009,7 +1151,10 @@ impl RemoteServerProjects {
                                 .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
                                 .child(Label::new("Open Folder"))
                                 .on_click(cx.listener({
-                                    let ssh_connection = connection.clone();
+                                    let RemoteConnection::Ssh(ssh_connection) = connection.clone()
+                                    else {
+                                        panic!("invalid conn");
+                                    };
                                     let host = host.clone();
                                     move |this, _, window, cx| {
                                         let new_ix = this.create_host_from_ssh_config(&host, cx);
@@ -1023,15 +1168,49 @@ impl RemoteServerProjects {
                                 })),
                         ),
                 ),
-                RemoteEntry::P2pConfig { open_folder, .. } => {
-                    // TODO: figure out if/how this will work
-                    List::new().child(
-                        h_flex()
-                            .id(("new-p2p-project-container", ix))
-                            .track_focus(&open_folder.focus_handle)
-                            .anchor_scroll(open_folder.scroll_anchor.clone()),
-                    )
-                }
+                RemoteEntry::P2pConfig {
+                    open_folder,
+                    ticket,
+                } => List::new().child(
+                    h_flex()
+                        .id(("new-p2p-project-container", ix))
+                        .track_focus(&open_folder.focus_handle)
+                        .anchor_scroll(open_folder.scroll_anchor.clone())
+                        .on_action(cx.listener({
+                            let RemoteConnection::P2p(p2p_connection) = connection.clone() else {
+                                panic!("invalid conn");
+                            };
+                            let ticket = ticket.clone();
+                            move |this, _: &menu::Confirm, window, cx| {
+                                let new_ix = this.create_host_from_p2p_config(&ticket, cx);
+                                this.create_p2p_project(new_ix, p2p_connection.clone(), window, cx);
+                            }
+                        }))
+                        .child(
+                            ListItem::new(("new-p2p-project", ix))
+                                .toggle_state(open_folder.focus_handle.contains_focused(window, cx))
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                                .child(Label::new("Open Folder"))
+                                .on_click(cx.listener({
+                                    let RemoteConnection::P2p(p2p_connection) = connection.clone()
+                                    else {
+                                        panic!("invalid conn");
+                                    };
+                                    let ticket = ticket.clone();
+                                    move |this, _, window, cx| {
+                                        let new_ix = this.create_host_from_p2p_config(&ticket, cx);
+                                        this.create_p2p_project(
+                                            new_ix,
+                                            p2p_connection.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                })),
+                        ),
+                ),
             })
     }
 
@@ -1207,6 +1386,23 @@ impl RemoteServerProjects {
                     args: connection_options.args.unwrap_or_default(),
                     upload_binary_over_ssh: None,
                     port_forwards: connection_options.port_forwards,
+                })
+        });
+    }
+
+    fn add_p2p_server(
+        &mut self,
+        connection_options: remote::IrohConnectionOptions,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_settings_file(cx, move |setting, _| {
+            setting
+                .p2p_connections
+                .get_or_insert(Default::default())
+                .push(P2pConnection {
+                    ticket: connection_options.ticket.to_string(),
+                    projects: BTreeSet::new(),
+                    nickname: None,
                 })
         });
     }
@@ -1913,6 +2109,36 @@ impl RemoteServerProjects {
             cx,
         );
         self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+        new_ix.load(atomic::Ordering::Acquire)
+    }
+
+    fn create_host_from_p2p_config(
+        &mut self,
+        ticket: &SharedString,
+        cx: &mut Context<'_, Self>,
+    ) -> usize {
+        let new_ix = Arc::new(AtomicUsize::new(0));
+
+        let update_new_ix = new_ix.clone();
+        self.update_settings_file(cx, move |settings, _| {
+            update_new_ix.store(
+                settings
+                    .p2p_connections
+                    .as_ref()
+                    .map_or(0, |connections| connections.len()),
+                atomic::Ordering::Release,
+            );
+        });
+
+        self.add_p2p_server(
+            IrohConnectionOptions {
+                ticket: ticket.to_string().parse().expect("invalid ticket"),
+                port_forwards: None,
+                nickname: None,
+            },
+            cx,
+        );
+        self.mode = Mode::default_mode(&self.p2p_config_servers, cx);
         new_ix.load(atomic::Ordering::Acquire)
     }
 }
