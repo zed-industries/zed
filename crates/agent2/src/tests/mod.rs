@@ -6,7 +6,7 @@ use anyhow::Result;
 use client::{Client, UserStore};
 use cloud_llm_client::CompletionIntent;
 use collections::IndexMap;
-use context_server::{ContextServer, ContextServerCommand, ContextServerId};
+
 use fs::{FakeFs, Fs};
 use futures::{
     StreamExt,
@@ -2539,11 +2539,10 @@ fn setup_context_server(
             name.into(),
             project::project_settings::ContextServerSettings::Custom {
                 enabled: true,
-                command: ContextServerCommand {
-                    path: "somebinary".into(),
+                config: project::project_settings::ContextServerConfig::Stdio {
+                    command: "somebinary".into(),
                     args: Vec::new(),
                     env: None,
-                    timeout: None,
                 },
             },
         );

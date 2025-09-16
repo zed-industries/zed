@@ -17,7 +17,7 @@ use project::{
     context_server_store::{
         ContextServerStatus, ContextServerStore, registry::ContextServerDescriptorRegistry,
     },
-    project_settings::{ContextServerSettings, ProjectSettings},
+    project_settings::{ContextServerConfig, ContextServerSettings, ProjectSettings},
     worktree_store::WorktreeStore,
 };
 use settings::{Settings as _, update_settings_file};
@@ -146,7 +146,11 @@ impl ConfigurationSource {
                         id,
                         ContextServerSettings::Custom {
                             enabled: true,
-                            command,
+                            config: ContextServerConfig::Stdio {
+                                command: command.path,
+                                args: command.args,
+                                env: command.env,
+                            },
                         },
                     )
                 })
@@ -302,13 +306,23 @@ impl ConfigureContextServerModal {
 
         window.spawn(cx, async move |cx| {
             let target = match settings {
-                ContextServerSettings::Custom {
-                    enabled: _,
-                    command,
-                } => Some(ConfigurationTarget::Existing {
-                    id: server_id,
-                    command,
-                }),
+                ContextServerSettings::Custom { enabled: _, config } => match config {
+                    ContextServerConfig::Stdio { command, args, env } => {
+                        Some(ConfigurationTarget::Existing {
+                            id: server_id,
+                            command: ContextServerCommand {
+                                path: command,
+                                args,
+                                env,
+                                timeout: None,
+                            },
+                        })
+                    }
+                    ContextServerConfig::Transport { .. } => {
+                        // Transport configurations cannot be edited in this modal
+                        None
+                    }
+                },
                 ContextServerSettings::Extension { .. } => {
                     match workspace
                         .update(cx, |workspace, cx| {

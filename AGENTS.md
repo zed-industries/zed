@@ -34,14 +34,10 @@
 ```mermaid
 graph TD
     context_server[context_server<br/>Main MCP Crate]
-    agent[agent<br/>Context Server Tool]
-    agent2[agent2<br/>Context Server Registry]
     assistant[assistant_slash_commands<br/>Slash Command Integration]
     agent_ui[agent_ui<br/>Configuration UI]
     project[project<br/>Context Server Store]
 
-    context_server --> agent
-    context_server --> agent2
     context_server --> assistant
     context_server --> agent_ui
     context_server --> project
@@ -94,51 +90,11 @@ rmcp = { version = "0.6.2", optional = true, features = [
 tokio = { workspace = true, optional = true }
 ```
 
-### 2. **`crates/agent/` - Agent Context Server Tool**
-
-**File**: `context_server_tool.rs`
-
-#### Before Migration
-```rust
-use context_server::{types, ContextServerId};
-use context_server::types::{Tool, CallToolParams, CallToolResponse};
-
-pub struct ContextServerTool {
-    tool: types::Tool,  // Custom Zed type
-}
-
-impl Tool for ContextServerTool {
-    fn input_schema(&self) -> serde_json::Value {
-        self.tool.input_schema.clone()
-    }
-}
-```
-
-#### After Migration
-```rust
-use rmcp::model::{Tool, CallToolRequestParam, CallToolResult};
-use context_server::ContextServerId; // Keep only ID wrapper
-
-pub struct ContextServerTool {
-    tool: rmcp::model::Tool,  // Direct RMCP type
-}
-
-impl Tool for ContextServerTool {
-    fn input_schema(&self) -> serde_json::Value {
-        self.tool.input_schema.clone()
-    }
-}
-```
-
-### 3. **`crates/agent2/` - Context Server Registry**
-
-**File**: `context_server_registry.rs`
-
-Manages registration and discovery of context servers. Updated to use RMCP types directly for server descriptors.
-
-### 4. **`crates/assistant_slash_commands/` - Slash Command Integration**
+### 2. **`crates/assistant_slash_commands/` - Slash Command Integration**
 
 **File**: `context_server_command.rs`
+
+Provides slash command integration for context servers in the assistant panel.
 
 #### Before Migration
 ```rust
@@ -165,10 +121,10 @@ let response = service
     .await?;
 ```
 
-### 5. **`crates/agent_ui/` - Configuration UI**
+### 3. **`crates/agent_ui/` - Configuration UI**
 
 **Files**:
-- `agent_configuration.rs` - Main configuration management
+- `agent_configuration.rs` - Main configuration management for AI agents (includes context server configuration)
 - `configure_context_server_modal.rs` - Server configuration modal
 
 #### UI Changes Required
@@ -177,7 +133,7 @@ let response = service
 - Hide command field for remote transports
 - Add authentication fields for HTTP
 
-### 6. **`crates/project/` - Context Server Store**
+### 4. **`crates/project/` - Context Server Store**
 
 **File**: `context_server_store.rs`
 

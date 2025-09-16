@@ -960,15 +960,30 @@ impl ExtensionImports for WasmState {
                         match settings {
                             project::project_settings::ContextServerSettings::Custom {
                                 enabled: _,
-                                command,
-                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
-                                command: Some(settings::CommandSettings {
-                                    path: command.path.to_str().map(|path| path.to_string()),
-                                    arguments: Some(command.args),
-                                    env: command.env.map(|env| env.into_iter().collect()),
-                                }),
-                                settings: None,
-                            })?),
+                                config,
+                            } => match config {
+                                project::project_settings::ContextServerConfig::Stdio {
+                                    command,
+                                    args,
+                                    env,
+                                } => Ok(serde_json::to_string(&settings::ContextServerSettings {
+                                    command: Some(settings::CommandSettings {
+                                        path: command.to_str().map(|path| path.to_string()),
+                                        arguments: Some(args.clone()),
+                                        env: env.as_ref().map(|env| {
+                                            env.iter()
+                                                .map(|(k, v)| (k.clone(), v.clone()))
+                                                .collect()
+                                        }),
+                                    }),
+                                    settings: None,
+                                })?),
+                                project::project_settings::ContextServerConfig::Transport {
+                                    ..
+                                } => Err(anyhow::anyhow!(
+                                    "Transport configurations are not supported in extensions"
+                                )),
+                            },
                             project::project_settings::ContextServerSettings::Extension {
                                 enabled: _,
                                 settings,
