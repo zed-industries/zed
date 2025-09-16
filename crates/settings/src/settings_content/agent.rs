@@ -1,8 +1,8 @@
-use collections::IndexMap;
+use collections::{HashMap, IndexMap};
 use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, sync::Arc};
+use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
 pub struct AgentSettingsContent {
@@ -261,4 +261,60 @@ impl From<&str> for LanguageModelProviderSetting {
     fn from(provider: &str) -> Self {
         Self(provider.to_string())
     }
+}
+
+#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+pub struct AllAgentServersSettings {
+    pub gemini: Option<BuiltinAgentServerSettings>,
+    pub claude: Option<BuiltinAgentServerSettings>,
+
+    /// Custom agent servers configured by the user
+    #[serde(flatten)]
+    pub custom: HashMap<SharedString, CustomAgentServerSettings>,
+}
+
+#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+pub struct BuiltinAgentServerSettings {
+    /// Absolute path to a binary to be used when launching this agent.
+    ///
+    /// This can be used to run a specific binary without automatic downloads or searching `$PATH`.
+    #[serde(rename = "command")]
+    pub path: Option<PathBuf>,
+    /// If a binary is specified in `command`, it will be passed these arguments.
+    pub args: Option<Vec<String>>,
+    /// If a binary is specified in `command`, it will be passed these environment variables.
+    pub env: Option<HashMap<String, String>>,
+    /// Whether to skip searching `$PATH` for an agent server binary when
+    /// launching this agent.
+    ///
+    /// This has no effect if a `command` is specified. Otherwise, when this is
+    /// `false`, Zed will search `$PATH` for an agent server binary and, if one
+    /// is found, use it for threads with this agent. If no agent binary is
+    /// found on `$PATH`, Zed will automatically install and use its own binary.
+    /// When this is `true`, Zed will not search `$PATH`, and will always use
+    /// its own binary.
+    ///
+    /// Default: true
+    pub ignore_system_version: Option<bool>,
+    /// The default mode to use for this agent.
+    ///
+    /// Note: Not only all agents support modes.
+    ///
+    /// Default: None
+    pub default_mode: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+pub struct CustomAgentServerSettings {
+    #[serde(rename = "command")]
+    pub path: PathBuf,
+    #[serde(default)]
+    pub args: Vec<String>,
+    pub env: Option<HashMap<String, String>>,
+    /// The default mode to use for this agent.
+    ///
+    /// Note: Not only all agents support modes.
+    ///
+    /// Default: None
+    pub default_mode: Option<String>,
 }

@@ -26,6 +26,7 @@ pub struct SettingsContent {
     pub theme: ThemeSettingsContent,
 
     pub agent: Option<AgentSettingsContent>,
+    pub agent_servers: Option<AllAgentServersSettings>,
 
     /// Configuration of audio in Zed.
     pub audio: Option<AudioSettingsContent>,
