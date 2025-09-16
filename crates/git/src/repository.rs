@@ -645,7 +645,7 @@ impl GitRepository for RealGitRepository {
                 .args([
                     "--no-optional-locks",
                     "show",
-                    "--format=%P%n",
+                    "--format=",
                     "-z",
                     "--no-renames",
                     "--name-status",
@@ -659,8 +659,7 @@ impl GitRepository for RealGitRepository {
                 .context("starting git show process")?;
 
             let show_stdout = String::from_utf8_lossy(&show_output.stdout);
-            let (_, raw_changes) = show_stdout.split_once('\n').unwrap();
-            let changes = parse_git_diff_name_status(raw_changes.trim_start_matches(&['\n', '\0']));
+            let changes = parse_git_diff_name_status(&show_stdout);
             let parent_sha = format!("{}^", commit);
 
             let mut cat_file_process = util::command::new_std_command("git")
