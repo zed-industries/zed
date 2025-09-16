@@ -9,9 +9,9 @@ use google_vertex_ai::{
 use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, StopReason,
+    AuthenticateError, ConfigurationViewTargetAgent, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, LanguageModelToolUseId, MessageContent, StopReason,
 };
 use language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -283,7 +283,12 @@ impl LanguageModelProvider for GoogleVertexLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        configuration_view_target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
