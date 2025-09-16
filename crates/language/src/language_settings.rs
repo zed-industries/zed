@@ -1,30 +1,29 @@
 //! Provides `language`-related settings.
 
 use crate::{File, Language, LanguageName, LanguageServerName};
-use anyhow::Result;
 use collections::{FxHashMap, HashMap, HashSet};
 use ec4rs::{
     Properties as EditorconfigProperties,
     property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{App, Modifiers, SharedString};
+use gpui::App;
 use itertools::{Either, Itertools};
 use schemars::{JsonSchema, json_schema};
-use serde::{
-    Deserialize, Deserializer, Serialize,
-    de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
-};
+use serde::{Deserialize, Serialize};
 
+pub use settings::{
+    CompletionSettings, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
+    IndentGuideSettings, LanguageSettingsContent, LspInsertMode, RewrapBehavior,
+    ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+};
 use settings::{
-    FormatOnSave, IndentGuideSettingsContent, LanguageSettingsContent, ParameterizedJsonSchema,
-    RewrapBehavior, Settings, SettingsKey, SettingsLocation, SettingsSources, SettingsStore,
-    SettingsUi,
+    ParameterizedJsonSchema, Settings, SettingsContent, SettingsLocation, SettingsStore, SettingsUi,
 };
 use shellexpand;
-use std::{borrow::Cow, num::NonZeroU32, path::Path, slice, sync::Arc};
-use util::schemars::replace_subschema;
-use util::serde::default_true;
+use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
+use util::MergeFrom;
+use util::{ResultExt, schemars::replace_subschema};
 
 /// Initializes the language settings.
 pub fn init(cx: &mut App) {
@@ -64,10 +63,11 @@ pub struct AllLanguageSettings {
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+    pub(crate) file_globs: FxHashMap<Arc<str>, Vec<String>>,
 }
 
 /// The settings for a particular language.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LanguageSettings {
     /// How many columns a tab should occupy.
     pub tab_size: NonZeroU32,
@@ -75,7 +75,7 @@ pub struct LanguageSettings {
     /// spaces.
     pub hard_tabs: bool,
     /// How to soft-wrap long lines of text.
-    pub soft_wrap: SoftWrap,
+    pub soft_wrap: settings::SoftWrap,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     pub preferred_line_length: u32,
@@ -88,7 +88,7 @@ pub struct LanguageSettings {
     pub wrap_guides: Vec<usize>,
     /// Indent guide related settings.
     /// todo!() shouldthis be not the content type?
-    pub indent_guides: IndentGuideSettingsContent,
+    pub indent_guides: IndentGuideSettings,
     /// Whether or not to perform a buffer format before saving.
     pub format_on_save: FormatOnSave,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
@@ -102,7 +102,7 @@ pub struct LanguageSettings {
     /// Zed's Prettier integration settings.
     pub prettier: settings::PrettierSettingsContent,
     /// Whether to automatically close JSX tags.
-    pub jsx_tag_auto_close: JsxTagAutoCloseSettings,
+    pub jsx_tag_auto_close: settings::JsxTagAutoCloseSettings,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
     /// The list of language servers to use (or disable) for this language.
@@ -124,9 +124,9 @@ pub struct LanguageSettings {
     /// scopes.
     pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
-    pub show_whitespaces: ShowWhitespaceSetting,
+    pub show_whitespaces: settings::ShowWhitespaceSetting,
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
-    pub whitespace_map: WhitespaceMap,
+    pub whitespace_map: settings::WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
@@ -149,7 +149,7 @@ pub struct LanguageSettings {
     /// Whether to perform linked edits
     pub linked_edits: bool,
     /// Task configuration for this language.
-    pub tasks: LanguageTaskConfig,
+    pub tasks: settings::LanguageTaskConfig,
     /// Whether to pop the completions menu while typing in an editor without
     /// explicitly requesting it.
     pub show_completions_on_input: bool,
@@ -157,7 +157,7 @@ pub struct LanguageSettings {
     /// completions menu.
     pub show_completion_documentation: bool,
     /// Completion settings for this language.
-    pub completions: CompletionSettings,
+    pub completions: settings::CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
 }
@@ -211,43 +211,19 @@ impl LanguageSettings {
     }
 }
 
-/// The provider that supplies edit predictions.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum EditPredictionProvider {
-    None,
-    #[default]
-    Copilot,
-    Supermaven,
-    Zed,
-}
-
-impl EditPredictionProvider {
-    pub fn is_zed(&self) -> bool {
-        match self {
-            EditPredictionProvider::Zed => true,
-            EditPredictionProvider::None
-            | EditPredictionProvider::Copilot
-            | EditPredictionProvider::Supermaven => false,
-        }
-    }
-}
-
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
 #[derive(Clone, Debug, Default, SettingsUi)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
-    pub provider: EditPredictionProvider,
+    pub provider: settings::EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
     #[settings_ui(skip)]
     pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
-    pub mode: EditPredictionsMode,
+    pub mode: settings::EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     pub copilot: CopilotSettings,
     /// Whether edit predictions are enabled in the assistant panel.
@@ -273,22 +249,6 @@ impl EditPredictionSettings {
 pub struct DisabledGlob {
     matcher: GlobMatcher,
     is_absolute: bool,
-}
-
-/// The mode in which edit predictions should be displayed.
-#[derive(
-    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum EditPredictionsMode {
-    /// If provider supports it, display inline when holding modifier key (e.g., alt).
-    /// Otherwise, eager preview is used.
-    #[serde(alias = "auto")]
-    Subtle,
-    /// Display inline when there are no language server completions available.
-    #[default]
-    #[serde(alias = "eager_preview")]
-    Eager,
 }
 
 #[derive(Clone, Debug, Default, SettingsUi)]
@@ -323,291 +283,6 @@ inventory::submit! {
                     .collect::<serde_json::Map<_, _>>()
             }))
         }
-    }
-}
-
-/// Controls how completions are processed for this language.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
-#[serde(rename_all = "snake_case")]
-pub struct CompletionSettings {
-    /// Controls how words are completed.
-    /// For large documents, not all words may be fetched for completion.
-    ///
-    /// Default: `fallback`
-    #[serde(default = "default_words_completion_mode")]
-    pub words: WordsCompletionMode,
-    /// How many characters has to be in the completions query to automatically show the words-based completions.
-    /// Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
-    ///
-    /// Default: 3
-    #[serde(default = "default_3")]
-    pub words_min_length: usize,
-    /// Whether to fetch LSP completions or not.
-    ///
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub lsp: bool,
-    /// When fetching LSP completions, determines how long to wait for a response of a particular server.
-    /// When set to 0, waits indefinitely.
-    ///
-    /// Default: 0
-    #[serde(default)]
-    pub lsp_fetch_timeout_ms: u64,
-    /// Controls how LSP completions are inserted.
-    ///
-    /// Default: "replace_suffix"
-    #[serde(default = "default_lsp_insert_mode")]
-    pub lsp_insert_mode: LspInsertMode,
-}
-
-/// Controls how document's words are completed.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WordsCompletionMode {
-    /// Always fetch document's words for completions along with LSP completions.
-    Enabled,
-    /// Only if LSP response errors or times out,
-    /// use document's words to show completions.
-    Fallback,
-    /// Never fetch or complete document's words for completions.
-    /// (Word-based completions can still be queried via a separate action)
-    Disabled,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LspInsertMode {
-    /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
-    Insert,
-    /// Replaces text before and after the cursor, using the `replace` range described in the LSP specification.
-    Replace,
-    /// Behaves like `"replace"` if the text that would be replaced is a subsequence of the completion text,
-    /// and like `"insert"` otherwise.
-    ReplaceSubsequence,
-    /// Behaves like `"replace"` if the text after the cursor is a suffix of the completion, and like
-    /// `"insert"` otherwise.
-    ReplaceSuffix,
-}
-
-fn default_words_completion_mode() -> WordsCompletionMode {
-    WordsCompletionMode::Fallback
-}
-
-fn default_lsp_insert_mode() -> LspInsertMode {
-    LspInsertMode::ReplaceSuffix
-}
-
-fn default_3() -> usize {
-    3
-}
-
-/// Controls how whitespace should be displayedin the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowWhitespaceSetting {
-    /// Draw whitespace only for the selected text.
-    Selection,
-    /// Do not draw any tabs or spaces.
-    None,
-    /// Draw all invisible symbols.
-    All,
-    /// Draw whitespaces at boundaries only.
-    ///
-    /// For a whitespace to be on a boundary, any of the following conditions need to be met:
-    /// - It is a tab
-    /// - It is adjacent to an edge (start or end)
-    /// - It is adjacent to a whitespace (left or right)
-    Boundary,
-    /// Draw whitespaces only after non-whitespace characters.
-    Trailing,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
-pub struct WhitespaceMap {
-    #[serde(default)]
-    pub space: Option<String>,
-    #[serde(default)]
-    pub tab: Option<String>,
-}
-
-impl WhitespaceMap {
-    pub fn space(&self) -> SharedString {
-        self.space
-            .as_ref()
-            .map_or_else(|| SharedString::from("•"), |s| SharedString::from(s))
-    }
-
-    pub fn tab(&self) -> SharedString {
-        self.tab
-            .as_ref()
-            .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
-    }
-}
-
-/// The settings for indent guides.
-#[derive(
-    Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi,
-)]
-pub struct IndentGuideSettings {
-    /// Whether to display indent guides in the editor.
-    ///
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    /// The width of the indent guides in pixels, between 1 and 10.
-    ///
-    /// Default: 1
-    #[serde(default = "line_width")]
-    pub line_width: u32,
-    /// The width of the active indent guide in pixels, between 1 and 10.
-    ///
-    /// Default: 1
-    #[serde(default = "active_line_width")]
-    pub active_line_width: u32,
-    /// Determines how indent guides are colored.
-    ///
-    /// Default: Fixed
-    #[serde(default)]
-    pub coloring: IndentGuideColoring,
-    /// Determines how indent guide backgrounds are colored.
-    ///
-    /// Default: Disabled
-    #[serde(default)]
-    pub background_coloring: IndentGuideBackgroundColoring,
-}
-
-fn line_width() -> u32 {
-    1
-}
-
-fn active_line_width() -> u32 {
-    line_width()
-}
-
-/// Determines how indent guides are colored.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum IndentGuideColoring {
-    /// Do not render any lines for indent guides.
-    Disabled,
-    /// Use the same color for all indentation levels.
-    #[default]
-    Fixed,
-    /// Use a different color for each indentation level.
-    IndentAware,
-}
-
-/// Determines how indent guide backgrounds are colored.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum IndentGuideBackgroundColoring {
-    /// Do not render any background for indent guides.
-    #[default]
-    Disabled,
-    /// Use a different color for each indentation level.
-    IndentAware,
-}
-
-/// The settings for inlay hints.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi)]
-pub struct InlayHintSettings {
-    /// Global switch to toggle hints on and off.
-    ///
-    /// Default: false
-    #[serde(default)]
-    pub enabled: bool,
-    /// Global switch to toggle inline values on and off when debugging.
-    ///
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub show_value_hints: bool,
-    /// Whether type hints should be shown.
-    ///
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub show_type_hints: bool,
-    /// Whether parameter hints should be shown.
-    ///
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub show_parameter_hints: bool,
-    /// Whether other hints should be shown.
-    ///
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub show_other_hints: bool,
-    /// Whether to show a background for inlay hints.
-    ///
-    /// If set to `true`, the background will use the `hint.background` color
-    /// from the current theme.
-    ///
-    /// Default: false
-    #[serde(default)]
-    pub show_background: bool,
-    /// Whether or not to debounce inlay hints updates after buffer edits.
-    ///
-    /// Set to 0 to disable debouncing.
-    ///
-    /// Default: 700
-    #[serde(default = "edit_debounce_ms")]
-    pub edit_debounce_ms: u64,
-    /// Whether or not to debounce inlay hints updates after buffer scrolls.
-    ///
-    /// Set to 0 to disable debouncing.
-    ///
-    /// Default: 50
-    #[serde(default = "scroll_debounce_ms")]
-    pub scroll_debounce_ms: u64,
-    /// Toggles inlay hints (hides or shows) when the user presses the modifiers specified.
-    /// If only a subset of the modifiers specified is pressed, hints are not toggled.
-    /// If no modifiers are specified, this is equivalent to `None`.
-    ///
-    /// Default: None
-    #[serde(default)]
-    pub toggle_on_modifiers_press: Option<Modifiers>,
-}
-
-fn edit_debounce_ms() -> u64 {
-    700
-}
-
-fn scroll_debounce_ms() -> u64 {
-    50
-}
-
-/// The task settings for a particular language.
-#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema, SettingsUi)]
-pub struct LanguageTaskConfig {
-    /// Extra task variables to set for a particular language.
-    #[serde(default)]
-    pub variables: HashMap<String, String>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    /// Use LSP tasks over Zed language extension ones.
-    /// If no LSP tasks are returned due to error/timeout or regular execution,
-    /// Zed language extension tasks will be used instead.
-    ///
-    /// Other Zed tasks will still be shown:
-    /// * Zed task from either of the task config file
-    /// * Zed task from history (e.g. one-off task was spawned before)
-    #[serde(default = "default_true")]
-    pub prefer_lsp: bool,
-}
-
-impl InlayHintSettings {
-    /// Returns the kinds of inlay hints that are enabled based on the settings.
-    pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
-        let mut kinds = HashSet::default();
-        if self.show_type_hints {
-            kinds.insert(Some(InlayHintKind::Type));
-        }
-        if self.show_parameter_hints {
-            kinds.insert(Some(InlayHintKind::Parameter));
-        }
-        if self.show_other_hints {
-            kinds.insert(None);
-        }
-        kinds
     }
 }
 
@@ -698,113 +373,71 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
     );
 }
 
-/// The kind of an inlay hint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum InlayHintKind {
-    /// An inlay hint for a type.
-    Type,
-    /// An inlay hint for a parameter.
-    Parameter,
-}
-
-impl InlayHintKind {
-    /// Returns the [`InlayHintKind`] from the given name.
-    ///
-    /// Returns `None` if `name` does not match any of the expected
-    /// string representations.
-    pub fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "type" => Some(InlayHintKind::Type),
-            "parameter" => Some(InlayHintKind::Parameter),
-            _ => None,
-        }
-    }
-
-    /// Returns the name of this [`InlayHintKind`].
-    pub fn name(&self) -> &'static str {
-        match self {
-            InlayHintKind::Type => "type",
-            InlayHintKind::Parameter => "parameter",
-        }
-    }
-}
-
 impl settings::Settings for AllLanguageSettings {
     fn from_default(content: &settings::SettingsContent, cx: &mut App) -> Option<Self> {
-        let defaults = content.project.all_languages.defaults;
+        let all_languages = &content.project.all_languages;
+        let defaults = &all_languages.defaults;
         let default_language_settings = LanguageSettings {
             tab_size: defaults.tab_size?,
             hard_tabs: defaults.hard_tabs?,
             soft_wrap: defaults.soft_wrap?,
             preferred_line_length: defaults.preferred_line_length?,
             show_wrap_guides: defaults.show_wrap_guides?,
-            wrap_guides: defaults.wrap_guides?,
-            indent_guides: defaults.indent_guides?,
-            format_on_save: defaults.format_on_save?,
+            wrap_guides: defaults.wrap_guides.clone()?,
+            indent_guides: defaults.indent_guides.clone()?,
+            format_on_save: defaults.format_on_save.clone()?,
             remove_trailing_whitespace_on_save: defaults.remove_trailing_whitespace_on_save?,
             ensure_final_newline_on_save: defaults.ensure_final_newline_on_save?,
-            formatter: defaults.formatter?,
-            prettier: defaults.prettier?,
-            jsx_tag_auto_close: defaults.jsx_tag_auto_close?,
+            formatter: defaults.formatter.clone()?,
+            prettier: defaults.prettier.clone()?,
+            jsx_tag_auto_close: defaults.jsx_tag_auto_close.clone()?,
             enable_language_server: defaults.enable_language_server?,
-            language_servers: defaults.language_servers?,
+            language_servers: defaults.language_servers.clone()?,
             allow_rewrap: defaults.allow_rewrap?,
             show_edit_predictions: defaults.show_edit_predictions?,
-            edit_predictions_disabled_in: defaults.edit_predictions_disabled_in?,
+            edit_predictions_disabled_in: defaults.edit_predictions_disabled_in.clone()?,
             show_whitespaces: defaults.show_whitespaces?,
-            whitespace_map: defaults.whitespace_map?,
+            whitespace_map: defaults.whitespace_map.clone()?,
             extend_comment_on_newline: defaults.extend_comment_on_newline?,
-            inlay_hints: defaults.inlay_hints?,
+            inlay_hints: defaults.inlay_hints.clone()?,
             use_autoclose: defaults.use_autoclose?,
             use_auto_surround: defaults.use_auto_surround?,
             use_on_type_format: defaults.use_on_type_format?,
             auto_indent: defaults.auto_indent?,
             auto_indent_on_paste: defaults.auto_indent_on_paste?,
             always_treat_brackets_as_autoclosed: defaults.always_treat_brackets_as_autoclosed?,
-            code_actions_on_format: defaults.code_actions_on_format?,
+            code_actions_on_format: defaults.code_actions_on_format.clone()?,
             linked_edits: defaults.linked_edits?,
-            tasks: defaults.tasks?,
+            tasks: defaults.tasks.clone()?,
             show_completions_on_input: defaults.show_completions_on_input?,
             show_completion_documentation: defaults.show_completion_documentation?,
-            completions: defaults.completions?,
-            debuggers: defaults.debuggers?,
+            completions: defaults.completions.clone()?,
+            debuggers: defaults.debuggers.clone()?,
         };
 
-        todo!();
-    }
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let default_value = sources.default;
-
-        // A default is provided for all settings.
-        let mut defaults: LanguageSettings =
-            serde_json::from_value(serde_json::to_value(&default_value.defaults)?)?;
-
         let mut languages = HashMap::default();
-        for (language_name, settings) in &default_value.languages.0 {
-            let mut language_settings = defaults.clone();
+        for (language_name, settings) in &all_languages.languages.0 {
+            let mut language_settings = default_language_settings.clone();
             merge_settings(&mut language_settings, settings);
-            languages.insert(language_name.clone(), language_settings);
+            languages.insert(LanguageName(language_name.clone()), language_settings);
         }
 
-        let mut edit_prediction_provider = default_value
+        let edit_prediction_provider = all_languages
             .features
             .as_ref()
             .and_then(|f| f.edit_prediction_provider);
-        let mut edit_predictions_mode = default_value
+        let edit_predictions_mode = all_languages
             .edit_predictions
             .as_ref()
-            .map(|edit_predictions| edit_predictions.mode)
-            .ok_or_else(Self::missing_default)?;
+            .map(|edit_predictions| edit_predictions.mode)?;
 
-        let mut completion_globs: HashSet<&String> = default_value
+        let disabled_globs: HashSet<&String> = all_languages
             .edit_predictions
             .as_ref()
             .and_then(|c| c.disabled_globs.as_ref())
-            .map(|globs| globs.iter().collect())
-            .ok_or_else(Self::missing_default)?;
+            .map(|globs| globs.iter().collect())?;
 
-        let mut copilot_settings = default_value
+        let copilot_settings = all_languages
             .edit_predictions
             .as_ref()
             .map(|settings| CopilotSettings {
@@ -814,111 +447,34 @@ impl settings::Settings for AllLanguageSettings {
             })
             .unwrap_or_default();
 
-        let mut enabled_in_text_threads = default_value
+        let enabled_in_text_threads = all_languages
             .edit_predictions
             .as_ref()
             .map(|settings| settings.enabled_in_text_threads)
             .unwrap_or(true);
 
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
+        let mut file_globs: FxHashMap<Arc<str>, Vec<String>> = FxHashMap::default();
 
-        for (language, patterns) in &default_value.file_types {
+        for (language, patterns) in &all_languages.file_types {
             let mut builder = GlobSetBuilder::new();
 
             for pattern in patterns {
-                builder.add(Glob::new(pattern)?);
+                builder.add(Glob::new(pattern).log_err()?);
             }
 
-            file_types.insert(language.clone(), builder.build()?);
+            file_types.insert(language.clone(), builder.build().log_err()?);
+            file_globs.insert(language.clone(), patterns.clone());
         }
 
-        for user_settings in sources.customizations() {
-            if let Some(provider) = user_settings
-                .features
-                .as_ref()
-                .and_then(|f| f.edit_prediction_provider)
-            {
-                edit_prediction_provider = Some(provider);
-            }
-
-            if let Some(edit_predictions) = user_settings.edit_predictions.as_ref() {
-                edit_predictions_mode = edit_predictions.mode;
-                enabled_in_text_threads = edit_predictions.enabled_in_text_threads;
-
-                if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
-                    completion_globs.extend(disabled_globs.iter());
-                }
-            }
-
-            if let Some(proxy) = user_settings
-                .edit_predictions
-                .as_ref()
-                .and_then(|settings| settings.copilot.proxy.clone())
-            {
-                copilot_settings.proxy = Some(proxy);
-            }
-
-            if let Some(proxy_no_verify) = user_settings
-                .edit_predictions
-                .as_ref()
-                .and_then(|settings| settings.copilot.proxy_no_verify)
-            {
-                copilot_settings.proxy_no_verify = Some(proxy_no_verify);
-            }
-
-            if let Some(enterprise_uri) = user_settings
-                .edit_predictions
-                .as_ref()
-                .and_then(|settings| settings.copilot.enterprise_uri.clone())
-            {
-                copilot_settings.enterprise_uri = Some(enterprise_uri);
-            }
-
-            // A user's global settings override the default global settings and
-            // all default language-specific settings.
-            merge_settings(&mut defaults, &user_settings.defaults);
-            for language_settings in languages.values_mut() {
-                merge_settings(language_settings, &user_settings.defaults);
-            }
-
-            // A user's language-specific settings override default language-specific settings.
-            for (language_name, user_language_settings) in &user_settings.languages.0 {
-                merge_settings(
-                    languages
-                        .entry(language_name.clone())
-                        .or_insert_with(|| defaults.clone()),
-                    user_language_settings,
-                );
-            }
-
-            for (language, patterns) in &user_settings.file_types {
-                let mut builder = GlobSetBuilder::new();
-
-                let default_value = default_value.file_types.get(&language.clone());
-
-                // Merge the default value with the user's value.
-                if let Some(patterns) = default_value {
-                    for pattern in patterns {
-                        builder.add(Glob::new(pattern)?);
-                    }
-                }
-
-                for pattern in patterns {
-                    builder.add(Glob::new(pattern)?);
-                }
-
-                file_types.insert(language.clone(), builder.build()?);
-            }
-        }
-
-        Ok(Self {
+        Some(Self {
             edit_predictions: EditPredictionSettings {
                 provider: if let Some(provider) = edit_prediction_provider {
                     provider
                 } else {
                     EditPredictionProvider::None
                 },
-                disabled_globs: completion_globs
+                disabled_globs: disabled_globs
                     .iter()
                     .filter_map(|g| {
                         let expanded_g = shellexpand::tilde(g).into_owned();
@@ -932,14 +488,115 @@ impl settings::Settings for AllLanguageSettings {
                 copilot: copilot_settings,
                 enabled_in_text_threads,
             },
-            defaults,
+            defaults: default_language_settings,
             languages,
             file_types,
+            file_globs,
         })
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        let d = &mut current.defaults;
+    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
+        let all_languages = &content.project.all_languages;
+        if let Some(provider) = all_languages
+            .features
+            .as_ref()
+            .and_then(|f| f.edit_prediction_provider)
+        {
+            self.edit_predictions.provider = provider;
+        }
+
+        if let Some(edit_predictions) = all_languages.edit_predictions.as_ref() {
+            self.edit_predictions.mode = edit_predictions.mode;
+            self.edit_predictions.enabled_in_text_threads =
+                edit_predictions.enabled_in_text_threads;
+
+            if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
+                self.edit_predictions
+                    .disabled_globs
+                    .extend(disabled_globs.iter().filter_map(|g| {
+                        let expanded_g = shellexpand::tilde(g).into_owned();
+                        Some(DisabledGlob {
+                            matcher: globset::Glob::new(&expanded_g).ok()?.compile_matcher(),
+                            is_absolute: Path::new(&expanded_g).is_absolute(),
+                        })
+                    }));
+            }
+        }
+
+        if let Some(proxy) = all_languages
+            .edit_predictions
+            .as_ref()
+            .and_then(|settings| settings.copilot.proxy.clone())
+        {
+            self.edit_predictions.copilot.proxy = Some(proxy);
+        }
+
+        if let Some(proxy_no_verify) = all_languages
+            .edit_predictions
+            .as_ref()
+            .and_then(|settings| settings.copilot.proxy_no_verify)
+        {
+            self.edit_predictions.copilot.proxy_no_verify = Some(proxy_no_verify);
+        }
+
+        if let Some(enterprise_uri) = all_languages
+            .edit_predictions
+            .as_ref()
+            .and_then(|settings| settings.copilot.enterprise_uri.clone())
+        {
+            self.edit_predictions.copilot.enterprise_uri = Some(enterprise_uri);
+        }
+
+        // A user's global settings override the default global settings and
+        // all default language-specific settings.
+        merge_settings(&mut self.defaults, &all_languages.defaults);
+        for language_settings in self.languages.values_mut() {
+            merge_settings(language_settings, &all_languages.defaults);
+        }
+
+        // A user's language-specific settings override default language-specific settings.
+        for (language_name, user_language_settings) in &all_languages.languages.0 {
+            merge_settings(
+                self.languages
+                    .entry(LanguageName(language_name.clone()))
+                    .or_insert_with(|| self.defaults.clone()),
+                user_language_settings,
+            );
+        }
+
+        for (language, patterns) in &all_languages.file_types {
+            let mut builder = GlobSetBuilder::new();
+
+            let default_value = self.file_globs.get(&language.clone());
+
+            // Merge the default value with the user's value.
+            if let Some(patterns) = default_value {
+                for pattern in patterns {
+                    if let Some(glob) = Glob::new(pattern).log_err() {
+                        builder.add(glob);
+                    }
+                }
+            }
+
+            for pattern in patterns {
+                if let Some(glob) = Glob::new(pattern).log_err() {
+                    builder.add(glob);
+                }
+            }
+
+            self.file_globs
+                .entry(language.clone())
+                .or_default()
+                .extend(patterns.clone());
+
+            if let Some(matcher) = builder.build().log_err() {
+                self.file_types.insert(language.clone(), matcher);
+            }
+        }
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
+        let d = &mut current.project.all_languages.defaults;
         if let Some(size) = vscode
             .read_value("editor.tabSize")
             .and_then(|v| v.as_u64())
@@ -1052,7 +709,11 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         // TODO: do we want to merge imported globs per filetype? for now we'll just replace
-        current.file_types.extend(associations);
+        current
+            .project
+            .all_languages
+            .file_types
+            .extend(associations);
 
         // cursor global ignore list applies to cursor-tab, so transfer it to edit_predictions.disabled_globs
         if let Some(disabled_globs) = vscode
@@ -1060,6 +721,8 @@ impl settings::Settings for AllLanguageSettings {
             .and_then(|v| v.as_array())
         {
             current
+                .project
+                .all_languages
                 .edit_predictions
                 .get_or_insert_default()
                 .disabled_globs
@@ -1075,87 +738,81 @@ impl settings::Settings for AllLanguageSettings {
 }
 
 fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent) {
-    fn merge<T>(target: &mut T, value: Option<T>) {
-        if let Some(value) = value {
-            *target = value;
-        }
-    }
-
-    merge(&mut settings.tab_size, src.tab_size);
+    settings.tab_size.merge_from(&src.tab_size);
     settings.tab_size = settings
         .tab_size
         .clamp(NonZeroU32::new(1).unwrap(), NonZeroU32::new(16).unwrap());
 
-    merge(&mut settings.hard_tabs, src.hard_tabs);
-    merge(&mut settings.soft_wrap, src.soft_wrap);
-    merge(&mut settings.use_autoclose, src.use_autoclose);
-    merge(&mut settings.use_auto_surround, src.use_auto_surround);
-    merge(&mut settings.use_on_type_format, src.use_on_type_format);
-    merge(&mut settings.auto_indent, src.auto_indent);
-    merge(&mut settings.auto_indent_on_paste, src.auto_indent_on_paste);
-    merge(
-        &mut settings.always_treat_brackets_as_autoclosed,
-        src.always_treat_brackets_as_autoclosed,
-    );
-    merge(&mut settings.show_wrap_guides, src.show_wrap_guides);
-    merge(&mut settings.wrap_guides, src.wrap_guides.clone());
-    merge(&mut settings.indent_guides, src.indent_guides);
-    merge(
-        &mut settings.code_actions_on_format,
-        src.code_actions_on_format.clone(),
-    );
-    merge(&mut settings.linked_edits, src.linked_edits);
-    merge(&mut settings.tasks, src.tasks.clone());
+    settings.hard_tabs.merge_from(&src.hard_tabs);
+    settings.soft_wrap.merge_from(&src.soft_wrap);
+    settings.use_autoclose.merge_from(&src.use_autoclose);
+    settings
+        .use_auto_surround
+        .merge_from(&src.use_auto_surround);
+    settings
+        .use_on_type_format
+        .merge_from(&src.use_on_type_format);
+    settings.auto_indent.merge_from(&src.auto_indent);
+    settings
+        .auto_indent_on_paste
+        .merge_from(&src.auto_indent_on_paste);
+    settings
+        .always_treat_brackets_as_autoclosed
+        .merge_from(&src.always_treat_brackets_as_autoclosed);
+    settings.show_wrap_guides.merge_from(&src.show_wrap_guides);
+    settings.wrap_guides.merge_from(&src.wrap_guides);
+    settings.indent_guides.merge_from(&src.indent_guides);
+    settings
+        .code_actions_on_format
+        .merge_from(&src.code_actions_on_format.clone());
+    settings.linked_edits.merge_from(&src.linked_edits);
+    settings.tasks.merge_from(&src.tasks.clone());
 
-    merge(
-        &mut settings.preferred_line_length,
-        src.preferred_line_length,
-    );
-    merge(&mut settings.formatter, src.formatter.clone());
-    merge(&mut settings.prettier, src.prettier.clone());
-    merge(
-        &mut settings.jsx_tag_auto_close,
-        src.jsx_tag_auto_close.clone(),
-    );
-    merge(&mut settings.format_on_save, src.format_on_save.clone());
-    merge(
-        &mut settings.remove_trailing_whitespace_on_save,
-        src.remove_trailing_whitespace_on_save,
-    );
-    merge(
-        &mut settings.ensure_final_newline_on_save,
-        src.ensure_final_newline_on_save,
-    );
-    merge(
-        &mut settings.enable_language_server,
-        src.enable_language_server,
-    );
-    merge(&mut settings.language_servers, src.language_servers.clone());
-    merge(&mut settings.allow_rewrap, src.allow_rewrap);
-    merge(
-        &mut settings.show_edit_predictions,
-        src.show_edit_predictions,
-    );
-    merge(
-        &mut settings.edit_predictions_disabled_in,
-        src.edit_predictions_disabled_in.clone(),
-    );
-    merge(&mut settings.show_whitespaces, src.show_whitespaces);
-    merge(&mut settings.whitespace_map, src.whitespace_map.clone());
-    merge(
-        &mut settings.extend_comment_on_newline,
-        src.extend_comment_on_newline,
-    );
-    merge(&mut settings.inlay_hints, src.inlay_hints);
-    merge(
-        &mut settings.show_completions_on_input,
-        src.show_completions_on_input,
-    );
-    merge(
-        &mut settings.show_completion_documentation,
-        src.show_completion_documentation,
-    );
-    merge(&mut settings.completions, src.completions);
+    settings
+        .preferred_line_length
+        .merge_from(&src.preferred_line_length);
+    settings.formatter.merge_from(&src.formatter.clone());
+    settings.prettier.merge_from(&src.prettier.clone());
+    settings
+        .jsx_tag_auto_close
+        .merge_from(&src.jsx_tag_auto_close.clone());
+    settings
+        .format_on_save
+        .merge_from(&src.format_on_save.clone());
+    settings
+        .remove_trailing_whitespace_on_save
+        .merge_from(&src.remove_trailing_whitespace_on_save);
+    settings
+        .ensure_final_newline_on_save
+        .merge_from(&src.ensure_final_newline_on_save);
+    settings
+        .enable_language_server
+        .merge_from(&src.enable_language_server);
+    settings
+        .language_servers
+        .merge_from(&src.language_servers.clone());
+    settings.allow_rewrap.merge_from(&src.allow_rewrap);
+    settings
+        .show_edit_predictions
+        .merge_from(&src.show_edit_predictions);
+    settings
+        .edit_predictions_disabled_in
+        .merge_from(&src.edit_predictions_disabled_in.clone());
+    settings.show_whitespaces.merge_from(&src.show_whitespaces);
+    settings
+        .whitespace_map
+        .merge_from(&src.whitespace_map.clone());
+    settings
+        .extend_comment_on_newline
+        .merge_from(&src.extend_comment_on_newline);
+    settings.inlay_hints.merge_from(&src.inlay_hints.clone());
+    settings
+        .show_completions_on_input
+        .merge_from(&src.show_completions_on_input);
+    settings
+        .show_completion_documentation
+        .merge_from(&src.show_completion_documentation);
+    settings.completions.merge_from(&src.completions.clone());
 }
 
 /// Allows to enable/disable formatting with Prettier
@@ -1193,48 +850,8 @@ pub struct JsxTagAutoCloseSettings {
 
 #[cfg(test)]
 mod tests {
-    use gpui::TestAppContext;
-
     use super::*;
-
-    #[test]
-    fn test_formatter_deserialization() {
-        let raw_auto = "{\"formatter\": \"auto\"}";
-        let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
-        assert_eq!(settings.formatter, Some(SelectedFormatter::Auto));
-        let raw = "{\"formatter\": \"language_server\"}";
-        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
-        assert_eq!(
-            settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Single(
-                Formatter::LanguageServer { name: None }
-            )))
-        );
-        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
-        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
-        assert_eq!(
-            settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Vec(vec![
-                Formatter::LanguageServer { name: None }
-            ])))
-        );
-        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
-        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
-        assert_eq!(
-            settings.formatter,
-            Some(SelectedFormatter::List(FormatterList::Vec(vec![
-                Formatter::LanguageServer { name: None },
-                Formatter::Prettier
-            ])))
-        );
-    }
-
-    #[test]
-    fn test_formatter_deserialization_invalid() {
-        let raw_auto = "{\"formatter\": {}}";
-        let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
-        assert!(result.is_err());
-    }
+    use gpui::TestAppContext;
 
     #[gpui::test]
     fn test_edit_predictions_enabled_for_file(cx: &mut TestAppContext) {

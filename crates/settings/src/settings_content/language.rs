@@ -29,7 +29,7 @@ pub struct AllLanguageSettingsContent {
     /// Settings for associating file extensions and filenames
     /// with languages.
     #[serde(default)]
-    pub file_types: HashMap<SharedString, Vec<String>>,
+    pub file_types: HashMap<Arc<str>, Vec<String>>,
 }
 
 /// The settings for enabling/disabling features.
@@ -37,13 +37,13 @@ pub struct AllLanguageSettingsContent {
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
-    pub edit_prediction_provider: Option<EditPredictionProviderContent>,
+    pub edit_prediction_provider: Option<EditPredictionProvider>,
 }
 
 /// The provider that supplies edit predictions.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum EditPredictionProviderContent {
+pub enum EditPredictionProvider {
     None,
     #[default]
     Copilot,
@@ -62,7 +62,7 @@ pub struct EditPredictionSettingsContent {
     /// The mode used to display edit predictions in the buffer.
     /// Provider support required.
     #[serde(default)]
-    pub mode: EditPredictionsModeContent,
+    pub mode: EditPredictionsMode,
     /// Settings specific to GitHub Copilot.
     #[serde(default)]
     pub copilot: CopilotSettingsContent,
@@ -98,7 +98,7 @@ pub struct CopilotSettingsContent {
 /// The mode in which edit predictions should be displayed.
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum EditPredictionsModeContent {
+pub enum EditPredictionsMode {
     /// If provider supports it, display inline when holding modifier key (e.g., alt).
     /// Otherwise, eager preview is used.
     #[serde(alias = "auto")]
@@ -112,7 +112,7 @@ pub enum EditPredictionsModeContent {
 /// Controls the soft-wrapping behavior in the editor.
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum SoftWrapContent {
+pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
     None,
     /// Deprecated: use None instead. Left to avoid breaking existing users' configs.
@@ -144,7 +144,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: none
     #[serde(default)]
-    pub soft_wrap: Option<SoftWrapContent>,
+    pub soft_wrap: Option<SoftWrap>,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     ///
@@ -166,7 +166,7 @@ pub struct LanguageSettingsContent {
     pub wrap_guides: Option<Vec<usize>>,
     /// Indent guide related settings.
     #[serde(default)]
-    pub indent_guides: Option<IndentGuideSettingsContent>,
+    pub indent_guides: Option<IndentGuideSettings>,
     /// Whether or not to perform a buffer format before saving.
     ///
     /// Default: on
@@ -379,6 +379,8 @@ pub struct JsxTagAutoCloseSettings {
 }
 
 /// The settings for inlay hints.
+/// todo(settings_refactor) the fields of this struct should likely be optional,
+/// and a similar struct exposed from the language crate.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct InlayHintSettings {
     /// Global switch to toggle hints on and off.
@@ -435,6 +437,54 @@ pub struct InlayHintSettings {
     /// Default: None
     #[serde(default)]
     pub toggle_on_modifiers_press: Option<Modifiers>,
+}
+
+impl InlayHintSettings {
+    /// Returns the kinds of inlay hints that are enabled based on the settings.
+    pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
+        let mut kinds = HashSet::default();
+        if self.show_type_hints {
+            kinds.insert(Some(InlayHintKind::Type));
+        }
+        if self.show_parameter_hints {
+            kinds.insert(Some(InlayHintKind::Parameter));
+        }
+        if self.show_other_hints {
+            kinds.insert(None);
+        }
+        kinds
+    }
+}
+
+/// The kind of an inlay hint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InlayHintKind {
+    /// An inlay hint for a type.
+    Type,
+    /// An inlay hint for a parameter.
+    Parameter,
+}
+
+impl InlayHintKind {
+    /// Returns the [`InlayHintKind`] from the given name.
+    ///
+    /// Returns `None` if `name` does not match any of the expected
+    /// string representations.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "type" => Some(InlayHintKind::Type),
+            "parameter" => Some(InlayHintKind::Parameter),
+            _ => None,
+        }
+    }
+
+    /// Returns the name of this [`InlayHintKind`].
+    pub fn name(&self) -> &'static str {
+        match self {
+            InlayHintKind::Type => "type",
+            InlayHintKind::Parameter => "parameter",
+        }
+    }
 }
 
 fn edit_debounce_ms() -> u64 {
@@ -775,7 +825,7 @@ pub enum Formatter {
 
 /// The settings for indent guides.
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct IndentGuideSettingsContent {
+pub struct IndentGuideSettings {
     /// Whether to display indent guides in the editor.
     ///
     /// Default: true
@@ -880,4 +930,48 @@ pub enum IndentGuideBackgroundColoring {
     Disabled,
     /// Use a different color for each indentation level.
     IndentAware,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_formatter_deserialization() {
+        let raw_auto = "{\"formatter\": \"auto\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw_auto).unwrap();
+        assert_eq!(settings.formatter, Some(SelectedFormatter::Auto));
+        let raw = "{\"formatter\": \"language_server\"}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList::Single(
+                Formatter::LanguageServer { name: None }
+            )))
+        );
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList::Vec(vec![
+                Formatter::LanguageServer { name: None }
+            ])))
+        );
+        let raw = "{\"formatter\": [{\"language_server\": {\"name\": null}}, \"prettier\"]}";
+        let settings: LanguageSettingsContent = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            settings.formatter,
+            Some(SelectedFormatter::List(FormatterList::Vec(vec![
+                Formatter::LanguageServer { name: None },
+                Formatter::Prettier
+            ])))
+        );
+    }
+
+    #[test]
+    fn test_formatter_deserialization_invalid() {
+        let raw_auto = "{\"formatter\": {}}";
+        let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
+        assert!(result.is_err());
+    }
 }

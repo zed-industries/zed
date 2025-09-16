@@ -186,7 +186,7 @@ struct SettingValue<T> {
 trait AnySettingValue: 'static + Send + Sync {
     fn setting_type_name(&self) -> &'static str;
 
-    fn from_file(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>>;
+    fn from_default(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>>;
     fn refine(&self, value: &mut dyn Any, s: &[&SettingsContent], cx: &mut App);
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
@@ -279,7 +279,7 @@ impl SettingsStore {
         }
         let Some(mut value) = T::from_default(&self.default_settings, cx) else {
             panic!(
-                "{}::from_file return None for default.json",
+                "{}::from_default return None for default.json",
                 type_name::<T>()
             )
         };
@@ -387,7 +387,7 @@ impl SettingsStore {
         cx: &mut App,
         update: impl FnOnce(&mut SettingsContent),
     ) {
-        let mut content = self.user_settings.as_ref().unwrap().content.clone();
+        let mut content = self.user_settings.clone().unwrap_or_default().content;
         update(&mut content);
         let new_text = serde_json::to_string(&UserSettingsContent {
             content,
@@ -864,7 +864,9 @@ impl SettingsStore {
         for setting_value in self.setting_values.values_mut() {
             // If the global settings file changed, reload the global value for the field.
             if changed_local_path.is_none() {
-                let mut value = setting_value.from_file(&self.default_settings, cx).unwrap();
+                let mut value = setting_value
+                    .from_default(&self.default_settings, cx)
+                    .unwrap();
                 setting_value.refine(value.as_mut(), &refinements, cx);
                 setting_value.set_global_value(value);
             }
@@ -896,7 +898,9 @@ impl SettingsStore {
                     continue;
                 }
 
-                let mut value = setting_value.from_file(&self.default_settings, cx).unwrap();
+                let mut value = setting_value
+                    .from_default(&self.default_settings, cx)
+                    .unwrap();
                 setting_value.refine(value.as_mut(), &refinements, cx);
                 setting_value.refine(value.as_mut(), &project_settings_stack, cx);
                 setting_value.set_local_value(*root_id, directory_path.clone(), value);
@@ -980,7 +984,7 @@ impl Debug for SettingsStore {
 }
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
-    fn from_file(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>> {
+    fn from_default(&self, s: &SettingsContent, cx: &mut App) -> Option<Box<dyn Any>> {
         T::from_default(s, cx).map(|result| Box::new(result) as _)
     }
 

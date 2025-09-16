@@ -798,6 +798,7 @@ fn font_fallbacks_from_settings(
 impl settings::Settings for ThemeSettings {
     fn from_default(content: &settings::SettingsContent, cx: &mut App) -> Option<Self> {
         let content = &content.theme;
+        dbg!(&content);
         let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
         let theme_selection: ThemeSelection = content.theme.clone()?.into();
@@ -832,7 +833,7 @@ impl settings::Settings for ThemeSettings {
                 .get_icon_theme(icon_theme_selection.icon_theme(*system_appearance))
                 .ok()?,
             icon_theme_selection: Some(icon_theme_selection),
-            ui_density: content.ui_density?.into(),
+            ui_density: content.ui_density.unwrap_or_default().into(),
             unnecessary_code_fade: content.unnecessary_code_fade?,
         };
 

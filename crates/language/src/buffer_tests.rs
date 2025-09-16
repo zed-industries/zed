@@ -1,6 +1,5 @@
 use super::*;
 use crate::Buffer;
-use crate::language_settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
@@ -11,6 +10,7 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use std::collections::BTreeSet;
 use std::{
     env,
