@@ -2,10 +2,8 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsUi};
-use util::paths::PathMatcher;
+use settings::{Settings, SettingsContent};
+use util::{ResultExt, paths::PathMatcher};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorktreeSettings {
@@ -34,19 +32,11 @@ impl WorktreeSettings {
 
 impl Settings for WorktreeSettings {
     fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
-        Self {
-            project_name: None,
-            file_scan_exclusions: content.project.worktree.file_scan_exclusions.unwrap(),
-            file_scan_inclusions: PathMatcher::default(),
-        }
-    }
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        let result: WorktreeSettingsContent = sources.json_merge()?;
-        let mut file_scan_exclusions = result.file_scan_exclusions.unwrap_or_default();
-        let mut private_files = result.private_files.unwrap_or_default();
-        let mut parsed_file_scan_inclusions: Vec<String> = result
-            .file_scan_inclusions
-            .unwrap_or_default()
+        let worktree = content.project.worktree.clone();
+        let file_scan_exclusions = worktree.file_scan_exclusions.unwrap();
+        let file_scan_inclusions = worktree.file_scan_inclusions.unwrap();
+        let private_files = worktree.private_files.unwrap();
+        let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
             .iter()
             .flat_map(|glob| {
                 Path::new(glob)
@@ -55,30 +45,71 @@ impl Settings for WorktreeSettings {
             })
             .filter(|p: &String| !p.is_empty())
             .collect();
-        file_scan_exclusions.sort();
-        private_files.sort();
-        parsed_file_scan_inclusions.sort();
-        Ok(Self {
-            file_scan_exclusions: path_matchers(&file_scan_exclusions, "file_scan_exclusions")?,
-            private_files: path_matchers(&private_files, "private_files")?,
+
+        Self {
+            project_name: None,
+            file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
+                .unwrap(),
             file_scan_inclusions: path_matchers(
-                &parsed_file_scan_inclusions,
+                parsed_file_scan_inclusions,
                 "file_scan_inclusions",
-            )?,
-            project_name: result.project_name,
-        })
+            )
+            .unwrap(),
+            private_files: path_matchers(private_files, "private_files").unwrap(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
+        let worktree = &content.project.worktree;
+
+        if let Some(project_name) = worktree.project_name.clone() {
+            self.project_name = Some(project_name);
+        }
+
+        // todo!() test this. Did it used to extend the arrays, or overwrite them?
+
+        if let Some(private_files) = worktree.private_files.clone() {
+            if let Some(matchers) = path_matchers(private_files, "private_files").log_err() {
+                self.private_files = matchers
+            }
+        }
+
+        if let Some(file_scan_exclusions) = worktree.file_scan_exclusions.clone() {
+            if let Some(matchers) =
+                path_matchers(file_scan_exclusions, "file_scan_exclusions").log_err()
+            {
+                self.file_scan_exclusions = matchers
+            }
+        }
+
+        if let Some(file_scan_inclusions) = worktree.file_scan_inclusions.clone() {
+            let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
+                .iter()
+                .flat_map(|glob| {
+                    Path::new(glob)
+                        .ancestors()
+                        .map(|a| a.to_string_lossy().into())
+                })
+                .filter(|p: &String| !p.is_empty())
+                .collect();
+            if let Some(matchers) =
+                path_matchers(parsed_file_scan_inclusions, "file_scan_inclusions").log_err()
+            {
+                self.file_scan_inclusions = matchers
+            }
+        }
+    }
+
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
         if let Some(inclusions) = vscode
             .read_value("files.watcherInclude")
             .and_then(|v| v.as_array())
             .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
         {
-            if let Some(old) = current.file_scan_inclusions.as_mut() {
+            if let Some(old) = current.project.worktree.file_scan_inclusions.as_mut() {
                 old.extend(inclusions)
             } else {
-                current.file_scan_inclusions = Some(inclusions)
+                current.project.worktree.file_scan_inclusions = Some(inclusions)
             }
         }
         if let Some(exclusions) = vscode
@@ -86,15 +117,16 @@ impl Settings for WorktreeSettings {
             .and_then(|v| v.as_array())
             .and_then(|v| v.iter().map(|n| n.as_str().map(str::to_owned)).collect())
         {
-            if let Some(old) = current.file_scan_exclusions.as_mut() {
+            if let Some(old) = current.project.worktree.file_scan_exclusions.as_mut() {
                 old.extend(exclusions)
             } else {
-                current.file_scan_exclusions = Some(exclusions)
+                current.project.worktree.file_scan_exclusions = Some(exclusions)
             }
         }
     }
 }
 
-fn path_matchers(values: &[String], context: &'static str) -> anyhow::Result<PathMatcher> {
+fn path_matchers(mut values: Vec<String>, context: &'static str) -> anyhow::Result<PathMatcher> {
+    values.sort();
     PathMatcher::new(values).with_context(|| format!("Failed to parse globs from {}", context))
 }

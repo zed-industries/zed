@@ -765,6 +765,7 @@ impl SettingsStore {
         self.extension_settings = Some(SettingsContent {
             project: ProjectSettingsContent {
                 all_languages: content.all_languages,
+                ..Default::default()
             },
             ..Default::default()
         });

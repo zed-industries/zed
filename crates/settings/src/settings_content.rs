@@ -132,7 +132,7 @@ pub enum BaseKeymapContent {
     None,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
     pub all_languages: AllLanguageSettingsContent,
@@ -229,7 +229,7 @@ pub enum GitHostingProviderKind {
     Bitbucket,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorktreeSettingsContent {
     /// The displayed name of this project. If not set, the root directory name
     /// will be displayed.
