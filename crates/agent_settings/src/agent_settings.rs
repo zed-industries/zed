@@ -364,21 +364,30 @@ impl JsonSchema for LanguageModelProviderSetting {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // list the builtin providers as a subset so that we still auto complete them in the settings
         json_schema!({
-            "enum": [
-                "amazon-bedrock",
-                "anthropic",
-                "copilot_chat",
-                "deepseek",
-                "google",
-                "lmstudio",
-                "mistral",
-                "ollama",
-                "openai",
-                "openrouter",
-                "vercel",
-                "x_ai",
-                "zed.dev"
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": [
+                        "amazon-bedrock",
+                        "anthropic",
+                        "copilot_chat",
+                        "deepseek",
+                        "google",
+                        "lmstudio",
+                        "mistral",
+                        "ollama",
+                        "openai",
+                        "openrouter",
+                        "vercel",
+                        "x_ai",
+                        "zed.dev"
+                    ]
+                },
+                {
+                    "type": "string",
+                }
             ]
         })
     }
