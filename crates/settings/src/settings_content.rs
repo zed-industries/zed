@@ -1,6 +1,8 @@
 mod language;
+mod terminal;
 mod theme;
 pub use language::*;
+pub use terminal::*;
 pub use theme::*;
 
 use std::env;
@@ -40,6 +42,9 @@ pub struct SettingsContent {
     ///
     /// Example: {"log": {"client": "warn"}}
     pub log: Option<HashMap<String, String>>,
+
+    /// Configuration of the terminal in Zed.
+    pub terminal: Option<TerminalSettingsContent>,
 
     pub title_bar: Option<TitleBarSettingsContent>,
 

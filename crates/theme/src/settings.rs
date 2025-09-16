@@ -13,10 +13,8 @@ use gpui::{
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
-use settings::{
-    FontFamilyName, IconThemeName, ParameterizedJsonSchema, Settings, SettingsContent, ThemeMode,
-    ThemeName,
-};
+pub use settings::{FontFamilyName, IconThemeName, ThemeMode, ThemeName};
+use settings::{ParameterizedJsonSchema, Settings, SettingsContent};
 use std::sync::Arc;
 use util::schemars::replace_subschema;
 use util::{MergeFrom, ResultExt as _};
@@ -782,7 +780,8 @@ fn clamp_font_weight(weight: f32) -> FontWeight {
     FontWeight(weight.clamp(100., 950.))
 }
 
-fn font_fallbacks_from_settings(
+/// font fallback from settings
+pub fn font_fallbacks_from_settings(
     fallbacks: Option<Vec<settings::FontFamilyName>>,
 ) -> Option<FontFallbacks> {
     fallbacks.map(|fallbacks| {
