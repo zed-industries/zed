@@ -1305,3 +1305,243 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
         LocalSettingsKind::Debug => proto::LocalSettingsKind::Debug,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_context_server_settings_stdio_parsing() {
+        let json = json!({
+            "filesystem": {
+                "source": "custom",
+                "enabled": true,
+                "command": "/usr/local/bin/mcp-server-filesystem",
+                "args": ["--root", "/home/user"],
+                "env": {
+                    "DEBUG": "1"
+                }
+            }
+        });
+
+        let settings: std::collections::HashMap<Arc<str>, ContextServerSettings> =
+            serde_json::from_value(json).expect("Failed to parse stdio context server settings");
+
+        let filesystem_settings = settings
+            .get("filesystem")
+            .expect("filesystem server not found");
+
+        match filesystem_settings {
+            ContextServerSettings::Custom { enabled, config } => {
+                assert_eq!(*enabled, true);
+                match config {
+                    ContextServerConfig::Stdio { command, args, env } => {
+                        assert_eq!(
+                            *command,
+                            PathBuf::from("/usr/local/bin/mcp-server-filesystem")
+                        );
+                        assert_eq!(*args, vec!["--root", "/home/user"]);
+                        assert_eq!(env.as_ref().unwrap().get("DEBUG").unwrap(), "1");
+                    }
+                    _ => panic!("Expected Stdio config"),
+                }
+            }
+            _ => panic!("Expected Custom settings"),
+        }
+    }
+
+    #[test]
+    fn test_context_server_settings_http_transport_parsing() {
+        let json = json!({
+            "remote-api": {
+                "source": "custom",
+                "enabled": true,
+                "transport": {
+                    "type": "http",
+                    "url": "https://api.example.com/mcp",
+                    "headers": {
+                        "Authorization": "Bearer token123",
+                        "Content-Type": "application/json"
+                    }
+                }
+            }
+        });
+
+        let settings: std::collections::HashMap<Arc<str>, ContextServerSettings> =
+            serde_json::from_value(json)
+                .expect("Failed to parse HTTP transport context server settings");
+
+        let remote_settings = settings
+            .get("remote-api")
+            .expect("remote-api server not found");
+
+        match remote_settings {
+            ContextServerSettings::Custom { enabled, config } => {
+                assert_eq!(*enabled, true);
+                match config {
+                    ContextServerConfig::Transport { transport } => match transport {
+                        TransportConfig::Http { url, headers } => {
+                            assert_eq!(url, "https://api.example.com/mcp");
+                            assert_eq!(headers.get("Authorization").unwrap(), "Bearer token123");
+                            assert_eq!(headers.get("Content-Type").unwrap(), "application/json");
+                        }
+                        _ => panic!("Expected HTTP transport"),
+                    },
+                    _ => panic!("Expected Transport config"),
+                }
+            }
+            _ => panic!("Expected Custom settings"),
+        }
+    }
+
+    #[test]
+    fn test_context_server_settings_sse_transport_parsing() {
+        let json = json!({
+            "streaming-server": {
+                "source": "custom",
+                "enabled": true,
+                "transport": {
+                    "type": "sse",
+                    "url": "https://streaming.example.com/mcp",
+                    "headers": {
+                        "Authorization": "Bearer sse-token"
+                    }
+                }
+            }
+        });
+
+        let settings: std::collections::HashMap<Arc<str>, ContextServerSettings> =
+            serde_json::from_value(json)
+                .expect("Failed to parse SSE transport context server settings");
+
+        let streaming_settings = settings
+            .get("streaming-server")
+            .expect("streaming-server not found");
+
+        match streaming_settings {
+            ContextServerSettings::Custom { enabled, config } => {
+                assert_eq!(*enabled, true);
+                match config {
+                    ContextServerConfig::Transport { transport } => match transport {
+                        TransportConfig::Sse { url, headers } => {
+                            assert_eq!(url, "https://streaming.example.com/mcp");
+                            assert_eq!(headers.get("Authorization").unwrap(), "Bearer sse-token");
+                        }
+                        _ => panic!("Expected SSE transport"),
+                    },
+                    _ => panic!("Expected Transport config"),
+                }
+            }
+            _ => panic!("Expected Custom settings"),
+        }
+    }
+
+    #[test]
+    fn test_context_server_settings_extension_parsing() {
+        let json = json!({
+            "extension-server": {
+                "source": "extension",
+                "enabled": true,
+                "settings": {
+                    "project_id": "my-project",
+                    "api_endpoint": "custom-value"
+                }
+            }
+        });
+
+        let settings: std::collections::HashMap<Arc<str>, ContextServerSettings> =
+            serde_json::from_value(json)
+                .expect("Failed to parse extension context server settings");
+
+        let extension_settings = settings
+            .get("extension-server")
+            .expect("extension-server not found");
+
+        match extension_settings {
+            ContextServerSettings::Extension { enabled, settings } => {
+                assert_eq!(*enabled, true);
+                assert_eq!(settings["project_id"], "my-project");
+                assert_eq!(settings["api_endpoint"], "custom-value");
+            }
+            _ => panic!("Expected Extension settings"),
+        }
+    }
+
+    #[test]
+    fn test_context_server_settings_mixed_configuration() {
+        let json = json!({
+            "filesystem": {
+                "source": "custom",
+                "enabled": true,
+                "command": "mcp-server-filesystem",
+                "args": ["--root", "/tmp"]
+            },
+            "remote-http": {
+                "source": "custom",
+                "enabled": true,
+                "transport": {
+                    "type": "http",
+                    "url": "https://api.example.com/mcp"
+                }
+            },
+            "extension-server": {
+                "source": "extension",
+                "enabled": false,
+                "settings": {
+                    "key": "value"
+                }
+            }
+        });
+
+        let settings: std::collections::HashMap<Arc<str>, ContextServerSettings> =
+            serde_json::from_value(json).expect("Failed to parse mixed context server settings");
+
+        assert_eq!(settings.len(), 3);
+
+        // Verify filesystem (stdio)
+        let fs_settings = settings.get("filesystem").unwrap();
+        assert!(matches!(
+            fs_settings,
+            ContextServerSettings::Custom { enabled: true, .. }
+        ));
+
+        // Verify remote-http (transport)
+        let http_settings = settings.get("remote-http").unwrap();
+        assert!(matches!(
+            http_settings,
+            ContextServerSettings::Custom { enabled: true, .. }
+        ));
+
+        // Verify extension-server
+        let ext_settings = settings.get("extension-server").unwrap();
+        assert!(matches!(
+            ext_settings,
+            ContextServerSettings::Extension { enabled: false, .. }
+        ));
+    }
+
+    #[test]
+    fn test_context_server_settings_enabled_defaults_to_true() {
+        let json = json!({
+            "simple-server": {
+                "source": "custom",
+                "command": "simple-mcp-server",
+                "args": []
+            }
+        });
+
+        let settings: std::collections::HashMap<Arc<str>, ContextServerSettings> =
+            serde_json::from_value(json).expect("Failed to parse simple context server settings");
+
+        let simple_settings = settings.get("simple-server").unwrap();
+
+        match simple_settings {
+            ContextServerSettings::Custom { enabled, .. } => {
+                assert_eq!(*enabled, true); // Should default to true
+            }
+            _ => panic!("Expected Custom settings"),
+        }
+    }
+}

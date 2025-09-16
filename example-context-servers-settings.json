@@ -1,0 +1,79 @@
+{
+  "context_servers": {
+    "filesystem": {
+      "source": "custom",
+      "enabled": true,
+      "command": "/usr/local/bin/mcp-server-filesystem",
+      "args": ["--root", "/home/user/projects"],
+      "env": {
+        "DEBUG": "1",
+        "LOG_LEVEL": "info"
+      }
+    },
+    "git": {
+      "source": "custom",
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-git"],
+      "env": {
+        "GIT_AUTHOR_NAME": "Zed User",
+        "GIT_AUTHOR_EMAIL": "user@example.com"
+      }
+    },
+    "sqlite": {
+      "source": "custom",
+      "enabled": true,
+      "command": "mcp-server-sqlite",
+      "args": ["--db-path", "./database.sqlite"]
+    },
+    "remote-api": {
+      "source": "custom",
+      "enabled": true,
+      "transport": {
+        "type": "http",
+        "url": "https://api.example.com/mcp",
+        "headers": {
+          "Authorization": "Bearer your-api-token-here",
+          "Content-Type": "application/json",
+          "X-Custom-Header": "value"
+        }
+      }
+    },
+    "streaming-server": {
+      "source": "custom",
+      "enabled": true,
+      "transport": {
+        "type": "sse",
+        "url": "https://streaming.example.com/mcp/events",
+        "headers": {
+          "Authorization": "Bearer your-streaming-token",
+          "Accept": "text/event-stream"
+        }
+      }
+    },
+    "internal-api": {
+      "source": "custom",
+      "enabled": false,
+      "transport": {
+        "type": "http",
+        "url": "http://localhost:8080/mcp"
+      }
+    },
+    "extension-server": {
+      "source": "extension",
+      "enabled": true,
+      "settings": {
+        "project_id": "my-project-123",
+        "api_endpoint": "custom-endpoint",
+        "timeout": 30000,
+        "retry_attempts": 3
+      }
+    },
+    "disabled-server": {
+      "source": "custom",
+      "enabled": false,
+      "command": "some-disabled-server",
+      "args": []
+    }
+  }
+}

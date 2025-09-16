@@ -14,8 +14,6 @@ path = "src/context_server.rs"
 [features]
 default = ["rmcp"]
 test-support = []
-# Feature for RMCP SDK migration
-rmcp = ["dep:rmcp", "dep:tokio"]
 
 [dependencies]
 anyhow.workspace = true
@@ -39,7 +37,7 @@ workspace-hack.workspace = true
 
 # RMCP SDK - the actual crate from crates.io
 # Additional dependencies needed when using RMCP
-tokio = { workspace = true, optional = true }
+tokio.workspace = true
 rand = { workspace = true }
 settings = { workspace = true }
 rmcp = { version = "0.6.2", optional = true, features = [

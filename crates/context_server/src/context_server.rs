@@ -15,14 +15,12 @@ use serde::{Deserialize, Serialize};
 use util::redact::should_redact;
 
 // RMCP imports
-#[cfg(feature = "rmcp")]
 use rmcp::{
     ServiceExt,
     model::{ClientCapabilities, ClientInfo, Implementation, InitializeRequestParam},
     service::{RoleClient, RunningService},
     transport::{ConfigureCommandExt, StreamableHttpClientTransport, TokioChildProcess},
 };
-#[cfg(feature = "rmcp")]
 use tokio::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -62,12 +60,10 @@ impl std::fmt::Debug for ContextServerCommand {
 
 pub enum ContextServerTransport {
     Stdio(ContextServerCommand, Option<PathBuf>),
-    #[cfg(feature = "rmcp")]
     Http {
         url: String,
         headers: HashMap<String, String>,
     },
-    #[cfg(feature = "rmcp")]
     Sse {
         url: String,
         headers: HashMap<String, String>,
@@ -76,7 +72,6 @@ pub enum ContextServerTransport {
 
 pub struct ContextServer {
     id: ContextServerId,
-    #[cfg(feature = "rmcp")]
     service: RwLock<Option<Arc<RunningService<RoleClient, InitializeRequestParam>>>>,
     #[cfg(not(feature = "rmcp"))]
     client: RwLock<Option<()>>, // Placeholder when RMCP not enabled
@@ -91,7 +86,6 @@ impl ContextServer {
     ) -> Self {
         Self {
             id,
-            #[cfg(feature = "rmcp")]
             service: RwLock::new(None),
             #[cfg(not(feature = "rmcp"))]
             client: RwLock::new(None),
@@ -102,7 +96,6 @@ impl ContextServer {
         }
     }
 
-    #[cfg(feature = "rmcp")]
     pub fn http(id: ContextServerId, url: String, headers: HashMap<String, String>) -> Self {
         Self {
             id,
@@ -111,7 +104,6 @@ impl ContextServer {
         }
     }
 
-    #[cfg(feature = "rmcp")]
     pub fn sse(id: ContextServerId, url: String, headers: HashMap<String, String>) -> Self {
         Self {
             id,
@@ -125,7 +117,6 @@ impl ContextServer {
         let id_str = id.0.clone(); // Clone the inner string before moving id
         Self {
             id,
-            #[cfg(feature = "rmcp")]
             service: RwLock::new(None),
             #[cfg(not(feature = "rmcp"))]
             client: RwLock::new(None),
@@ -154,7 +145,6 @@ impl ContextServer {
         self.id.clone()
     }
 
-    #[cfg(feature = "rmcp")]
     pub fn service(&self) -> Option<Arc<RunningService<RoleClient, InitializeRequestParam>>> {
         self.service.read().clone()
     }
@@ -165,7 +155,6 @@ impl ContextServer {
     }
 
     // Legacy method for backward compatibility
-    #[cfg(feature = "rmcp")]
     pub fn client(&self) -> Option<Arc<RunningService<RoleClient, InitializeRequestParam>>> {
         self.service()
     }
@@ -205,7 +194,6 @@ impl ContextServer {
         self.start(cx).await
     }
 
-    #[cfg(feature = "rmcp")]
     async fn initialize(&self) -> Result<()> {
         log::debug!("starting context server {}", self.id);
 
@@ -264,7 +252,6 @@ impl ContextServer {
         Err(anyhow::anyhow!("RMCP feature not enabled"))
     }
 
-    #[cfg(feature = "rmcp")]
     pub async fn list_tools(&self) -> Result<Vec<rmcp::model::Tool>> {
         let service = self.service.read();
         let service = service
@@ -278,7 +265,6 @@ impl ContextServer {
         Err(anyhow::anyhow!("RMCP feature not enabled"))
     }
 
-    #[cfg(feature = "rmcp")]
     pub async fn call_tool(
         &self,
         params: rmcp::model::CallToolRequestParam,
@@ -295,7 +281,6 @@ impl ContextServer {
         Err(anyhow::anyhow!("RMCP feature not enabled"))
     }
 
-    #[cfg(feature = "rmcp")]
     pub async fn list_prompts(&self) -> Result<Vec<rmcp::model::Prompt>> {
         let service = self.service.read();
         let service = service
@@ -309,7 +294,6 @@ impl ContextServer {
         Err(anyhow::anyhow!("RMCP feature not enabled"))
     }
 
-    #[cfg(feature = "rmcp")]
     pub async fn get_prompt(
         &self,
         params: rmcp::model::GetPromptRequestParam,
@@ -326,7 +310,6 @@ impl ContextServer {
         Err(anyhow::anyhow!("RMCP feature not enabled"))
     }
 
-    #[cfg(feature = "rmcp")]
     pub async fn list_resources(&self) -> Result<Vec<rmcp::model::Resource>> {
         let service = self.service.read();
         let service = service
@@ -340,7 +323,6 @@ impl ContextServer {
         Err(anyhow::anyhow!("RMCP feature not enabled"))
     }
 
-    #[cfg(feature = "rmcp")]
     pub async fn read_resource(
         &self,
         params: rmcp::model::ReadResourceRequestParam,
@@ -358,7 +340,6 @@ impl ContextServer {
     }
 
     pub async fn stop(&self) -> Result<()> {
-        #[cfg(feature = "rmcp")]
         {
             let mut service = self.service.write();
             service.take(); // Just drop it, no explicit cancel needed
