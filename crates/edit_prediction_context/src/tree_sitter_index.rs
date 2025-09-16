@@ -207,7 +207,7 @@ impl TreeSitterIndex {
         self.buffers
             .insert(buffer.downgrade(), BufferState::default());
         let weak_buf = buffer.downgrade();
-        cx.observe_release(buffer, move |this, buffer, cx| {
+        cx.observe_release(buffer, move |this, _buffer, _cx| {
             this.buffers.remove(&weak_buf);
         })
         .detach();
@@ -289,7 +289,7 @@ impl TreeSitterIndex {
                 .items
                 .into_iter()
                 .filter_map(BufferDeclaration::try_from_outline_item)
-                .map(|declaration| declaration.into_buffer_declaration(&snapshot))
+                .map(|declaration| declaration.into_file_declaration(&snapshot))
                 .collect())
         });
 
@@ -330,7 +330,7 @@ impl BufferDeclaration {
         })
     }
 
-    pub fn into_buffer_declaration(self, snapshot: &BufferSnapshot) -> FileDeclaration {
+    pub fn into_file_declaration(self, snapshot: &BufferSnapshot) -> FileDeclaration {
         FileDeclaration {
             identifier: self.identifier,
             item_range: self.item_range.to_offset(snapshot),
