@@ -3,11 +3,13 @@ mod language;
 mod project;
 mod terminal;
 mod theme;
+mod workspace;
 pub use agent::*;
 pub use language::*;
 pub use project::*;
 pub use terminal::*;
 pub use theme::*;
+pub use workspace::*;
 
 use collections::HashMap;
 use gpui::{App, SharedString};
@@ -30,6 +32,13 @@ pub struct SettingsContent {
 
     #[serde(flatten)]
     pub extension: ExtensionSettingsContent,
+
+    #[serde(flatten)]
+    pub workspace: WorkspaceSettingsContent,
+
+    pub tabs: Option<ItemSettingsContent>,
+
+    pub preview_tabs: Option<PreviewTabsSettingsContent>,
 
     pub agent: Option<AgentSettingsContent>,
     pub agent_servers: Option<AllAgentServersSettings>,
