@@ -8,6 +8,7 @@ use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use std::ops::Range;
 use std::sync::Arc;
 use text::{Anchor, OffsetRangeExt as _};
+use util::ResultExt as _;
 
 // TODO:
 //
@@ -29,7 +30,7 @@ pub struct TreeSitterIndex {
     project: WeakEntity<Project>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct FileState {
     declarations: Vec<FileDeclaration>,
     task: Option<Task<()>>,
@@ -80,34 +81,61 @@ pub struct DeclarationText {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Identifier(Arc<str>);
 
+impl<T: Into<Arc<str>>> From<T> for Identifier {
+    fn from(value: T) -> Self {
+        Identifier(value.into())
+    }
+}
+
 impl TreeSitterIndex {
     pub fn new(project: &Entity<Project>, cx: &mut Context<Self>) -> Self {
-        cx.subscribe(
-            &project.read(cx).worktree_store(),
-            Self::handle_worktree_store_event,
-        )
-        .detach();
         let mut this = Self {
             project: project.downgrade(),
             files: HashMap::default(),
             buffers: HashMap::default(),
         };
+
+        let worktree_store = project.read(cx).worktree_store();
+        cx.subscribe(&worktree_store, Self::handle_worktree_store_event)
+            .detach();
+
+        for worktree in worktree_store
+            .read(cx)
+            .worktrees()
+            .map(|w| w.read(cx).snapshot())
+            .collect::<Vec<_>>()
+        {
+            // todo! bg?
+            for entry in worktree.files(false, 0) {
+                this.update_file(
+                    entry.id,
+                    ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    },
+                    cx,
+                );
+            }
+        }
+
         let buffer_store = project.read(cx).buffer_store().clone();
         for buffer in buffer_store.read(cx).buffers().collect::<Vec<_>>() {
             this.register_buffer(&buffer, cx);
         }
         cx.subscribe(&buffer_store, Self::handle_buffer_store_event)
             .detach();
+
         this
     }
 
     pub fn declarations_for_identifier<const N: usize>(
         &self,
-        identifier: Identifier,
+        identifier: impl Into<Identifier>,
         cx: &App,
     ) -> Vec<Declaration> {
         assert!(N < 32);
 
+        let identifier = identifier.into();
         let mut declarations = Vec::with_capacity(N);
         // THEORY: set would be slower given the avg. number of buffers
         let mut included_buffer_entry_ids = arrayvec::ArrayVec::<_, N>::new();
@@ -212,6 +240,7 @@ impl TreeSitterIndex {
         })
         .detach();
         cx.subscribe(buffer, Self::handle_buffer_event).detach();
+        self.update_buffer(buffer.clone(), cx);
     }
 
     fn handle_buffer_event(
@@ -272,12 +301,22 @@ impl TreeSitterIndex {
         let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx) else {
             return;
         };
+        let language_registry = project.languages().clone();
 
         let snapshot_task = worktree.update(cx, |worktree, cx| {
             let load_task = worktree.load_file(&project_path.path, cx);
             cx.spawn(async move |_this, cx| {
                 let loaded_file = load_task.await?;
-                let buffer = cx.new(|cx| Buffer::local(loaded_file.text, cx))?;
+                let language = language_registry
+                    .language_for_file_path(&project_path.path)
+                    .await
+                    .log_err();
+
+                let buffer = cx.new(|cx| {
+                    let mut buffer = Buffer::local(loaded_file.text, cx);
+                    buffer.set_language(language, cx);
+                    buffer
+                })?;
                 buffer.read_with(cx, |buffer, _cx| buffer.snapshot())
             })
         });
@@ -338,6 +377,159 @@ impl BufferDeclaration {
             signature_range: self.signature_range.to_offset(snapshot),
             signature_text: self.signature_text.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{path::Path, sync::Arc};
+
+    use gpui::TestAppContext;
+    use indoc::indoc;
+    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+
+    use crate::tree_sitter_index::TreeSitterIndex;
+
+    #[gpui::test]
+    async fn test_unopen_indexed_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "a.rs": indoc! {r#"
+                    fn main() {
+                        let x = 1;
+                        let y = 2;
+                        let z = add(x, y);
+                        println!("Result: {}", z);
+                    }
+
+                    fn add(a: i32, b: i32) -> i32 {
+                        a + b
+                    }
+                "#},
+                "b.rs": indoc! {"
+                    pub struct Config {
+                        pub name: String,
+                        pub value: i32,
+                    }
+
+                    impl Config {
+                        pub fn new(name: String, value: i32) -> Self {
+                            Config { name, value }
+                        }
+                    }
+                "},
+                "c.rs": indoc! {r#"
+                    use std::collections::HashMap;
+
+                    fn main() {
+                        let args: Vec<String> = std::env::args().collect();
+                        let data: Vec<i32> = args[1..]
+                            .iter()
+                            .filter_map(|s| s.parse().ok())
+                            .collect();
+                        let result = process_data(data);
+                        println!("{:?}", result);
+                    }
+
+                    fn process_data(data: Vec<i32>) -> HashMap<i32, usize> {
+                        let mut counts = HashMap::new();
+                        for value in data {
+                            *counts.entry(value).or_insert(0) += 1;
+                        }
+                        counts
+                    }
+
+                    #[cfg(test)]
+                    mod tests {
+                        use super::*;
+
+                        #[test]
+                        fn test_process_data() {
+                            let data = vec![1, 2, 2, 3];
+                            let result = process_data(data);
+                            assert_eq!(result.get(&2), Some(&2));
+                        }
+                    }
+                "#}
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+        let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+        language_registry.add(Arc::new(rust_lang()));
+
+        let index = cx.new(|cx| TreeSitterIndex::new(&project, cx));
+        cx.run_until_parked();
+        index.read_with(cx, |index, cx| {
+            let decls = index.declarations_for_identifier::<8>("main", cx);
+            assert_eq!(decls.len(), 2);
+
+            if let Declaration::File { declaration, file } = &decls[0] {
+                assert_eq!(
+                    project
+                        .read(cx)
+                        .path_for_entry(*file, cx)
+                        .unwrap()
+                        .path
+                        .as_ref(),
+                    Path::new("c.rs"),
+                );
+                assert_eq!(declaration.identifier, "main".into());
+                assert_eq!(declaration.item_range, 32..279);
+            } else {
+                panic!();
+            }
+
+            if let Declaration::File { declaration, file } = &decls[1] {
+                assert_eq!(
+                    project
+                        .read(cx)
+                        .path_for_entry(*file, cx)
+                        .unwrap()
+                        .path
+                        .as_ref(),
+                    Path::new("a.rs"),
+                );
+                assert_eq!(declaration.identifier, "main".into());
+                assert_eq!(declaration.item_range, 0..97);
+            } else {
+                panic!();
+            }
+        });
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
+        .unwrap()
+    }
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
     }
 }
 

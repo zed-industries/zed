@@ -5052,6 +5052,8 @@ dependencies = [
  "log",
  "pretty_assertions",
  "project",
+ "serde_json",
+ "settings",
  "text",
  "tree-sitter",
  "util",
