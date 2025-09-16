@@ -163,7 +163,7 @@ impl Model {
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking => 200_000,
+            | Self::Claude3_7SonnetThinking => 264_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -175,10 +175,10 @@ impl Model {
             | Self::ClaudeSonnet4
             | Self::ClaudeSonnet4Thinking
             | Self::Claude3_7Sonnet
-            | Self::Claude3_7SonnetThinking => 64_000,
+            | Self::Claude3_7SonnetThinking => 8_192,
             Self::Custom {
                 max_output_tokens, ..
-            } => max_output_tokens.unwrap_or(4_096),
+            } => max_output_tokens.unwrap_or(8_192),
         }
     }
 
