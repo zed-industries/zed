@@ -1,6 +1,8 @@
+mod agent;
 mod language;
 mod terminal;
 mod theme;
+pub use agent::*;
 pub use language::*;
 pub use terminal::*;
 pub use theme::*;
@@ -22,6 +24,8 @@ pub struct SettingsContent {
 
     #[serde(flatten)]
     pub theme: ThemeSettingsContent,
+
+    pub agent: Option<AgentSettingsContent>,
 
     /// Configuration of audio in Zed.
     pub audio: Option<AudioSettingsContent>,

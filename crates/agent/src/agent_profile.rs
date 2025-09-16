@@ -52,7 +52,7 @@ impl AgentProfile {
         update_settings_file::<AgentSettings>(fs, cx, {
             let id = id.clone();
             move |settings, _cx| {
-                settings.create_profile(id, profile_settings).log_err();
+                profile_settings.save_to_settings(id, settings).log_err();
             }
         });
 

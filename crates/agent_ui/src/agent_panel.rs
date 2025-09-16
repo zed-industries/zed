@@ -33,7 +33,7 @@ use agent::{
     history_store::{HistoryEntryId, HistoryStore},
     thread_store::{TextThreadStore, ThreadStore},
 };
-use agent_settings::{AgentDockPosition, AgentSettings, DefaultView};
+use agent_settings::{AgentDockPosition, AgentSettings, DefaultAgentView};
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
