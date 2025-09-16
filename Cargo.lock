@@ -5044,6 +5044,7 @@ name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arrayvec",
  "collections",
  "gpui",
  "indoc",

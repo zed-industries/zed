@@ -1,10 +1,10 @@
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext as _, Context, Entity, Task, WeakEntity};
+use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
 use language::{Buffer, BufferEvent, BufferSnapshot, OutlineItem};
 use project::buffer_store::{BufferStore, BufferStoreEvent};
 use project::worktree_store::{WorktreeStore, WorktreeStoreEvent};
-use project::{PathChange, Project, ProjectEntryId, ProjectItem as _, ProjectPath};
+use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use std::ops::Range;
 use std::sync::Arc;
 use text::{Anchor, OffsetRangeExt as _};
@@ -101,28 +101,56 @@ impl TreeSitterIndex {
         this
     }
 
-    pub fn declarations_for_identifier(&self, identifier: Identifier) -> Vec<Declaration> {
-        let mut declarations = Vec::new();
+    pub fn declarations_for_identifier<const N: usize>(
+        &self,
+        identifier: Identifier,
+        cx: &App,
+    ) -> Vec<Declaration> {
+        assert!(N < 32);
+
+        let mut declarations = Vec::with_capacity(N);
+        // THEORY: set would be slower given the avg. number of buffers
+        let mut included_buffer_entry_ids = arrayvec::ArrayVec::<_, N>::new();
 
         for (buffer, buffer_state) in &self.buffers {
+            let mut included = false;
             for declaration in &buffer_state.declarations {
                 if declaration.identifier == identifier {
                     declarations.push(Declaration::Buffer {
                         buffer: buffer.clone(),
                         declaration: declaration.clone(),
                     });
+                    included = true;
+
+                    if declarations.len() == N {
+                        return declarations;
+                    }
                 }
+            }
+            if included
+                && let Ok(Some(entry)) = buffer.read_with(cx, |buffer, cx| {
+                    project::File::from_dyn(buffer.file()).and_then(|f| f.project_entry_id(cx))
+                })
+            {
+                included_buffer_entry_ids.push(entry);
             }
         }
 
-        // todo! handle buffers shadowing files
         for (file, file_state) in &self.files {
+            if included_buffer_entry_ids.contains(file) {
+                continue;
+            }
+
             for declaration in &file_state.declarations {
                 if declaration.identifier == identifier {
                     declarations.push(Declaration::File {
                         file: *file,
                         declaration: declaration.clone(),
                     });
+
+                    if declarations.len() == N {
+                        return declarations;
+                    }
                 }
             }
         }
@@ -181,14 +209,6 @@ impl TreeSitterIndex {
         let weak_buf = buffer.downgrade();
         cx.observe_release(buffer, move |this, buffer, cx| {
             this.buffers.remove(&weak_buf);
-            // todo! now that files and buffers are tracked separately, need to implement shadowing
-            // logic and this file update is no longer needed.
-            if let Some(file) = project::File::from_dyn(buffer.file())
-                && let Some(entry_id) = file.project_entry_id(cx)
-                && let Some(project_path) = buffer.project_path(cx)
-            {
-                this.update_file(entry_id, project_path, cx);
-            }
         })
         .detach();
         cx.subscribe(buffer, Self::handle_buffer_event).detach();
