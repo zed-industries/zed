@@ -1,12 +1,12 @@
 #![allow(missing_docs)]
 
-use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
+use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
 use indexmap::IndexMap;
 use palette::FromColor;
-use schemars::{JsonSchema, JsonSchema_repr};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_repr::{Deserialize_repr, Serialize_repr};
 use settings::{AccentContent, PlayerColorContent};
+pub use settings::{FontWeightContent, WindowBackgroundContent};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
@@ -33,25 +33,6 @@ pub enum AppearanceContent {
     Dark,
 }
 
-/// The background appearance of the window.
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WindowBackgroundContent {
-    Opaque,
-    Transparent,
-    Blurred,
-}
-
-impl From<WindowBackgroundContent> for WindowBackgroundAppearance {
-    fn from(value: WindowBackgroundContent) -> Self {
-        match value {
-            WindowBackgroundContent::Opaque => WindowBackgroundAppearance::Opaque,
-            WindowBackgroundContent::Transparent => WindowBackgroundAppearance::Transparent,
-            WindowBackgroundContent::Blurred => WindowBackgroundAppearance::Blurred,
-        }
-    }
-}
-
 /// The content of a serialized theme family.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeFamilyContent {
@@ -73,7 +54,7 @@ pub struct ThemeContent {
 #[serde(default)]
 pub struct ThemeStyleContent {
     #[serde(default, rename = "background.appearance")]
-    pub window_background_appearance: Option<WindowBackgroundContent>,
+    pub window_background_appearance: Option<settings::WindowBackgroundContent>,
 
     #[serde(default)]
     pub accents: Vec<AccentContent>,
@@ -288,20 +269,6 @@ pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> Statu
             .as_ref()
             .and_then(|color| try_parse_color(color).ok()),
     }
-}
-
-#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq)]
-#[repr(u16)]
-pub enum FontWeightContent {
-    Thin = 100,
-    ExtraLight = 200,
-    Light = 300,
-    Normal = 400,
-    Medium = 500,
-    Semibold = 600,
-    Bold = 700,
-    ExtraBold = 800,
-    Black = 900,
 }
 
 pub fn theme_colors_refinement(

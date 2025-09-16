@@ -3,7 +3,7 @@ use indexmap::IndexMap;
 use strum::IntoEnumIterator;
 use theme::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
-    ThemeColorsContent, ThemeContent, ThemeStyleContent,
+    ThemeColorsContent, ThemeContent, ThemeStyleContent, WindowBackgroundContent,
 };
 
 use crate::ThemeMetadata;
@@ -56,7 +56,7 @@ impl VsCodeThemeConverter {
             name: self.theme_metadata.name,
             appearance,
             style: ThemeStyleContent {
-                window_background_appearance: Some(theme::WindowBackgroundContent::Opaque),
+                window_background_appearance: Some(WindowBackgroundContent::Opaque),
                 accents: Vec::new(), //TODO can we read this from the theme?
                 colors: theme_colors,
                 status: status_colors,
