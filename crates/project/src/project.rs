@@ -985,7 +985,7 @@ impl settings::Settings for DisableAiSettings {
 
     fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
         // If disable_ai is true *in any file*, it is disabled.
-        self.disable_ai = self.disable_ai || content.project.disable_ai.unwrap_or(false);
+        self.disable_ai = self.disable_ai || content.disable_ai.unwrap_or(false);
     }
 
     fn import_from_vscode(
@@ -3244,9 +3244,22 @@ impl Project {
     ) {
         self.buffers_needing_diff.insert(buffer.downgrade());
         let first_insertion = self.buffers_needing_diff.len() == 1;
-
         let settings = ProjectSettings::get_global(cx);
-        let delay = settings.git.gutter_debounce;
+        let delay = if let Some(delay) = settings.git.gutter_debounce {
+            delay
+        } else {
+            if first_insertion {
+                let this = cx.weak_entity();
+                cx.defer(move |cx| {
+                    if let Some(this) = this.upgrade() {
+                        this.update(cx, |this, cx| {
+                            this.recalculate_buffer_diffs(cx).detach();
+                        });
+                    }
+                });
+            }
+            return;
+        };
 
         const MIN_DELAY: u64 = 50;
         let delay = delay.max(MIN_DELAY);
@@ -5632,32 +5645,42 @@ mod disable_ai_settings_tests {
     #[gpui::test]
     async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            let mut store = SettingsStore::new(cx, &settings::test_settings());
-            store.register_setting::<DisableAiSettings>(cx);
+            settings::init(cx);
+            Project::init_settings(cx);
+
             // Test 1: Default is false (AI enabled)
             assert!(
                 !DisableAiSettings::get_global(cx).disable_ai,
                 "Default should allow AI"
             );
+        });
 
-            let disable_true = serde_json::json!({
-                "disable_ai": true
-            })
-            .to_string();
-            let disable_false = serde_json::json!({
-                "disable_ai": false
-            })
-            .to_string();
+        let disable_true = serde_json::json!({
+            "disable_ai": true
+        })
+        .to_string();
+        let disable_false = serde_json::json!({
+            "disable_ai": false
+        })
+        .to_string();
 
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             store.set_user_settings(&disable_false, cx).unwrap();
             store.set_global_settings(&disable_true, cx).unwrap();
+        });
+        cx.update(|cx| {
             assert!(
                 DisableAiSettings::get_global(cx).disable_ai,
                 "Local false cannot override global true"
             );
+        });
 
+        cx.update_global::<SettingsStore, _>(|store, cx| {
             store.set_global_settings(&disable_false, cx).unwrap();
             store.set_user_settings(&disable_true, cx).unwrap();
+        });
+
+        cx.update(|cx| {
             assert!(
                 DisableAiSettings::get_global(cx).disable_ai,
                 "Local false cannot override global true"

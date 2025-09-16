@@ -7,7 +7,7 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::sync::Arc;
 
 /// Settings for rendering text in UI and text buffers.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]

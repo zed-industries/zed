@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use util::serde::default_true;
 
-use crate::AllLanguageSettingsContent;
+use crate::{AllLanguageSettingsContent, SlashCommandSettings};
 
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettingsContent {
@@ -24,11 +24,11 @@ pub struct ProjectSettingsContent {
     /// name to the lsp value.
     /// Default: null
     #[serde(default)]
-    pub lsp: HashMap<Arc<str>, LspSettingsContent>,
+    pub lsp: HashMap<Arc<str>, LspSettings>,
 
     /// Configuration for Debugger-related features
     #[serde(default)]
-    pub dap: HashMap<Arc<str>, DapSettingsContent>,
+    pub dap: HashMap<Arc<str>, DapSettings>,
 
     /// Settings for context servers used for AI-related features.
     #[serde(default)]
@@ -39,6 +39,9 @@ pub struct ProjectSettingsContent {
 
     /// Settings for slash commands.
     pub slash_commands: Option<SlashCommandSettings>,
+
+    /// The list of custom Git hosting providers.
+    pub git_hosting_providers: Option<Vec<GitHostingProviderConfig>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -80,7 +83,7 @@ pub struct WorktreeSettingsContent {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
-pub struct LspSettingsContent {
+pub struct LspSettings {
     pub binary: Option<BinarySettings>,
     pub initialization_options: Option<serde_json::Value>,
     pub settings: Option<serde_json::Value>,
@@ -92,7 +95,7 @@ pub struct LspSettingsContent {
     pub fetch: Option<FetchSettings>,
 }
 
-impl Default for LspSettingsContent {
+impl Default for LspSettings {
     fn default() -> Self {
         Self {
             binary: None,
@@ -119,7 +122,7 @@ pub struct FetchSettings {
 }
 
 /// Common language server settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GlobalLspSettingsContent {
     /// Whether to show the LSP servers button in the status bar.
     ///
@@ -128,31 +131,23 @@ pub struct GlobalLspSettingsContent {
 }
 
 // todo! binary is actually just required, shouldn't be an option
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub struct DapSettingsContent {
+pub struct DapSettings {
     pub binary: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct SessionSettings {
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct SessionSettingsContent {
     /// Whether or not to restore unsaved buffers on restart.
     ///
     /// If this is true, user won't be prompted whether to save/discard
     /// dirty files when closing the application.
     ///
     /// Default: true
-    pub restore_unsaved_buffers: bool,
-}
-
-impl Default for SessionSettings {
-    fn default() -> Self {
-        Self {
-            restore_unsaved_buffers: true,
-        }
-    }
+    pub restore_unsaved_buffers: Option<bool>,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -213,7 +208,7 @@ impl std::fmt::Debug for ContextServerCommand {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
     ///
@@ -238,7 +233,7 @@ pub struct GitSettings {
     pub hunk_style: Option<GitHunkStyleSetting>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GitGutterSetting {
     /// Show git gutter in tracked files.
@@ -248,7 +243,7 @@ pub enum GitGutterSetting {
     Hide,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
@@ -276,7 +271,7 @@ pub struct InlineBlameSettings {
     pub show_commit_summary: Option<bool>,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettingsContent {
     /// Whether to show author name as part of the commit information.
@@ -285,7 +280,7 @@ pub struct BranchPickerSettingsContent {
     pub show_author_name: Option<bool>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GitHunkStyleSetting {
     /// Show unstaged hunks with a filled background and staged hunks hollow.
@@ -295,7 +290,7 @@ pub enum GitHunkStyleSetting {
     UnstagedHollow,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettingsContent {
     /// Whether to show the project diagnostics button in the status bar.
     pub button: Option<bool>,
@@ -349,7 +344,7 @@ pub struct InlineDiagnosticsSettingsContent {
     pub max_severity: Option<DiagnosticSeverityContent>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
     /// The path to the Node binary.
     pub path: Option<String>,
@@ -381,4 +376,27 @@ pub enum DiagnosticSeverityContent {
     Info,
     #[serde(alias = "all")]
     Hint,
+}
+
+/// A custom Git hosting provider.
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GitHostingProviderConfig {
+    /// The type of the provider.
+    ///
+    /// Must be one of `github`, `gitlab`, or `bitbucket`.
+    pub provider: GitHostingProviderKind,
+
+    /// The base URL for the provider (e.g., "https://code.corp.big.com").
+    pub base_url: String,
+
+    /// The display name for the provider (e.g., "BigCorp GitHub").
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GitHostingProviderKind {
+    Github,
+    Gitlab,
+    Bitbucket,
 }

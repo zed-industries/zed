@@ -19,7 +19,7 @@ pub use util::serde::default_true;
 
 use crate::ActiveSettingsProfileName;
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsContent {
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
@@ -45,9 +45,6 @@ pub struct SettingsContent {
     /// Configuration for Git-related features
     pub git: Option<GitSettings>,
 
-    /// The list of custom Git hosting providers.
-    pub git_hosting_providers: Option<Vec<GitHostingProviderConfig>>,
-
     /// Common language server settings.
     pub global_lsp_settings: Option<GlobalLspSettingsContent>,
 
@@ -70,7 +67,7 @@ pub struct SettingsContent {
     pub server_url: Option<String>,
 
     /// Configuration for session-related features
-    pub session: Option<SessionSettings>,
+    pub session: Option<SessionSettingsContent>,
     /// Control what info is collected by Zed.
     pub telemetry: Option<TelemetrySettingsContent>,
 
@@ -86,6 +83,11 @@ pub struct SettingsContent {
 
     // Settings related to calls in Zed
     pub calls: Option<CallSettingsContent>,
+
+    /// Whether to disable all AI features in Zed.
+    ///
+    /// Default: false
+    pub disable_ai: Option<bool>,
 }
 
 impl SettingsContent {
@@ -101,7 +103,7 @@ pub struct ServerSettingsContent {
     pub project: ProjectSettingsContent,
 }
 
-#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
     pub content: SettingsContent,
@@ -211,7 +213,7 @@ pub enum TitleBarVisibilityContent {
 }
 
 /// Configuration of audio in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct AudioSettingsContent {
     /// Opt into the new audio system.
     #[serde(rename = "experimental.rodio_audio", default)]
@@ -231,31 +233,8 @@ pub struct AudioSettingsContent {
     pub control_output_volume: Option<bool>,
 }
 
-/// A custom Git hosting provider.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GitHostingProviderConfig {
-    /// The type of the provider.
-    ///
-    /// Must be one of `github`, `gitlab`, or `bitbucket`.
-    pub provider: GitHostingProviderKind,
-
-    /// The base URL for the provider (e.g., "https://code.corp.big.com").
-    pub base_url: String,
-
-    /// The display name for the provider (e.g., "BigCorp GitHub").
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GitHostingProviderKind {
-    Github,
-    Gitlab,
-    Bitbucket,
-}
-
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -267,7 +246,7 @@ pub struct TelemetrySettingsContent {
     pub metrics: Option<bool>,
 }
 
-#[derive(Debug, Serialize, Deserialize, JsonSchema, Clone)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone)]
 pub struct DebuggerSettingsContent {
     /// Determines the stepping granularity.
     ///
@@ -322,21 +301,21 @@ pub enum DockPosition {
 }
 
 /// Settings for slash commands.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, PartialEq, Eq)]
 pub struct SlashCommandSettings {
     /// Settings for the `/cargo-workspace` slash command.
     pub cargo_workspace: Option<CargoWorkspaceCommandSettings>,
 }
 
 /// Settings for the `/cargo-workspace` slash command.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, PartialEq, Eq)]
 pub struct CargoWorkspaceCommandSettings {
     /// Whether `/cargo-workspace` is enabled.
     pub enabled: Option<bool>,
 }
 
 /// Configuration of voice calls in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct CallSettingsContent {
     /// Whether the microphone should be muted when joining a channel or a call.
     ///

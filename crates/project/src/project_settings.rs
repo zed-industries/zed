@@ -1,14 +1,10 @@
 use anyhow::Context as _;
-use clock::Global;
 use collections::HashMap;
 use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{
-    App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, SharedString, Subscription,
-    Task,
-};
+use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::LanguageServerName;
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
@@ -17,16 +13,17 @@ use paths::{
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, Message, REMOTE_SERVER_PROJECT_ID, ToProto},
+    proto::{self, FromProto, REMOTE_SERVER_PROJECT_ID, ToProto},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub use settings::DirenvSettings;
+pub use settings::LspSettings;
 use settings::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation,
-    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsStore, SettingsUi,
+    parse_json_with_comments, watch_config_file,
 };
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -51,13 +48,13 @@ pub struct ProjectSettings {
     /// name to the lsp value.
     /// Default: null
     // todo! should these hash map types be Map<key, SettingsContent> or Map<Key, Settings>
-    pub lsp: HashMap<LanguageServerName, settings::LspSettingsContent>,
+    pub lsp: HashMap<LanguageServerName, settings::LspSettings>,
 
     /// Common language server settings.
     pub global_lsp_settings: GlobalLspSettings,
 
     /// Configuration for Debugger-related features
-    pub dap: HashMap<DebugAdapterName, DapSettings>,
+    pub dap: HashMap<DebugAdapterName, settings::DapSettings>,
 
     /// Settings for context servers used for AI-related features.
     pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
@@ -78,10 +75,35 @@ pub struct ProjectSettings {
     pub session: SessionSettings,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct DapSettings {
-    pub binary: String,
-    pub args: Vec<String>,
+#[derive(Copy, Clone, Debug)]
+pub struct SessionSettings {
+    /// Whether or not to restore unsaved buffers on restart.
+    ///
+    /// If this is true, user won't be prompted whether to save/discard
+    /// dirty files when closing the application.
+    ///
+    /// Default: true
+    pub restore_unsaved_buffers: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct NodeBinarySettings {
+    /// The path to the Node binary.
+    pub path: Option<String>,
+    /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
+    pub npm_path: Option<String>,
+    /// If enabled, Zed will download its own copy of Node.
+    pub ignore_system_version: bool,
+}
+
+impl From<settings::NodeBinarySettings> for NodeBinarySettings {
+    fn from(settings: settings::NodeBinarySettings) -> Self {
+        Self {
+            path: settings.path,
+            npm_path: settings.npm_path,
+            ignore_system_version: settings.ignore_system_version.unwrap_or(false),
+        }
+    }
 }
 
 /// Common language server settings.
@@ -281,7 +303,7 @@ pub struct GitSettings {
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: null
-    pub gutter_debounce: u64,
+    pub gutter_debounce: Option<u64>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
@@ -415,7 +437,7 @@ pub struct InlineDiagnosticsSettings {
     /// Default: 0
     pub min_column: u32,
 
-    pub max_severity: DiagnosticSeverity,
+    pub max_severity: Option<DiagnosticSeverity>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -432,7 +454,7 @@ pub struct LspPullDiagnosticsSettings {
 }
 
 impl Settings for ProjectSettings {
-    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let project = &content.project.clone();
         let diagnostics = content.diagnostics.as_ref().unwrap();
         let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();
@@ -441,7 +463,7 @@ impl Settings for ProjectSettings {
         let git = content.git.as_ref().unwrap();
         let git_settings = GitSettings {
             git_gutter: git.git_gutter.unwrap(),
-            gutter_debounce: git.gutter_debounce.unwrap(),
+            gutter_debounce: git.gutter_debounce,
             inline_blame: {
                 let inline = git.inline_blame.unwrap();
                 InlineBlameSettings {
@@ -474,21 +496,18 @@ impl Settings for ProjectSettings {
                 .map(|(key, value)| (LanguageServerName(key.into()), value.into()))
                 .collect(),
             global_lsp_settings: GlobalLspSettings {
-                button: content.global_lsp_settings.unwrap().button.unwrap(),
+                button: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .button
+                    .unwrap(),
             },
             dap: project
                 .dap
                 .clone()
                 .into_iter()
-                .map(|(key, value)| {
-                    (
-                        DebugAdapterName(key.into()),
-                        DapSettings {
-                            binary: value.binary.unwrap(),
-                            args: value.args,
-                        },
-                    )
-                })
+                .map(|(key, value)| (DebugAdapterName(key.into()), value))
                 .collect(),
             diagnostics: DiagnosticsSettings {
                 button: diagnostics.button.unwrap(),
@@ -502,17 +521,19 @@ impl Settings for ProjectSettings {
                     update_debounce_ms: inline_diagnostics.update_debounce_ms.unwrap(),
                     padding: inline_diagnostics.padding.unwrap(),
                     min_column: inline_diagnostics.min_column.unwrap(),
-                    max_severity: inline_diagnostics.max_severity.unwrap().into(),
+                    max_severity: inline_diagnostics.max_severity.map(Into::into),
                 },
             },
             git: git_settings,
-            node: content.node.clone(),
-            load_direnv: project.load_direnv.unwrap(),
-            session: content.session.clone(),
+            node: content.node.clone().unwrap().into(),
+            load_direnv: project.load_direnv.clone().unwrap(),
+            session: SessionSettings {
+                restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
+            },
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
         let project = &content.project;
         self.context_servers.extend(
             project
@@ -521,16 +542,14 @@ impl Settings for ProjectSettings {
                 .into_iter()
                 .map(|(key, value)| (key, value.into())),
         );
-        self.dap
-            .extend(project.dap.clone().into_iter().filter_map(|(key, value)| {
-                Some((
-                    DebugAdapterName(key.into()),
-                    DapSettings {
-                        binary: value.binary?,
-                        args: value.args,
-                    },
-                ))
-            }));
+        dbg!(&self.context_servers);
+        self.dap.extend(
+            project
+                .dap
+                .clone()
+                .into_iter()
+                .filter_map(|(key, value)| Some((DebugAdapterName(key.into()), value))),
+        );
         if let Some(diagnostics) = content.diagnostics.as_ref() {
             if let Some(inline) = &diagnostics.inline {
                 self.diagnostics.inline.enabled.merge_from(&inline.enabled);
@@ -543,10 +562,9 @@ impl Settings for ProjectSettings {
                     .inline
                     .min_column
                     .merge_from(&inline.min_column);
-                self.diagnostics
-                    .inline
-                    .max_severity
-                    .merge_from(&inline.max_severity.map(Into::into));
+                if let Some(max_severity) = inline.max_severity {
+                    self.diagnostics.inline.max_severity = Some(max_severity.into())
+                }
             }
 
             self.diagnostics.button.merge_from(&diagnostics.button);
@@ -595,18 +613,37 @@ impl Settings for ProjectSettings {
             }
             self.git.git_gutter.merge_from(&git.git_gutter);
             self.git.hunk_style.merge_from(&git.hunk_style);
-            self.git.gutter_debounce.merge_from(&git.gutter_debounce);
+            if let Some(debounce) = git.gutter_debounce {
+                self.git.gutter_debounce = Some(debounce);
+            }
         }
-        self.global_lsp_settings = content.global_lsp_settings.clone();
-        self.load_direnv = content.project.load_direnv.clone();
-        self.lsp.extend(
-            content
-                .project
-                .lsp
-                .clone()
-                .into_iter()
-                .map(|(key, value)| (key, lsp_settings)),
+        self.global_lsp_settings.button.merge_from(
+            &content
+                .global_lsp_settings
+                .as_ref()
+                .and_then(|settings| settings.button),
         );
+        self.load_direnv
+            .merge_from(&content.project.load_direnv.clone());
+
+        for (key, value) in content.project.lsp.clone() {
+            self.lsp.insert(LanguageServerName(key.into()), value);
+        }
+
+        if let Some(node) = content.node.as_ref() {
+            self.node
+                .ignore_system_version
+                .merge_from(&node.ignore_system_version);
+            if let Some(path) = node.path.clone() {
+                self.node.path = Some(path);
+            }
+            if let Some(npm_path) = node.npm_path.clone() {
+                self.node.npm_path = Some(npm_path);
+            }
+        }
+        self.session
+            .restore_unsaved_buffers
+            .merge_from(&content.session.and_then(|s| s.restore_unsaved_buffers));
     }
 
     fn import_from_vscode(
@@ -750,17 +787,19 @@ impl SettingsObserver {
             if let Some(upstream_client) = upstream_client {
                 let mut user_settings = None;
                 user_settings_watcher = Some(cx.observe_global::<SettingsStore>(move |_, cx| {
-                    let new_settings = cx.global::<SettingsStore>().raw_user_settings();
-                    if Some(new_settings) != user_settings.as_ref() {
-                        if let Some(new_settings_string) = serde_json::to_string(new_settings).ok()
-                        {
-                            user_settings = new_settings.clone();
-                            upstream_client
-                                .send(proto::UpdateUserSettings {
-                                    project_id: REMOTE_SERVER_PROJECT_ID,
-                                    contents: new_settings_string,
-                                })
-                                .log_err();
+                    if let Some(new_settings) = cx.global::<SettingsStore>().raw_user_settings() {
+                        if Some(new_settings) != user_settings.as_ref() {
+                            if let Some(new_settings_string) =
+                                serde_json::to_string(new_settings).ok()
+                            {
+                                user_settings = Some(new_settings.clone());
+                                upstream_client
+                                    .send(proto::UpdateUserSettings {
+                                        project_id: REMOTE_SERVER_PROJECT_ID,
+                                        contents: new_settings_string,
+                                    })
+                                    .log_err();
+                            }
                         }
                     }
                 }));
@@ -870,10 +909,9 @@ impl SettingsObserver {
         envelope: TypedEnvelope<proto::UpdateUserSettings>,
         cx: AsyncApp,
     ) -> anyhow::Result<()> {
-        let new_settings = serde_json::from_str::<serde_json::Value>(&envelope.payload.contents)
-            .with_context(|| {
-                format!("deserializing {} user settings", envelope.payload.contents)
-            })?;
+        let new_settings = serde_json::from_str(&envelope.payload.contents).with_context(|| {
+            format!("deserializing {} user settings", envelope.payload.contents)
+        })?;
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
                 .set_raw_user_settings(new_settings, cx)

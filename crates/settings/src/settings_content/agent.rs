@@ -4,7 +4,7 @@ use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug, Default)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, Debug, Default)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///
@@ -174,7 +174,7 @@ pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
 }
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentDockPosition {
     Left,
@@ -183,7 +183,7 @@ pub enum AgentDockPosition {
     Bottom,
 }
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DefaultAgentView {
     #[default]
@@ -191,7 +191,7 @@ pub enum DefaultAgentView {
     TextThread,
 }
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyWhenAgentWaiting {
     #[default]
@@ -263,7 +263,7 @@ impl From<&str> for LanguageModelProviderSetting {
     }
 }
 
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, Debug)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,

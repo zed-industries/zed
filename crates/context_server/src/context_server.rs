@@ -12,13 +12,9 @@ use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
 use client::Client;
-use collections::HashMap;
 use gpui::AsyncApp;
 use parking_lot::RwLock;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 pub use settings::ContextServerCommand;
-use util::redact::should_redact;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);

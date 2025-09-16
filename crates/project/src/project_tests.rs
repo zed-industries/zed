@@ -8769,8 +8769,8 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(Vec::new());
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
             });
         });
     });
