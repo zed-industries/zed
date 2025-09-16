@@ -9694,7 +9694,7 @@ impl EditorScrollbars {
                 editor_bounds.bottom_left(),
                 size(
                     // The horizontal viewport size differs from the space available for the
-                    // horizontal scrollbar, so we have to manually stich it together here.
+                    // horizontal scrollbar, so we have to manually stitch it together here.
                     editor_bounds.size.width - right_margin,
                     scrollbar_width,
                 ),
