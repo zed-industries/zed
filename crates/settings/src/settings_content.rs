@@ -43,6 +43,14 @@ pub struct SettingsContent {
     /// Example: {"log": {"client": "warn"}}
     pub log: Option<HashMap<String, String>>,
 
+    pub proxy: Option<String>,
+
+    /// The URL of the Zed server to connect to.
+    pub server_url: Option<String>,
+
+    /// Control what info is collected by Zed.
+    pub telemetry: Option<TelemetrySettingsContent>,
+
     /// Configuration of the terminal in Zed.
     pub terminal: Option<TerminalSettingsContent>,
 
@@ -264,4 +272,16 @@ pub struct WorktreeSettingsContent {
     /// Treat the files matching these globs as `.env` files.
     /// Default: [ "**/.env*" ]
     pub private_files: Option<Vec<String>>,
+}
+/// Control what info is collected by Zed.
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct TelemetrySettingsContent {
+    /// Send debug info like crash reports.
+    ///
+    /// Default: true
+    pub diagnostics: Option<bool>,
+    /// Send anonymized usage data like what languages you're using Zed with.
+    ///
+    /// Default: true
+    pub metrics: Option<bool>,
 }
