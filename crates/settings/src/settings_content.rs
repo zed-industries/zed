@@ -15,6 +15,7 @@ use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::sync::Arc;
 pub use util::serde::default_true;
 
 use crate::ActiveSettingsProfileName;
@@ -26,6 +27,9 @@ pub struct SettingsContent {
 
     #[serde(flatten)]
     pub theme: ThemeSettingsContent,
+
+    #[serde(flatten)]
+    pub extension: ExtensionSettingsContent,
 
     pub agent: Option<AgentSettingsContent>,
     pub agent_servers: Option<AllAgentServersSettings>,
@@ -326,4 +330,18 @@ pub struct CallSettingsContent {
     ///
     /// Default: false
     pub share_on_join: Option<bool>,
+}
+
+#[derive(Deserialize, Serialize, PartialEq, Debug, Default, Clone, JsonSchema)]
+pub struct ExtensionSettingsContent {
+    /// The extensions that should be automatically installed by Zed.
+    ///
+    /// This is used to make functionality provided by extensions (e.g., language support)
+    /// available out-of-the-box.
+    ///
+    /// Default: { "html": true }
+    #[serde(default)]
+    pub auto_install_extensions: HashMap<Arc<str>, bool>,
+    #[serde(default)]
+    pub auto_update_extensions: HashMap<Arc<str>, bool>,
 }
