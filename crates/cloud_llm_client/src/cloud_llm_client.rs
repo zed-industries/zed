@@ -321,8 +321,8 @@ pub struct LanguageModel {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListModelsResponse {
     pub models: Vec<LanguageModel>,
-    pub default_model: LanguageModelId,
-    pub default_fast_model: LanguageModelId,
+    pub default_model: Option<LanguageModelId>,
+    pub default_fast_model: Option<LanguageModelId>,
     pub recommended_models: Vec<LanguageModelId>,
 }
 
