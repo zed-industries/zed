@@ -217,7 +217,7 @@ impl ButtonStyle {
         match self {
             ButtonStyle::Filled => {
                 let mut filled_background = element_bg_from_elevation(elevation, cx);
-                filled_background.fade_out(0.5);
+                filled_background.fade_out(0.2);
 
                 ButtonLikeStyles {
                     background: filled_background,
