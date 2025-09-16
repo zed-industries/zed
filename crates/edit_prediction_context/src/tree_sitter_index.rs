@@ -1,16 +1,13 @@
-use anyhow::Result;
 use collections::{HashMap, HashSet};
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
-use language::{Buffer, BufferEvent, BufferSnapshot, Language, LanguageId, OutlineItem};
+use language::{Buffer, BufferEvent, BufferSnapshot};
 use project::buffer_store::{BufferStore, BufferStoreEvent};
 use project::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use slotmap::SlotMap;
-use std::borrow::Cow;
-use std::num::NonZeroU64;
 use std::ops::Range;
 use std::sync::Arc;
-use text::{Anchor, OffsetRangeExt as _};
+use text::Anchor;
 use util::{ResultExt as _, debug_panic, some_or_debug_panic};
 
 use crate::outline::{Identifier, OutlineDeclaration, declarations_in_buffer};
@@ -96,7 +93,6 @@ pub struct FileDeclaration {
     parent: Option<DeclarationId>,
     identifier: Identifier,
     item_range: Range<usize>,
-    annotation_range: Option<Range<usize>>,
     signature_range: Range<usize>,
     signature_text: Arc<str>,
 }
@@ -106,7 +102,6 @@ pub struct BufferDeclaration {
     parent: Option<DeclarationId>,
     identifier: Identifier,
     item_range: Range<Anchor>,
-    annotation_range: Option<Range<Anchor>>,
     signature_range: Range<Anchor>,
 }
 
@@ -492,8 +487,6 @@ impl BufferDeclaration {
             identifier: declaration.identifier,
             item_range: snapshot.anchor_before(declaration.item_range.start)
                 ..snapshot.anchor_before(declaration.item_range.end),
-            // todo!
-            annotation_range: None,
             signature_range: snapshot.anchor_before(declaration.signature_range.start)
                 ..snapshot.anchor_before(declaration.signature_range.end),
         }
@@ -509,8 +502,6 @@ impl FileDeclaration {
             parent: None,
             identifier: declaration.identifier,
             item_range: declaration.item_range,
-            // todo!
-            annotation_range: None,
             signature_text: snapshot
                 .text_for_range(declaration.signature_range.clone())
                 .collect::<String>()
