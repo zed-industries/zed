@@ -154,6 +154,8 @@ pub struct ProjectSettingsContent {
 
     #[serde(flatten)]
     pub worktree: WorktreeSettingsContent,
+
+    pub disable_ai: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]

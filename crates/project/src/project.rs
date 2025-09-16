@@ -980,46 +980,22 @@ pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
 
-#[derive(
-    Copy,
-    Clone,
-    PartialEq,
-    Eq,
-    Debug,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    SettingsUi,
-    SettingsKey,
-    JsonSchema,
-)]
-#[settings_key(None)]
-pub struct DisableAiSettingContent {
-    pub disable_ai: Option<bool>,
-}
-
 impl settings::Settings for DisableAiSettings {
-    type FileContent = DisableAiSettingContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        // For security reasons, settings can only make AI restrictions MORE strict, not less.
-        // (For example, if someone is working on a project that contractually
-        // requires no AI use, that should override the user's setting which
-        // permits AI use.)
-        // This also prevents an attacker from using project or server settings to enable AI when it should be disabled.
-        let disable_ai = sources
-            .project
-            .iter()
-            .chain(sources.user.iter())
-            .chain(sources.server.iter())
-            .chain(sources.release_channel.iter())
-            .chain(sources.profile.iter())
-            .any(|disabled| disabled.disable_ai == Some(true));
-
-        Ok(Self { disable_ai })
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            disable_ai: content.project.disable_ai.unwrap(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        self.disable_ai = self.disable_ai || content.project.disable_ai.unwrap_or(false);
+    }
+
+    fn import_from_vscode(
+        _vscode: &settings::VsCodeSettings,
+        _current: &mut settings::SettingsContent,
+    ) {
+    }
 }
 
 impl Project {
@@ -5668,145 +5644,96 @@ fn provide_inline_values(
 mod disable_ai_settings_tests {
     use super::*;
     use gpui::TestAppContext;
-    use settings::{Settings, SettingsSources};
+    use rpc::proto::cancel_language_server_work::Work;
+    use settings::Settings;
 
     #[gpui::test]
     async fn test_disable_ai_settings_security(cx: &mut TestAppContext) {
-        fn disable_setting(value: Option<bool>) -> DisableAiSettingContent {
-            DisableAiSettingContent { disable_ai: value }
-        }
         cx.update(|cx| {
+            let mut store = SettingsStore::new(cx, &settings::test_settings());
+            store.register_setting::<DisableAiSettings>(cx);
+            let ai_disabled = |cx| DisableAiSettings::get_global(cx).disable_ai;
             // Test 1: Default is false (AI enabled)
-            let sources = SettingsSources {
-                default: &DisableAiSettingContent {
-                    disable_ai: Some(false),
-                },
-                global: None,
-                extensions: None,
-                user: None,
-                release_channel: None,
-                operating_system: None,
-                profile: None,
-                server: None,
-                project: &[],
-            };
-            let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert!(!settings.disable_ai, "Default should allow AI");
+            assert!(!ai_disabled(cx), "Default should allow AI");
+
+            let disable_true = serde_json::json!({
+                "disable_ai": true
+            })
+            .to_string();
+            let disable_false = serde_json::json!({
+                "disable_ai": false
+            })
+            .to_string();
 
             // Test 2: Global true, local false -> still disabled (local cannot re-enable)
-            let global_true = disable_setting(Some(true));
-            let local_false = disable_setting(Some(false));
-            let sources = SettingsSources {
-                default: &disable_setting(Some(false)),
-                global: None,
-                extensions: None,
-                user: Some(&global_true),
-                release_channel: None,
-                operating_system: None,
-                profile: None,
-                server: None,
-                project: &[&local_false],
-            };
-            let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert!(
-                settings.disable_ai,
-                "Local false cannot override global true"
-            );
+            store.set_user_settings(&disable_false, cx);
+            assert!(ai_disabled(cx), "Local false cannot override global true");
 
             // Test 3: Global false, local true -> disabled (local can make more restrictive)
-            let global_false = disable_setting(Some(false));
-            let local_true = disable_setting(Some(true));
-            let sources = SettingsSources {
-                default: &disable_setting(Some(false)),
-                global: None,
-                extensions: None,
-                user: Some(&global_false),
-                release_channel: None,
-                operating_system: None,
-                profile: None,
-                server: None,
-                project: &[&local_true],
-            };
-            let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert!(settings.disable_ai, "Local true can override global false");
+            store.set_user_settings(&disable_false, cx);
+            store.set_local_settings(
+                WorktreeId::from_usize(0),
+                Path::new("project.json").into(),
+                settings::LocalSettingsKind::Settings,
+                Some(&disable_true),
+                cx,
+            );
+            assert!(ai_disabled(cx), "Local true can override global false");
+            store.clear_local_settings(WorktreeId::from_usize(0), cx);
 
             // Test 4: Server can only make more restrictive (set to true)
-            let user_false = disable_setting(Some(false));
-            let server_true = disable_setting(Some(true));
-            let sources = SettingsSources {
-                default: &disable_setting(Some(false)),
-                global: None,
-                extensions: None,
-                user: Some(&user_false),
-                release_channel: None,
-                operating_system: None,
-                profile: None,
-                server: Some(&server_true),
-                project: &[],
-            };
-            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            store.set_user_settings(&disable_false, cx);
+            store.set_server_settings(&disable_true, cx);
             assert!(
-                settings.disable_ai,
+                ai_disabled(cx),
                 "Server can set to true even if user is false"
             );
 
             // Test 5: Server false cannot override user true
-            let user_true = disable_setting(Some(true));
-            let server_false = disable_setting(Some(false));
-            let sources = SettingsSources {
-                default: &disable_setting(Some(false)),
-                global: None,
-                extensions: None,
-                user: Some(&user_true),
-                release_channel: None,
-                operating_system: None,
-                profile: None,
-                server: Some(&server_false),
-                project: &[],
-            };
-            let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert!(
-                settings.disable_ai,
-                "Server false cannot override user true"
-            );
+            store.set_server_settings(&disable_false, cx);
+            store.set_user_settings(&disable_true, cx);
+            assert!(ai_disabled(cx), "Server false cannot override user true");
 
             // Test 6: Multiple local settings, any true disables AI
-            let global_false = disable_setting(Some(false));
-            let local_false3 = disable_setting(Some(false));
-            let local_true2 = disable_setting(Some(true));
-            let local_false4 = disable_setting(Some(false));
-            let sources = SettingsSources {
-                default: &disable_setting(Some(false)),
-                global: None,
-                extensions: None,
-                user: Some(&global_false),
-                release_channel: None,
-                operating_system: None,
-                profile: None,
-                server: None,
-                project: &[&local_false3, &local_true2, &local_false4],
-            };
-            let settings = DisableAiSettings::load(sources, cx).unwrap();
-            assert!(settings.disable_ai, "Any local true should disable AI");
+            store.set_local_settings(
+                WorktreeId::from_usize(0),
+                Path::new("a").into(),
+                settings::LocalSettingsKind::Settings,
+                Some(&disable_false),
+                cx,
+            );
+            store.set_local_settings(
+                WorktreeId::from_usize(1),
+                Path::new("b").into(),
+                settings::LocalSettingsKind::Settings,
+                Some(&disable_true),
+                cx,
+            );
+            store.set_local_settings(
+                WorktreeId::from_usize(2),
+                Path::new("c").into(),
+                settings::LocalSettingsKind::Settings,
+                Some(&disable_false),
+                cx,
+            );
+            store.set_user_settings(&disable_false, cx);
+            assert!(ai_disabled(cx), "Any local true should disable AI");
+            store.clear_local_settings(WorktreeId::from_usize(0), cx);
+            store.clear_local_settings(WorktreeId::from_usize(1), cx);
+            store.clear_local_settings(WorktreeId::from_usize(2), cx);
 
             // Test 7: All three sources can independently disable AI
-            let user_false2 = disable_setting(Some(false));
-            let server_false2 = disable_setting(Some(false));
-            let local_true3 = disable_setting(Some(true));
-            let sources = SettingsSources {
-                default: &disable_setting(Some(false)),
-                global: None,
-                extensions: None,
-                user: Some(&user_false2),
-                release_channel: None,
-                operating_system: None,
-                profile: None,
-                server: Some(&server_false2),
-                project: &[&local_true3],
-            };
-            let settings = DisableAiSettings::load(sources, cx).unwrap();
+            store.set_server_settings(&disable_false, cx);
+            store.set_user_settings(&disable_false, cx);
+            store.set_local_settings(
+                WorktreeId::from_usize(0),
+                Path::new("a").into(),
+                settings::LocalSettingsKind::Settings,
+                Some(&disable_true),
+                cx,
+            );
             assert!(
-                settings.disable_ai,
+                ai_disabled(cx),
                 "Local can disable even if user and server are false"
             );
         });

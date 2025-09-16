@@ -28,8 +28,9 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
+use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
+use settings::InlayHintKind;
 
 use remote::RemoteClient;
 use rpc::{
