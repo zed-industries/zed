@@ -160,7 +160,7 @@ mod tests {
                 &mut parser,
                 &mut rng
             ),
-            // This output is marlformed, so we're doing our best effort
+            // This output is malformed, so we're doing our best effort
             "Hello world\n```\n\nThe end\n".to_string()
         );
     }
@@ -182,7 +182,7 @@ mod tests {
                 &mut parser,
                 &mut rng
             ),
-            // This output is marlformed, so we're doing our best effort
+            // This output is malformed, so we're doing our best effort
             "```\nHello world\n```\n".to_string()
         );
     }
