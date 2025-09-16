@@ -313,6 +313,33 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
         .parent()
         .context("Failed to determine parent directory of zed executable path.")?;
 
+    #[cfg(target_os = "macos")]
+    let zed_cli_path = {
+        enum MacosAppBundle {
+            App,
+            LocalPath,
+        }
+        // locate bundle
+        let mut app_path = zed_path.canonicalize()?;
+        while app_path.extension() != Some(std::ffi::OsStr::new("app")) {
+            anyhow::ensure!(
+                app_path.pop(),
+                "cannot find app bundle containing  {zed_path:?}"
+            );
+        }
+        let app_bundle = match app_path.extension().and_then(|ext| ext.to_str()) {
+            Some("app") => MacosAppBundle::App,
+            _ => MacosAppBundle::LocalPath,
+        };
+
+        let zed_cli_path = match app_bundle {
+            MacosAppBundle::App => app_path.join("Contents/MacOS/cli"),
+            MacosAppBundle::LocalPath => parent.join("cli"),
+        };
+
+        zed_cli_path.to_string_lossy().to_string()
+    };
+
     #[cfg(target_os = "windows")]
     let zed_cli_path = {
         let possible_locations = [parent.join("bin").join("zed.exe"), parent.join("cli.exe")];
