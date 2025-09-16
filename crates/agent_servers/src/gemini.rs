@@ -7,6 +7,7 @@ use anyhow::{Context as _, Result};
 use client::ProxySettings;
 use collections::HashMap;
 use gpui::{App, AppContext, SharedString, Task};
+use http_client::read_no_proxy_from_env;
 use language_models::provider::google::GoogleLanguageModelProvider;
 use project::agent_server_store::GEMINI_NAME;
 use settings::SettingsStore;
@@ -38,13 +39,27 @@ impl AgentServer for Gemini {
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
         let proxy_url = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<ProxySettings>(None).proxy.clone()
+            settings.get::<ProxySettings>(None).proxy_url()
         });
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
             let mut extra_env = HashMap::default();
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
+
+            if let Some(proxy_url) = &proxy_url {
+                let env_var = if proxy_url.scheme() == "https" {
+                    "HTTPS_PROXY"
+                } else {
+                    "HTTP_PROXY"
+                };
+                extra_env.insert(env_var.to_owned(), proxy_url.to_string());
+            }
+
+            if let Some(no_proxy) = read_no_proxy_from_env() {
+                extra_env.insert("NO_PROXY".to_owned(), no_proxy);
+            }
+
             if let Some(api_key) = cx
                 .update(GoogleLanguageModelProvider::api_key_for_gemini_cli)?
                 .await
@@ -52,7 +67,7 @@ impl AgentServer for Gemini {
             {
                 extra_env.insert("GEMINI_API_KEY".into(), api_key);
             }
-            let (mut command, root_dir, login) = store
+            let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store
                         .get_external_agent(&GEMINI_NAME.into())
@@ -66,14 +81,6 @@ impl AgentServer for Gemini {
                     ))
                 })??
                 .await?;
-
-            // Add proxy flag if proxy settings are configured in Zed and not in the args
-            if let Some(proxy_url_value) = &proxy_url
-                && !command.args.iter().any(|arg| arg.contains("--proxy"))
-            {
-                command.args.push("--proxy".into());
-                command.args.push(proxy_url_value.clone());
-            }
 
             let connection = crate::acp::connect(
                 name,
