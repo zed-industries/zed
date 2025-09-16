@@ -319,14 +319,23 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
             App,
             LocalPath,
         }
-        // locate bundle
-        let mut app_path = zed_path.canonicalize()?;
-        while app_path.extension() != Some(std::ffi::OsStr::new("app")) {
-            anyhow::ensure!(
-                app_path.pop(),
-                "cannot find app bundle containing  {zed_path:?}"
-            );
+
+        fn locate_bundle(zed_path: &std::path::Path) -> Result<std::path::PathBuf> {
+            let mut app_path = zed_path.canonicalize()?;
+            while app_path.extension() != Some(std::ffi::OsStr::new("app")) {
+                anyhow::ensure!(
+                    app_path.pop(),
+                    "cannot find app bundle containing  {zed_path:?}"
+                );
+            }
+            Ok(app_path)
         }
+
+        let app_path = locate_bundle(&zed_path)
+            .context("locating macOS app bundle")
+            .log_err()
+            .unwrap_or(zed_path);
+
         let app_bundle = match app_path.extension().and_then(|ext| ext.to_str()) {
             Some("app") => MacosAppBundle::App,
             _ => MacosAppBundle::LocalPath,
