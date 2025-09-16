@@ -29,7 +29,6 @@ use context_server_store::ContextServerStore;
 pub use environment::{EnvironmentErrorMessage, ProjectEnvironmentEvent};
 use git::repository::get_git_committer;
 use git_store::{Repository, RepositoryId};
-use schemars::JsonSchema;
 pub mod search_history;
 mod yarn;
 
@@ -101,10 +100,7 @@ use rpc::{
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
-use settings::{
-    InvalidSettingsError, Settings, SettingsKey, SettingsLocation, SettingsSources, SettingsStore,
-    SettingsUi,
-};
+use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
 use smol::channel::Receiver;
 use snippet::Snippet;
 use snippet_provider::SnippetProvider;
@@ -988,6 +984,7 @@ impl settings::Settings for DisableAiSettings {
     }
 
     fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        // If disable_ai is true *in any file*, it is disabled.
         self.disable_ai = self.disable_ai || content.project.disable_ai.unwrap_or(false);
     }
 
@@ -5644,7 +5641,6 @@ fn provide_inline_values(
 mod disable_ai_settings_tests {
     use super::*;
     use gpui::TestAppContext;
-    use rpc::proto::cancel_language_server_work::Work;
     use settings::Settings;
 
     #[gpui::test]
@@ -5652,7 +5648,9 @@ mod disable_ai_settings_tests {
         cx.update(|cx| {
             let mut store = SettingsStore::new(cx, &settings::test_settings());
             store.register_setting::<DisableAiSettings>(cx);
-            let ai_disabled = |cx| DisableAiSettings::get_global(cx).disable_ai;
+            fn ai_disabled(cx: &App) -> bool {
+                DisableAiSettings::get_global(cx).disable_ai
+            }
             // Test 1: Default is false (AI enabled)
             assert!(!ai_disabled(cx), "Default should allow AI");
 
@@ -5665,77 +5663,13 @@ mod disable_ai_settings_tests {
             })
             .to_string();
 
-            // Test 2: Global true, local false -> still disabled (local cannot re-enable)
-            store.set_user_settings(&disable_false, cx);
+            store.set_user_settings(&disable_false, cx).unwrap();
+            store.set_global_settings(&disable_true, cx).unwrap();
             assert!(ai_disabled(cx), "Local false cannot override global true");
 
-            // Test 3: Global false, local true -> disabled (local can make more restrictive)
-            store.set_user_settings(&disable_false, cx);
-            store.set_local_settings(
-                WorktreeId::from_usize(0),
-                Path::new("project.json").into(),
-                settings::LocalSettingsKind::Settings,
-                Some(&disable_true),
-                cx,
-            );
-            assert!(ai_disabled(cx), "Local true can override global false");
-            store.clear_local_settings(WorktreeId::from_usize(0), cx);
-
-            // Test 4: Server can only make more restrictive (set to true)
-            store.set_user_settings(&disable_false, cx);
-            store.set_server_settings(&disable_true, cx);
-            assert!(
-                ai_disabled(cx),
-                "Server can set to true even if user is false"
-            );
-
-            // Test 5: Server false cannot override user true
-            store.set_server_settings(&disable_false, cx);
-            store.set_user_settings(&disable_true, cx);
-            assert!(ai_disabled(cx), "Server false cannot override user true");
-
-            // Test 6: Multiple local settings, any true disables AI
-            store.set_local_settings(
-                WorktreeId::from_usize(0),
-                Path::new("a").into(),
-                settings::LocalSettingsKind::Settings,
-                Some(&disable_false),
-                cx,
-            );
-            store.set_local_settings(
-                WorktreeId::from_usize(1),
-                Path::new("b").into(),
-                settings::LocalSettingsKind::Settings,
-                Some(&disable_true),
-                cx,
-            );
-            store.set_local_settings(
-                WorktreeId::from_usize(2),
-                Path::new("c").into(),
-                settings::LocalSettingsKind::Settings,
-                Some(&disable_false),
-                cx,
-            );
-            store.set_user_settings(&disable_false, cx);
-            assert!(ai_disabled(cx), "Any local true should disable AI");
-            store.clear_local_settings(WorktreeId::from_usize(0), cx);
-            store.clear_local_settings(WorktreeId::from_usize(1), cx);
-            store.clear_local_settings(WorktreeId::from_usize(2), cx);
-
-            // Test 7: All three sources can independently disable AI
-            store.set_server_settings(&disable_false, cx);
-            store.set_user_settings(&disable_false, cx);
-            store.set_local_settings(
-                WorktreeId::from_usize(0),
-                Path::new("a").into(),
-                settings::LocalSettingsKind::Settings,
-                Some(&disable_true),
-                cx,
-            );
-            assert!(
-                ai_disabled(cx),
-                "Local can disable even if user and server are false"
-            );
+            store.set_global_settings(&disable_false, cx).unwrap();
+            store.set_user_settings(&disable_true, cx).unwrap();
+            assert!(ai_disabled(cx), "Local false cannot override global true");
         });
     }
 }

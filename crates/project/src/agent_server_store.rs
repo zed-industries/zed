@@ -23,7 +23,7 @@ use rpc::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{SettingsContent, SettingsKey, SettingsStore, SettingsUi};
-use util::{MergeFrom, ResultExt as _, debug_panic};
+use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
 

@@ -803,6 +803,15 @@ impl Default for FormatterList {
     }
 }
 
+impl AsRef<[Formatter]> for FormatterList {
+    fn as_ref(&self) -> &[Formatter] {
+        match &self {
+            Self::Single(single) => std::slice::from_ref(single),
+            Self::Vec(v) => v,
+        }
+    }
+}
+
 /// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
 #[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]

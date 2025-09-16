@@ -13,9 +13,9 @@ use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 
 pub use settings::{
-    CompletionSettings, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
-    IndentGuideSettings, LanguageSettingsContent, LspInsertMode, RewrapBehavior,
-    ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    CompletionSettings, EditPredictionProvider, EditPredictionsMode, FormatOnSave, Formatter,
+    FormatterList, IndentGuideSettings, InlayHintKind, LanguageSettingsContent, LspInsertMode,
+    RewrapBehavior, SelectedFormatter, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{
     ParameterizedJsonSchema, Settings, SettingsContent, SettingsLocation, SettingsStore, SettingsUi,

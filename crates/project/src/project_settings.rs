@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation,
-    SettingsSources, SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
+    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
 };
 use std::{
     collections::BTreeMap,
