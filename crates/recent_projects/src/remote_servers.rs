@@ -6,7 +6,7 @@ use crate::{
     },
     ssh_config::parse_ssh_config_hosts,
 };
-use editor::{Editor, RemoteSelection};
+use editor::Editor;
 use file_finder::OpenPathDelegate;
 use futures::{FutureExt, channel::oneshot, future::Shared, select};
 use gpui::{
@@ -168,7 +168,7 @@ impl WslPickerDelegate {
 
         let distros = lxss_key
             .enum_keys()
-            .flat_map(|k| k)
+            .flatten()
             .flat_map(|k| {
                 lxss_key
                     .open_subkey(&k)
@@ -277,8 +277,8 @@ impl PickerDelegate for WslPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _: &mut Window,
+        _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         use ui::HighlightedLabel;
 
@@ -487,14 +487,12 @@ impl gpui::Render for ProjectPicker {
                     connection_string: connection_string.clone(),
                     paths: Default::default(),
                     nickname: nickname.clone(),
-                    is_wsl: false,
                 }
                 .render(window, cx),
                 ProjectPickerData::Wsl { distro_name } => SshConnectionHeader {
                     connection_string: distro_name.clone(),
                     paths: Default::default(),
                     nickname: None,
-                    is_wsl: true,
                 }
                 .render(window, cx),
             })
@@ -748,7 +746,7 @@ impl RemoteServerProjects {
         }
     }
 
-    pub fn project_picker(
+    fn project_picker(
         create_new_window: bool,
         index: ServerIndex,
         connection_options: remote::RemoteConnectionOptions,
@@ -1084,7 +1082,7 @@ impl RemoteServerProjects {
             }
             Mode::AddWslDistro(state) => {
                 let delegate = &state.picker.read(cx).delegate;
-                let distro = delegate.matches[delegate.selected_index].string.clone();
+                let distro = delegate.selected_distro().unwrap();
                 self.connect_wsl_distro(state.picker.clone(), distro, window, cx);
             }
         }
@@ -1129,11 +1127,9 @@ impl RemoteServerProjects {
                     (connection.host.clone(), None, false)
                 }
             }
-            Connection::Wsl(wsl_connection_options) => (
-                SharedString::from(wsl_connection_options.distro_name.clone()),
-                None,
-                true,
-            ),
+            Connection::Wsl(wsl_connection_options) => {
+                (wsl_connection_options.distro_name.clone(), None, true)
+            }
         };
         v_flex()
             .w_full()
@@ -1295,7 +1291,6 @@ impl RemoteServerProjects {
                                 .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
                                 .child(Label::new("Open Folder"))
                                 .on_click(cx.listener({
-                                    let connection = connection;
                                     let host = host.clone();
                                     move |this, _, window, cx| {
                                         let new_ix = this.create_host_from_ssh_config(&host, cx);
@@ -1648,7 +1643,6 @@ impl RemoteServerProjects {
                         connection_string: connection.host.clone().into(),
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
-                        is_wsl: false,
                     }
                     .render(window, cx)
                     .into_any_element(),
@@ -1656,7 +1650,6 @@ impl RemoteServerProjects {
                         connection_string: connection.distro_name.clone().into(),
                         paths: Default::default(),
                         nickname: None,
-                        is_wsl: true,
                     }
                     .render(window, cx)
                     .into_any_element(),
@@ -1994,7 +1987,6 @@ impl RemoteServerProjects {
                     connection_string,
                     paths: Default::default(),
                     nickname,
-                    is_wsl: false,
                 }
                 .render(window, cx),
             )

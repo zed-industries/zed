@@ -389,7 +389,6 @@ pub(crate) struct SshConnectionHeader {
     pub(crate) connection_string: SharedString,
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) nickname: Option<SharedString>,
-    pub(crate) is_wsl: bool,
 }
 
 impl RenderOnce for SshConnectionHeader {
@@ -462,7 +461,6 @@ impl Render for RemoteConnectionModal {
                     paths: self.paths.clone(),
                     connection_string,
                     nickname,
-                    is_wsl: false,
                 }
                 .render(window, cx),
             )
