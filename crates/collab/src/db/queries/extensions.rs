@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use chrono::Utc;
-use sea_orm::sea_query::IntoCondition;
+use sea_orm::{DbBackend, sea_query::IntoCondition};
 use util::ResultExt;
 
 use super::*;
@@ -29,9 +29,12 @@ impl Database {
 
                 let extension_version_table_name = extension_version::Entity.table_name();
                 let description_column_name = extension_version::Column::Description.as_str();
-                let query = format!(
-                    "name ILIKE $1 OR {extension_version_table_name}.{description_column_name} ILIKE $2"
-                );
+
+                let query = if cfg!(any(test, feature = "sqlite")) && self.pool.get_database_backend() == DbBackend::Sqlite {
+                    format!("LOWER(name) LIKE ? OR LOWER({extension_version_table_name}.{description_column_name}) LIKE ?")
+                } else {
+                    format!("name ILIKE $1 OR {extension_version_table_name}.{description_column_name} ILIKE $2")
+                };
 
                 condition = condition
                     .add(Expr::cust_with_exprs(
