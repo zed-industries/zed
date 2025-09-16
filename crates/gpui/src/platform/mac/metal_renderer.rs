@@ -132,11 +132,18 @@ impl MetalRenderer {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
-        let mut devices = metal::Device::all();
-        devices.sort_by_key(|device| (device.is_removable(), device.is_low_power()));
-        let Some(device) = devices.pop() else {
-            log::error!("unable to access a compatible graphics device");
-            std::process::exit(1);
+        // Prefer the system default device first. On Apple Silicon this is the only GPU.
+        let device = if let Some(device) = metal::Device::system_default() {
+            device
+        } else {
+            let mut devices = metal::Device::all();
+            if devices.is_empty() {
+                log::error!("unable to access a compatible graphics device (no Metal devices found)");
+                std::process::exit(1);
+            }
+            // When multiple devices exist (e.g., Intel iGPU + dGPU or eGPU), prefer low-power, non-removable.
+            devices.sort_by_key(|d| (d.is_removable(), !d.is_low_power()));
+            devices.remove(0)
         };
 
         let layer = metal::MetalLayer::new();
