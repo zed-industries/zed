@@ -13,7 +13,7 @@ pub mod size;
 pub mod test;
 pub mod time;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures::Future;
 use itertools::Either;
 use regex::Regex;
@@ -289,8 +289,6 @@ fn load_shell_from_passwd() -> Result<()> {
 #[cfg(unix)]
 /// Returns a shell escaped path for the current zed executable
 pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
-    use anyhow::Context;
-
     let zed_path = std::env::current_exe()
         .context("Failed to determine current zed executable path.")?
         .to_string_lossy()
@@ -304,6 +302,21 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
         shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
 
     Ok(zed_path_escaped.to_string())
+}
+
+/// Returns a shell escaped path for the zed cli executable
+pub fn get_shell_safe_zed_cli_path() -> Result<String> {
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    #[cfg(target_os = "windows")]
+    let zed_cli_path = zed_path
+        .parent()
+        .map(|p| p.join("bin").join("zed.exe"))
+        .context("Failed to determine zed-cli path from zed executable path.")?
+        .to_string_lossy()
+        .to_string();
+
+    Ok(zed_cli_path)
 }
 
 #[cfg(unix)]
