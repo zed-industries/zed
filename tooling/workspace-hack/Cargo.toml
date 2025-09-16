@@ -75,7 +75,6 @@ hmac = { version = "0.12", default-features = false, features = ["reset"] }
 hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "server", "stream"] }
 idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
-itertools-93f6ce9d446188ac = { package = "itertools", version = "0.10" }
 jiff = { version = "0.2" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -100,8 +99,7 @@ percent-encoding = { version = "2" }
 phf = { version = "0.11", features = ["macros"] }
 phf_shared = { version = "0.11" }
 prost-274715c4dabd11b0 = { package = "prost", version = "0.9" }
-prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
-prost-types-274715c4dabd11b0 = { package = "prost-types", version = "0.9" }
+prost-types = { version = "0.9" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
 rand_chacha = { version = "0.3" }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
@@ -215,7 +213,6 @@ hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "
 idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
 itertools-594e8ee84c453af0 = { package = "itertools", version = "0.13" }
-itertools-93f6ce9d446188ac = { package = "itertools", version = "0.10" }
 jiff = { version = "0.2" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -242,8 +239,7 @@ phf_shared = { version = "0.11" }
 prettyplease = { version = "0.2", default-features = false, features = ["verbatim"] }
 proc-macro2 = { version = "1" }
 prost-274715c4dabd11b0 = { package = "prost", version = "0.9" }
-prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
-prost-types-274715c4dabd11b0 = { package = "prost-types", version = "0.9" }
+prost-types = { version = "0.9" }
 quote = { version = "1" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
 rand_chacha = { version = "0.3" }
@@ -316,7 +312,7 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
@@ -337,6 +333,7 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
@@ -347,7 +344,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["NSA
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
@@ -377,7 +374,7 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSArray", "NSAttributedString", "NSBundle", "NSCoder", "NSData", "NSDate", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSNotification", "NSNull", "NSObjCRuntime", "NSObject", "NSProcessInfo", "NSRange", "NSRunLoop", "NSString", "NSURL", "NSUndoManager", "NSValue", "objc2-core-foundation", "std"] }
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
@@ -398,6 +395,7 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
@@ -408,7 +406,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["NSA
 objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
@@ -446,7 +444,7 @@ nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "s
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
@@ -476,6 +474,7 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
+itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
@@ -487,7 +486,7 @@ nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "s
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
@@ -526,7 +525,7 @@ nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "s
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
@@ -556,6 +555,7 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
+itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
@@ -567,7 +567,7 @@ nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "s
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
@@ -590,7 +590,7 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 num = { version = "0.4" }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "fs", "net"] }
 scopeguard = { version = "1" }
@@ -603,9 +603,9 @@ winapi = { version = "0.3", default-features = false, features = ["cfg", "commap
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
 windows-sys-4db8c43aad08e7ae = { package = "windows-sys", version = "0.60", features = ["Win32_Globalization", "Win32_System_Com", "Win32_UI_Shell"] }
-windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming"] }
-windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
+windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 codespan-reporting = { version = "0.12" }
@@ -614,10 +614,11 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
+itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 num = { version = "0.4" }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "fs", "net"] }
 scopeguard = { version = "1" }
@@ -630,9 +631,9 @@ winapi = { version = "0.3", default-features = false, features = ["cfg", "commap
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
 windows-sys-4db8c43aad08e7ae = { package = "windows-sys", version = "0.60", features = ["Win32_Globalization", "Win32_System_Com", "Win32_UI_Shell"] }
-windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming"] }
-windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
+windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 
 [target.x86_64-unknown-linux-musl.dependencies]
 aes = { version = "0.8", default-features = false, features = ["zeroize"] }
@@ -659,7 +660,7 @@ nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "s
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
@@ -689,6 +690,7 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
+itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
@@ -700,7 +702,7 @@ nix-fa1f6196edfd7249 = { package = "nix", version = "0.30", features = ["fs", "s
 num-bigint-dig = { version = "0.8", features = ["i128", "prime", "zeroize"] }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
-prost-types-5ef9efb8ec2df382 = { package = "prost-types", version = "0.12" }
+prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
