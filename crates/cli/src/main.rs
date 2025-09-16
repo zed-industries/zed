@@ -110,6 +110,11 @@ struct Args {
     ))]
     #[arg(long)]
     uninstall: bool,
+
+    /// Used for SSH/Git password authentication, to remove the need for netcat as a dependency,
+    /// by having Zed act like netcat communicating over a Unix socket.
+    #[arg(long, hide = true)]
+    askpass: Option<String>,
 }
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
@@ -196,6 +201,12 @@ fn main() -> Result<()> {
         }
     }
     let args = Args::parse();
+
+    // `zed --askpass` Makes zed operate in nc/netcat mode for use with askpass
+    if let Some(socket) = &args.askpass {
+        askpass::main(socket);
+        return Ok(());
+    }
 
     // Set custom data directory before any path operations
     let user_data_dir = args.user_data_dir.clone();
