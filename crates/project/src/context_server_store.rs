@@ -529,48 +529,10 @@ impl ContextServerStore {
                     }
                     ContextServerConfig::Transport { transport } => match transport {
                         TransportConfig::Http { url, headers } => {
-                            #[cfg(feature = "rmcp")]
-                            {
-                                Arc::new(ContextServer::http(id, url.clone(), headers.clone()))
-                            }
-                            #[cfg(not(feature = "rmcp"))]
-                            {
-                                let _ = (url, headers); // Suppress unused variable warnings
-                                log::warn!("HTTP transport requested but RMCP feature not enabled");
-                                // Fallback to stdio with dummy command
-                                Arc::new(ContextServer::stdio(
-                                    id,
-                                    ContextServerCommand {
-                                        path: "echo".into(),
-                                        args: vec!["RMCP not enabled".to_string()],
-                                        env: None,
-                                        timeout: None,
-                                    },
-                                    root_path,
-                                ))
-                            }
+                            Arc::new(ContextServer::http(id, url.clone(), headers.clone()))
                         }
                         TransportConfig::Sse { url, headers } => {
-                            #[cfg(feature = "rmcp")]
-                            {
-                                Arc::new(ContextServer::sse(id, url.clone(), headers.clone()))
-                            }
-                            #[cfg(not(feature = "rmcp"))]
-                            {
-                                let _ = (url, headers); // Suppress unused variable warnings
-                                log::warn!("SSE transport requested but RMCP feature not enabled");
-                                // Fallback to stdio with dummy command
-                                Arc::new(ContextServer::stdio(
-                                    id,
-                                    ContextServerCommand {
-                                        path: "echo".into(),
-                                        args: vec!["RMCP not enabled".to_string()],
-                                        env: None,
-                                        timeout: None,
-                                    },
-                                    root_path,
-                                ))
-                            }
+                            Arc::new(ContextServer::sse(id, url.clone(), headers.clone()))
                         }
                     },
                 },
@@ -592,48 +554,10 @@ impl ContextServerStore {
                     }
                     ContextServerConfig::Transport { transport } => match transport {
                         TransportConfig::Http { url, headers } => {
-                            #[cfg(feature = "rmcp")]
-                            {
-                                Arc::new(ContextServer::http(id, url.clone(), headers.clone()))
-                            }
-                            #[cfg(not(feature = "rmcp"))]
-                            {
-                                let _ = (url, headers); // Suppress unused variable warnings
-                                log::warn!("HTTP transport requested but RMCP feature not enabled");
-                                // Fallback to stdio with dummy command
-                                Arc::new(ContextServer::stdio(
-                                    id,
-                                    ContextServerCommand {
-                                        path: "echo".into(),
-                                        args: vec!["RMCP not enabled".to_string()],
-                                        env: None,
-                                        timeout: None,
-                                    },
-                                    root_path,
-                                ))
-                            }
+                            Arc::new(ContextServer::http(id, url.clone(), headers.clone()))
                         }
                         TransportConfig::Sse { url, headers } => {
-                            #[cfg(feature = "rmcp")]
-                            {
-                                Arc::new(ContextServer::sse(id, url.clone(), headers.clone()))
-                            }
-                            #[cfg(not(feature = "rmcp"))]
-                            {
-                                let _ = (url, headers); // Suppress unused variable warnings
-                                log::warn!("SSE transport requested but RMCP feature not enabled");
-                                // Fallback to stdio with dummy command
-                                Arc::new(ContextServer::stdio(
-                                    id,
-                                    ContextServerCommand {
-                                        path: "echo".into(),
-                                        args: vec!["RMCP not enabled".to_string()],
-                                        env: None,
-                                        timeout: None,
-                                    },
-                                    root_path,
-                                ))
-                            }
+                            Arc::new(ContextServer::sse(id, url.clone(), headers.clone()))
                         }
                     },
                 },
