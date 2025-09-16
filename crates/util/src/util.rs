@@ -304,17 +304,26 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
     Ok(zed_path_escaped.to_string())
 }
 
-/// Returns a shell escaped path for the zed cli executable
+/// Returns a shell escaped path for the zed cli executable, this function
+/// should be called from the zed executable, not zed-cli.
 pub fn get_shell_safe_zed_cli_path() -> Result<String> {
     let zed_path =
         std::env::current_exe().context("Failed to determine current zed executable path.")?;
-    #[cfg(target_os = "windows")]
-    let zed_cli_path = zed_path
+    let parent = zed_path
         .parent()
-        .map(|p| p.join("bin").join("zed.exe"))
-        .context("Failed to determine zed-cli path from zed executable path.")?
-        .to_string_lossy()
-        .to_string();
+        .context("Failed to determine parent directory of zed executable path.")?;
+
+    #[cfg(target_os = "windows")]
+    let zed_cli_path = {
+        let possible_locations = [parent.join("bin").join("zed.exe"), parent.join("cli.exe")];
+        possible_locations
+            .into_iter()
+            .find(|p| p.exists())
+            .filter(|p| p != &zed_path)
+            .context("Failed to find zed-cli executable next to zed executable.")?
+            .to_string_lossy()
+            .to_string()
+    };
 
     Ok(zed_cli_path)
 }
