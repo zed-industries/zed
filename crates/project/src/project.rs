@@ -979,7 +979,7 @@ pub struct DisableAiSettings {
 impl settings::Settings for DisableAiSettings {
     fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
-            disable_ai: content.project.disable_ai.unwrap(),
+            disable_ai: content.disable_ai.unwrap(),
         }
     }
 
@@ -3246,21 +3246,7 @@ impl Project {
         let first_insertion = self.buffers_needing_diff.len() == 1;
 
         let settings = ProjectSettings::get_global(cx);
-        let delay = if let Some(delay) = settings.git.gutter_debounce {
-            delay
-        } else {
-            if first_insertion {
-                let this = cx.weak_entity();
-                cx.defer(move |cx| {
-                    if let Some(this) = this.upgrade() {
-                        this.update(cx, |this, cx| {
-                            this.recalculate_buffer_diffs(cx).detach();
-                        });
-                    }
-                });
-            }
-            return;
-        };
+        let delay = settings.git.gutter_debounce;
 
         const MIN_DELAY: u64 = 50;
         let delay = delay.max(MIN_DELAY);
@@ -5648,11 +5634,11 @@ mod disable_ai_settings_tests {
         cx.update(|cx| {
             let mut store = SettingsStore::new(cx, &settings::test_settings());
             store.register_setting::<DisableAiSettings>(cx);
-            fn ai_disabled(cx: &App) -> bool {
-                DisableAiSettings::get_global(cx).disable_ai
-            }
             // Test 1: Default is false (AI enabled)
-            assert!(!ai_disabled(cx), "Default should allow AI");
+            assert!(
+                !DisableAiSettings::get_global(cx).disable_ai,
+                "Default should allow AI"
+            );
 
             let disable_true = serde_json::json!({
                 "disable_ai": true
@@ -5665,11 +5651,17 @@ mod disable_ai_settings_tests {
 
             store.set_user_settings(&disable_false, cx).unwrap();
             store.set_global_settings(&disable_true, cx).unwrap();
-            assert!(ai_disabled(cx), "Local false cannot override global true");
+            assert!(
+                DisableAiSettings::get_global(cx).disable_ai,
+                "Local false cannot override global true"
+            );
 
             store.set_global_settings(&disable_false, cx).unwrap();
             store.set_user_settings(&disable_true, cx).unwrap();
-            assert!(ai_disabled(cx), "Local false cannot override global true");
+            assert!(
+                DisableAiSettings::get_global(cx).disable_ai,
+                "Local false cannot override global true"
+            );
         });
     }
 }

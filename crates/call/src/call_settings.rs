@@ -3,6 +3,7 @@ use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use util::MergeFrom;
 
 #[derive(Deserialize, Debug)]
 pub struct CallSettings {
@@ -10,27 +11,25 @@ pub struct CallSettings {
     pub share_on_join: bool,
 }
 
-/// Configuration of voice calls in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
-#[settings_key(key = "calls")]
-pub struct CallSettingsContent {
-    /// Whether the microphone should be muted when joining a channel or a call.
-    ///
-    /// Default: false
-    pub mute_on_join: Option<bool>,
-
-    /// Whether your current project should be shared when joining an empty channel.
-    ///
-    /// Default: false
-    pub share_on_join: Option<bool>,
-}
-
 impl Settings for CallSettings {
-    type FileContent = CallSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
+        let call = content.call.unwrap();
+        CallSettings {
+            mute_on_join: call.mute_on_join.unwrap(),
+            share_on_join: call.share_on_join.unwrap(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
+        if let Some(call) = content.call.clone() {
+            self.mute_on_join.merge_from(call.mute_on_join);
+            self.share_on_join.merge_from(call.share_on_join);
+        }
+    }
+
+    fn import_from_vscode(
+        _vscode: &settings::VsCodeSettings,
+        _current: &settings::SettingsContent,
+    ) {
+    }
 }

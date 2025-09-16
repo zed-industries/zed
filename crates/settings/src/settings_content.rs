@@ -1,19 +1,21 @@
 mod agent;
 mod language;
+mod project;
 mod terminal;
 mod theme;
 pub use agent::*;
 pub use language::*;
+pub use project::*;
 pub use terminal::*;
 pub use theme::*;
-
-use std::env;
 
 use collections::HashMap;
 use gpui::{App, SharedString};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::env;
+pub use util::serde::default_true;
 
 use crate::ActiveSettingsProfileName;
 
@@ -37,8 +39,17 @@ pub struct SettingsContent {
 
     pub debugger: Option<DebuggerSettingsContent>,
 
+    /// Configuration for Diagnostics-related features.
+    pub diagnostics: Option<DiagnosticsSettingsContent>,
+
+    /// Configuration for Git-related features
+    pub git: Option<GitSettings>,
+
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<Vec<GitHostingProviderConfig>>,
+
+    /// Common language server settings.
+    pub global_lsp_settings: Option<GlobalLspSettingsContent>,
 
     /// Whether or not to enable Helix mode.
     ///
@@ -50,11 +61,16 @@ pub struct SettingsContent {
     /// Example: {"log": {"client": "warn"}}
     pub log: Option<HashMap<String, String>>,
 
+    /// Configuration for Node-related features
+    pub node: Option<NodeBinarySettings>,
+
     pub proxy: Option<String>,
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
 
+    /// Configuration for session-related features
+    pub session: Option<SessionSettings>,
     /// Control what info is collected by Zed.
     pub telemetry: Option<TelemetrySettingsContent>,
 
@@ -67,6 +83,9 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub vim_mode: Option<bool>,
+
+    // Settings related to calls in Zed
+    pub calls: Option<CallSettingsContent>,
 }
 
 impl SettingsContent {
@@ -145,17 +164,6 @@ pub enum BaseKeymapContent {
     Emacs,
     Cursor,
     None,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ProjectSettingsContent {
-    #[serde(flatten)]
-    pub all_languages: AllLanguageSettingsContent,
-
-    #[serde(flatten)]
-    pub worktree: WorktreeSettingsContent,
-
-    pub disable_ai: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -246,42 +254,6 @@ pub enum GitHostingProviderKind {
     Bitbucket,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct WorktreeSettingsContent {
-    /// The displayed name of this project. If not set, the root directory name
-    /// will be displayed.
-    ///
-    /// Default: none
-    pub project_name: Option<String>,
-
-    /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
-    /// `file_scan_inclusions`.
-    ///
-    /// Default: [
-    ///   "**/.git",
-    ///   "**/.svn",
-    ///   "**/.hg",
-    ///   "**/.jj",
-    ///   "**/CVS",
-    ///   "**/.DS_Store",
-    ///   "**/Thumbs.db",
-    ///   "**/.classpath",
-    ///   "**/.settings"
-    /// ]
-    pub file_scan_exclusions: Option<Vec<String>>,
-
-    /// Always include files that match these globs when scanning for files, even if they're
-    /// ignored by git. This setting is overridden by `file_scan_exclusions`.
-    /// Default: [
-    ///  ".env*",
-    ///  "docker-compose.*.yml",
-    /// ]
-    pub file_scan_inclusions: Option<Vec<String>>,
-
-    /// Treat the files matching these globs as `.env` files.
-    /// Default: [ "**/.env*" ]
-    pub private_files: Option<Vec<String>>,
-}
 /// Control what info is collected by Zed.
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TelemetrySettingsContent {
@@ -347,4 +319,32 @@ pub enum DockPosition {
     Left,
     Bottom,
     Right,
+}
+
+/// Settings for slash commands.
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
+pub struct SlashCommandSettings {
+    /// Settings for the `/cargo-workspace` slash command.
+    pub cargo_workspace: Option<CargoWorkspaceCommandSettings>,
+}
+
+/// Settings for the `/cargo-workspace` slash command.
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
+pub struct CargoWorkspaceCommandSettings {
+    /// Whether `/cargo-workspace` is enabled.
+    pub enabled: Option<bool>,
+}
+
+/// Configuration of voice calls in Zed.
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct CallSettingsContent {
+    /// Whether the microphone should be muted when joining a channel or a call.
+    ///
+    /// Default: false
+    pub mute_on_join: Option<bool>,
+
+    /// Whether your current project should be shared when joining an empty channel.
+    ///
+    /// Default: false
+    pub share_on_join: Option<bool>,
 }

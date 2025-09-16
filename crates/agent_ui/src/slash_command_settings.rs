@@ -5,32 +5,30 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 /// Settings for slash commands.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(key = "slash_commands")]
+#[derive(Debug, Default, Clone)]
 pub struct SlashCommandSettings {
     /// Settings for the `/cargo-workspace` slash command.
-    #[serde(default)]
     pub cargo_workspace: CargoWorkspaceCommandSettings,
 }
 
 /// Settings for the `/cargo-workspace` slash command.
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
+#[derive(Debug, Default, Clone)]
 pub struct CargoWorkspaceCommandSettings {
     /// Whether `/cargo-workspace` is enabled.
-    #[serde(default)]
     pub enabled: bool,
 }
 
 impl Settings for SlashCommandSettings {
-    type FileContent = Self;
+    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
+        Self {
+            cargo_workspace: CargoWorkspaceCommandSettings {
+                enabled: content.project.slash_commands.unwrap(),
+            },
+        }
+    }
 
-    fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> Result<Self> {
-        SettingsSources::<Self::FileContent>::json_merge_with(
-            [sources.default]
-                .into_iter()
-                .chain(sources.user)
-                .chain(sources.server),
-        )
+    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
+        todo!()
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
