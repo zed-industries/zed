@@ -1,6 +1,5 @@
 use agent_client_protocol as acp;
 use fs::Fs;
-use http_client::read_no_proxy_from_env;
 use settings::{SettingsStore, update_settings_file};
 use std::path::Path;
 use std::rc::Rc;
@@ -8,12 +7,10 @@ use std::sync::Arc;
 use std::{any::Any, path::PathBuf};
 
 use anyhow::{Context as _, Result};
-use client::ProxySettings;
-use collections::HashMap;
 use gpui::{App, AppContext as _, SharedString, Task};
 use project::agent_server_store::{AllAgentServersSettings, CLAUDE_CODE_NAME};
 
-use crate::{AgentServer, AgentServerDelegate};
+use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 
 #[derive(Clone)]
@@ -63,27 +60,10 @@ impl AgentServer for ClaudeCode {
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
-        let proxy_url = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<ProxySettings>(None).proxy_url()
-        });
+        let extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
-            let mut extra_env = HashMap::default();
-
-            if let Some(proxy_url) = &proxy_url {
-                let env_var = if proxy_url.scheme() == "https" {
-                    "HTTPS_PROXY"
-                } else {
-                    "HTTP_PROXY"
-                };
-                extra_env.insert(env_var.to_owned(), proxy_url.to_string());
-            }
-
-            if let Some(no_proxy) = read_no_proxy_from_env() {
-                extra_env.insert("NO_PROXY".to_owned(), no_proxy);
-            }
-
             let (command, root_dir, login) = store
                 .update(cx, |store, cx| {
                     let agent = store

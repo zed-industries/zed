@@ -1,16 +1,12 @@
 use std::rc::Rc;
 use std::{any::Any, path::Path};
 
-use crate::{AgentServer, AgentServerDelegate};
+use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use anyhow::{Context as _, Result};
-use client::ProxySettings;
-use collections::HashMap;
-use gpui::{App, AppContext, SharedString, Task};
-use http_client::read_no_proxy_from_env;
+use gpui::{App, SharedString, Task};
 use language_models::provider::google::GoogleLanguageModelProvider;
 use project::agent_server_store::GEMINI_NAME;
-use settings::SettingsStore;
 
 #[derive(Clone)]
 pub struct Gemini;
@@ -38,27 +34,11 @@ impl AgentServer for Gemini {
         let root_dir = root_dir.map(|root_dir| root_dir.to_string_lossy().to_string());
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let store = delegate.store.downgrade();
-        let proxy_url = cx.read_global(|settings: &SettingsStore, _| {
-            settings.get::<ProxySettings>(None).proxy_url()
-        });
+        let mut extra_env = load_proxy_env(cx);
         let default_mode = self.default_mode(cx);
 
         cx.spawn(async move |cx| {
-            let mut extra_env = HashMap::default();
             extra_env.insert("SURFACE".to_owned(), "zed".to_owned());
-
-            if let Some(proxy_url) = &proxy_url {
-                let env_var = if proxy_url.scheme() == "https" {
-                    "HTTPS_PROXY"
-                } else {
-                    "HTTP_PROXY"
-                };
-                extra_env.insert(env_var.to_owned(), proxy_url.to_string());
-            }
-
-            if let Some(no_proxy) = read_no_proxy_from_env() {
-                extra_env.insert("NO_PROXY".to_owned(), no_proxy);
-            }
 
             if let Some(api_key) = cx
                 .update(GoogleLanguageModelProvider::api_key_for_gemini_cli)?
