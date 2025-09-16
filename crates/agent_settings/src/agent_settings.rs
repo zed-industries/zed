@@ -325,7 +325,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     use_modifier_to_send: Option<bool>,
-    /// Minimum number of lines to display in the agent message editor.
+    /// Minimum number of lines of height the agent message editor should have.
     ///
     /// Default: 4
     message_editor_min_lines: Option<usize>,
