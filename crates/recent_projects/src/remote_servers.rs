@@ -1,8 +1,8 @@
 use crate::{
     remote_connections::{
         Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettingsContent,
-        SshConnection, SshConnectionHeader, SshProject, SshSettings, WslConnection, connect,
-        connect_over_ssh, open_remote_project,
+        SshConnection, SshConnectionHeader, SshProject, SshSettings, connect, connect_over_ssh,
+        open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -16,7 +16,7 @@ use gpui::{
 };
 use log::info;
 use paths::{global_ssh_config_file, user_ssh_config_file};
-use picker::{Picker, PickerDelegate};
+use picker::Picker;
 use project::{Fs, Project};
 use remote::{
     RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
@@ -35,13 +35,8 @@ use std::{
     },
 };
 use ui::{
-<<<<<<< HEAD
     IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Navigable, NavigableEntry,
-    Section, Tooltip, WithScrollbar, prelude::*,
-=======
-    IconButtonShape, List, ListItem, ListItemSpacing, ListSeparator, Modal, ModalHeader, Navigable,
-    NavigableEntry, Scrollbar, ScrollbarState, Section, Tooltip, prelude::*,
->>>>>>> 68fa39a947 (implement wsl opening from ui)
+    Scrollbar, ScrollbarState, Section, Tooltip, prelude::*,
 };
 use util::{
     ResultExt,
@@ -86,12 +81,14 @@ impl CreateRemoteServer {
     }
 }
 
+#[cfg(target_os = "windows")]
 struct AddWslDistro {
     picker: Entity<Picker<WslPickerDelegate>>,
     connection_prompt: Option<Entity<RemoteConnectionPrompt>>,
     _creating: Option<Task<()>>,
 }
 
+#[cfg(target_os = "windows")]
 impl AddWslDistro {
     fn new(window: &mut Window, cx: &mut Context<RemoteServerProjects>) -> Self {
         let delegate = WslPickerDelegate::new();
@@ -189,7 +186,7 @@ impl EventEmitter<WslDistroSelected> for Picker<WslPickerDelegate> {}
 impl EventEmitter<WslPickerDismissed> for Picker<WslPickerDelegate> {}
 
 #[cfg(target_os = "windows")]
-impl PickerDelegate for WslPickerDelegate {
+impl picker::PickerDelegate for WslPickerDelegate {
     type ListItem = ListItem;
 
     fn match_count(&self) -> usize {
@@ -287,7 +284,7 @@ impl PickerDelegate for WslPickerDelegate {
             ListItem::new(ix)
                 .toggle_state(selected)
                 .inset(true)
-                .spacing(ListItemSpacing::Sparse)
+                .spacing(ui::ListItemSpacing::Sparse)
                 .child(
                     h_flex()
                         .flex_grow()
@@ -689,6 +686,7 @@ enum Mode {
     EditNickname(EditNicknameState),
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
+    #[cfg(target_os = "windows")]
     AddWslDistro(AddWslDistro),
 }
 
@@ -859,6 +857,7 @@ impl RemoteServerProjects {
         });
     }
 
+    #[cfg(target_os = "windows")]
     fn connect_wsl_distro(
         &mut self,
         picker: Entity<Picker<WslPickerDelegate>>,
@@ -1080,6 +1079,7 @@ impl RemoteServerProjects {
                 self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
                 self.focus_handle.focus(window);
             }
+            #[cfg(target_os = "windows")]
             Mode::AddWslDistro(state) => {
                 let delegate = &state.picker.read(cx).delegate;
                 let distro = delegate.selected_distro().unwrap();
@@ -1478,6 +1478,7 @@ impl RemoteServerProjects {
         });
     }
 
+    #[cfg(target_os = "windows")]
     fn add_wsl_distro(
         &mut self,
         connection_options: remote::WslConnectionOptions,
@@ -1487,7 +1488,7 @@ impl RemoteServerProjects {
             setting
                 .wsl_connections
                 .get_or_insert(Default::default())
-                .push(WslConnection {
+                .push(remote_connections::WslConnection {
                     distro_name: SharedString::from(connection_options.distro_name),
                     user: connection_options.user,
                     projects: BTreeSet::new(),
@@ -1600,6 +1601,7 @@ impl RemoteServerProjects {
             )
     }
 
+    #[cfg(target_os = "windows")]
     fn render_add_wsl_distro(
         &self,
         state: &AddWslDistro,
@@ -2388,6 +2390,7 @@ impl Render for RemoteServerProjects {
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)
                     .into_any_element(),
+                #[cfg(target_os = "windows")]
                 Mode::AddWslDistro(state) => self
                     .render_add_wsl_distro(state, window, cx)
                     .into_any_element(),
