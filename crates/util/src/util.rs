@@ -380,7 +380,14 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
             .to_string()
     };
 
-    Ok(zed_cli_path)
+    #[cfg(target_os = "windows")]
+    {
+        Ok(zed_cli_path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        shlex::try_quote(&zed_cli_path).context("Failed to shell-escape Zed executable path.")
+    }
 }
 
 #[cfg(unix)]
