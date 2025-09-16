@@ -352,6 +352,25 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
             .to_string()
     };
 
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let zed_cli_path = {
+        // libexec is the standard, lib/cli is for Arch (and other non-libexec distros),
+        // ./cli is for the target directory in development builds.
+        let possible_locations = ["../libexec/cli", "../lib/zed/cli", "./cli"];
+        possible_locations
+            .iter()
+            .find_map(|p| {
+                parent
+                    .join(p)
+                    .canonicalize()
+                    .ok()
+                    .filter(|path| path != &zed_path)
+            })
+            .with_context(|| format!("could not find any of: {}", possible_locations.join(", ")))?
+            .to_string_lossy()
+            .to_string()
+    };
+
     Ok(zed_cli_path)
 }
 
