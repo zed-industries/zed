@@ -2524,6 +2524,10 @@ impl Editor {
         key_context
     }
 
+    pub fn last_bounds(&self) -> Option<&Bounds<Pixels>> {
+        self.last_bounds.as_ref()
+    }
+
     fn show_mouse_cursor(&mut self, cx: &mut Context<Self>) {
         if self.mouse_cursor_hidden {
             self.mouse_cursor_hidden = false;

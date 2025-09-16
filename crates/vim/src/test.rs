@@ -2216,19 +2216,18 @@ async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
         Mode::Visual,
     );
 
-    // Updating the selections in the editor will eventually trigger the method
-    // in vim mode that automatically updates the mode from visual to normal,
-    // which will correctly handle clipping the cursor position.
-    // There might be a better way to mimic the actual mouse click, but this
-    // approach seems enough for now.
-    cx.update_editor(|editor, window, cx| {
-        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selection| {
-            selection.move_with(|_map, selection| {
-                selection.set_head(DisplayPoint::new(DisplayRow(0), 12), SelectionGoal::None);
-                selection.set_tail(DisplayPoint::new(DisplayRow(0), 12), SelectionGoal::None);
-            })
-        })
+    let mut pixel_position = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let current_head = editor.selections.newest_display(cx).end;
+        editor.last_bounds().unwrap().origin
+            + editor
+                .display_to_pixel_point(current_head, &snapshot, window)
+                .unwrap()
     });
+    pixel_position.x += px(100.);
+    // click beyond end of the line
+    cx.simulate_click(pixel_position, Modifiers::default());
+    cx.run_until_parked();
 
     cx.assert_state(
         indoc! {
