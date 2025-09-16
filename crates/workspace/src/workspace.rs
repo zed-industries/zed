@@ -1695,8 +1695,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let fs = self.project().read(cx).fs();
-        settings::update_settings_file::<WorkspaceSettings>(fs.clone(), cx, move |content, _cx| {
-            content.bottom_dock_layout = Some(layout);
+        settings::update_settings_file(fs.clone(), cx, move |content, _cx| {
+            content.workspace.bottom_dock_layout = Some(layout);
         });
 
         cx.notify();
@@ -6014,8 +6014,8 @@ impl Workspace {
     ) {
         let fs = self.project().read(cx).fs().clone();
         let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
-        update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-            file.defaults.show_edit_predictions = Some(!show_edit_predictions)
+        update_settings_file(fs, cx, move |file, _| {
+            file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
     }
 }
@@ -8678,8 +8678,8 @@ mod tests {
         // Autosave on window change.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnWindowChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnWindowChange);
                 })
             });
             item.is_dirty = true;

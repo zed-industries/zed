@@ -9,8 +9,6 @@ use gpui::{
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
@@ -210,12 +208,21 @@ impl Focusable for Dock {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DockPosition {
     Left,
     Bottom,
     Right,
+}
+
+impl From<settings::DockPosition> for DockPosition {
+    fn from(value: settings::DockPosition) -> Self {
+        match value {
+            settings::DockPosition::Left => Self::Left,
+            settings::DockPosition::Bottom => Self::Bottom,
+            settings::DockPosition::Right => Self::Right,
+        }
+    }
 }
 
 impl DockPosition {

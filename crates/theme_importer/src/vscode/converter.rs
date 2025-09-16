@@ -1,5 +1,5 @@
 use anyhow::Result;
-use indexmap::IndexMap;
+use collections::IndexMap;
 use strum::IntoEnumIterator;
 use theme::{
     FontStyleContent, FontWeightContent, HighlightStyleContent, StatusColorsContent,
@@ -212,7 +212,7 @@ impl VsCodeThemeConverter {
     }
 
     fn convert_syntax_theme(&self) -> Result<IndexMap<String, HighlightStyleContent>> {
-        let mut highlight_styles = IndexMap::new();
+        let mut highlight_styles = IndexMap::default();
 
         for syntax_token in ZedSyntaxToken::iter() {
             let override_match = self

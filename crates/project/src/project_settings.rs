@@ -652,7 +652,7 @@ impl Settings for ProjectSettings {
     ) {
         // this just sets the binary name instead of a full path so it relies on path lookup
         // resolving to the one you want
-        let npm_path = vscode.read_enum_setting("npm.packageManager", |s| match s {
+        let npm_path = vscode.read_enum("npm.packageManager", |s| match s {
             v @ ("npm" | "yarn" | "bun" | "pnpm") => Some(v.to_owned()),
             _ => None,
         });

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use clap::Parser;
-use indexmap::IndexMap;
+use collections::IndexMap;
 use log::LevelFilter;
 use serde::Deserialize;
 use simplelog::ColorChoice;
@@ -137,7 +137,7 @@ fn main() -> Result<()> {
         file_name: "".to_string(),
     };
 
-    let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::new());
+    let converter = VsCodeThemeConverter::new(vscode_theme, theme_metadata, IndexMap::default());
 
     let theme = converter.convert()?;
     let mut theme = serde_json::to_value(theme).unwrap();

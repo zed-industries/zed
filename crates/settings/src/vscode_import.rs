@@ -137,7 +137,7 @@ impl VsCodeSettings {
     }
 
     // todo! replace enum_setting
-    pub fn read_enum_setting<T>(&self, key: &str, f: impl FnOnce(&str) -> Option<T>) -> Option<T> {
+    pub fn read_enum<T>(&self, key: &str, f: impl FnOnce(&str) -> Option<T>) -> Option<T> {
         self.content.get(key).and_then(Value::as_str).and_then(f)
     }
 }

@@ -1,7 +1,10 @@
+use std::num::NonZeroUsize;
+
+use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
@@ -69,7 +72,8 @@ pub struct WorkspaceSettingsContent {
     /// it will be assumed to equal the value.
     ///
     /// Default: true
-    pub command_aliases: Option<HashMap<String, String>>,
+    #[serde(default)]
+    pub command_aliases: HashMap<String, String>,
     /// Maximum open tabs in a pane. Will not close an unsaved
     /// tab. Set to `None` for unlimited tabs.
     ///
@@ -82,7 +86,8 @@ pub struct WorkspaceSettingsContent {
     /// Whether to resize all the panels in a dock when resizing the dock.
     ///
     /// Default: ["left"]
-    pub resize_all_panels_in_dock: Option<Vec<DockPosition>>,
+    #[serde(default)]
+    pub resize_all_panels_in_dock: Vec<DockPosition>,
     /// Whether to automatically close files that have been deleted on disk.
     ///
     /// Default: false
@@ -97,6 +102,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
+
+    // Settings related to the editor's tab bar.
+    pub tab_bar: Option<TabBarSettingsContent>,
+
+    pub tabs: Option<ItemSettingsContent>,
 }
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -212,7 +222,7 @@ pub enum BottomDockLayout {
     RightAligned,
 }
 
-#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseWindowWhenNoItems {
     /// Match platform conventions by default, so "on" on macOS and "off" everywhere else
@@ -234,7 +244,7 @@ impl CloseWindowWhenNoItems {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreOnStartupBehavior {
     /// Always start with an empty editor
@@ -246,7 +256,7 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
     ///
@@ -289,7 +299,7 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
@@ -302,4 +312,31 @@ pub struct CenteredLayoutSettings {
     ///
     /// Default: 0.2
     pub right_padding: Option<f32>,
+}
+
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum OnLastWindowClosed {
+    /// Match platform conventions by default, so don't quit on macOS, and quit on other platforms
+    #[default]
+    PlatformDefault,
+    /// Quit the application the last window is closed
+    QuitApp,
+}
+
+impl OnLastWindowClosed {
+    pub fn is_quit_app(&self) -> bool {
+        match self {
+            OnLastWindowClosed::PlatformDefault => false,
+            OnLastWindowClosed::QuitApp => true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DockPosition {
+    Left,
+    Bottom,
+    Right,
 }

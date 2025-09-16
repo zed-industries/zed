@@ -40,12 +40,13 @@ impl Settings for TitleBarSettings {
 
     fn refine(&mut self, s: &SettingsContent, _: &mut App) {
         let Some(content) = s.title_bar else {
-            return
-        }
+            return;
+        };
 
         self.show.refine(&content.show);
         self.show_branch_icon.refine(content.show_branch_icon);
-        self.show_onboarding_banner.refine(content.show_onboarding_banner);
+        self.show_onboarding_banner
+            .refine(content.show_onboarding_banner);
         self.show_user_picture.refine(content.show_user_picture);
         self.show_branch_name.refine(content.show_branch_name);
         self.show_project_items.refine(content.show_project_items);

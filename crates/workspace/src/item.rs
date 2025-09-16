@@ -15,7 +15,7 @@ use gpui::{
     Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
-use settings::{
+pub use settings::{
     ActivateOnClose, ClosePosition, Settings, SettingsLocation, ShowCloseButton, ShowDiagnostics,
 };
 use smallvec::SmallVec;
@@ -100,8 +100,7 @@ impl Settings for ItemSettings {
                 ShowCloseButton::Hidden
             })
         }
-        if let Some(s) = vscode.read_enum_setting("workbench.editor.tabActionLocation", |s| match s
-        {
+        if let Some(s) = vscode.read_enum("workbench.editor.tabActionLocation", |s| match s {
             "right" => Some(ClosePosition::Right),
             "left" => Some(ClosePosition::Left),
             _ => None,
