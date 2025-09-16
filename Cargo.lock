@@ -20570,7 +20570,7 @@ dependencies = [
  "idna",
  "indexmap",
  "inout",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "itertools 0.13.0",
  "jiff",
  "lazy_static",
