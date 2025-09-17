@@ -14926,27 +14926,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "settings_ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "command_palette_hooks",
- "debugger_ui",
- "editor",
- "feature_flags",
- "gpui",
- "menu",
- "serde",
- "serde_json",
- "settings",
- "smallvec",
- "theme",
- "ui",
- "workspace",
- "workspace-hack",
-]
-
-[[package]]
 name = "settings_ui_macros"
 version = "0.1.0"
 dependencies = [
@@ -20625,7 +20604,6 @@ dependencies = [
  "session",
  "settings",
  "settings_profile_selector",
- "settings_ui",
  "shellexpand 2.1.2",
  "smol",
  "snippet_provider",

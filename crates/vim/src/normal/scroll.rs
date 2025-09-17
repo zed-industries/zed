@@ -271,7 +271,7 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::{EditorSettings, ScrollBeyondLastLine};
+    use editor::ScrollBeyondLastLine;
     use gpui::{AppContext as _, point, px, size};
     use indoc::indoc;
     use language::Point;

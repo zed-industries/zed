@@ -645,7 +645,6 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::EditorSettings;
     use editor::{DisplayPoint, display_map::DisplayRow};
 
     use indoc::indoc;

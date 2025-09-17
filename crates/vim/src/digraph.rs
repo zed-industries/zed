@@ -224,7 +224,6 @@ mod test {
     use settings::SettingsStore;
 
     use crate::{
-        VimSettings,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };

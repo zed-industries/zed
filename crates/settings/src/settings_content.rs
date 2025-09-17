@@ -552,16 +552,12 @@ pub struct VimSettingsContent {
     pub cursor_shape: Option<CursorShapeSettings>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Debug)]
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum ModeContent {
     #[default]
     Normal,
     Insert,
-    Replace,
-    Visual,
-    VisualLine,
-    VisualBlock,
     HelixNormal,
 }
 

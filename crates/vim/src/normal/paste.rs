@@ -311,17 +311,13 @@ impl Vim {
 #[cfg(test)]
 mod test {
     use crate::{
-        UseSystemClipboard, VimSettings,
         state::{Mode, Register},
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use gpui::ClipboardItem;
     use indoc::indoc;
-    use language::{
-        LanguageName,
-        language_settings::{AllLanguageSettings, LanguageSettingsContent},
-    };
-    use settings::SettingsStore;
+    use language::{LanguageName, language_settings::LanguageSettingsContent};
+    use settings::{SettingsStore, UseSystemClipboard};
 
     #[gpui::test]
     async fn test_paste(cx: &mut gpui::TestAppContext) {
@@ -712,7 +708,7 @@ mod test {
         cx.update_global(|store: &mut SettingsStore, cx| {
             store.update_user_settings(cx, |settings| {
                 settings.project.all_languages.languages.0.insert(
-                    LanguageName::new("Rust"),
+                    LanguageName::new("Rust").0,
                     LanguageSettingsContent {
                         auto_indent_on_paste: Some(false),
                         ..Default::default()

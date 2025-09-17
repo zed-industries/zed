@@ -624,7 +624,6 @@ pub fn main() {
         markdown_preview::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
-        settings_ui::init(cx);
         keymap_editor::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);

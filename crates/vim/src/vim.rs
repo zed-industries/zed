@@ -19,7 +19,6 @@ mod state;
 mod surrounds;
 mod visual;
 
-use anyhow::Result;
 use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
@@ -38,15 +37,15 @@ use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde::Serialize;
-use settings::{
-    Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi, update_settings_file,
+pub use settings::{
+    ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use util::MergeFrom;
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
@@ -1793,15 +1792,46 @@ impl Vim {
     }
 }
 
-#[derive(Deserialize)]
 struct VimSettings {
     pub default_mode: Mode,
     pub toggle_relative_line_numbers: bool,
-    pub use_system_clipboard: UseSystemClipboard,
+    pub use_system_clipboard: settings::UseSystemClipboard,
     pub use_smartcase_find: bool,
     pub custom_digraphs: HashMap<String, Arc<str>>,
     pub highlight_on_yank_duration: u64,
     pub cursor_shape: CursorShapeSettings,
+}
+
+/// The settings for cursor shape.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CursorShapeSettings {
+    /// Cursor shape for the normal mode.
+    ///
+    /// Default: block
+    pub normal: Option<CursorShape>,
+    /// Cursor shape for the replace mode.
+    ///
+    /// Default: underline
+    pub replace: Option<CursorShape>,
+    /// Cursor shape for the visual mode.
+    ///
+    /// Default: block
+    pub visual: Option<CursorShape>,
+    /// Cursor shape for the insert mode.
+    ///
+    /// The default value follows the primary cursor_shape.
+    pub insert: Option<CursorShape>,
+}
+
+impl From<settings::CursorShapeSettings> for CursorShapeSettings {
+    fn from(settings: settings::CursorShapeSettings) -> Self {
+        Self {
+            normal: settings.normal.map(Into::into),
+            replace: settings.replace.map(Into::into),
+            visual: settings.visual.map(Into::into),
+            insert: settings.insert.map(Into::into),
+        }
+    }
 }
 
 impl From<settings::ModeContent> for Mode {
@@ -1809,18 +1839,14 @@ impl From<settings::ModeContent> for Mode {
         match mode {
             ModeContent::Normal => Self::Normal,
             ModeContent::Insert => Self::Insert,
-            ModeContent::Replace => Self::Replace,
-            ModeContent::Visual => Self::Visual,
-            ModeContent::VisualLine => Self::VisualLine,
-            ModeContent::VisualBlock => Self::VisualBlock,
             ModeContent::HelixNormal => Self::HelixNormal,
         }
     }
 }
 
 impl Settings for VimSettings {
-    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
-        let vim = content.vim.as_ref().unwrap();
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let vim = content.vim.clone().unwrap();
         Self {
             default_mode: vim.default_mode.unwrap().into(),
             toggle_relative_line_numbers: vim.toggle_relative_line_numbers.unwrap(),
@@ -1828,11 +1854,11 @@ impl Settings for VimSettings {
             use_smartcase_find: vim.use_smartcase_find.unwrap(),
             custom_digraphs: vim.custom_digraphs.unwrap(),
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
-            cursor_shape: vim.cursor_shape.unwrap(),
+            cursor_shape: vim.cursor_shape.unwrap().into(),
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
         let Some(vim) = content.vim.as_ref() else {
             return;
         };
@@ -1846,7 +1872,8 @@ impl Settings for VimSettings {
         self.custom_digraphs.merge_from(&vim.custom_digraphs);
         self.highlight_on_yank_duration
             .merge_from(&vim.highlight_on_yank_duration);
-        self.cursor_shape.merge_from(&vim.cursor_shape);
+        self.cursor_shape
+            .merge_from(&vim.cursor_shape.map(Into::into));
     }
 
     fn import_from_vscode(

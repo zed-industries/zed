@@ -989,11 +989,10 @@ impl Vim {
 mod test {
     use gpui::{KeyBinding, TestAppContext, UpdateGlobal};
     use indoc::indoc;
-    use language::language_settings::AllLanguageSettings;
     use settings::SettingsStore;
 
     use crate::{
-        VimSettings, motion,
+        motion,
         state::Mode::{self},
         test::{NeovimBackedTestContext, VimTestContext},
     };
