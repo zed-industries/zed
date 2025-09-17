@@ -522,6 +522,7 @@ impl Mode {
 }
 
 impl RemoteServerProjects {
+    #[cfg(target_os = "windows")]
     pub fn wsl(
         create_new_window: bool,
         fs: Arc<dyn Fs>,
