@@ -57,23 +57,15 @@ pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
-    #[serde(default)]
     pub disabled_globs: Option<Vec<String>>,
     /// The mode used to display edit predictions in the buffer.
     /// Provider support required.
-    #[serde(default)]
-    pub mode: EditPredictionsMode,
+    pub mode: Option<EditPredictionsMode>,
     /// Settings specific to GitHub Copilot.
-    #[serde(default)]
-    pub copilot: CopilotSettingsContent,
+    pub copilot: Option<CopilotSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
-    #[serde(default = "default_true")]
-    pub enabled_in_text_threads: bool,
-}
-
-fn default_true() -> bool {
-    true
+    pub enabled_in_text_threads: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -81,17 +73,14 @@ pub struct CopilotSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
     ///
     /// Default: none
-    #[serde(default)]
     pub proxy: Option<String>,
     /// Disable certificate verification for the proxy (not recommended).
     ///
     /// Default: false
-    #[serde(default)]
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     ///
     /// Default: none
-    #[serde(default)]
     pub enterprise_uri: Option<String>,
 }
 
@@ -132,24 +121,20 @@ pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
     /// Default: 4
-    #[serde(default)]
     pub tab_size: Option<NonZeroU32>,
     /// Whether to indent lines using tab characters, as opposed to multiple
     /// spaces.
     ///
     /// Default: false
-    #[serde(default)]
     pub hard_tabs: Option<bool>,
     /// How to soft-wrap long lines of text.
     ///
     /// Default: none
-    #[serde(default)]
     pub soft_wrap: Option<SoftWrap>,
     /// The column at which to soft-wrap lines, for buffers where soft-wrap
     /// is enabled.
     ///
     /// Default: 80
-    #[serde(default)]
     pub preferred_line_length: Option<u32>,
     /// Whether to show wrap guides in the editor. Setting this to true will
     /// show a guide at the 'preferred_line_length' value if softwrap is set to
@@ -157,52 +142,42 @@ pub struct LanguageSettingsContent {
     /// by the 'wrap_guides' setting.
     ///
     /// Default: true
-    #[serde(default)]
     pub show_wrap_guides: Option<bool>,
     /// Character counts at which to show wrap guides in the editor.
     ///
     /// Default: []
-    #[serde(default)]
     pub wrap_guides: Option<Vec<usize>>,
     /// Indent guide related settings.
-    #[serde(default)]
     pub indent_guides: Option<IndentGuideSettings>,
     /// Whether or not to perform a buffer format before saving.
     ///
     /// Default: on
-    #[serde(default)]
     pub format_on_save: Option<FormatOnSave>,
     /// Whether or not to remove any trailing whitespace from lines of a buffer
     /// before saving it.
     ///
     /// Default: true
-    #[serde(default)]
     pub remove_trailing_whitespace_on_save: Option<bool>,
     /// Whether or not to ensure there's a single newline at the end of a buffer
     /// when saving it.
     ///
     /// Default: true
-    #[serde(default)]
     pub ensure_final_newline_on_save: Option<bool>,
     /// How to perform a buffer format.
     ///
     /// Default: auto
-    #[serde(default)]
     pub formatter: Option<SelectedFormatter>,
     /// Zed's Prettier integration settings.
     /// Allows to enable/disable formatting with Prettier
     /// and configure default Prettier, used when no project-level Prettier installation is found.
     ///
     /// Default: off
-    #[serde(default)]
     pub prettier: Option<PrettierSettingsContent>,
     /// Whether to automatically close JSX tags.
-    #[serde(default)]
     pub jsx_tag_auto_close: Option<JsxTagAutoCloseSettings>,
     /// Whether to use language servers to provide code intelligence.
     ///
     /// Default: true
-    #[serde(default)]
     pub enable_language_server: Option<bool>,
     /// The list of language servers to use (or disable) for this language.
     ///
@@ -212,7 +187,6 @@ pub struct LanguageSettingsContent {
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
     ///
     /// Default: ["..."]
-    #[serde(default)]
     pub language_servers: Option<Vec<String>>,
     /// Controls where the `editor::Rewrap` action is allowed for this language.
     ///
@@ -220,13 +194,11 @@ pub struct LanguageSettingsContent {
     /// allowed everywhere.
     ///
     /// Default: "in_comments"
-    #[serde(default)]
     pub allow_rewrap: Option<RewrapBehavior>,
     /// Controls whether edit predictions are shown immediately (true)
     /// or manually by triggering `editor::ShowEditPrediction` (false).
     ///
     /// Default: true
-    #[serde(default)]
     pub show_edit_predictions: Option<bool>,
     /// Controls whether edit predictions are shown in the given language
     /// scopes.
@@ -234,23 +206,18 @@ pub struct LanguageSettingsContent {
     /// Example: ["string", "comment"]
     ///
     /// Default: []
-    #[serde(default)]
     pub edit_predictions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
-    #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
     ///
     /// Default: "•" for spaces, "→" for tabs.
-    #[serde(default)]
     pub whitespace_map: Option<WhitespaceMap>,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     ///
     /// Default: true
-    #[serde(default)]
     pub extend_comment_on_newline: Option<bool>,
     /// Inlay hint related settings.
-    #[serde(default)]
     pub inlay_hints: Option<InlayHintSettings>,
     /// Whether to automatically type closing characters for you. For example,
     /// when you type (, Zed will automatically add a closing ) at the correct position.
@@ -860,6 +827,10 @@ pub struct IndentGuideSettings {
     /// Default: Disabled
     #[serde(default)]
     pub background_coloring: IndentGuideBackgroundColoring,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn line_width() -> u32 {

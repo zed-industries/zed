@@ -998,11 +998,11 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
         update_settings_file(fs, cx, move |settings, _cx| {
             if let Some(edit_predictions) = settings.project.all_languages.edit_predictions.as_mut()
             {
-                edit_predictions.mode = mode;
+                edit_predictions.mode = Some(mode);
             } else {
                 settings.project.all_languages.edit_predictions =
                     Some(settings::EditPredictionSettingsContent {
-                        mode,
+                        mode: Some(mode),
                         ..Default::default()
                     });
             }

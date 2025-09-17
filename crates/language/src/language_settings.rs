@@ -430,33 +430,25 @@ impl settings::Settings for AllLanguageSettings {
             .features
             .as_ref()
             .and_then(|f| f.edit_prediction_provider);
-        let edit_predictions_mode = all_languages.edit_predictions.as_ref().unwrap().mode;
 
-        let disabled_globs: HashSet<&String> = all_languages
-            .edit_predictions
-            .as_ref()
-            .unwrap()
+        let edit_predictions = all_languages.edit_predictions.clone().unwrap();
+        let edit_predictions_mode = edit_predictions.mode.unwrap();
+
+        let disabled_globs: HashSet<&String> = edit_predictions
             .disabled_globs
             .as_ref()
             .unwrap()
             .iter()
             .collect();
 
-        let copilot_settings = all_languages
-            .edit_predictions
-            .as_ref()
-            .map(|settings| CopilotSettings {
-                proxy: settings.copilot.proxy.clone(),
-                proxy_no_verify: settings.copilot.proxy_no_verify,
-                enterprise_uri: settings.copilot.enterprise_uri.clone(),
-            })
-            .unwrap_or_default();
+        let copilot = edit_predictions.copilot.unwrap();
+        let copilot_settings = CopilotSettings {
+            proxy: copilot.proxy,
+            proxy_no_verify: copilot.proxy_no_verify,
+            enterprise_uri: copilot.enterprise_uri,
+        };
 
-        let enabled_in_text_threads = all_languages
-            .edit_predictions
-            .as_ref()
-            .map(|settings| settings.enabled_in_text_threads)
-            .unwrap_or(true);
+        let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
         let mut file_globs: FxHashMap<Arc<str>, Vec<String>> = FxHashMap::default();
@@ -511,9 +503,12 @@ impl settings::Settings for AllLanguageSettings {
         }
 
         if let Some(edit_predictions) = all_languages.edit_predictions.as_ref() {
-            self.edit_predictions.mode = edit_predictions.mode;
-            self.edit_predictions.enabled_in_text_threads =
-                edit_predictions.enabled_in_text_threads;
+            self.edit_predictions
+                .mode
+                .merge_from(&edit_predictions.mode);
+            self.edit_predictions
+                .enabled_in_text_threads
+                .merge_from(&edit_predictions.enabled_in_text_threads);
 
             if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
                 self.edit_predictions
@@ -531,7 +526,7 @@ impl settings::Settings for AllLanguageSettings {
         if let Some(proxy) = all_languages
             .edit_predictions
             .as_ref()
-            .and_then(|settings| settings.copilot.proxy.clone())
+            .and_then(|settings| settings.copilot.as_ref()?.proxy.clone())
         {
             self.edit_predictions.copilot.proxy = Some(proxy);
         }
@@ -539,7 +534,7 @@ impl settings::Settings for AllLanguageSettings {
         if let Some(proxy_no_verify) = all_languages
             .edit_predictions
             .as_ref()
-            .and_then(|settings| settings.copilot.proxy_no_verify)
+            .and_then(|settings| settings.copilot.as_ref()?.proxy_no_verify)
         {
             self.edit_predictions.copilot.proxy_no_verify = Some(proxy_no_verify);
         }
@@ -547,7 +542,7 @@ impl settings::Settings for AllLanguageSettings {
         if let Some(enterprise_uri) = all_languages
             .edit_predictions
             .as_ref()
-            .and_then(|settings| settings.copilot.enterprise_uri.clone())
+            .and_then(|settings| settings.copilot.as_ref()?.enterprise_uri.clone())
         {
             self.edit_predictions.copilot.enterprise_uri = Some(enterprise_uri);
         }

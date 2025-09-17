@@ -937,14 +937,6 @@
     /// Default: false
     "use_modifier_to_send": false
   },
-  // The settings for slash commands.
-  "slash_commands": {
-    // Settings for the `/project` slash command.
-    "project": {
-      // Whether `/project` is enabled.
-      "enabled": false
-    }
-  },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
   // Whether to use language servers to provide code intelligence.
@@ -1287,7 +1279,13 @@
     // },
     // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true
+    "enabled_in_text_threads": true,
+
+    "copilot": {
+      "enterprise_uri": null,
+      "proxy": null,
+      "proxy_no_verify": null
+    }
   },
   // Settings specific to journaling
   "journal": {
@@ -2011,5 +2009,11 @@
   //     }
   //   }
   // }
-  "profiles": []
+  "profiles": [],
+
+  /// A map of log scopes to the desired log level.
+  /// Useful for filtering out noisy logs or enabling more verbose logging.
+  ///
+  /// Example: {"log": {"client": "warn"}}
+  "log": {}
 }

@@ -250,7 +250,12 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                 update_settings_file(
                     fs.clone(),
                     cx,
-                    move |setting, _| setting.telemetry.get_or_insert_default().metrics = Some(enabled),
+                    move |setting, _| {
+                        dbg!(&setting.telemetry);
+                        setting.telemetry.get_or_insert_default().metrics = Some(enabled);
+                        dbg!(&setting.telemetry);
+                    }
+                    ,
                 );
 
                 // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
@@ -289,7 +294,12 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                     update_settings_file(
                         fs.clone(),
                         cx,
-                        move |setting, _| setting.telemetry.get_or_insert_default().diagnostics = Some(enabled),
+                        move |setting, _| {
+                            dbg!(&setting.telemetry);
+                            setting.telemetry.get_or_insert_default().diagnostics = Some(enabled);
+                            dbg!(&setting.telemetry);
+                        },
+
                     );
 
                     // This telemetry event shouldn't fire when it's off. If it does we'll be alerted

@@ -526,7 +526,7 @@ pub struct FileFinderSettingsContent {
     /// * `None`: Be smart and search for ignored when called from a gitignored worktree
     ///
     /// Default: None
-    /// todo!() -> Change this type to an enum
+    /// todo() -> Change this type to an enum
     pub include_ignored: Option<Option<bool>>,
 }
 
