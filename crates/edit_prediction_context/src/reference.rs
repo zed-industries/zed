@@ -11,7 +11,7 @@ use crate::{
 pub struct Reference {
     pub identifier: Identifier,
     pub range: Range<usize>,
-    pub reference_region: ReferenceRegion,
+    pub region: ReferenceRegion,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -96,7 +96,7 @@ pub fn identifiers_in_range(
                             language_id: mat.language.id(),
                         },
                         range: node_range.clone(),
-                        reference_region,
+                        region: reference_region,
                     });
                     last_added_range = Some(node_range);
                 }
