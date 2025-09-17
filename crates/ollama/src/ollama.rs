@@ -468,9 +468,9 @@ pub async fn generate(
 pub async fn discover_available_models(
     client: Arc<dyn HttpClient>,
     api_url: &str,
-    api_key: Option<String>,
+    api_key: Option<Arc<str>>,
 ) -> Result<Vec<AvailableModel>> {
-    let models = get_models(client.as_ref(), api_url, api_key.clone(), None).await?;
+    let models = get_models(client.as_ref(), api_url, api_key.as_deref(), None).await?;
 
     let tasks = models
         .into_iter()
@@ -484,7 +484,7 @@ pub async fn discover_available_models(
             let api_url = api_url.to_string();
             async move {
                 let capabilities =
-                    show_model(client.as_ref(), &api_url, api_key, &model.name).await?;
+                    show_model(client.as_ref(), &api_url, api_key.as_deref(), &model.name).await?;
                 Ok(AvailableModel::new(
                     &model.name,
                     None,

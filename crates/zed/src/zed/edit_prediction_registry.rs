@@ -6,7 +6,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_models::AllLanguageModelSettings;
-use ollama::OLLAMA_API_KEY_VAR;
+use ollama;
 use ollama_edit_predictions::{OllamaEditPredictionProvider, OllamaEditPredictionState as State};
 use settings::{Settings as _, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
@@ -16,7 +16,11 @@ use zeta::ZetaEditPredictionProvider;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
     let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-    let api_url = settings.api_url.clone();
+    let api_url: gpui::SharedString = if settings.api_url.is_empty() {
+        ollama::OLLAMA_API_URL.into()
+    } else {
+        settings.api_url.clone().into()
+    };
     let models = settings.available_models.clone();
     let ollama_service = State::new(client.http_client(), api_url, None, cx);
 
@@ -245,7 +249,13 @@ fn assign_edit_prediction_provider(
         }
         EditPredictionProvider::Ollama => {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            let api_key = std::env::var(OLLAMA_API_KEY_VAR).ok();
+
+            // Get API URL
+            let api_url: gpui::SharedString = if settings.api_url.is_empty() {
+                ollama::OLLAMA_API_URL.into()
+            } else {
+                settings.api_url.clone().into()
+            };
 
             // Get model from settings or use discovered models
             let model = if let Some(first_model) = settings.available_models.first() {
@@ -262,7 +272,7 @@ fn assign_edit_prediction_provider(
             };
 
             if let Some(model) = model {
-                let provider = cx.new(|cx| OllamaEditPredictionProvider::new(model, api_key, cx));
+                let provider = cx.new(|cx| OllamaEditPredictionProvider::new(model, api_url, cx));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             } else {
                 log::error!(

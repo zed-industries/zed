@@ -11170,6 +11170,8 @@ dependencies = [
  "gpui",
  "http_client",
  "language",
+ "language_model",
+ "language_models",
  "ollama",
  "project",
  "serde_json",

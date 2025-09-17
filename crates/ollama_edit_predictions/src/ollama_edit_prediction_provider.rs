@@ -1,8 +1,10 @@
 use anyhow::{Context as AnyhowContext, Result};
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
-use gpui::{App, AppContext, Context, Entity, EntityId, Global, Subscription, Task};
+use gpui::{App, AppContext, Context, Entity, EntityId, Global, SharedString, Subscription, Task};
 use http_client::HttpClient;
 use language::{Anchor, Buffer, ToOffset};
+use language_model::AuthenticateError;
+use language_models::{api_key::ApiKeyState, provider::ollama::API_KEY_ENV_VAR};
 use ollama::{
     AvailableModel, GenerateOptions, GenerateRequest, discover_available_models, generate,
 };
@@ -18,8 +20,8 @@ const OLLAMA_EDIT_PREDICTION_TOP_P: f32 = 0.95;
 // Global Ollama service for managing models across all providers
 pub struct State {
     http_client: Arc<dyn HttpClient>,
-    api_url: String,
-    api_key: Option<String>,
+    api_url: SharedString,
+    api_key_state: ApiKeyState,
     available_models: Vec<AvailableModel>,
     fetch_models_task: Option<Task<Result<()>>>,
     _settings_subscription: Subscription,
@@ -28,7 +30,7 @@ pub struct State {
 impl State {
     pub fn new(
         http_client: Arc<dyn HttpClient>,
-        api_url: String,
+        api_url: SharedString,
         api_key: Option<String>,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -41,14 +43,20 @@ impl State {
 
             let mut service = Self {
                 http_client,
+                api_key_state: ApiKeyState::new(api_url.clone()),
                 api_url,
-                api_key,
                 available_models: Vec::new(),
                 fetch_models_task: None,
                 _settings_subscription: subscription,
             };
 
-            // TODO: why a secod refresh here?
+            // TODO: Remove backward compatibility once all callers are updated
+            if let Some(_key) = api_key {
+                // For now, we'll rely on the ApiKeyState to load from env vars
+                // The store() method would be used for user-provided keys
+            }
+
+            // TODO: why a second refresh here?
             service.restart_fetch_models_task(cx);
             service
         })
@@ -76,11 +84,30 @@ impl State {
         self.restart_fetch_models_task(cx);
     }
 
-    pub fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) {
-        if self.api_key != api_key {
-            self.api_key = api_key;
-            self.restart_fetch_models_task(cx);
-        }
+    pub fn set_api_key(
+        &mut self,
+        api_key: Option<String>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let task = self.api_key_state.store(
+            self.api_url.clone(),
+            api_key,
+            |this| &mut this.api_key_state,
+            cx,
+        );
+        self.restart_fetch_models_task(cx);
+        task
+    }
+
+    pub fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let task = self.api_key_state.load_if_needed(
+            self.api_url.clone(),
+            &API_KEY_ENV_VAR,
+            |this| &mut this.api_key_state,
+            cx,
+        );
+        self.restart_fetch_models_task(cx);
+        task
     }
 
     fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
@@ -90,7 +117,7 @@ impl State {
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let http_client = Arc::clone(&self.http_client);
         let api_url = self.api_url.clone();
-        let api_key = self.api_key.clone();
+        let api_key = self.api_key_state.key(&api_url);
 
         cx.spawn(async move |this, cx| {
             // Get the current settings models to merge with API models
@@ -103,13 +130,16 @@ impl State {
             })?;
 
             // Fetch models from API using shared utility
-            let mut api_discovered_models =
-                match discover_available_models(http_client.clone(), &api_url, api_key.clone())
-                    .await
-                {
-                    Ok(models) => models,
-                    Err(_) => return Ok(()), // Silently fail if API is unavailable
-                };
+            let mut api_discovered_models = match discover_available_models(
+                http_client.clone(),
+                api_url.as_ref(),
+                api_key.clone(),
+            )
+            .await
+            {
+                Ok(models) => models,
+                Err(_) => return Ok(()), // Silently fail if API is unavailable
+            };
 
             // Filter out models that are already defined in settings
             api_discovered_models.retain(|model| !settings_models.contains(&model.name));
@@ -137,16 +167,27 @@ pub struct OllamaEditPredictionProvider {
     file_extension: Option<String>,
     current_completion: Option<String>,
     pending_refresh: Option<Task<Result<()>>>,
-    api_key: Option<String>,
+    api_key_state: ApiKeyState,
+    api_url: SharedString,
     _service_subscription: Option<Subscription>,
 }
 
 impl OllamaEditPredictionProvider {
-    pub fn new(model: String, api_key: Option<String>, cx: &mut Context<Self>) -> Self {
-        // Update the global service with the API key if one is provided
+    pub fn new(model: String, api_url: SharedString, cx: &mut Context<Self>) -> Self {
+        let mut api_key_state = ApiKeyState::new(api_url.clone());
+
+        // Load API key if needed using the shared env var
+        let _load_task = api_key_state.load_if_needed(
+            api_url.clone(),
+            &API_KEY_ENV_VAR,
+            |this: &mut Self| &mut this.api_key_state,
+            cx,
+        );
+
+        // Update the global service to ensure it has the latest models
         if let Some(service) = State::global(cx) {
             service.update(cx, |service, cx| {
-                service.set_api_key(api_key.clone(), cx);
+                service.restart_fetch_models_task(cx);
             });
         }
 
@@ -164,7 +205,8 @@ impl OllamaEditPredictionProvider {
             file_extension: None,
             current_completion: None,
             pending_refresh: None,
-            api_key,
+            api_key_state,
+            api_url,
             _service_subscription: subscription,
         }
     }
@@ -255,7 +297,7 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
         cx: &mut Context<Self>,
     ) {
         // Get API settings from the global Ollama service or fallback
-        let (http_client, api_url) = if let Some(service) = State::global(cx) {
+        let (http_client, _api_url) = if let Some(service) = State::global(cx) {
             let service_ref = service.read(cx);
             (service_ref.http_client.clone(), service_ref.api_url.clone())
         } else {
@@ -267,7 +309,7 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                     .unwrap_or_else(|| {
                         Arc::new(http_client::BlockedHttpClient::new()) as Arc<dyn HttpClient>
                     }),
-                ollama::OLLAMA_API_URL.to_string(),
+                ollama::OLLAMA_API_URL.into(),
             )
         };
 
@@ -292,8 +334,13 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                 this.extract_context(buffer_snapshot, cursor_position)
             })?;
 
-            let (model, api_key) =
-                this.update(cx, |this, _| (this.model.clone(), this.api_key.clone()))?;
+            let (model, api_key, api_url_for_request) = this.update(cx, |this, _| {
+                let api_key = this
+                    .api_key_state
+                    .key(&this.api_url)
+                    .map(|k| k.as_ref().to_string());
+                (this.model.clone(), api_key, this.api_url.clone())
+            })?;
 
             let stop_tokens = this.update(cx, |this, _| this.get_stop_tokens())?;
 
@@ -311,9 +358,14 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                 keep_alive: None,
             };
 
-            let response = generate(http_client.as_ref(), &api_url, api_key, request)
-                .await
-                .context("Failed to get completion from Ollama");
+            let response = generate(
+                http_client.as_ref(),
+                api_url_for_request.as_ref(),
+                api_key,
+                request,
+            )
+            .await
+            .context("Failed to get completion from Ollama");
 
             this.update(cx, |this, cx| {
                 this.pending_refresh = None;
@@ -436,7 +488,11 @@ mod tests {
         // Test CodeLlama code model gets stop tokens
         let codellama_provider = cx.update(|cx| {
             cx.new(|cx| {
-                OllamaEditPredictionProvider::new("codellama:7b-code".to_string(), None, cx)
+                OllamaEditPredictionProvider::new(
+                    "codellama:7b-code".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
             })
         });
 
@@ -446,7 +502,13 @@ mod tests {
 
         // Test non-CodeLlama model doesn't get stop tokens
         let qwen_provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         qwen_provider.read_with(cx, |provider, _| {
@@ -523,7 +585,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -536,7 +598,13 @@ mod tests {
 
         // Create completion provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         // Wait for model discovery to complete
@@ -566,7 +634,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -578,7 +646,13 @@ mod tests {
 
         // Create completion provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         // Wait for model discovery to complete (with failure)
@@ -605,7 +679,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -616,7 +690,13 @@ mod tests {
         });
 
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:7b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:7b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         cx.background_executor.run_until_parked();
@@ -686,7 +766,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -698,7 +778,13 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         // Trigger completion refresh (no debounce for test speed)
@@ -759,7 +845,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -771,7 +857,13 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         // Configure response that starts with what user already typed
@@ -811,7 +903,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -823,7 +915,13 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         // Set up the editor with the Ollama provider
@@ -891,7 +989,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -903,7 +1001,13 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         // Set up the editor with the Ollama provider
@@ -1004,7 +1108,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1122,7 +1226,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 Some("test-api-key".to_string()),
                 cx,
             )
@@ -1162,7 +1266,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1177,7 +1281,7 @@ mod tests {
 
         // Update API key
         service.update(cx, |service, cx| {
-            service.set_api_key(Some("new-api-key".to_string()), cx);
+            let _task = service.set_api_key(Some("new-api-key".to_string()), cx);
         });
 
         // Wait for refresh to complete
@@ -1208,7 +1312,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1222,7 +1326,13 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         // Clear any initial requests (including model discovery)
@@ -1254,13 +1364,17 @@ mod tests {
             .advance_clock(OLLAMA_DEBOUNCE_TIMEOUT);
         cx.background_executor.run_until_parked();
 
-        // Now exactly one request should have been made (the last one)
+        // Now exactly one generate request should have been made (the last one)
         let requests_after_timeout = fake_http_client.get_requests();
+        let generate_requests: Vec<_> = requests_after_timeout
+            .iter()
+            .filter(|(path, _)| path.contains("/api/generate"))
+            .collect();
         assert_eq!(
-            requests_after_timeout.len(),
+            generate_requests.len(),
             1,
-            "Expected exactly 1 request after debounce timeout, got {}",
-            requests_after_timeout.len()
+            "Expected exactly 1 generate request after debounce timeout, got {}",
+            generate_requests.len()
         );
 
         // Verify provider is no longer refreshing
@@ -1290,7 +1404,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1305,7 +1419,13 @@ mod tests {
 
         // Create provider
         let provider = cx.update(|cx| {
-            cx.new(|cx| OllamaEditPredictionProvider::new("qwen2.5-coder:3b".to_string(), None, cx))
+            cx.new(|cx| {
+                OllamaEditPredictionProvider::new(
+                    "qwen2.5-coder:3b".to_string(),
+                    "http://localhost:11434".into(),
+                    cx,
+                )
+            })
         });
 
         // Clear any initial requests (including model discovery)
@@ -1328,13 +1448,17 @@ mod tests {
                 .advance_clock(Duration::from_millis(200 - 75 - 10));
         }
 
-        // With slow typing, we should get 3 separate API requests (one per "keystroke")
+        // With slow typing, we should get 3 separate generate requests (one per "keystroke")
         let requests = fake_http_client.get_requests();
+        let generate_requests: Vec<_> = requests
+            .iter()
+            .filter(|(path, _)| path.contains("/api/generate"))
+            .collect();
         assert_eq!(
-            requests.len(),
+            generate_requests.len(),
             3,
-            "Expected 3 requests for slow typing (200ms intervals), got {}. This demonstrates that 75ms debounce is too short for normal typing speeds.",
-            requests.len()
+            "Expected 3 generate requests for slow typing (200ms intervals), got {}. This demonstrates that 75ms debounce is too short for normal typing speeds.",
+            generate_requests.len()
         );
     }
 }

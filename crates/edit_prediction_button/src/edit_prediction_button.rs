@@ -1328,7 +1328,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1399,14 +1399,8 @@ mod tests {
         );
 
         // Create and set global service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client,
-                "http://localhost:11434".to_string(),
-                None,
-                cx,
-            )
-        });
+        let service =
+            cx.update(|cx| State::new(fake_http_client, "http://localhost:11434".into(), None, cx));
 
         cx.update(|cx| {
             State::set_global(service.clone(), cx);
@@ -1438,7 +1432,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1526,7 +1520,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1626,7 +1620,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1739,7 +1733,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )
@@ -1837,7 +1831,7 @@ mod tests {
         let service = cx.update(|cx| {
             State::new(
                 fake_http_client.clone(),
-                "http://localhost:11434".to_string(),
+                "http://localhost:11434".into(),
                 None,
                 cx,
             )

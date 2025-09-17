@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -13,12 +13,9 @@ use language_model::{
 };
 use menu;
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OLLAMA_API_URL,
-    OllamaFunctionCall, OllamaFunctionTool, OllamaToolCall, discover_available_models,
-    stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OLLAMA_API_URL, OllamaFunctionCall,
+    OllamaFunctionTool, OllamaToolCall, discover_available_models, stream_chat_completion,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::LazyLock;
@@ -42,7 +39,7 @@ const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollam
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Ollama");
 
 const API_KEY_ENV_VAR_NAME: &str = "OLLAMA_API_KEY";
-static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+pub static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
@@ -58,7 +55,7 @@ pub struct OllamaLanguageModelProvider {
 pub struct State {
     api_key_state: ApiKeyState,
     http_client: Arc<dyn HttpClient>,
-    available_models: Vec<AvailableModel>,
+    fetched_models: Vec<AvailableModel>,
     fetch_model_task: Option<Task<Result<()>>>,
 }
 
@@ -109,7 +106,7 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let ollama_models = discover_available_models(http_client, &api_url, None).await?;
+            let ollama_models = discover_available_models(http_client, &api_url, api_key).await?;
 
             this.update(cx, |this, cx| {
                 this.fetched_models = ollama_models;
@@ -135,7 +132,7 @@ impl OllamaLanguageModelProvider {
     }
 
     pub fn available_models_for_completion(&self, cx: &App) -> Vec<AvailableModel> {
-        self.state.read(cx).available_models.clone()
+        self.state.read(cx).fetched_models.clone()
     }
 
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
