@@ -1125,7 +1125,7 @@ mod tests {
             Project::init_settings(cx);
             workspace::init_settings(cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-                store.update_user_settings(cx, |settings| f(settings.project.all_languages));
+                store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
             });
         });
     }

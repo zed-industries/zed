@@ -8845,6 +8845,7 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand 2.1.2",
+ "util",
  "workspace",
  "workspace-hack",
 ]

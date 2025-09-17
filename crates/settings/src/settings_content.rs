@@ -79,6 +79,9 @@ pub struct SettingsContent {
     /// Common language server settings.
     pub global_lsp_settings: Option<GlobalLspSettingsContent>,
 
+    /// The settings for the image viewer.
+    pub image_viewer: Option<ImageViewerSettingsContent>,
+
     /// Whether or not to enable Helix mode.
     ///
     /// Default: false
@@ -593,12 +596,12 @@ pub struct JournalSettingsContent {
     /// What format to display the hours in.
     ///
     /// Default: hour12
-    pub hour_format: Option<HourFormatContent>,
+    pub hour_format: Option<HourFormat>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum HourFormatContent {
+pub enum HourFormat {
     #[default]
     Hour12,
     Hour24,
@@ -684,4 +687,23 @@ pub enum LineIndicatorFormat {
     Short,
     #[default]
     Long,
+}
+
+/// The settings for the image viewer.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+pub struct ImageViewerSettingsContent {
+    /// The unit to use for displaying image file sizes.
+    ///
+    /// Default: "binary"
+    pub unit: Option<ImageFileSizeUnit>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFileSizeUnit {
+    /// Displays file size in binary units (e.g., KiB, MiB).
+    #[default]
+    Binary,
+    /// Displays file size in decimal units (e.g., KB, MB).
+    Decimal,
 }

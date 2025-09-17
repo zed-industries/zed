@@ -1422,7 +1422,7 @@ impl Panel for DebugPanel {
         }
 
         settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
-            settings.debugger.get_or_insert_default().dock = position.into();
+            settings.debugger.get_or_insert_default().dock = Some(position.into());
         });
     }
 

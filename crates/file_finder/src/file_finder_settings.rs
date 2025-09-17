@@ -36,8 +36,6 @@ impl Settings for FileFinderSettings {
         self.include_ignored
             .merge_from(&file_finder.include_ignored);
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
