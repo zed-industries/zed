@@ -542,7 +542,6 @@ impl Settings for ProjectSettings {
                 .into_iter()
                 .map(|(key, value)| (key, value.into())),
         );
-        dbg!(&self.context_servers);
         self.dap.extend(
             project
                 .dap

@@ -140,12 +140,12 @@ pub struct SettingsLocation<'a> {
 /// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
-    default_settings: SettingsContent,
+    default_settings: Box<SettingsContent>,
     user_settings: Option<UserSettingsContent>,
-    global_settings: Option<SettingsContent>,
+    global_settings: Option<Box<SettingsContent>>,
 
-    extension_settings: Option<SettingsContent>,
-    server_settings: Option<SettingsContent>,
+    extension_settings: Option<Box<SettingsContent>>,
+    server_settings: Option<Box<SettingsContent>>,
     local_settings: BTreeMap<(WorktreeId, Arc<Path>), SettingsContent>,
     raw_editorconfig_settings: BTreeMap<(WorktreeId, Arc<Path>), (String, Option<Editorconfig>)>,
 
@@ -260,11 +260,11 @@ impl SettingsStore {
 
         let mut refinements = Vec::default();
 
-        if let Some(extension_settings) = self.extension_settings.as_ref() {
+        if let Some(extension_settings) = self.extension_settings.as_deref() {
             refinements.push(extension_settings)
         }
 
-        if let Some(global_settings) = self.global_settings.as_ref() {
+        if let Some(global_settings) = self.global_settings.as_deref() {
             refinements.push(global_settings)
         }
 
@@ -619,7 +619,7 @@ impl SettingsStore {
             parse_json_with_comments(global_settings_content)?
         };
 
-        self.global_settings = Some(settings);
+        self.global_settings = Some(Box::new(settings));
         self.recompute_values(None, cx)?;
         Ok(())
     }
@@ -636,9 +636,11 @@ impl SettingsStore {
         };
 
         // Rewrite the server settings into a content type
-        self.server_settings = settings.map(|settings| SettingsContent {
-            project: settings.project,
-            ..Default::default()
+        self.server_settings = settings.map(|settings| {
+            Box::new(SettingsContent {
+                project: settings.project,
+                ..Default::default()
+            })
         });
 
         self.recompute_values(None, cx)?;
@@ -762,13 +764,13 @@ impl SettingsStore {
         content: ExtensionsSettingsContent,
         cx: &mut App,
     ) -> Result<()> {
-        self.extension_settings = Some(SettingsContent {
+        self.extension_settings = Some(Box::new(SettingsContent {
             project: ProjectSettingsContent {
                 all_languages: content.all_languages,
                 ..Default::default()
             },
             ..Default::default()
-        });
+        }));
         self.recompute_values(None, cx)?;
         Ok(())
     }
@@ -839,11 +841,11 @@ impl SettingsStore {
 
         let mut refinements = Vec::default();
 
-        if let Some(extension_settings) = self.extension_settings.as_ref() {
+        if let Some(extension_settings) = self.extension_settings.as_deref() {
             refinements.push(extension_settings)
         }
 
-        if let Some(global_settings) = self.global_settings.as_ref() {
+        if let Some(global_settings) = self.global_settings.as_deref() {
             refinements.push(global_settings)
         }
 
@@ -1286,7 +1288,6 @@ mod tests {
     ) {
         store.set_user_settings(&old_json, cx).ok();
         let edits = store.edits_for_update(&old_json, update);
-        dbg!(&edits);
         let mut new_json = old_json;
         for (range, replacement) in edits.into_iter() {
             new_json.replace_range(range, &replacement);
@@ -1401,9 +1402,7 @@ mod tests {
                 }"#
             .unindent(),
             |settings| {
-                dbg!(&settings.title_bar);
                 settings.title_bar.as_mut().unwrap().show = Some(TitleBarVisibilityContent::Never);
-                dbg!(&settings.title_bar);
             },
             r#"{
                 "title_bar":   { "show": "never", "name": "Max"  }

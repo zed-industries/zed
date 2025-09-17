@@ -5819,8 +5819,7 @@ mod tests {
         init_test(cx);
         cx.update_global::<SettingsStore, ()>(|s, cx| {
             s.update_user_settings(cx, |s| {
-                s.workspace.tabs.get_or_insert_default().activate_on_close =
-                    Some(ActivateOnClose::Neighbour);
+                s.tabs.get_or_insert_default().activate_on_close = Some(ActivateOnClose::Neighbour);
             });
         });
         let fs = FakeFs::new(cx.executor());
@@ -5909,7 +5908,7 @@ mod tests {
         init_test(cx);
         cx.update_global::<SettingsStore, ()>(|s, cx| {
             s.update_user_settings(cx, |s| {
-                s.workspace.tabs.get_or_insert_default().activate_on_close =
+                s.tabs.get_or_insert_default().activate_on_close =
                     Some(ActivateOnClose::LeftNeighbour);
             });
         });

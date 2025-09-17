@@ -88,8 +88,7 @@ pub struct WorkspaceSettingsContent {
     /// Whether to resize all the panels in a dock when resizing the dock.
     ///
     /// Default: ["left"]
-    #[serde(default)]
-    pub resize_all_panels_in_dock: Vec<DockPosition>,
+    pub resize_all_panels_in_dock: Option<Vec<DockPosition>>,
     /// Whether to automatically close files that have been deleted on disk.
     ///
     /// Default: false
@@ -104,11 +103,6 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub zoomed_padding: Option<bool>,
-
-    // Settings related to the editor's tab bar.
-    pub tab_bar: Option<TabBarSettingsContent>,
-
-    pub tabs: Option<ItemSettingsContent>,
 }
 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

@@ -1027,7 +1027,6 @@ mod tests {
 
             cx.run_until_parked();
         }
-        dbg!("hi");
 
         // Ensure that mcp-2 is removed once it is removed from the settings
         {
@@ -1055,7 +1054,6 @@ mod tests {
                 assert_eq!(store.read(cx).status_for_server(&server_2_id), None);
             });
         }
-        dbg!("bye");
 
         // Ensure that nothing happens if the settings do not change
         {

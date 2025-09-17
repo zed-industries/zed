@@ -28,7 +28,7 @@ pub struct SettingsContent {
     pub project: ProjectSettingsContent,
 
     #[serde(flatten)]
-    pub theme: ThemeSettingsContent,
+    pub theme: Box<ThemeSettingsContent>,
 
     #[serde(flatten)]
     pub extension: ExtensionSettingsContent,
@@ -37,6 +37,7 @@ pub struct SettingsContent {
     pub workspace: WorkspaceSettingsContent,
 
     pub tabs: Option<ItemSettingsContent>,
+    pub tab_bar: Option<TabBarSettingsContent>,
 
     pub preview_tabs: Option<PreviewTabsSettingsContent>,
 
@@ -119,16 +120,16 @@ pub struct ServerSettingsContent {
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
-    pub content: SettingsContent,
+    pub content: Box<SettingsContent>,
 
-    pub dev: Option<SettingsContent>,
-    pub nightly: Option<SettingsContent>,
-    pub preview: Option<SettingsContent>,
-    pub stable: Option<SettingsContent>,
+    pub dev: Option<Box<SettingsContent>>,
+    pub nightly: Option<Box<SettingsContent>>,
+    pub preview: Option<Box<SettingsContent>>,
+    pub stable: Option<Box<SettingsContent>>,
 
-    pub macos: Option<SettingsContent>,
-    pub windows: Option<SettingsContent>,
-    pub linux: Option<SettingsContent>,
+    pub macos: Option<Box<SettingsContent>>,
+    pub windows: Option<Box<SettingsContent>>,
+    pub linux: Option<Box<SettingsContent>>,
 
     #[serde(default)]
     pub profiles: HashMap<String, SettingsContent>,
@@ -141,18 +142,18 @@ pub struct ExtensionsSettingsContent {
 impl UserSettingsContent {
     pub fn for_release_channel(&self) -> Option<&SettingsContent> {
         match *release_channel::RELEASE_CHANNEL {
-            ReleaseChannel::Dev => self.dev.as_ref(),
-            ReleaseChannel::Nightly => self.nightly.as_ref(),
-            ReleaseChannel::Preview => self.preview.as_ref(),
-            ReleaseChannel::Stable => self.stable.as_ref(),
+            ReleaseChannel::Dev => self.dev.as_deref(),
+            ReleaseChannel::Nightly => self.nightly.as_deref(),
+            ReleaseChannel::Preview => self.preview.as_deref(),
+            ReleaseChannel::Stable => self.stable.as_deref(),
         }
     }
 
     pub fn for_os(&self) -> Option<&SettingsContent> {
         match env::consts::OS {
-            "macos" => self.macos.as_ref(),
-            "linux" => self.linux.as_ref(),
-            "windows" => self.windows.as_ref(),
+            "macos" => self.macos.as_deref(),
+            "linux" => self.linux.as_deref(),
+            "windows" => self.windows.as_deref(),
             _ => None,
         }
     }

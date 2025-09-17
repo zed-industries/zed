@@ -1,7 +1,6 @@
 use std::num::NonZeroUsize;
 
 use crate::DockPosition;
-use anyhow::Result;
 use collections::HashMap;
 use gpui::App;
 use serde::Deserialize;
@@ -18,7 +17,7 @@ pub struct WorkspaceSettings {
     pub bottom_dock_layout: settings::BottomDockLayout,
     pub pane_split_direction_horizontal: settings::PaneSplitDirectionHorizontal,
     pub pane_split_direction_vertical: settings::PaneSplitDirectionVertical,
-    pub centered_layout: settings::CenteredLayoutSettings, // <- This one is hard to describe, especially as it has
+    pub centered_layout: settings::CenteredLayoutSettings,
     pub confirm_quit: bool,
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
@@ -31,24 +30,10 @@ pub struct WorkspaceSettings {
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
     pub on_last_window_closed: settings::OnLastWindowClosed,
-    pub resize_all_panels_in_dock: Vec<DockPosition>, // <- This one is not an overwrite merge, it is an extend merge
+    pub resize_all_panels_in_dock: Vec<DockPosition>,
     pub close_on_file_delete: bool,
     pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq)]
-pub struct CenteredLayoutSettings {
-    /// The relative width of the left padding of the central pane from the
-    /// workspace when the centered layout is used.
-    ///
-    /// Default: 0.2
-    pub left_padding: f32,
-    // The relative width of the right padding of the central pane from the
-    // workspace when the centered layout is used.
-    ///
-    /// Default: 0.2
-    pub right_padding: f32,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
@@ -78,7 +63,7 @@ pub struct TabBarSettings {
 }
 
 impl Settings for WorkspaceSettings {
-    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let workspace = &content.workspace;
         Self {
             active_pane_modifiers: ActivePanelModifiers {
@@ -116,14 +101,20 @@ impl Settings for WorkspaceSettings {
             max_tabs: workspace.max_tabs.clone(),
             when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.clone().unwrap(),
             on_last_window_closed: workspace.on_last_window_closed.clone().unwrap(),
-            resize_all_panels_in_dock: workspace.resize_all_panels_in_dock.iter().collect(),
+            resize_all_panels_in_dock: workspace
+                .resize_all_panels_in_dock
+                .clone()
+                .unwrap()
+                .into_iter()
+                .map(Into::into)
+                .collect(),
             close_on_file_delete: workspace.close_on_file_delete.clone().unwrap(),
             use_system_window_tabs: workspace.use_system_window_tabs.clone().unwrap(),
             zoomed_padding: workspace.zoomed_padding.clone().unwrap(),
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
         let workspace = &content.workspace;
         if let Some(border_size) = *&workspace
             .active_pane_modifiers
@@ -169,12 +160,11 @@ impl Settings for WorkspaceSettings {
             .merge_from(&workspace.when_closing_with_no_tabs);
         self.on_last_window_closed
             .merge_from(&workspace.on_last_window_closed);
-        self.resize_all_panels_in_dock.extend(
-            workspace
+        self.resize_all_panels_in_dock.merge_from(
+            &workspace
                 .resize_all_panels_in_dock
-                .iter()
-                .copied()
-                .map(Into::<DockPosition>::into),
+                .as_ref()
+                .map(|resize| resize.clone().into_iter().map(Into::into).collect()),
         );
         self.close_on_file_delete
             .merge_from(&workspace.close_on_file_delete);
@@ -270,6 +260,26 @@ impl Settings for WorkspaceSettings {
 }
 
 impl Settings for TabBarSettings {
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let tab_bar = content.tab_bar.clone().unwrap();
+        TabBarSettings {
+            show: tab_bar.show.unwrap(),
+            show_nav_history_buttons: tab_bar.show_nav_history_buttons.unwrap(),
+            show_tab_bar_buttons: tab_bar.show_tab_bar_buttons.unwrap(),
+        }
+    }
+
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        let Some(tab_bar) = &content.tab_bar else {
+            return;
+        };
+        self.show.merge_from(&tab_bar.show);
+        self.show_nav_history_buttons
+            .merge_from(&tab_bar.show_nav_history_buttons);
+        self.show_tab_bar_buttons
+            .merge_from(&tab_bar.show_tab_bar_buttons);
+    }
+
     fn import_from_vscode(
         vscode: &settings::VsCodeSettings,
         current: &mut settings::SettingsContent,
@@ -279,14 +289,10 @@ impl Settings for TabBarSettings {
             "single" | "none" => Some(false),
             _ => None,
         }) {
-            current.workspace.tab_bar.get_or_insert_default().show = Some(b);
+            current.tab_bar.get_or_insert_default().show = Some(b);
         }
         if Some("hidden") == vscode.read_string("workbench.editor.editorActionsLocation") {
-            current
-                .workspace
-                .tab_bar
-                .get_or_insert_default()
-                .show_tab_bar_buttons = Some(false)
+            current.tab_bar.get_or_insert_default().show_tab_bar_buttons = Some(false)
         }
     }
 }
