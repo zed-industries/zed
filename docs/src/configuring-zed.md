@@ -2626,6 +2626,7 @@ The following settings can be overridden for each specific language:
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
+- [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
 - [`use_autoclose`](#use-autoclose)
@@ -3347,6 +3348,20 @@ Positive integer values
 2. `selection`
 3. `none`
 4. `boundary`
+
+## Whitespace Map
+
+- Description: Specify the characters used to render whitespace when show_whitespaces is enabled.
+- Setting: `whitespace_map`
+- Default:
+
+```json
+{
+  "whitespace_map": {
+    "space": "•",
+    "tab": "→"
+  },
+```
 
 ## Soft Wrap
 
