@@ -14,9 +14,7 @@ use gpui::{
 use http_client::BlockedHttpClient;
 use language::{
     FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageRegistry,
-    language_settings::{
-        Formatter, FormatterList, PrettierSettings, SelectedFormatter, language_settings,
-    },
+    language_settings::{Formatter, FormatterList, SelectedFormatter, language_settings},
     tree_sitter_typescript,
 };
 use node_runtime::NodeRuntime;

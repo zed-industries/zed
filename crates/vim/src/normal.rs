@@ -1724,8 +1724,8 @@ mod test {
     async fn test_f_and_t_smartcase(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
-                s.use_smartcase_find = Some(true);
+            store.update_user_settings(cx, |s| {
+                s.vim.get_or_insert_default().use_smartcase_find = Some(true);
             });
         });
 
@@ -1891,8 +1891,12 @@ mod test {
 
         cx.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                    settings.defaults.preferred_line_length = Some(5);
+                settings.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .preferred_line_length = Some(5);
                 });
             })
         });

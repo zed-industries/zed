@@ -295,57 +295,8 @@ impl SettingsUiTree {
     // so that we can keep none/skip and still test in CI that all settings have
     #[cfg(feature = "test-support")]
     pub fn all_paths(&self, cx: &App) -> Vec<Vec<SharedString>> {
-        fn all_paths_rec(
-            tree: &[UiEntry],
-            paths: &mut Vec<Vec<SharedString>>,
-            current_path: &mut Vec<SharedString>,
-            idx: usize,
-            cx: &App,
-        ) {
-            let child = &tree[idx];
-            let mut pushed_path = false;
-            if let Some(path) = child.path.as_ref() {
-                current_path.push(path.clone());
-                paths.push(current_path.clone());
-                pushed_path = true;
-            }
-            // todo(settings_ui): handle dynamic nodes here
-            let selected_descendant_index = child
-                .dynamic_render
-                .as_ref()
-                .map(|dynamic_render| {
-                    read_settings_value_from_path(
-                        SettingsStore::global(cx).raw_default_settings(),
-                        &current_path,
-                    )
-                    .map(|value| (dynamic_render.determine_option)(value, cx))
-                })
-                .and_then(|selected_descendant_index| {
-                    selected_descendant_index.map(|index| child.nth_descendant_index(tree, index))
-                });
-
-            if let Some(selected_descendant_index) = selected_descendant_index {
-                // just silently fail if we didn't find a setting value for the path
-                if let Some(descendant_index) = selected_descendant_index {
-                    all_paths_rec(tree, paths, current_path, descendant_index, cx);
-                }
-            } else if let Some(desc_idx) = child.first_descendant_index() {
-                let mut desc_idx = Some(desc_idx);
-                while let Some(descendant_index) = desc_idx {
-                    all_paths_rec(&tree, paths, current_path, descendant_index, cx);
-                    desc_idx = tree[descendant_index].next_sibling;
-                }
-            }
-            if pushed_path {
-                current_path.pop();
-            }
-        }
-
-        let mut paths = Vec::new();
-        for &index in &self.root_entry_indices {
-            all_paths_rec(&self.entries, &mut paths, &mut Vec::new(), index, cx);
-        }
-        paths
+        // todo(settings_ui) this needs to be implemented not in terms of JSON anymore
+        Vec::default()
     }
 }
 

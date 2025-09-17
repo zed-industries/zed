@@ -1480,7 +1480,7 @@ mod tests {
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
-    use settings::SettingsStore;
+    use settings::{SearchSettingsContent, SettingsStore};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -2867,7 +2867,13 @@ mod tests {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.editor.search = Some(search_settings);
+                    settings.editor.search = Some(SearchSettingsContent {
+                        button: Some(search_settings.button),
+                        whole_word: Some(search_settings.whole_word),
+                        case_sensitive: Some(search_settings.case_sensitive),
+                        include_ignored: Some(search_settings.include_ignored),
+                        regex: Some(search_settings.regex),
+                    });
                 });
             });
         });

@@ -176,6 +176,7 @@ pub struct SearchSettings {
     pub include_ignored: bool,
     pub regex: bool,
 }
+
 impl EditorSettings {
     pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
