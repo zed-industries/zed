@@ -275,7 +275,7 @@ impl SshRemoteConnection {
         });
 
         let mut askpass =
-            askpass::AskPassSession::new(cx.background_executor(), askpass_delegate).await?;
+            askpass::AskPassSession::new(cx.background_executor(), askpass_delegate, None).await?;
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it

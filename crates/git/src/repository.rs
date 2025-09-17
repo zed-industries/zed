@@ -2044,7 +2044,7 @@ async fn run_git_command(
             stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         })
     } else {
-        let ask_pass = AskPassSession::new(executor, ask_pass).await?;
+        let ask_pass = AskPassSession::new(executor, ask_pass, None).await?;
         command
             .env("GIT_ASKPASS", ask_pass.script_path())
             .env("SSH_ASKPASS", ask_pass.script_path())

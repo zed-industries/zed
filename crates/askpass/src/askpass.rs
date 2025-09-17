@@ -17,6 +17,8 @@ use smol::fs;
 use util::ResultExt as _;
 
 use crate::encrypted_password::decrypt;
+// This is the default timeout setting used by VSCode.
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(17);
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
@@ -59,7 +61,8 @@ pub struct AskPassSession {
     #[cfg(target_os = "windows")]
     askpass_helper: String,
     #[cfg(target_os = "windows")]
-    secret: std::sync::Arc<OnceLock<EncryptedPassword>>,
+    secret: std::sync::Arc<parking_lot::Mutex<String>>,
+    timeout: Duration,
     _askpass_task: Task<()>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
@@ -74,7 +77,11 @@ impl AskPassSession {
     /// This will create a new AskPassSession.
     /// You must retain this session until the master process exits.
     #[must_use]
-    pub async fn new(executor: &BackgroundExecutor, mut delegate: AskPassDelegate) -> Result<Self> {
+    pub async fn new(
+        executor: &BackgroundExecutor,
+        mut delegate: AskPassDelegate,
+        timeout: Option<Duration>,
+    ) -> Result<Self> {
         use net::async_net::UnixListener;
         use util::fs::make_file_executable;
 
@@ -157,6 +164,7 @@ impl AskPassSession {
             #[cfg(target_os = "windows")]
             askpass_helper,
 
+            timeout: timeout.unwrap_or(DEFAULT_TIMEOUT),
             _askpass_task: askpass_task,
             askpass_kill_master_rx: Some(askpass_kill_master_rx),
             askpass_opened_rx: Some(askpass_opened_rx),
@@ -178,8 +186,6 @@ impl AskPassSession {
     // future when this is no longer needed. Note that this can only be called once, but due to the
     // drop order this takes an &mut, so you can `drop()` it after you're done with the master process.
     pub async fn run(&mut self) -> AskPassResult {
-        // This is the default timeout setting used by VSCode.
-        let connection_timeout = Duration::from_secs(17);
         let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
         let askpass_kill_master_rx = self
             .askpass_kill_master_rx
@@ -193,7 +199,7 @@ impl AskPassSession {
                 AskPassResult::CancelledByUser
             }
 
-            _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
+            _ = futures::FutureExt::fuse(smol::Timer::after(self.timeout)) => {
                 AskPassResult::Timedout
             }
         }
