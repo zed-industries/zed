@@ -595,7 +595,7 @@ impl CommitViewToolbar {
                 let active_pane = workspace.active_pane();
                 let commit_view_id = commit_view.entity_id();
                 active_pane.update(cx, |pane, cx| {
-                    pane.close_item_by_id(commit_view_id, SaveIntent::Close, window, cx)
+                    pane.close_item_by_id(commit_view_id, SaveIntent::Skip, window, cx)
                 })
             })?
             .await?;
