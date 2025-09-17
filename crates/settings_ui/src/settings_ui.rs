@@ -1,5 +1,3 @@
-mod appearance_settings_controls;
-
 use std::{
     num::NonZeroU32,
     ops::{Not, Range},
@@ -24,8 +22,6 @@ use workspace::{
     Workspace,
     item::{Item, ItemEvent},
 };
-
-use crate::appearance_settings_controls::AppearanceSettingsControls;
 
 pub struct SettingsUiFeatureFlag;
 
@@ -579,30 +575,6 @@ impl Render for SettingsPage {
                 ),
             )
     }
-}
-
-// todo(settings_ui): remove, only here as inspiration
-#[allow(dead_code)]
-fn render_old_appearance_settings(cx: &mut App) -> impl IntoElement {
-    v_flex()
-        .p_4()
-        .size_full()
-        .gap_4()
-        .child(Label::new("Settings").size(LabelSize::Large))
-        .child(
-            v_flex().gap_1().child(Label::new("Appearance")).child(
-                v_flex()
-                    .elevation_2(cx)
-                    .child(AppearanceSettingsControls::new()),
-            ),
-        )
-        .child(
-            v_flex().gap_1().child(Label::new("Editor")).child(
-                v_flex()
-                    .elevation_2(cx)
-                    .child(EditorSettingsControls::new()),
-            ),
-        )
 }
 
 fn element_id_from_path(path: &[SharedString]) -> ElementId {
