@@ -1,7 +1,5 @@
 use language::{BufferSnapshot, LanguageId, SyntaxMapMatches};
 use std::{cmp::Reverse, ops::Range, sync::Arc};
-use tree_sitter::QueryCursor;
-use util::RangeExt;
 
 // TODO:
 //

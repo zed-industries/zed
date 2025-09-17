@@ -44,7 +44,7 @@ use crate::outline::{Identifier, OutlineDeclaration, declarations_in_buffer};
 // * Use queue for parsing
 
 slotmap::new_key_type! {
-    struct DeclarationId;
+    pub struct DeclarationId;
 }
 
 pub struct TreeSitterIndex {
@@ -158,8 +158,6 @@ impl TreeSitterIndex {
     ) -> Vec<Declaration> {
         // make sure to not have a large stack allocation
         assert!(N < 32);
-
-        let identifier = identifier.into();
 
         let Some(declaration_ids) = self.identifiers.get(&identifier) else {
             return vec![];
@@ -519,10 +517,11 @@ mod tests {
     use futures::channel::oneshot;
     use gpui::TestAppContext;
     use indoc::indoc;
-    use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+    use language::{Language, LanguageConfig, LanguageId, LanguageMatcher, tree_sitter_rust};
     use project::{FakeFs, Project, ProjectItem};
     use serde_json::json;
     use settings::SettingsStore;
+    use text::OffsetRangeExt as _;
     use util::path;
 
     use crate::tree_sitter_index::TreeSitterIndex;
