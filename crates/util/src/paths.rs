@@ -609,6 +609,14 @@ impl PathMatcher {
         })
     }
 
+    pub fn empty(path_style: PathStyle) -> Self {
+        Self {
+            path_style,
+            glob: GlobSet::empty(),
+            sources: vec![],
+        }
+    }
+
     pub fn sources(&self) -> &[String] {
         &self.sources
     }

@@ -500,7 +500,7 @@ impl ContextServerStore {
             .next()
             .map(|worktree| settings::SettingsLocation {
                 worktree_id: worktree.read(cx).id(),
-                path: Path::new(""),
+                path: RelPath::empty(),
             });
         &ProjectSettings::get(location, cx).context_servers
     }

@@ -131,6 +131,12 @@ impl std::fmt::Display for AbsPath {
 #[derive(PartialEq, Debug, Eq, PartialOrd, Ord, Hash)]
 pub struct RelPath(str);
 
+impl AsRef<Path> for RelPath {
+    fn as_ref(&self) -> &Path {
+        Path::new(&self.0)
+    }
+}
+
 impl RelPath {
     pub fn empty() -> &'static Self {
         unsafe { Self::new_unchecked("") }

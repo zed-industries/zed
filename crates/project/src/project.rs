@@ -5139,7 +5139,12 @@ impl Project {
         cx: &mut Context<Project>,
     ) -> Result<()> {
         self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.set_worktrees_from_proto(worktrees, self.replica_id(), cx)
+            worktree_store.set_worktrees_from_proto(
+                worktrees,
+                self.replica_id(),
+                self.path_style(),
+                cx,
+            )
         })
     }
 

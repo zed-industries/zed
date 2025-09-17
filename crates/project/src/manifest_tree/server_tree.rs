@@ -21,6 +21,7 @@ use language::{
 use lsp::LanguageServerName;
 use settings::{Settings, SettingsLocation, WorktreeId};
 use std::sync::OnceLock;
+use util::rel_path::RelPath;
 
 use crate::{
     LanguageServerId, ProjectPath, project_settings::LspSettings,
@@ -32,7 +33,7 @@ use super::ManifestTree;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ServersForWorktree {
     pub(crate) roots: BTreeMap<
-        Arc<Path>,
+        Arc<RelPath>,
         BTreeMap<LanguageServerName, (Arc<InnerTreeNode>, BTreeSet<LanguageName>)>,
     >,
 }

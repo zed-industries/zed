@@ -28,6 +28,7 @@ use text::ReplicaId;
 use util::{
     ResultExt,
     paths::{PathStyle, RemotePathBuf, SanitizedPath},
+    rel_path::RelPath,
 };
 use worktree::{
     Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
@@ -450,6 +451,7 @@ impl WorktreeStore {
         &mut self,
         worktrees: Vec<proto::WorktreeMetadata>,
         replica_id: ReplicaId,
+        path_style: PathStyle,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let mut old_worktrees_by_id = self
@@ -477,7 +479,14 @@ impl WorktreeStore {
                 self.worktrees.push(handle);
             } else {
                 self.add(
-                    &Worktree::remote(project_id, replica_id, worktree, client.clone(), cx)?,
+                    &Worktree::remote(
+                        project_id,
+                        replica_id,
+                        worktree,
+                        client.clone(),
+                        path_style,
+                        cx,
+                    )?,
                     cx,
                 );
             }

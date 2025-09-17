@@ -67,10 +67,7 @@ impl<'a> GitTraversal<'a> {
             return;
         };
 
-        let Ok(abs_path) = self.traversal.snapshot().absolutize(&entry.path) else {
-            self.repo_location = None;
-            return;
-        };
+        let abs_path = self.traversal.snapshot().absolutize(&entry.path);
 
         let Some((repo, repo_path)) = self.repo_root_for_path(&abs_path) else {
             self.repo_location = None;

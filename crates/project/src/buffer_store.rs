@@ -26,7 +26,7 @@ use rpc::{
 use smol::channel::Receiver;
 use std::{io, path::Path, pin::pin, sync::Arc, time::Instant};
 use text::BufferId;
-use util::{ResultExt as _, TryFutureExt, debug_panic, maybe};
+use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
 
 /// A set of open buffers.
@@ -292,7 +292,7 @@ impl RemoteBufferStore {
 
     fn open_buffer(
         &self,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {
@@ -370,7 +370,7 @@ impl LocalBufferStore {
         &self,
         buffer_handle: Entity<Buffer>,
         worktree: Entity<Worktree>,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         mut has_changed_file: bool,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<()>> {
@@ -443,7 +443,7 @@ impl LocalBufferStore {
     fn local_worktree_entries_changed(
         this: &mut BufferStore,
         worktree_handle: &Entity<Worktree>,
-        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        changes: &[(Arc<RelPath>, ProjectEntryId, PathChange)],
         cx: &mut Context<BufferStore>,
     ) {
         let snapshot = worktree_handle.read(cx).snapshot();
@@ -462,7 +462,7 @@ impl LocalBufferStore {
     fn local_worktree_entry_changed(
         this: &mut BufferStore,
         entry_id: ProjectEntryId,
-        path: &Arc<Path>,
+        path: &Arc<RelPath>,
         worktree: &Entity<worktree::Worktree>,
         snapshot: &worktree::Snapshot,
         cx: &mut Context<BufferStore>,
@@ -615,7 +615,7 @@ impl LocalBufferStore {
 
     fn open_buffer(
         &self,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         worktree: Entity<Worktree>,
         cx: &mut Context<BufferStore>,
     ) -> Task<Result<Entity<Buffer>>> {

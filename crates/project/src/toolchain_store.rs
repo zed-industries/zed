@@ -23,7 +23,7 @@ use rpc::{
     },
 };
 use settings::WorktreeId;
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 
 use crate::{
     ProjectEnvironment, ProjectPath,
@@ -265,10 +265,12 @@ impl ToolchainStore {
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
                 let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+                let path = RelPath::new(envelope.payload.path.as_deref().unwrap_or(""))
+                    .context("Expected a relative path")?;
                 this.active_toolchain(
                     ProjectPath {
                         worktree_id,
-                        path: Arc::from(envelope.payload.path.as_deref().unwrap_or("").as_ref()),
+                        path: Arc::from(path),
                     },
                     language_name,
                     cx,

@@ -47,7 +47,7 @@ use std::{
     sync::{Arc, Once},
 };
 use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 use worktree::Worktree;
 
 #[derive(Debug)]
@@ -203,7 +203,7 @@ impl DapStore {
 
                 let settings_location = SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
-                    path: Path::new(""),
+                    path: RelPath::empty(),
                 };
                 let dap_settings = ProjectSettings::get(Some(settings_location), cx)
                     .dap
@@ -945,8 +945,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
             .with_context(|| format!("no worktree entry for path {path:?}"))?;
         let abs_path = self
             .worktree
-            .absolutize(&entry.path)
-            .with_context(|| format!("cannot absolutize path {path:?}"))?;
+            .absolutize(&entry.path);
 
         self.fs.load(&abs_path).await
     }

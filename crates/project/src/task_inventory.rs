@@ -76,7 +76,7 @@ impl InventoryContents for DebugScenario {
 #[derive(Debug)]
 struct InventoryFor<T> {
     global: HashMap<PathBuf, Vec<T>>,
-    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<T>>>,
+    worktree: HashMap<WorktreeId, HashMap<Arc<RelPath>, Vec<T>>>,
 }
 
 impl<T: InventoryContents> InventoryFor<T> {
@@ -1180,7 +1180,7 @@ mod tests {
         let worktree_id = WorktreeId::from_usize(0);
         let local_worktree_location = SettingsLocation {
             worktree_id,
-            path: Path::new("foo"),
+            path: RelPath::new("foo").unwrap(),
         };
         inventory.update(cx, |inventory, _| {
             inventory
@@ -1474,7 +1474,7 @@ mod tests {
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_1,
-                        path: Path::new(".zed"),
+                        path: RelPath::new(".zed").unwrap(),
                     }),
                     Some(&mock_tasks_from_names(
                         worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
@@ -1485,7 +1485,7 @@ mod tests {
                 .update_file_based_tasks(
                     TaskSettingsLocation::Worktree(SettingsLocation {
                         worktree_id: worktree_2,
-                        path: Path::new(".zed"),
+                        path: RelPath::new(".zed").unwrap(),
                     }),
                     Some(&mock_tasks_from_names(
                         worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
