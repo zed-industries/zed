@@ -13,8 +13,8 @@ use editor::{CompletionProvider, Editor, EditorEvent};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, IsZero,
+    Action, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
     KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
     ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
@@ -27,7 +27,8 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAss
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
     Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    Styled as _, Table, TableColumnWidths, TableInteractionState, TableResizeBehavior, Tooltip,
+    Window, prelude::*, right_click_menu,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -37,24 +38,16 @@ use workspace::{
 };
 
 pub use ui_components::*;
+use zed_actions::OpenKeymapEditor;
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
-    ui_components::{
-        keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
-        table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
+    ui_components::keystroke_input::{
+        ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording,
     },
 };
 
 const NO_ACTION_ARGUMENTS_TEXT: SharedString = SharedString::new_static("<no arguments>");
-
-actions!(
-    zed,
-    [
-        /// Opens the keymap editor.
-        OpenKeymapEditor
-    ]
-);
 
 actions!(
     keymap_editor,
@@ -376,7 +369,7 @@ struct KeymapEditor {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HumanizedActionNameCache,
-    current_widths: Entity<ColumnWidths<6>>,
+    current_widths: Entity<TableColumnWidths<6>>,
     show_hover_menus: bool,
     /// In order for the JSON LSP to run in the actions arguments editor, we
     /// require a backing file In order to avoid issues (primarily log spam)
@@ -432,7 +425,10 @@ impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let _keymap_subscription =
             cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
-        let table_interaction_state = TableInteractionState::new(window, cx);
+        let table_interaction_state = cx.new(|cx| {
+            TableInteractionState::new(cx)
+                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+        });
 
         let keystroke_editor = cx.new(|cx| {
             let mut keystroke_editor = KeystrokeInput::new(None, window, cx);
@@ -442,7 +438,7 @@ impl KeymapEditor {
 
         let filter_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Filter action names…", cx);
+            editor.set_placeholder_text("Filter action names…", window, cx);
             editor
         });
 
@@ -503,7 +499,7 @@ impl KeymapEditor {
             show_hover_menus: true,
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
-            current_widths: cx.new(|cx| ColumnWidths::new(cx)),
+            current_widths: cx.new(|cx| TableColumnWidths::new(cx)),
         };
 
         this.on_keymap_changed(window, cx);
@@ -788,9 +784,8 @@ impl KeymapEditor {
                     match previous_edit {
                         // should remove scroll from process_query
                         PreviousEdit::ScrollBarOffset(offset) => {
-                            this.table_interaction_state.update(cx, |table, _| {
-                                table.set_scrollbar_offset(Axis::Vertical, offset)
-                            })
+                            this.table_interaction_state
+                                .update(cx, |table, _| table.set_scroll_offset(offset))
                             // set selected index and scroll
                         }
                         PreviousEdit::Keybinding {
@@ -819,9 +814,8 @@ impl KeymapEditor {
                                     cx,
                                 );
                             } else {
-                                this.table_interaction_state.update(cx, |table, _| {
-                                    table.set_scrollbar_offset(Axis::Vertical, fallback)
-                                });
+                                this.table_interaction_state
+                                    .update(cx, |table, _| table.set_scroll_offset(fallback));
                             }
                             cx.notify();
                         }
@@ -1206,9 +1200,7 @@ impl KeymapEditor {
         };
         let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
         self.previous_edit = Some(PreviousEdit::ScrollBarOffset(
-            self.table_interaction_state
-                .read(cx)
-                .get_scrollbar_offset(Axis::Vertical),
+            self.table_interaction_state.read(cx).scroll_offset(),
         ));
         let keyboard_mapper = cx.keyboard_mapper().clone();
         cx.spawn(async move |_, _| {
@@ -1577,33 +1569,6 @@ impl Render for KeymapEditor {
                         h_flex()
                             .gap_2()
                             .child(
-                                right_click_menu("open-keymap-menu")
-                                    .menu(|window, cx| {
-                                        ContextMenu::build(window, cx, |menu, _, _| {
-                                            menu.header("Open Keymap JSON")
-                                                .action("User", zed_actions::OpenKeymap.boxed_clone())
-                                                .action("Zed Default", zed_actions::OpenDefaultKeymap.boxed_clone())
-                                                .action("Vim Default", vim::OpenDefaultKeymap.boxed_clone())
-                                        })
-                                    })
-                                    .anchor(gpui::Corner::TopLeft)
-                                    .trigger(|open, _, _|
-                                        IconButton::new(
-                                            "OpenKeymapJsonButton",
-                                            IconName::Json
-                                        )
-                                        .shape(ui::IconButtonShape::Square)
-                                        .when(!open, |this|
-                                            this.tooltip(move |window, cx| {
-                                                Tooltip::with_meta("Open Keymap JSON", Some(&zed_actions::OpenKeymap),"Right click to view more options", window, cx)
-                                            })
-                                        )
-                                        .on_click(|_, window, cx| {
-                                            window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
-                                        })
-                                    )
-                            )
-                            .child(
                                 div()
                                     .key_context({
                                         let mut context = KeyContext::new_with_defaults();
@@ -1617,73 +1582,139 @@ impl Render for KeymapEditor {
                                     .py_1()
                                     .border_1()
                                     .border_color(theme.colors().border)
-                                    .rounded_lg()
+                                    .rounded_md()
                                     .child(self.filter_editor.clone()),
                             )
                             .child(
-                                IconButton::new(
-                                    "KeymapEditorToggleFiltersIcon",
-                                    IconName::Keyboard,
-                                )
-                                .shape(ui::IconButtonShape::Square)
-                                .tooltip({
-                                    let focus_handle = focus_handle.clone();
-
-                                    move |window, cx| {
-                                        Tooltip::for_action_in(
-                                            "Search by Keystroke",
-                                            &ToggleKeystrokeSearch,
-                                            &focus_handle.clone(),
-                                            window,
-                                            cx,
+                                h_flex()
+                                    .gap_1()
+                                    .min_w_64()
+                                    .child(
+                                        IconButton::new(
+                                            "KeymapEditorToggleFiltersIcon",
+                                            IconName::Keyboard,
                                         )
-                                    }
-                                })
-                                .toggle_state(matches!(
-                                    self.search_mode,
-                                    SearchMode::KeyStroke { .. }
-                                ))
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(ToggleKeystrokeSearch.boxed_clone(), cx);
-                                }),
-                            )
-                            .child(
-                                IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .when(
-                                        self.keybinding_conflict_state.any_user_binding_conflicts(),
-                                        |this| {
-                                            this.indicator(Indicator::dot().color(Color::Warning))
-                                        },
-                                    )
-                                    .tooltip({
-                                        let filter_state = self.filter_state;
-                                        let focus_handle = focus_handle.clone();
+                                        .icon_size(IconSize::Small)
+                                        .tooltip({
+                                            let focus_handle = focus_handle.clone();
 
-                                        move |window, cx| {
-                                            Tooltip::for_action_in(
-                                                match filter_state {
-                                                    FilterState::All => "Show Conflicts",
-                                                    FilterState::Conflicts => "Hide Conflicts",
-                                                },
-                                                &ToggleConflictFilter,
-                                                &focus_handle.clone(),
-                                                window,
+                                            move |window, cx| {
+                                                Tooltip::for_action_in(
+                                                    "Search by Keystroke",
+                                                    &ToggleKeystrokeSearch,
+                                                    &focus_handle.clone(),
+                                                    window,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        .toggle_state(matches!(
+                                            self.search_mode,
+                                            SearchMode::KeyStroke { .. }
+                                        ))
+                                        .on_click(|_, window, cx| {
+                                            window.dispatch_action(
+                                                ToggleKeystrokeSearch.boxed_clone(),
                                                 cx,
+                                            );
+                                        }),
+                                    )
+                                    .child(
+                                        IconButton::new("KeymapEditorConflictIcon", IconName::Warning)
+                                            .icon_size(IconSize::Small)
+                                            .when(
+                                                self.keybinding_conflict_state
+                                                    .any_user_binding_conflicts(),
+                                                |this| {
+                                                    this.indicator(
+                                                        Indicator::dot().color(Color::Warning),
+                                                    )
+                                                },
                                             )
-                                        }
-                                    })
-                                    .selected_icon_color(Color::Warning)
-                                    .toggle_state(matches!(
-                                        self.filter_state,
-                                        FilterState::Conflicts
-                                    ))
-                                    .on_click(|_, window, cx| {
-                                        window.dispatch_action(
-                                            ToggleConflictFilter.boxed_clone(),
-                                            cx,
-                                        );
-                                    }),
+                                            .tooltip({
+                                                let filter_state = self.filter_state;
+                                                let focus_handle = focus_handle.clone();
+
+                                                move |window, cx| {
+                                                    Tooltip::for_action_in(
+                                                        match filter_state {
+                                                            FilterState::All => "Show Conflicts",
+                                                            FilterState::Conflicts => {
+                                                                "Hide Conflicts"
+                                                            }
+                                                        },
+                                                        &ToggleConflictFilter,
+                                                        &focus_handle.clone(),
+                                                        window,
+                                                        cx,
+                                                    )
+                                                }
+                                            })
+                                            .selected_icon_color(Color::Warning)
+                                            .toggle_state(matches!(
+                                                self.filter_state,
+                                                FilterState::Conflicts
+                                            ))
+                                            .on_click(|_, window, cx| {
+                                                window.dispatch_action(
+                                                    ToggleConflictFilter.boxed_clone(),
+                                                    cx,
+                                                );
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .ml_1()
+                                            .pl_2()
+                                            .border_l_1()
+                                            .border_color(cx.theme().colors().border_variant)
+                                            .child(
+                                                right_click_menu("open-keymap-menu")
+                                                    .menu(|window, cx| {
+                                                        ContextMenu::build(window, cx, |menu, _, _| {
+                                                            menu.header("Open Keymap JSON")
+                                                                .action(
+                                                                    "User",
+                                                                    zed_actions::OpenKeymap.boxed_clone(),
+                                                                )
+                                                                .action(
+                                                                    "Zed Default",
+                                                                    zed_actions::OpenDefaultKeymap
+                                                                        .boxed_clone(),
+                                                                )
+                                                                .action(
+                                                                    "Vim Default",
+                                                                    vim::OpenDefaultKeymap.boxed_clone(),
+                                                                )
+                                                        })
+                                                    })
+                                                    .anchor(gpui::Corner::TopLeft)
+                                                    .trigger(|open, _, _| {
+                                                        IconButton::new(
+                                                            "OpenKeymapJsonButton",
+                                                            IconName::Json,
+                                                        )
+                                                        .icon_size(IconSize::Small)
+                                                        .when(!open, |this| {
+                                                            this.tooltip(move |window, cx| {
+                                                                Tooltip::with_meta(
+                                                                    "Open keymap.json",
+                                                                    Some(&zed_actions::OpenKeymap),
+                                                                    "Right click to view more options",
+                                                                    window,
+                                                                    cx,
+                                                                )
+                                                            })
+                                                        })
+                                                        .on_click(|_, window, cx| {
+                                                            window.dispatch_action(
+                                                                zed_actions::OpenKeymap.boxed_clone(),
+                                                                cx,
+                                                            );
+                                                        })
+                                                    }),
+                                            ),
+                                    )
                             ),
                     )
                     .when_some(
@@ -1694,48 +1725,42 @@ impl Render for KeymapEditor {
                         |this, exact_match| {
                             this.child(
                                 h_flex()
-                                    .map(|this| {
-                                        if self
-                                            .keybinding_conflict_state
-                                            .any_user_binding_conflicts()
-                                        {
-                                            this.pr(rems_from_px(54.))
-                                        } else {
-                                            this.pr_7()
-                                        }
-                                    })
                                     .gap_2()
                                     .child(self.keystroke_editor.clone())
                                     .child(
-                                        IconButton::new(
-                                            "keystrokes-exact-match",
-                                            IconName::CaseSensitive,
-                                        )
-                                        .tooltip({
-                                            let keystroke_focus_handle =
-                                                self.keystroke_editor.read(cx).focus_handle(cx);
-
-                                            move |window, cx| {
-                                                Tooltip::for_action_in(
-                                                    "Toggle Exact Match Mode",
-                                                    &ToggleExactKeystrokeMatching,
-                                                    &keystroke_focus_handle,
-                                                    window,
-                                                    cx,
+                                        h_flex()
+                                            .min_w_64()
+                                            .child(
+                                                IconButton::new(
+                                                    "keystrokes-exact-match",
+                                                    IconName::CaseSensitive,
                                                 )
-                                            }
-                                        })
-                                        .shape(IconButtonShape::Square)
-                                        .toggle_state(exact_match)
-                                        .on_click(
-                                            cx.listener(|_, _, window, cx| {
-                                                window.dispatch_action(
-                                                    ToggleExactKeystrokeMatching.boxed_clone(),
-                                                    cx,
-                                                );
-                                            }),
-                                        ),
-                                    ),
+                                                .tooltip({
+                                                    let keystroke_focus_handle =
+                                                        self.keystroke_editor.read(cx).focus_handle(cx);
+
+                                                    move |window, cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Toggle Exact Match Mode",
+                                                            &ToggleExactKeystrokeMatching,
+                                                            &keystroke_focus_handle,
+                                                            window,
+                                                            cx,
+                                                        )
+                                                    }
+                                                })
+                                                .shape(IconButtonShape::Square)
+                                                .toggle_state(exact_match)
+                                                .on_click(
+                                                    cx.listener(|_, _, window, cx| {
+                                                        window.dispatch_action(
+                                                            ToggleExactKeystrokeMatching.boxed_clone(),
+                                                            cx,
+                                                        );
+                                                    }),
+                                                ),
+                                            ),
+                                    )
                             )
                         },
                     ),
@@ -1758,12 +1783,12 @@ impl Render for KeymapEditor {
                     ])
                     .resizable_columns(
                         [
-                            ResizeBehavior::None,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable, // this column doesn't matter
+                            TableResizeBehavior::None,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable, // this column doesn't matter
                         ],
                         &self.current_widths,
                         cx,
@@ -2348,10 +2373,7 @@ impl KeybindingEditorModal {
                             keymap.previous_edit = Some(PreviousEdit::Keybinding {
                                 action_mapping,
                                 action_name,
-                                fallback: keymap
-                                    .table_interaction_state
-                                    .read(cx)
-                                    .get_scrollbar_offset(Axis::Vertical),
+                                fallback: keymap.table_interaction_state.read(cx).scroll_offset(),
                             });
                             let status_toast = StatusToast::new(
                                 format!("Saved edits to the {} action.", humanized_action_name),
@@ -2771,7 +2793,7 @@ impl ActionArgumentsEditor {
             editor.set_text(arguments, window, cx);
         } else {
             // TODO: default value from schema?
-            editor.set_placeholder_text("Action Arguments", cx);
+            editor.set_placeholder_text("Action Arguments", window, cx);
         }
     }
 

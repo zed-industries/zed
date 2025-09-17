@@ -19,7 +19,7 @@ use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
 use settings::Settings;
-use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
+use task::{RevealStrategy, RevealTarget, SpawnInTerminal, TaskId};
 use terminal::{
     Terminal,
     terminal_settings::{TerminalDockPosition, TerminalSettings},
@@ -49,6 +49,8 @@ const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 actions!(
     terminal_panel,
     [
+        /// Toggles the terminal panel.
+        Toggle,
         /// Toggles focus on the terminal panel.
         ToggleFocus
     ]
@@ -62,6 +64,13 @@ pub fn init(cx: &mut App) {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+                }
+            });
+            workspace.register_action(|workspace, _: &Toggle, window, cx| {
+                if is_enabled_in_workspace(workspace, cx) {
+                    if !workspace.toggle_panel_focus::<TerminalPanel>(window, cx) {
+                        workspace.close_panel::<TerminalPanel>(window, cx);
+                    }
                 }
             });
         },
@@ -376,19 +385,44 @@ impl TerminalPanel {
                 }
                 self.serialize(cx);
             }
-            &pane::Event::Split(direction) => {
-                let fut = self.new_pane_with_cloned_active_terminal(window, cx);
-                let pane = pane.clone();
-                cx.spawn_in(window, async move |panel, cx| {
-                    let Some(new_pane) = fut.await else {
+            &pane::Event::Split {
+                direction,
+                clone_active_item,
+            } => {
+                if clone_active_item {
+                    let fut = self.new_pane_with_cloned_active_terminal(window, cx);
+                    let pane = pane.clone();
+                    cx.spawn_in(window, async move |panel, cx| {
+                        let Some(new_pane) = fut.await else {
+                            return;
+                        };
+                        panel
+                            .update_in(cx, |panel, window, cx| {
+                                panel.center.split(&pane, &new_pane, direction).log_err();
+                                window.focus(&new_pane.focus_handle(cx));
+                            })
+                            .ok();
+                    })
+                    .detach();
+                } else {
+                    let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx))
+                    else {
                         return;
                     };
-                    _ = panel.update_in(cx, |panel, window, cx| {
-                        panel.center.split(&pane, &new_pane, direction).log_err();
-                        window.focus(&new_pane.focus_handle(cx));
+                    let Ok(project) = self
+                        .workspace
+                        .update(cx, |workspace, _| workspace.project().clone())
+                    else {
+                        return;
+                    };
+                    let new_pane =
+                        new_terminal_pane(self.workspace.clone(), project, false, window, cx);
+                    new_pane.update(cx, |pane, cx| {
+                        pane.add_item(item, true, true, None, window, cx);
                     });
-                })
-                .detach();
+                    self.center.split(&pane, &new_pane, direction).log_err();
+                    window.focus(&new_pane.focus_handle(cx));
+                }
             }
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
@@ -437,7 +471,7 @@ impl TerminalPanel {
                 })
                 .ok()?
                 .await
-                .ok()?;
+                .log_err()?;
 
             panel
                 .update_in(cx, move |terminal_panel, window, cx| {
@@ -487,42 +521,10 @@ impl TerminalPanel {
 
     pub fn spawn_task(
         &mut self,
-        task: &SpawnInTerminal,
+        task: SpawnInTerminal,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<WeakEntity<Terminal>>> {
-        let remote_client = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                let project = workspace.project().read(cx);
-                if project.is_via_collab() {
-                    Err(anyhow!("cannot spawn tasks as a guest"))
-                } else {
-                    Ok(project.remote_client())
-                }
-            })
-            .flatten();
-
-        let remote_client = match remote_client {
-            Ok(remote_client) => remote_client,
-            Err(e) => return Task::ready(Err(e)),
-        };
-
-        let remote_shell = remote_client
-            .as_ref()
-            .and_then(|remote_client| remote_client.read(cx).shell());
-
-        let builder = ShellBuilder::new(remote_shell.as_deref(), &task.shell);
-        let command_label = builder.command_label(&task.command_label);
-        let (command, args) = builder.build(task.command.clone(), &task.args);
-
-        let task = SpawnInTerminal {
-            command_label,
-            command: Some(command),
-            args,
-            ..task.clone()
-        };
-
         if task.allow_concurrent_runs && task.use_new_terminal {
             return self.spawn_in_new_terminal(task, window, cx);
         }
@@ -767,7 +769,7 @@ impl TerminalPanel {
         })
     }
 
-    pub fn add_terminal_shell(
+    fn add_terminal_shell(
         &mut self,
         cwd: Option<PathBuf>,
         reveal_strategy: RevealStrategy,
@@ -777,7 +779,7 @@ impl TerminalPanel {
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
-                anyhow::bail!("terminal not yet supported for remote projects");
+                anyhow::bail!("terminal not yet supported for collaborative projects");
             }
             let pane = terminal_panel.update(cx, |terminal_panel, _| {
                 terminal_panel.pending_terminals_to_add += 1;
@@ -1556,7 +1558,7 @@ impl workspace::TerminalProvider for TerminalProvider {
         window.spawn(cx, async move |cx| {
             let terminal = terminal_panel
                 .update_in(cx, |terminal_panel, window, cx| {
-                    terminal_panel.spawn_task(&task, window, cx)
+                    terminal_panel.spawn_task(task, window, cx)
                 })
                 .ok()?
                 .await;

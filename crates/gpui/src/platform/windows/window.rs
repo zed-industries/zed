@@ -684,8 +684,16 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 this.set_window_placement().log_err();
-                unsafe { SetActiveWindow(hwnd).log_err() };
-                unsafe { SetFocus(Some(hwnd)).log_err() };
+
+                unsafe {
+                    // If the window is minimized, restore it.
+                    if IsIconic(hwnd).as_bool() {
+                        ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
+                    }
+
+                    SetActiveWindow(hwnd).log_err();
+                    SetFocus(Some(hwnd)).log_err();
+                }
 
                 // premium ragebait by windows, this is needed because the window
                 // must have received an input event to be able to set itself to foreground
@@ -839,7 +847,7 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow().renderer.gpu_specs().log_err()
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         // There is no such thing on Windows.
     }
 }

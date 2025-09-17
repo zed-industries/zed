@@ -256,6 +256,9 @@ fn load_shell_from_passwd() -> Result<()> {
             &mut result,
         )
     };
+    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
+
+    // SAFETY: If `getpwuid_r` doesn't error, we have the entry here.
     let entry = unsafe { pwd.assume_init() };
 
     anyhow::ensure!(
@@ -264,7 +267,6 @@ fn load_shell_from_passwd() -> Result<()> {
         uid,
         status
     );
-    anyhow::ensure!(!result.is_null(), "passwd entry for uid {} not found", uid);
     anyhow::ensure!(
         entry.pw_uid == uid,
         "passwd entry has different uid ({}) than getuid ({}) returned",
@@ -1091,6 +1093,15 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     fn from(result: anyhow::Result<O>) -> Self {
         ConnectionResult::Result(result)
     }
+}
+
+#[track_caller]
+pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
+    #[cfg(debug_assertions)]
+    if option.is_none() {
+        panic!("Unexpected None");
+    }
+    option
 }
 
 #[cfg(test)]

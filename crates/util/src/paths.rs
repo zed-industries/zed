@@ -12,10 +12,30 @@ use std::{
     sync::LazyLock,
 };
 
+static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
-    static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
-    HOME_DIR.get_or_init(|| dirs::home_dir().expect("failed to determine home directory"))
+    HOME_DIR.get_or_init(|| {
+        if cfg!(any(test, feature = "test-support")) {
+            if cfg!(target_os = "macos") {
+                PathBuf::from("/Users/zed")
+            } else if cfg!(target_os = "windows") {
+                PathBuf::from("C:\\Users\\zed")
+            } else {
+                PathBuf::from("/home/zed")
+            }
+        } else {
+            dirs::home_dir().expect("failed to determine home directory")
+        }
+    })
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_home_dir(path: PathBuf) {
+    HOME_DIR
+        .set(path)
+        .expect("set_home_dir called after home_dir was already accessed");
 }
 
 pub trait PathExt {
@@ -45,6 +65,7 @@ pub trait PathExt {
                 .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+    fn local_to_wsl(&self) -> Option<PathBuf>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -97,6 +118,26 @@ impl<T: AsRef<Path>> PathExt for T {
         {
             self.as_ref().to_string_lossy().to_string()
         }
+    }
+
+    /// Converts a local path to one that can be used inside of WSL.
+    /// Returns `None` if the path cannot be converted into a WSL one (network share).
+    fn local_to_wsl(&self) -> Option<PathBuf> {
+        let mut new_path = PathBuf::new();
+        for component in self.as_ref().components() {
+            match component {
+                std::path::Component::Prefix(prefix) => {
+                    let drive_letter = prefix.as_os_str().to_string_lossy().to_lowercase();
+                    let drive_letter = drive_letter.strip_suffix(':')?;
+
+                    new_path.push(format!("/mnt/{}", drive_letter));
+                }
+                std::path::Component::RootDir => {}
+                _ => new_path.push(component),
+            }
+        }
+
+        Some(new_path)
     }
 }
 

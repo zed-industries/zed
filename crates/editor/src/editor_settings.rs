@@ -6,7 +6,8 @@ use language::CursorShape;
 use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi, VsCodeSettings};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi, VsCodeSettings};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
@@ -203,23 +204,6 @@ pub struct Gutter {
     pub runnables: bool,
     pub breakpoints: bool,
     pub folds: bool,
-}
-
-/// When to show the scrollbar in the editor.
-///
-/// Default: auto
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowScrollbar {
-    /// Show the scrollbar if there's important information or
-    /// follow the system's configured behavior.
-    Auto,
-    /// Match the system's configured behavior.
-    System,
-    /// Always show the scrollbar.
-    Always,
-    /// Never show the scrollbar.
-    Never,
 }
 
 /// When to show the minimap in the editor.
@@ -431,8 +415,9 @@ pub enum SnippetSortOrder {
     None,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
 #[settings_ui(group = "Editor")]
+#[settings_key(None)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -747,6 +732,7 @@ pub struct ScrollbarAxesContent {
 #[derive(
     Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq, SettingsUi,
 )]
+#[settings_ui(group = "Gutter")]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -776,9 +762,13 @@ impl EditorSettings {
     }
 }
 
-impl Settings for EditorSettings {
-    const KEY: Option<&'static str> = None;
+impl ScrollbarVisibility for EditorSettings {
+    fn visibility(&self, _cx: &App) -> ShowScrollbar {
+        self.scrollbar.show
+    }
+}
 
+impl Settings for EditorSettings {
     type FileContent = EditorSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {

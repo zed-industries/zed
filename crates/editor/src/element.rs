@@ -18,7 +18,7 @@ use crate::{
     editor_settings::{
         CurrentLineHighlight, DocumentColorsRenderMode, DoubleClickInMultibuffer, Minimap,
         MinimapThumb, MinimapThumbBorder, ScrollBeyondLastLine, ScrollbarAxes,
-        ScrollbarDiagnostics, ShowMinimap, ShowScrollbar,
+        ScrollbarDiagnostics, ShowMinimap,
     },
     git::blame::{BlameRenderer, GitBlame, GlobalBlameRenderer},
     hover_popover::{
@@ -85,7 +85,7 @@ use theme::{ActiveTheme, Appearance, BufferLineHeight, PlayerColor};
 use ui::utils::ensure_minimum_contrast;
 use ui::{
     ButtonLike, ContextMenu, Indicator, KeyBinding, POPOVER_Y_PADDING, Tooltip, h_flex, prelude::*,
-    right_click_menu,
+    right_click_menu, scrollbars::ShowScrollbar,
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::post_inc;
@@ -365,6 +365,8 @@ impl EditorElement {
         register_action(editor, window, Editor::toggle_comments);
         register_action(editor, window, Editor::select_larger_syntax_node);
         register_action(editor, window, Editor::select_smaller_syntax_node);
+        register_action(editor, window, Editor::select_next_syntax_node);
+        register_action(editor, window, Editor::select_prev_syntax_node);
         register_action(editor, window, Editor::unwrap_syntax_node);
         register_action(editor, window, Editor::select_enclosing_symbol);
         register_action(editor, window, Editor::move_to_enclosing_bracket);
@@ -379,6 +381,8 @@ impl EditorElement {
         register_action(editor, window, Editor::go_to_prev_diagnostic);
         register_action(editor, window, Editor::go_to_next_hunk);
         register_action(editor, window, Editor::go_to_prev_hunk);
+        register_action(editor, window, Editor::go_to_next_document_highlight);
+        register_action(editor, window, Editor::go_to_prev_document_highlight);
         register_action(editor, window, |editor, action, window, cx| {
             editor
                 .go_to_definition(action, window, cx)
@@ -1056,7 +1060,7 @@ impl EditorElement {
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
-                            id: post_inc(&mut editor.selections.next_selection_id),
+                            id: post_inc(&mut editor.selections.next_selection_id()),
                             start: drop_anchor,
                             end: drop_anchor,
                             reversed: false,
@@ -1501,6 +1505,15 @@ impl EditorElement {
                 selections.push((player, layouts));
             }
         });
+
+        #[cfg(debug_assertions)]
+        Self::layout_debug_ranges(
+            &mut selections,
+            start_anchor..end_anchor,
+            &snapshot.display_snapshot,
+            cx,
+        );
+
         (selections, active_rows, newest_selection_head)
     }
 
@@ -1534,9 +1547,13 @@ impl EditorElement {
         // Local cursors
         if !skip_local {
             let color = cx.theme().players().local().cursor;
-            editor.selections.disjoint.iter().for_each(|selection| {
-                add_cursor(selection.head(), color);
-            });
+            editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .for_each(|selection| {
+                    add_cursor(selection.head(), color);
+                });
             if let Some(ref selection) = editor.selections.pending_anchor() {
                 add_cursor(selection.head(), color);
             }
@@ -3449,12 +3466,15 @@ impl EditorElement {
 
             let placeholder_lines = placeholder_text
                 .as_ref()
-                .map_or("", AsRef::as_ref)
-                .split('\n')
+                .map_or(Vec::new(), |text| text.split('\n').collect::<Vec<_>>());
+
+            let placeholder_line_count = placeholder_lines.len();
+
+            placeholder_lines
+                .into_iter()
                 .skip(rows.start.0 as usize)
                 .chain(iter::repeat(""))
-                .take(rows.len());
-            placeholder_lines
+                .take(cmp::max(rows.len(), placeholder_line_count))
                 .map(move |line| {
                     let run = TextRun {
                         len: line.len(),
@@ -7287,6 +7307,54 @@ impl EditorElement {
 
         unstaged == unstaged_hollow
     }
+
+    #[cfg(debug_assertions)]
+    fn layout_debug_ranges(
+        selections: &mut Vec<(PlayerColor, Vec<SelectionLayout>)>,
+        anchor_range: Range<Anchor>,
+        display_snapshot: &DisplaySnapshot,
+        cx: &App,
+    ) {
+        let theme = cx.theme();
+        text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
+            if debug_ranges.ranges.is_empty() {
+                return;
+            }
+            let buffer_snapshot = &display_snapshot.buffer_snapshot;
+            for (buffer, buffer_range, excerpt_id) in
+                buffer_snapshot.range_to_buffer_ranges(anchor_range)
+            {
+                let buffer_range =
+                    buffer.anchor_after(buffer_range.start)..buffer.anchor_before(buffer_range.end);
+                selections.extend(debug_ranges.ranges.iter().flat_map(|debug_range| {
+                    let player_color = theme
+                        .players()
+                        .color_for_participant(debug_range.occurrence_index as u32 + 1);
+                    debug_range.ranges.iter().filter_map(move |range| {
+                        if range.start.buffer_id != Some(buffer.remote_id()) {
+                            return None;
+                        }
+                        let clipped_start = range.start.max(&buffer_range.start, buffer);
+                        let clipped_end = range.end.min(&buffer_range.end, buffer);
+                        let range = buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_start)?
+                            ..buffer_snapshot.anchor_in_excerpt(excerpt_id, clipped_end)?;
+                        let start = range.start.to_display_point(display_snapshot);
+                        let end = range.end.to_display_point(display_snapshot);
+                        let selection_layout = SelectionLayout {
+                            head: start,
+                            range: start..end,
+                            cursor_shape: CursorShape::Bar,
+                            is_newest: false,
+                            is_local: false,
+                            active_rows: start.row()..end.row(),
+                            user_name: Some(SharedString::new(debug_range.value.clone())),
+                        };
+                        Some((player_color, vec![selection_layout]))
+                    })
+                }));
+            }
+        });
+    }
 }
 
 fn header_jump_data(
@@ -8296,7 +8364,7 @@ impl Element for EditorElement {
                     let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
                         (editor.snapshot(window, cx), editor.read_only(cx))
                     });
-                    let style = self.style.clone();
+                    let style = &self.style;
 
                     let rem_size = window.rem_size();
                     let font_id = window.text_system().resolve_font(&style.text.font());
@@ -8771,7 +8839,7 @@ impl Element for EditorElement {
                                     blame.blame_for_rows(&[row_infos], cx).next()
                                 })
                                 .flatten()?;
-                            let mut element = render_inline_blame_entry(blame_entry, &style, cx)?;
+                            let mut element = render_inline_blame_entry(blame_entry, style, cx)?;
                             let inline_blame_padding = ProjectSettings::get_global(cx)
                                 .git
                                 .inline_blame
@@ -8791,7 +8859,7 @@ impl Element for EditorElement {
                     let longest_line_width = layout_line(
                         snapshot.longest_row(),
                         &snapshot,
-                        &style,
+                        style,
                         editor_width,
                         is_row_soft_wrapped,
                         window,
@@ -8949,7 +9017,7 @@ impl Element for EditorElement {
                                 scroll_pixel_position,
                                 newest_selection_head,
                                 editor_width,
-                                &style,
+                                style,
                                 window,
                                 cx,
                             )
@@ -8967,7 +9035,7 @@ impl Element for EditorElement {
                         end_row,
                         line_height,
                         em_width,
-                        &style,
+                        style,
                         window,
                         cx,
                     );
@@ -9112,7 +9180,7 @@ impl Element for EditorElement {
                                     &line_layouts,
                                     newest_selection_head,
                                     newest_selection_point,
-                                    &style,
+                                    style,
                                     window,
                                     cx,
                                 )
@@ -9252,11 +9320,21 @@ impl Element for EditorElement {
                     });
 
                     let invisible_symbol_font_size = font_size / 2.;
+                    let whitespace_map = &self
+                        .editor
+                        .read(cx)
+                        .buffer
+                        .read(cx)
+                        .language_settings(cx)
+                        .whitespace_map;
+
+                    let tab_char = whitespace_map.tab();
+                    let tab_len = tab_char.len();
                     let tab_invisible = window.text_system().shape_line(
-                        "→".into(),
+                        tab_char,
                         invisible_symbol_font_size,
                         &[TextRun {
-                            len: "→".len(),
+                            len: tab_len,
                             font: self.style.text.font(),
                             color: cx.theme().colors().editor_invisible,
                             background_color: None,
@@ -9265,11 +9343,14 @@ impl Element for EditorElement {
                         }],
                         None,
                     );
+
+                    let space_char = whitespace_map.space();
+                    let space_len = space_char.len();
                     let space_invisible = window.text_system().shape_line(
-                        "•".into(),
+                        space_char,
                         invisible_symbol_font_size,
                         &[TextRun {
-                            len: "•".len(),
+                            len: space_len,
                             font: self.style.text.font(),
                             color: cx.theme().colors().editor_invisible,
                             background_color: None,
@@ -9617,7 +9698,7 @@ impl EditorScrollbars {
                 editor_bounds.bottom_left(),
                 size(
                     // The horizontal viewport size differs from the space available for the
-                    // horizontal scrollbar, so we have to manually stich it together here.
+                    // horizontal scrollbar, so we have to manually stitch it together here.
                     editor_bounds.size.width - right_margin,
                     scrollbar_width,
                 ),
@@ -10739,7 +10820,7 @@ mod tests {
         let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, window, cx| {
-                editor.set_placeholder_text("hello", cx);
+                editor.set_placeholder_text("hello", window, cx);
                 editor.insert_blocks(
                     [BlockProperties {
                         style: BlockStyle::Fixed,

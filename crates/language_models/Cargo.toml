@@ -29,6 +29,7 @@ copilot.workspace = true
 credentials_provider.workspace = true
 deepseek = { workspace = true, features = ["schemars"] }
 editor.workspace = true
+fs.workspace = true
 futures.workspace = true
 google_ai = { workspace = true, features = ["schemars"] }
 gpui.workspace = true
@@ -61,6 +62,7 @@ util.workspace = true
 vercel = { workspace = true, features = ["schemars"] }
 workspace-hack.workspace = true
 x_ai = { workspace = true, features = ["schemars"] }
+zed_env_vars.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

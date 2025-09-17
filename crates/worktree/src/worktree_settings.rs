@@ -4,11 +4,12 @@ use anyhow::Context as _;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use util::paths::PathMatcher;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorktreeSettings {
+    pub project_name: Option<String>,
     pub file_scan_inclusions: PathMatcher,
     pub file_scan_exclusions: PathMatcher,
     pub private_files: PathMatcher,
@@ -31,8 +32,16 @@ impl WorktreeSettings {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct WorktreeSettingsContent {
+    /// The displayed name of this project. If not set, the root directory name
+    /// will be displayed.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub project_name: Option<String>,
+
     /// Completely ignore files matching globs from `file_scan_exclusions`. Overrides
     /// `file_scan_inclusions`.
     ///
@@ -65,8 +74,6 @@ pub struct WorktreeSettingsContent {
 }
 
 impl Settings for WorktreeSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = WorktreeSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
@@ -94,6 +101,7 @@ impl Settings for WorktreeSettings {
                 &parsed_file_scan_inclusions,
                 "file_scan_inclusions",
             )?,
+            project_name: result.project_name,
         })
     }
 

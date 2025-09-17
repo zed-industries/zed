@@ -68,6 +68,78 @@ fn test_line_endings(cx: &mut gpui::App) {
 }
 
 #[gpui::test]
+fn test_set_line_ending(cx: &mut TestAppContext) {
+    let base = cx.new(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+    let base_replica = cx.new(|cx| {
+        Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
+    });
+    base.update(cx, |_buffer, cx| {
+        cx.subscribe(&base_replica, |this, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                this.apply_ops([operation.clone()], cx);
+            }
+        })
+        .detach();
+    });
+    base_replica.update(cx, |_buffer, cx| {
+        cx.subscribe(&base, |this, _, event, cx| {
+            if let BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } = event
+            {
+                this.apply_ops([operation.clone()], cx);
+            }
+        })
+        .detach();
+    });
+
+    // Base
+    base_replica.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    base.update(cx, |buffer, cx| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+        buffer.set_line_ending(LineEnding::Windows, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+    base_replica.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+    base.update(cx, |buffer, cx| {
+        buffer.set_line_ending(LineEnding::Unix, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    base_replica.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+
+    // Replica
+    base.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    base_replica.update(cx, |buffer, cx| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+        buffer.set_line_ending(LineEnding::Windows, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+    base.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+    base_replica.update(cx, |buffer, cx| {
+        buffer.set_line_ending(LineEnding::Unix, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+    base.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.line_ending(), LineEnding::Unix);
+    });
+}
+
+#[gpui::test]
 fn test_select_language(cx: &mut App) {
     init_settings(cx, |_| {});
 
@@ -707,9 +779,7 @@ async fn test_outline(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
-        .unwrap();
+    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
         outline
@@ -791,9 +861,7 @@ async fn test_outline_nodes_with_newlines(cx: &mut gpui::TestAppContext) {
     .unindent();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
-        .unwrap();
+    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
         outline
@@ -830,7 +898,7 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
     let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
 
     // extra context nodes are included in the outline.
-    let outline = snapshot.outline(None).unwrap();
+    let outline = snapshot.outline(None);
     assert_eq!(
         outline
             .items
@@ -841,7 +909,7 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
     );
 
     // extra context nodes do not appear in breadcrumbs.
-    let symbols = snapshot.symbols_containing(3, None).unwrap();
+    let symbols = snapshot.symbols_containing(3, None);
     assert_eq!(
         symbols
             .iter()
@@ -873,9 +941,7 @@ fn test_outline_annotations(cx: &mut App) {
     .unindent();
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let outline = buffer
-        .update(cx, |buffer, _| buffer.snapshot().outline(None))
-        .unwrap();
+    let outline = buffer.update(cx, |buffer, _| buffer.snapshot().outline(None));
 
     assert_eq!(
         outline
@@ -979,7 +1045,6 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
     ) -> Vec<(String, Range<Point>)> {
         snapshot
             .symbols_containing(position, None)
-            .unwrap()
             .into_iter()
             .map(|item| {
                 (
@@ -3786,4 +3851,81 @@ fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     cx.update_global::<SettingsStore, _>(|settings, cx| {
         settings.update_user_settings::<AllLanguageSettings>(cx, f);
     });
+}
+
+#[gpui::test(iterations = 100)]
+fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
+    use util::RandomCharIter;
+
+    // Generate random text
+    let len = rng.random_range(0..10000);
+    let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+    let snapshot = buffer.read(cx).snapshot();
+
+    // Get all chunks and verify their bitmaps
+    let chunks = snapshot.chunks(0..snapshot.len(), false);
+
+    for chunk in chunks {
+        let chunk_text = chunk.text;
+        let chars_bitmap = chunk.chars;
+        let tabs_bitmap = chunk.tabs;
+
+        // Check empty chunks have empty bitmaps
+        if chunk_text.is_empty() {
+            assert_eq!(
+                chars_bitmap, 0,
+                "Empty chunk should have empty chars bitmap"
+            );
+            assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
+            continue;
+        }
+
+        // Verify that chunk text doesn't exceed 128 bytes
+        assert!(
+            chunk_text.len() <= 128,
+            "Chunk text length {} exceeds 128 bytes",
+            chunk_text.len()
+        );
+
+        // Verify chars bitmap
+        let char_indices = chunk_text
+            .char_indices()
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+
+        for byte_idx in 0..chunk_text.len() {
+            let should_have_bit = char_indices.contains(&byte_idx);
+            let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != should_have_bit {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Char indices: {:?}", char_indices);
+                eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+            }
+
+            assert_eq!(
+                has_bit, should_have_bit,
+                "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                byte_idx, chunk_text, should_have_bit, has_bit
+            );
+        }
+
+        // Verify tabs bitmap
+        for (byte_idx, byte) in chunk_text.bytes().enumerate() {
+            let is_tab = byte == b'\t';
+            let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != is_tab {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Tabs bitmap: {:#b}", tabs_bitmap);
+                assert_eq!(
+                    has_bit, is_tab,
+                    "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
+                    byte_idx, chunk_text, byte as char, is_tab, has_bit
+                );
+            }
+        }
+    }
 }

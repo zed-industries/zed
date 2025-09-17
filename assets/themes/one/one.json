@@ -321,6 +321,11 @@
             "font_style": null,
             "font_weight": null
           },
+          "punctuation.markup": {
+            "color": "#d07277ff",
+            "font_style": null,
+            "font_weight": null
+          },
           "punctuation.special": {
             "color": "#b1574bff",
             "font_style": null,
@@ -711,6 +716,11 @@
             "font_weight": null
           },
           "punctuation.list_marker": {
+            "color": "#d3604fff",
+            "font_style": null,
+            "font_weight": null
+          },
+          "punctuation.markup": {
             "color": "#d3604fff",
             "font_style": null,
             "font_weight": null

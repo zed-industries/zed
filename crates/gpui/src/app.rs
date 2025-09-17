@@ -958,6 +958,14 @@ impl App {
                     cx.window_update_stack.pop();
                     window.root.replace(root_view.into());
                     window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
+
+                    // allow a window to draw at least once before returning
+                    // this didn't cause any issues on non windows platforms as it seems we always won the race to on_request_frame
+                    // on windows we quite frequently lose the race and return a window that has never rendered, which leads to a crash
+                    // where DispatchTree::root_node_id asserts on empty nodes
+                    let clear = window.draw(cx);
+                    clear.clear();
+
                     cx.window_handles.insert(id, window.handle);
                     cx.windows.get_mut(id).unwrap().replace(window);
                     Ok(handle)
@@ -1358,12 +1366,7 @@ impl App {
         F: FnOnce(AnyView, &mut Window, &mut App) -> T,
     {
         self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(id)
-                .context("window not found")?
-                .take()
-                .context("window not found")?;
+            let mut window = cx.windows.get_mut(id)?.take()?;
 
             let root_view = window.root.clone().unwrap();
 
@@ -1380,15 +1383,14 @@ impl App {
                     true
                 });
             } else {
-                cx.windows
-                    .get_mut(id)
-                    .context("window not found")?
-                    .replace(window);
+                cx.windows.get_mut(id)?.replace(window);
             }
 
-            Ok(result)
+            Some(result)
         })
+        .context("window not found")
     }
+
     /// Creates an `AsyncApp`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncApp {

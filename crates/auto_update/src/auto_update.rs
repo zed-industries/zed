@@ -10,7 +10,7 @@ use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsStore, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
 use std::{
@@ -34,7 +34,7 @@ actions!(
         /// Checks for available updates.
         Check,
         /// Dismisses the update error message.
-        DismissErrorMessage,
+        DismissMessage,
         /// Opens the release notes for the current version in a browser.
         ViewReleaseNotes,
     ]
@@ -55,14 +55,14 @@ pub enum VersionCheckType {
     Semantic(SemanticVersion),
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading { version: VersionCheckType },
     Installing { version: VersionCheckType },
     Updated { version: VersionCheckType },
-    Errored,
+    Errored { error: Arc<anyhow::Error> },
 }
 
 impl AutoUpdateStatus {
@@ -118,13 +118,14 @@ struct AutoUpdateSetting(bool);
 /// Whether or not to automatically check for updates.
 ///
 /// Default: true
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi)]
-#[serde(transparent)]
-struct AutoUpdateSettingContent(bool);
+#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
+#[settings_key(None)]
+#[settings_ui(group = "Auto Update")]
+struct AutoUpdateSettingContent {
+    pub auto_update: Option<bool>,
+}
 
 impl Settings for AutoUpdateSetting {
-    const KEY: Option<&'static str> = Some("auto_update");
-
     type FileContent = AutoUpdateSettingContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -135,17 +136,22 @@ impl Settings for AutoUpdateSetting {
             sources.user,
         ]
         .into_iter()
-        .find_map(|value| value.copied())
-        .unwrap_or(*sources.default);
+        .find_map(|value| value.and_then(|val| val.auto_update))
+        .or(sources.default.auto_update)
+        .ok_or_else(Self::missing_default)?;
 
-        Ok(Self(auto_update.0))
+        Ok(Self(auto_update))
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
         let mut cur = &mut Some(*current);
         vscode.enum_setting("update.mode", &mut cur, |s| match s {
-            "none" | "manual" => Some(AutoUpdateSettingContent(false)),
-            _ => Some(AutoUpdateSettingContent(true)),
+            "none" | "manual" => Some(AutoUpdateSettingContent {
+                auto_update: Some(false),
+            }),
+            _ => Some(AutoUpdateSettingContent {
+                auto_update: Some(true),
+            }),
         });
         *current = cur.unwrap();
     }
@@ -377,7 +383,9 @@ impl AutoUpdater {
                         }
                         UpdateCheckType::Manual => {
                             log::error!("auto-update failed: error:{:?}", error);
-                            AutoUpdateStatus::Errored
+                            AutoUpdateStatus::Errored {
+                                error: Arc::new(error),
+                            }
                         }
                     };
 
@@ -396,8 +404,8 @@ impl AutoUpdater {
         self.status.clone()
     }
 
-    pub fn dismiss_error(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.status == AutoUpdateStatus::Idle {
+    pub fn dismiss(&mut self, cx: &mut Context<Self>) -> bool {
+        if let AutoUpdateStatus::Idle = self.status {
             return false;
         }
         self.status = AutoUpdateStatus::Idle;
@@ -558,6 +566,7 @@ impl AutoUpdater {
 
         this.update(&mut cx, |this, cx| {
             this.status = AutoUpdateStatus::Checking;
+            log::info!("Auto Update: checking for updates");
             cx.notify();
         })?;
 
@@ -985,7 +994,26 @@ pub fn finalize_auto_update_on_quit() {
 
 #[cfg(test)]
 mod tests {
+    use gpui::TestAppContext;
+    use settings::default_settings;
+
     use super::*;
+
+    #[gpui::test]
+    fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let mut store = SettingsStore::new(cx);
+            store
+                .set_default_settings(&default_settings(), cx)
+                .expect("Unable to set default settings");
+            store
+                .set_user_settings("{}", cx)
+                .expect("Unable to set user settings");
+            cx.set_global(store);
+            AutoUpdateSetting::register(cx);
+            assert!(AutoUpdateSetting::get_global(cx).0);
+        });
+    }
 
     #[test]
     fn test_stable_does_not_update_when_fetched_version_is_not_higher() {

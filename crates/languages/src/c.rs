@@ -5,11 +5,10 @@ use gpui::{App, AsyncApp};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, latest_github_release};
 pub use language::*;
 use lsp::{InitializeParams, LanguageServerBinary, LanguageServerName};
-use project::{lsp_store::clangd_ext, project_settings::ProjectSettings};
+use project::lsp_store::clangd_ext;
 use serde_json::json;
-use settings::Settings as _;
 use smol::fs;
-use std::{any::Any, env::consts, path::PathBuf, sync::Arc};
+use std::{env::consts, path::PathBuf, sync::Arc};
 use util::{ResultExt, fs::remove_matching, maybe, merge_json_value_into};
 
 use crate::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -20,42 +19,18 @@ impl CLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("clangd");
 }
 
-#[async_trait(?Send)]
-impl super::LspAdapter for CLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        Self::SERVER_NAME
-    }
-
-    async fn check_if_user_installed(
-        &self,
-        delegate: &dyn LspAdapterDelegate,
-        _: Option<Toolchain>,
-        _: &AsyncApp,
-    ) -> Option<LanguageServerBinary> {
-        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-        Some(LanguageServerBinary {
-            path,
-            arguments: Vec::new(),
-            env: None,
-        })
-    }
+impl LspInstaller for CLspAdapter {
+    type BinaryVersion = GitHubLspBinaryVersion;
 
     async fn fetch_latest_server_version(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Send + Any>> {
-        let release = latest_github_release(
-            "clangd/clangd",
-            true,
-            ProjectSettings::try_read_global(cx, |s| {
-                s.lsp.get(&Self::SERVER_NAME)?.fetch.as_ref()?.pre_release
-            })
-            .flatten()
-            .unwrap_or(false),
-            delegate.http_client(),
-        )
-        .await?;
+        pre_release: bool,
+        _: &mut AsyncApp,
+    ) -> Result<GitHubLspBinaryVersion> {
+        let release =
+            latest_github_release("clangd/clangd", true, pre_release, delegate.http_client())
+                .await?;
         let os_suffix = match consts::OS {
             "macos" => "mac",
             "linux" => "linux",
@@ -73,12 +48,26 @@ impl super::LspAdapter for CLspAdapter {
             url: asset.browser_download_url.clone(),
             digest: asset.digest.clone(),
         };
-        Ok(Box::new(version) as Box<_>)
+        Ok(version)
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: Option<Toolchain>,
+        _: &AsyncApp,
+    ) -> Option<LanguageServerBinary> {
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: Vec::new(),
+            env: None,
+        })
     }
 
     async fn fetch_server_binary(
         &self,
-        version: Box<dyn 'static + Send + Any>,
+        version: GitHubLspBinaryVersion,
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
@@ -86,7 +75,7 @@ impl super::LspAdapter for CLspAdapter {
             name,
             url,
             digest: expected_digest,
-        } = *version.downcast::<GitHubLspBinaryVersion>().unwrap();
+        } = version;
         let version_dir = container_dir.join(format!("clangd_{name}"));
         let binary_path = version_dir.join("bin/clangd");
 
@@ -156,6 +145,13 @@ impl super::LspAdapter for CLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
+    }
+}
+
+#[async_trait(?Send)]
+impl super::LspAdapter for CLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME
     }
 
     async fn label_for_completion(
