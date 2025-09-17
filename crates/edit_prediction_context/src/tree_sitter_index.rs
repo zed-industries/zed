@@ -12,15 +12,7 @@ use util::{ResultExt as _, debug_panic, some_or_debug_panic};
 
 use crate::outline::{Identifier, OutlineDeclaration, declarations_in_buffer};
 
-// To discuss: Strings in FileDeclaration?
-
 // TODO:
-//
-// * Need an efficient way to get outline parents (see parents field / outline_id in
-// `zeta_context/src/outline.rs`, as well as logic for figuring it out). Could be indexes into
-// `declarations` instead of the OutlineId mechanism.
-//
-// * signature_text
 //
 // * Skip for remote projects
 
