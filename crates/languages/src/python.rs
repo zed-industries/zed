@@ -971,7 +971,7 @@ impl ToolchainLister for PythonToolchainProvider {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Arc<Path>,
+        subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList {
         let env = project_env.unwrap_or_default();

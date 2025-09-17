@@ -601,6 +601,7 @@ mod tests {
     use http_client::FakeHttpClient;
     use std::collections::HashMap;
     use telemetry_events::FlexibleEvent;
+    use util::rel_path::RelPath;
     use worktree::{PathChange, ProjectEntryId, WorktreeId};
 
     #[gpui::test]
@@ -855,12 +856,12 @@ mod tests {
         let entries: Vec<_> = file_paths
             .into_iter()
             .enumerate()
-            .map(|(i, path)| {
-                (
-                    Arc::from(std::path::Path::new(path)),
+            .filter_map(|(i, path)| {
+                Some((
+                    Arc::from(RelPath::new(path)?),
                     ProjectEntryId::from_proto(i as u64 + 1),
                     PathChange::Added,
-                )
+                ))
             })
             .collect();
         let updated_entries: UpdatedEntriesSet = Arc::from(entries.as_slice());

@@ -1502,16 +1502,18 @@ impl Project {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
 
+        let path_style = if response.payload.windows_paths {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+
         let worktree_store = cx.new(|_| {
             WorktreeStore::remote(
                 true,
                 client.clone().into(),
                 response.payload.project_id,
-                if response.payload.windows_paths {
-                    PathStyle::Windows
-                } else {
-                    PathStyle::Posix
-                },
+                path_style,
             )
         })?;
         let buffer_store = cx.new(|cx| {
@@ -1585,12 +1587,6 @@ impl Project {
         let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx))?;
         let replica_id = response.payload.replica_id as ReplicaId;
 
-        let path_style = if response.payload.windows_paths {
-            PathStyle::Windows
-        } else {
-            PathStyle::Posix
-        };
-
         let mut worktrees = Vec::new();
         for worktree in response.payload.worktrees {
             let worktree = Worktree::remote(
@@ -1600,7 +1596,7 @@ impl Project {
                 client.clone(),
                 path_style,
                 cx,
-            )?;
+            );
             worktrees.push(worktree);
         }
 
@@ -4929,7 +4925,7 @@ impl Project {
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
-        let path_style = this.read_with(&cx, |this, cx| this.path_style())?;
+        let path_style = this.read_with(&cx, |this, cx| this.path_style(cx))?;
         let query =
             SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
         let results = this.update(&mut cx, |this, cx| {
@@ -4970,15 +4966,10 @@ impl Project {
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+        let path = RelPath::from_proto(envelope.payload.path)?.into();
         let open_buffer = this.update(&mut cx, |this, cx| {
-            this.open_buffer(
-                ProjectPath {
-                    worktree_id,
-                    path: Arc::<Path>::from_proto(envelope.payload.path),
-                },
-                cx,
-            )
-        })?;
+            this.open_buffer(ProjectPath { worktree_id, path }, cx)
+        })??;
 
         let buffer = open_buffer.await?;
         Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
@@ -5142,7 +5133,7 @@ impl Project {
             worktree_store.set_worktrees_from_proto(
                 worktrees,
                 self.replica_id(),
-                self.path_style(),
+                self.path_style(cx),
                 cx,
             )
         })
@@ -5331,8 +5322,8 @@ impl Project {
         self.agent_location.clone()
     }
 
-    pub fn path_style(&self) -> PathStyle {
-        todo!()
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        self.worktree_store.read(cx).path_style()
     }
 }
 
@@ -5437,11 +5428,11 @@ impl<'a> From<&'a ProjectPath> for SettingsLocation<'a> {
     }
 }
 
-impl<P: AsRef<Path>> From<(WorktreeId, P)> for ProjectPath {
+impl<P: Into<Arc<RelPath>>> From<(WorktreeId, P)> for ProjectPath {
     fn from((worktree_id, path): (WorktreeId, P)) -> Self {
         Self {
             worktree_id,
-            path: path.as_ref().into(),
+            path: path.into(),
         }
     }
 }

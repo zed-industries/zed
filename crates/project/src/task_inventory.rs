@@ -25,7 +25,9 @@ use task::{
     VariableName,
 };
 use text::{BufferId, Point, ToPoint};
-use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc};
+use util::{
+    NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc, rel_path::RelPath,
+};
 use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};

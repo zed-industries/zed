@@ -2193,20 +2193,20 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     .await;
 
     // Mark files as git modified
-    fs.set_git_content_for_repo(
+    fs.set_head_and_index_for_repo(
         path!("/root/tree1/.git").as_ref(),
         &[
-            ("dir1/modified1.txt".into(), "modified".into(), None),
-            ("dir1/modified2.txt".into(), "modified".into(), None),
-            ("modified4.txt".into(), "modified".into(), None),
-            ("dir2/modified3.txt".into(), "modified".into(), None),
+            ("dir1/modified1.txt", "modified".into()),
+            ("dir1/modified2.txt", "modified".into()),
+            ("modified4.txt", "modified".into()),
+            ("dir2/modified3.txt", "modified".into()),
         ],
     );
-    fs.set_git_content_for_repo(
+    fs.set_head_and_index_for_repo(
         path!("/root/tree2/.git").as_ref(),
         &[
-            ("dir3/modified5.txt".into(), "modified".into(), None),
-            ("modified6.txt".into(), "modified".into(), None),
+            ("dir3/modified5.txt", "modified".into()),
+            ("modified6.txt", "modified".into()),
         ],
     );
 

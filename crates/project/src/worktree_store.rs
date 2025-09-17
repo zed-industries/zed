@@ -158,8 +158,9 @@ impl WorktreeStore {
         cx: &App,
     ) -> Option<(Entity<Worktree>, Arc<RelPath>)> {
         for tree in self.worktrees() {
+            let path_style = tree.read(cx).path_style();
             if let Ok(relative_path) = abs_path.as_ref().strip_prefix(tree.read(cx).abs_path())
-                && let Some(relative_path) = RelPath::from_std_path(relative_path)
+                && let Some(relative_path) = RelPath::from_std_path(relative_path, path_style)
             {
                 return Some((tree.clone(), relative_path.into()));
             }
@@ -170,6 +171,13 @@ impl WorktreeStore {
     pub fn absolutize(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
         let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
         Some(worktree.read(cx).absolutize(&project_path.path))
+    }
+    
+    pub fn path_style(&self) -> PathStyle {
+        match &self.state {
+            WorktreeStoreState::Local { .. } => PathStyle::current(),
+            WorktreeStoreState::Remote { path_style, .. } => path_style,
+        }
     }
 
     pub fn find_or_create_worktree(
@@ -783,8 +791,8 @@ impl WorktreeStore {
                     continue;
                 }
                 let relative_path = file.strip_prefix(snapshot.abs_path())?;
-                let relative_path =
-                    RelPath::from_std_path(&relative_path).context("getting relative path")?;
+                let relative_path = RelPath::from_std_path(&relative_path, snapshot.path_style())
+                    .context("getting relative path")?;
                 results.push((relative_path, !metadata.is_dir))
             }
             results.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));

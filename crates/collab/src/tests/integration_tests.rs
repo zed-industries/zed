@@ -3013,21 +3013,21 @@ async fn test_git_status_sync(
     // and b.txt is unmerged.
     client_a.fs().set_head_for_repo(
         path!("/dir/.git").as_ref(),
-        &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
+        &[("b.txt", "B".into()), ("c.txt", "c".into())],
         "deadbeef",
     );
     client_a.fs().set_index_for_repo(
         path!("/dir/.git").as_ref(),
         &[
-            ("a.txt".into(), "".into()),
-            ("b.txt".into(), "B".into()),
-            ("c.txt".into(), "c".into()),
+            ("a.txt", "".into()),
+            ("b.txt", "B".into()),
+            ("c.txt", "c".into()),
         ],
     );
     client_a.fs().set_unmerged_paths_for_repo(
         path!("/dir/.git").as_ref(),
         &[(
-            "b.txt".into(),
+            "b.txt",
             UnmergedStatus {
                 first_head: UnmergedStatusCode::Updated,
                 second_head: UnmergedStatusCode::Deleted,

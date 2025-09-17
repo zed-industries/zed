@@ -46,7 +46,7 @@ pub struct Toolchains {
     /// Auto-detected toolchains.
     pub toolchains: ToolchainList,
     /// Path of the project root at which we ran the automatic toolchain detection.
-    pub root_path: Arc<Path>,
+    pub root_path: Arc<RelPath>,
     pub user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
 }
 impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
@@ -395,7 +395,7 @@ pub struct LocalToolchainStore {
     languages: Arc<LanguageRegistry>,
     worktree_store: Entity<WorktreeStore>,
     project_environment: Entity<ProjectEnvironment>,
-    active_toolchains: BTreeMap<(WorktreeId, LanguageName), BTreeMap<Arc<Path>, Toolchain>>,
+    active_toolchains: BTreeMap<(WorktreeId, LanguageName), BTreeMap<Arc<RelPath>, Toolchain>>,
     manifest_tree: Entity<ManifestTree>,
 }
 
@@ -421,7 +421,7 @@ impl language::LanguageToolchainStore for RemoteStore {
     async fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
@@ -481,7 +481,7 @@ impl LocalToolchainStore {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &mut Context<Self>,
-    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
+    ) -> Task<Option<(ToolchainList, Arc<RelPath>)>> {
         let registry = self.languages.clone();
 
         let manifest_tree = self.manifest_tree.downgrade();
@@ -513,13 +513,12 @@ impl LocalToolchainStore {
                 })
                 .ok()?
                 .unwrap_or_else(|| ProjectPath {
-                    path: Arc::from(Path::new("")),
+                    path: Arc::from(RelPath::empty()),
                     worktree_id,
                 });
             let abs_path = worktree
-                .update(cx, |this, _| this.absolutize(&relative_path.path).ok())
-                .ok()
-                .flatten()?;
+                .update(cx, |this, _| this.absolutize(&relative_path.path))
+                .ok()?;
 
             let project_env = environment
                 .update(cx, |environment, cx| {
@@ -542,7 +541,7 @@ impl LocalToolchainStore {
     pub(crate) fn active_toolchain(
         &self,
         worktree_id: WorktreeId,
-        relative_path: &Arc<Path>,
+        relative_path: &Arc<RelPath>,
         language_name: LanguageName,
     ) -> Option<Toolchain> {
         let ancestors = relative_path.ancestors();
@@ -635,7 +634,7 @@ impl RemoteToolchainStore {
         path: ProjectPath,
         language_name: LanguageName,
         cx: &App,
-    ) -> Task<Option<(ToolchainList, Arc<Path>)>> {
+    ) -> Task<Option<(ToolchainList, Arc<RelPath>)>> {
         let project_id = self.project_id;
         let client = self.client.clone();
         cx.background_spawn(async move {
@@ -644,7 +643,7 @@ impl RemoteToolchainStore {
                     project_id,
                     worktree_id: path.worktree_id.to_proto(),
                     language_name: language_name.clone().into(),
-                    path: Some(path.path.to_string_lossy().into_owned()),
+                    path: Some(path.path.to_proto()),
                 })
                 .await
                 .log_err()?;
@@ -658,12 +657,7 @@ impl RemoteToolchainStore {
                     Some(Toolchain {
                         language_name: language_name.clone(),
                         name: toolchain.name.into(),
-                        // todo(windows)
-                        // Do we need to convert path to native string?
-                        path: PathBuf::from_proto(toolchain.path)
-                            .to_string_lossy()
-                            .to_string()
-                            .into(),
+                        path: RelPath::from_proto(toolchain.path)?,
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                     })
                 })

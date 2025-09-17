@@ -11,7 +11,6 @@ pub use crate::remote::*;
 use anyhow::{Context as _, Result};
 pub use git2 as libgit;
 use gpui::{Action, actions};
-pub use repository::WORK_DIRECTORY_REPO_PATH;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::fmt;

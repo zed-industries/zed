@@ -186,7 +186,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let tree = worktree.read(cx);
         let settings_for = |path: &str| {
-            let file_entry = tree.entry_for_path(path).unwrap().clone();
+            let file_entry = tree.entry_for_path(path.into()).unwrap().clone();
             let file = File::for_entry(file_entry, worktree.clone());
             let file_language = project
                 .read(cx)
@@ -352,12 +352,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             let tree = worktree.read(cx);
 
             let file_a = File::for_entry(
-                tree.entry_for_path("a/a.rs").unwrap().clone(),
+                tree.entry_for_path("a/a.rs".into()).unwrap().clone(),
                 worktree.clone(),
             ) as _;
             let settings_a = language_settings(None, Some(&file_a), cx);
             let file_b = File::for_entry(
-                tree.entry_for_path("b/b.rs").unwrap().clone(),
+                tree.entry_for_path("b/b.rs".into()).unwrap().clone(),
                 worktree.clone(),
             ) as _;
             let settings_b = language_settings(None, Some(&file_b), cx);
@@ -738,7 +738,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
             this.available_toolchains(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from("project-b/source_file.py".as_ref()),
+                    path: "project-b/source_file.py".into(),
                 },
                 LanguageName::new("Python"),
                 cx,
@@ -754,7 +754,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
             this.active_toolchain(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from("project-b/source_file.py".as_ref()),
+                    path: "project-b/source_file.py".into(),
                 },
                 LanguageName::new("Python"),
                 cx,
@@ -5960,8 +5960,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 false,
                 false,
-                PathMatcher::empty(path_style),
-                PathMatcher::empty(path_style),
+                PathMatcher::empty(PathStyle::current()),
+                PathMatcher::empty(PathStyle::current()),
                 false,
                 None,
             )
@@ -7179,8 +7179,8 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     .await;
 
     fs.set_head_and_index_for_repo(
-        "/dir/.git".as_ref(),
-        &[("file.txt".into(), committed_contents.clone())],
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_contents.clone())],
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
@@ -8391,8 +8391,8 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
     fs.set_head_and_index_for_repo(
         path!("/root/.git").as_ref(),
         &[
-            (".gitignore".into(), "*.txt\n".into()),
-            ("a.xml".into(), "<a></a>".into()),
+            (".gitignore", "*.txt\n".into()),
+            ("a.xml", "<a></a>".into()),
         ],
     );
 
@@ -8818,8 +8818,8 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     fs.set_head_and_index_for_repo(
         path!("/root/tree/.git").as_ref(),
         &[
-            (".gitignore".into(), "ignored-dir\n".into()),
-            ("tracked-dir/tracked-file1".into(), "".into()),
+            (".gitignore", "ignored-dir\n".into()),
+            ("tracked-dir/tracked-file1", "".into()),
         ],
     );
 
@@ -9215,7 +9215,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
         async fn list(
             &self,
             worktree_root: PathBuf,
-            subroot_relative_path: Arc<Path>,
+            subroot_relative_path: Arc<RelPath>,
             _: Option<HashMap<String, String>>,
         ) -> ToolchainList {
             // This lister will always return a path .venv directories within ancestors
@@ -9337,7 +9337,7 @@ fn assert_entry_git_state(
 ) {
     assert_eq!(tree.abs_path(), repository.work_directory_abs_path);
     let entry = tree
-        .entry_for_path(path)
+        .entry_for_path(path.into())
         .unwrap_or_else(|| panic!("entry {path} not found"));
     let status = repository
         .status_for_path(&path.into())

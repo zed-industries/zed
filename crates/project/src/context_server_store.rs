@@ -10,7 +10,7 @@ use futures::{FutureExt as _, future::join_all};
 use gpui::{App, AsyncApp, Context, Entity, EventEmitter, Subscription, Task, WeakEntity, actions};
 use registry::ContextServerDescriptorRegistry;
 use settings::{Settings as _, SettingsStore};
-use util::ResultExt as _;
+use util::{rel_path::RelPath, ResultExt as _};
 
 use crate::{
     Project,

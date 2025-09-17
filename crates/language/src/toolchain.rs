@@ -15,6 +15,7 @@ use fs::Fs;
 use gpui::{AsyncApp, SharedString};
 use settings::WorktreeId;
 use task::ShellKind;
+use util::rel_path::RelPath;
 
 use crate::{LanguageName, ManifestName};
 
@@ -97,7 +98,7 @@ pub trait ToolchainLister: Send + Sync + 'static {
     async fn list(
         &self,
         worktree_root: PathBuf,
-        subroot_relative_path: Arc<Path>,
+        subroot_relative_path: Arc<RelPath>,
         project_env: Option<HashMap<String, String>>,
     ) -> ToolchainList;
 
@@ -134,7 +135,7 @@ pub trait LanguageToolchainStore: Send + Sync + 'static {
     async fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
-        relative_path: Arc<Path>,
+        relative_path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain>;
@@ -144,7 +145,7 @@ pub trait LocalLanguageToolchainStore: Send + Sync + 'static {
     fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
-        relative_path: &Arc<Path>,
+        relative_path: &Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain>;
@@ -155,7 +156,7 @@ impl<T: LocalLanguageToolchainStore> LanguageToolchainStore for T {
     async fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
-        relative_path: Arc<Path>,
+        relative_path: Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain> {

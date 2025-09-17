@@ -150,6 +150,7 @@ impl RelPath {
                 .components()
                 .any(|component| component == ".." || component == "." || component.is_empty())
         {
+            log::debug!("invalid relative path: {:?}", &this.0);
             return None;
         }
         Some(this)
@@ -160,10 +161,10 @@ impl RelPath {
         Self::new(s.as_ref()).unwrap()
     }
 
-    pub fn from_std_path(path: &Path) -> Option<Arc<Self>> {
+    pub fn from_std_path(path: &Path, path_style: PathStyle) -> Option<Arc<Self>> {
         let mut string = Cow::Borrowed(path.to_str()?);
 
-        if cfg!(target_os = "windows") {
+        if path_style == PathStyle::Windows {
             string = Cow::Owned(string.as_ref().replace('\\', "/"))
         }
 
@@ -177,11 +178,7 @@ impl RelPath {
             };
         }
 
-        let this = Self::new(&string);
-        if this.is_none() {
-            log::debug!("invalid relative path from std: {string:?}");
-        }
-        this.map(Arc::from)
+        Self::new(&string).map(Arc::from)
     }
 
     pub unsafe fn new_unchecked<S: AsRef<str> + ?Sized>(s: &S) -> &Self {
@@ -202,6 +199,10 @@ impl RelPath {
 
     pub fn file_name(&self) -> Option<&str> {
         self.components().next_back()
+    }
+
+    pub fn extension(&self) -> Option<&str> {
+        Some(self.as_std_path().extension()?.to_str().unwrap())
     }
 
     pub fn parent(&self) -> Option<&Self> {
@@ -368,11 +369,11 @@ mod tests {
         assert!(RelPath::new("./foo/bar").is_none());
         assert!(RelPath::new("..").is_none());
 
-        assert!(RelPath::from_std_path(Path::new("/")).is_none());
-        assert!(RelPath::from_std_path(Path::new("//")).is_none());
-        assert!(RelPath::from_std_path(Path::new("/foo/")).is_none());
+        assert!(RelPath::from_std_path(Path::new("/"), PathStyle::current()).is_none());
+        assert!(RelPath::from_std_path(Path::new("//"), PathStyle::current()).is_none());
+        assert!(RelPath::from_std_path(Path::new("/foo/"), PathStyle::current()).is_none());
         assert_eq!(
-            RelPath::from_std_path(&PathBuf::from_iter(["foo", ""])).unwrap(),
+            RelPath::from_std_path(&PathBuf::from_iter(["foo", ""]), PathStyle::current()).unwrap(),
             Arc::from(RelPath::from_str("foo"))
         );
     }

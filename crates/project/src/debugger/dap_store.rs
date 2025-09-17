@@ -938,14 +938,13 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         self.toolchain_store.clone()
     }
-    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+
+    async fn read_text_file(&self, path: &RelPath) -> Result<String> {
         let entry = self
             .worktree
-            .entry_for_path(&path)
+            .entry_for_path(path)
             .with_context(|| format!("no worktree entry for path {path:?}"))?;
-        let abs_path = self
-            .worktree
-            .absolutize(&entry.path);
+        let abs_path = self.worktree.absolutize(&entry.path);
 
         self.fs.load(&abs_path).await
     }

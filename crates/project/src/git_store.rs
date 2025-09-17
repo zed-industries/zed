@@ -20,7 +20,7 @@ use futures::{
     stream::FuturesOrdered,
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, Oid, WORK_DIRECTORY_REPO_PATH,
+    BuildPermalinkParams, GitHostingProviderRegistry, Oid,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -63,7 +63,12 @@ use std::{
 };
 use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
-use util::{ResultExt, debug_panic, paths::SanitizedPath, post_inc};
+use util::{
+    ResultExt, debug_panic,
+    paths::{PathStyle, SanitizedPath},
+    post_inc,
+    rel_path::RelPath,
+};
 use worktree::{
     File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
     UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
@@ -199,7 +204,7 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
 
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
-        let repo_path = RepoPath(Arc::<Path>::from_proto(value.repo_path));
+        let repo_path = RepoPath::from_proto(&value.repo_path).context("invalid repo path")?;
         let status = status_from_proto(value.simple_status, value.status)?;
         Ok(Self { repo_path, status })
     }
@@ -239,6 +244,7 @@ pub struct RepositorySnapshot {
     pub id: RepositoryId,
     pub statuses_by_path: SumTree<StatusEntry>,
     pub work_directory_abs_path: Arc<Path>,
+    pub path_style: PathStyle,
     pub branch: Option<Branch>,
     pub head_commit: Option<CommitDetails>,
     pub scan_id: u64,
@@ -945,9 +951,7 @@ impl GitStore {
             {
                 return Task::ready(Err(anyhow!("no permalink available")));
             }
-            let Some(file_path) = file.worktree.read(cx).absolutize(&file.path).ok() else {
-                return Task::ready(Err(anyhow!("no permalink available")));
-            };
+            let file_path = file.worktree.read(cx).absolutize(&file.path);
             return cx.spawn(async move |cx| {
                 let provider_registry = cx.update(GitHostingProviderRegistry::default_global)?;
                 get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
@@ -983,9 +987,7 @@ impl GitStore {
                             parse_git_remote_url(provider_registry, &origin_url)
                                 .context("parsing Git remote URL")?;
 
-                        let path = repo_path.to_str().with_context(|| {
-                            format!("converting repo path {repo_path:?} to string")
-                        })?;
+                        let path = repo_path.as_str();
 
                         Ok(provider.build_permalink(
                             remote,
@@ -1311,7 +1313,7 @@ impl GitStore {
                 });
                 if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
                     let recv = repo.update(cx, |repo, cx| {
-                        log::debug!("hunks changed for {}", path.display());
+                        log::debug!("hunks changed for {}", path.as_str());
                         repo.spawn_set_index_text_job(
                             path,
                             new_index_text.as_ref().map(|rope| rope.to_string()),
@@ -1473,6 +1475,7 @@ impl GitStore {
         mut cx: AsyncApp,
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
+            let path_style = this.worktree_store.read(cx).path_style();
             let mut update = envelope.payload;
 
             let id = RepositoryId::from_proto(update.id);
@@ -1486,6 +1489,7 @@ impl GitStore {
                     Repository::remote(
                         id,
                         Path::new(&update.abs_path).into(),
+                        path_style,
                         ProjectId(update.project_id),
                         client,
                         git_store,
@@ -1679,8 +1683,7 @@ impl GitStore {
             .payload
             .paths
             .into_iter()
-            .map(PathBuf::from)
-            .map(RepoPath::new)
+            .filter_map(|path| RepoPath::new(&path))
             .collect();
 
         repository_handle
@@ -1703,8 +1706,7 @@ impl GitStore {
             .payload
             .paths
             .into_iter()
-            .map(PathBuf::from)
-            .map(RepoPath::new)
+            .filter_map(|path| RepoPath::new(&path))
             .collect();
 
         repository_handle
@@ -1728,8 +1730,7 @@ impl GitStore {
             .payload
             .paths
             .into_iter()
-            .map(PathBuf::from)
-            .map(RepoPath::new)
+            .filter_map(|path| RepoPath::new(&path))
             .collect();
 
         repository_handle
@@ -1984,7 +1985,7 @@ impl GitStore {
                 .files
                 .into_iter()
                 .map(|file| proto::CommitFile {
-                    path: file.path.to_string(),
+                    path: file.path.to_proto(),
                     old_text: file.old_text,
                     new_text: file.new_text,
                 })
@@ -2311,9 +2312,10 @@ impl GitStore {
     fn process_updated_entries(
         &self,
         worktree: &Entity<Worktree>,
-        updated_entries: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        updated_entries: &[(Arc<RelPath>, ProjectEntryId, PathChange)],
         cx: &mut App,
     ) -> Task<HashMap<Entity<Repository>, Vec<RepoPath>>> {
+        let path_style = worktree.read(cx).path_style();
         let mut repo_paths = self
             .repositories
             .values()
@@ -2328,7 +2330,7 @@ impl GitStore {
 
         let entries = entries
             .into_iter()
-            .filter_map(|path| worktree.absolutize(&path).ok())
+            .map(|path| worktree.absolutize(&path))
             .collect::<Arc<[_]>>();
 
         let executor = cx.background_executor().clone();
@@ -2348,8 +2350,9 @@ impl GitStore {
                     let mut paths = Vec::new();
                     // All paths prefixed by a given repo will constitute a continuous range.
                     while let Some(path) = entries.get(ix)
-                        && let Some(repo_path) =
-                            RepositorySnapshot::abs_path_to_repo_path_inner(&repo_path, path)
+                        && let Some(repo_path) = RepositorySnapshot::abs_path_to_repo_path_inner(
+                            &repo_path, path, path_style,
+                        )
                     {
                         paths.push((repo_path, ix));
                         ix += 1;
@@ -2740,7 +2743,7 @@ impl RepositoryId {
 }
 
 impl RepositorySnapshot {
-    fn empty(id: RepositoryId, work_directory_abs_path: Arc<Path>) -> Self {
+    fn empty(id: RepositoryId, work_directory_abs_path: Arc<Path>, path_style: PathStyle) -> Self {
         Self {
             id,
             statuses_by_path: Default::default(),
@@ -2752,6 +2755,7 @@ impl RepositorySnapshot {
             remote_origin_url: None,
             remote_upstream_url: None,
             stash_entries: Default::default(),
+            path_style,
         }
     }
 
@@ -2871,18 +2875,19 @@ impl RepositorySnapshot {
     }
 
     pub fn abs_path_to_repo_path(&self, abs_path: &Path) -> Option<RepoPath> {
-        Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path)
+        Self::abs_path_to_repo_path_inner(&self.work_directory_abs_path, abs_path, self.path_style)
     }
 
     #[inline]
     fn abs_path_to_repo_path_inner(
         work_directory_abs_path: &Path,
         abs_path: &Path,
+        path_style: PathStyle,
     ) -> Option<RepoPath> {
         abs_path
             .strip_prefix(&work_directory_abs_path)
-            .map(RepoPath::from)
             .ok()
+            .and_then(|path| RepoPath::from_std_path(path, path_style))
     }
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
@@ -3008,7 +3013,8 @@ impl Repository {
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path.clone());
+        let snapshot =
+            RepositorySnapshot::empty(id, work_directory_abs_path.clone(), PathStyle::current());
         Repository {
             this: cx.weak_entity(),
             git_store,
@@ -3034,12 +3040,13 @@ impl Repository {
     fn remote(
         id: RepositoryId,
         work_directory_abs_path: Arc<Path>,
+        path_style: PathStyle,
         project_id: ProjectId,
         client: AnyProtoClient,
         git_store: WeakEntity<GitStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path);
+        let snapshot = RepositorySnapshot::empty(id, work_directory_abs_path, path_style);
         Self {
             this: cx.weak_entity(),
             snapshot,
@@ -3083,12 +3090,11 @@ impl Repository {
                                 let buffer_store = git_store.buffer_store.read(cx);
                                 let buffer = buffer_store.get(*buffer_id)?;
                                 let file = File::from_dyn(buffer.read(cx).file())?;
-                                let abs_path =
-                                    file.worktree.read(cx).absolutize(&file.path).ok()?;
+                                let abs_path = file.worktree.read(cx).absolutize(&file.path);
                                 let repo_path = this.abs_path_to_repo_path(&abs_path)?;
                                 log::debug!(
                                     "start reload diff bases for repo path {}",
-                                    repo_path.0.display()
+                                    repo_path.as_str()
                                 );
                                 diff_state.update(cx, |diff_state, _| {
                                     let has_unstaged_diff = diff_state
@@ -3311,7 +3317,10 @@ impl Repository {
     pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
         let git_store = self.git_store.upgrade()?;
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
-        let abs_path = self.snapshot.work_directory_abs_path.join(&path.0);
+        let abs_path = self
+            .snapshot
+            .work_directory_abs_path
+            .join(path.as_std_path());
         let abs_path = SanitizedPath::new(&abs_path);
         let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
         Some(ProjectPath {
@@ -3440,10 +3449,7 @@ impl Repository {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 commit,
-                                paths: paths
-                                    .into_iter()
-                                    .map(|p| p.to_string_lossy().to_string())
-                                    .collect(),
+                                paths: paths.into_iter().map(|p| p.to_proto()).collect(),
                             })
                             .await?;
 
@@ -3533,10 +3539,12 @@ impl Repository {
                         files: response
                             .files
                             .into_iter()
-                            .map(|file| CommitFile {
-                                path: Path::new(&file.path).into(),
-                                old_text: file.old_text,
-                                new_text: file.new_text,
+                            .filter_map(|file| {
+                                Some(CommitFile {
+                                    path: RepoPath::from_proto(&file.path)?,
+                                    old_text: file.old_text,
+                                    new_text: file.new_text,
+                                })
                             })
                             .collect(),
                     })
@@ -4130,7 +4138,7 @@ impl Repository {
             Some(GitJobKey::WriteIndex(path.clone())),
             None,
             move |git_repo, mut cx| async move {
-                log::debug!("start updating index text for buffer {}", path.display());
+                log::debug!("start updating index text for buffer {}", path.as_str());
                 match git_repo {
                     RepositoryState::Local {
                         backend,
@@ -4152,7 +4160,7 @@ impl Repository {
                             .await?;
                     }
                 }
-                log::debug!("finish updating index text for buffer {}", path.display());
+                log::debug!("finish updating index text for buffer {}", path.as_str());
 
                 if let Some(hunk_staging_operation_count) = hunk_staging_operation_count {
                     let project_path = this
@@ -4385,7 +4393,7 @@ impl Repository {
             update
                 .current_merge_conflicts
                 .into_iter()
-                .map(|path| RepoPath(Path::new(&path).into())),
+                .filter_map(|path| RepoPath::from_proto(&path)),
         );
         self.snapshot.branch = update.branch_summary.as_ref().map(proto_to_branch);
         self.snapshot.head_commit = update
@@ -4406,7 +4414,7 @@ impl Repository {
         let edits = update
             .removed_statuses
             .into_iter()
-            .map(|path| sum_tree::Edit::Remove(PathKey(FromProto::from_proto(path))))
+            .filter_map(|path| Some(sum_tree::Edit::Remove(PathKey(RelPath::from_proto(&path)?))))
             .chain(
                 update
                     .updated_statuses
@@ -5006,9 +5014,7 @@ async fn compute_snapshot(
     let mut events = Vec::new();
     let branches = backend.branches().await?;
     let branch = branches.into_iter().find(|branch| branch.is_head);
-    let statuses = backend
-        .status(std::slice::from_ref(&WORK_DIRECTORY_REPO_PATH))
-        .await?;
+    let statuses = backend.status(&[RelPath::empty().into()]).await?;
     let stash_entries = backend.stash_entries().await?;
     let statuses_by_path = SumTree::from_iter(
         statuses
@@ -5054,6 +5060,7 @@ async fn compute_snapshot(
         id,
         statuses_by_path,
         work_directory_abs_path,
+        path_style: prev_snapshot.path_style,
         scan_id: prev_snapshot.scan_id + 1,
         branch,
         head_commit,

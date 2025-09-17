@@ -118,6 +118,7 @@ use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
     paths::{PathExt, SanitizedPath},
     post_inc,
+    rel_path::RelPath,
 };
 
 pub use fs::*;
@@ -158,7 +159,7 @@ impl FormatTrigger {
 #[derive(Clone)]
 struct UnifiedLanguageServer {
     id: LanguageServerId,
-    project_roots: HashSet<Arc<Path>>,
+    project_roots: HashSet<Arc<RelPath>>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -209,7 +210,7 @@ pub struct LocalLspStore {
     diagnostics: HashMap<
         WorktreeId,
         HashMap<
-            Arc<Path>,
+            Arc<RelPath>,
             Vec<(
                 LanguageServerId,
                 Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
@@ -1086,7 +1087,7 @@ impl LocalLspStore {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
 
-            let path: Arc<Path> = file
+            let path: Arc<RelPath> = file
                 .path()
                 .parent()
                 .map(Arc::from)
@@ -1851,7 +1852,7 @@ impl LocalLspStore {
                                             .ok()
                                             .flatten()
                                     })
-                                    .map(|p| p.path.to_sanitized_string())
+                                    .map(|p| p.path.as_str())
                                     .join(", ");
                                 zlog::warn!(
                                     logger =>
@@ -2347,7 +2348,7 @@ impl LocalLspStore {
         let Some(language) = buffer.language().cloned() else {
             return;
         };
-        let path: Arc<Path> = file
+        let path: Arc<RelPath> = file
             .path()
             .parent()
             .map(Arc::from)
@@ -3483,7 +3484,7 @@ pub struct LspStore {
     _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
     diagnostic_summaries:
-        HashMap<WorktreeId, HashMap<Arc<Path>, HashMap<LanguageServerId, DiagnosticSummary>>>,
+        HashMap<WorktreeId, HashMap<Arc<RelPath>, HashMap<LanguageServerId, DiagnosticSummary>>>,
     pub lsp_server_capabilities: HashMap<LanguageServerId, lsp::ServerCapabilities>,
     lsp_document_colors: HashMap<BufferId, DocumentColorData>,
     lsp_code_lens: HashMap<BufferId, CodeLensData>,
@@ -10798,7 +10799,7 @@ impl LspStore {
     pub(super) fn update_local_worktree_language_servers(
         &mut self,
         worktree_handle: &Entity<Worktree>,
-        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        changes: &[(Arc<RelPath>, ProjectEntryId, PathChange)],
         cx: &mut Context<Self>,
     ) {
         if changes.is_empty() {

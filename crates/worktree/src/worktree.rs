@@ -1802,6 +1802,7 @@ impl LocalWorktree {
             .filter_map(|(_, target)| {
                 Some(RelPath::from_std_path(
                     target.strip_prefix(&worktree_path).ok()?,
+                    PathStyle::current(),
                 )?)
             })
             .collect::<Vec<_>>();
@@ -2212,7 +2213,9 @@ impl RemoteWorktree {
                     let Some(relative_path) = abs_path
                         .strip_prefix(&root_path_to_copy)
                         .ok()
-                        .and_then(|relative_path| RelPath::from_std_path(relative_path))
+                        .and_then(|relative_path| {
+                            RelPath::from_std_path(relative_path, PathStyle::current())
+                        })
                     else {
                         continue;
                     };
@@ -2816,6 +2819,7 @@ impl LocalSnapshot {
                     ignore_parent_abs_path
                         .strip_prefix(self.abs_path.as_path())
                         .unwrap(),
+                    PathStyle::current(),
                 )
                 .unwrap();
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
@@ -3765,7 +3769,7 @@ impl BackgroundScanner {
         let containing_git_repository = repo.and_then(|(ancestor_dot_git, work_directory)| {
             self.state.lock().insert_git_repository_for_path(
                 work_directory,
-                RelPath::from_std_path(&ancestor_dot_git).unwrap(),
+                RelPath::from_std_path(&ancestor_dot_git, PathStyle::current()).unwrap(),
                 self.fs.as_ref(),
                 self.watcher.as_ref(),
             )?;
@@ -4014,8 +4018,7 @@ impl BackgroundScanner {
                 }
 
                 let relative_path: Arc<RelPath> =
-                    if let Some(path) = abs_path.strip_prefix(&root_canonical_path).ok().and_then(RelPath::from_std_path) {
-
+                    if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) && let Some(path) = RelPath::from_std_path(path, PathStyle::current()) {
                         path
                     } else {
                         if is_git_related {
@@ -4581,7 +4584,8 @@ impl BackgroundScanner {
                         if let Some((ancestor_dot_git, work_directory)) = repo {
                             state.insert_git_repository_for_path(
                                 work_directory,
-                                RelPath::from_std_path(&ancestor_dot_git).unwrap(),
+                                RelPath::from_std_path(&ancestor_dot_git, PathStyle::current())
+                                    .unwrap(),
                                 self.fs.as_ref(),
                                 self.watcher.as_ref(),
                             );
@@ -4677,7 +4681,8 @@ impl BackgroundScanner {
                 .ignores_by_parent_abs_path
                 .retain(|parent_abs_path, (_, needs_update)| {
                     if let Ok(parent_path) = parent_abs_path.strip_prefix(abs_path.as_path())
-                        && let Some(parent_path) = RelPath::from_std_path(&parent_path)
+                        && let Some(parent_path) =
+                            RelPath::from_std_path(&parent_path, PathStyle::current())
                     {
                         if *needs_update {
                             *needs_update = false;
@@ -4734,7 +4739,7 @@ impl BackgroundScanner {
             .abs_path
             .strip_prefix(snapshot.abs_path.as_path())
             .unwrap();
-        let Some(path) = RelPath::from_std_path(&path) else {
+        let Some(path) = RelPath::from_std_path(&path, PathStyle::current()) else {
             return;
         };
 
@@ -4838,7 +4843,7 @@ impl BackgroundScanner {
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
                     state.insert_git_repository(
-                        RelPath::from_std_path(relative).unwrap(),
+                        RelPath::from_std_path(relative, PathStyle::current()).unwrap(),
                         self.fs.as_ref(),
                         self.watcher.as_ref(),
                     );
