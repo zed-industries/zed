@@ -1158,14 +1158,16 @@ impl ProjectPanel {
                     return;
                 }
 
-                let maybe_root_entry = project
+                let root_entry_id = project
                     .worktree_for_id(*worktree_id, cx)
                     .map(|worktree| worktree.read(cx).snapshot())
-                    .and_then(|worktree_snapshot| worktree_snapshot.root_entry().cloned());
+                    .and_then(|worktree_snapshot| {
+                        worktree_snapshot.root_entry().map(|entry| entry.id)
+                    });
 
-                match maybe_root_entry {
-                    Some(entry) => {
-                        expanded_entries.retain(|entry_id| entry_id == &entry.id);
+                match root_entry_id {
+                    Some(id) => {
+                        expanded_entries.retain(|entry_id| entry_id == &id);
                     }
                     None => *expanded_entries = Default::default(),
                 };
