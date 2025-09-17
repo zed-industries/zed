@@ -143,13 +143,17 @@ impl LiveSettings {
 
             let denoise_enabled = AudioSettings::get_global(cx).denoise;
             #[cfg(debug_assertions)]
-            if denoise_enabled {
-                log::warn!("Denoise does not work on debug builds, not enabling")
-            } else {
-                LIVE_SETTINGS
-                    .denoise
-                    .store(denoise_enabled, Ordering::Relaxed);
+            {
+                static DENOISE_WARNING_SEND: AtomicBool = AtomicBool::new(false);
+                if denoise_enabled && !DENOISE_WARNING_SEND.load(Ordering::Relaxed) {
+                    DENOISE_WARNING_SEND.store(true, Ordering::Relaxed);
+                    log::warn!("Denoise does not work on debug builds, not enabling")
+                }
             }
+            #[cfg(not(debug_assertions))]
+            LIVE_SETTINGS
+                .denoise
+                .store(denoise_enabled, Ordering::Relaxed);
         })
         .detach();
 
@@ -160,9 +164,15 @@ impl LiveSettings {
         LIVE_SETTINGS
             .auto_speaker_volume
             .store(init_settings.auto_speaker_volume, Ordering::Relaxed);
+        let denoise_enabled = AudioSettings::get_global(cx).denoise;
+        #[cfg(debug_assertions)]
+        if denoise_enabled {
+            log::warn!("Denoise does not work on debug builds, not enabling")
+        }
+        #[cfg(not(debug_assertions))]
         LIVE_SETTINGS
             .denoise
-            .store(init_settings.denoise, Ordering::Relaxed);
+            .store(denoise_enabled, Ordering::Relaxed);
     }
 }
 
