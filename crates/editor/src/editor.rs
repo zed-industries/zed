@@ -20549,7 +20549,9 @@ impl Editor {
                     )
                     .detach();
                 }
-                self.update_lsp_data(false, Some(buffer_id), window, cx);
+                if self.active_diagnostics != ActiveDiagnostic::All {
+                    self.update_lsp_data(false, Some(buffer_id), window, cx);
+                }
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
