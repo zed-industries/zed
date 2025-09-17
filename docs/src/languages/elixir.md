@@ -52,7 +52,6 @@ To switch to `next-ls`, add the following to your `settings.json`:
 To switch to `lexical`, add the following to your `settings.json`:
 
 ```json
-{
   "languages": {
     "Elixir": {
       "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
@@ -61,7 +60,6 @@ To switch to `lexical`, add the following to your `settings.json`:
       "language_servers": ["lexical", "!expert", "!elixir-ls", "!next-ls", "..."]
     }
   }
-}
 ```
 
 ## Setting up `elixir-ls`
