@@ -2241,14 +2241,14 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
+            store.update_user_settings(cx, |settings| {
                 settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::None);
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
+            store.update_user_settings(cx, |settings| {
                 settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
             });
         });

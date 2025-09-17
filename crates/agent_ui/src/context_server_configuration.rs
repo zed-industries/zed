@@ -5,7 +5,6 @@ use extension::ExtensionManifest;
 use fs::Fs;
 use gpui::WeakEntity;
 use language::LanguageRegistry;
-use project::project_settings::ProjectSettings;
 use settings::update_settings_file;
 use ui::prelude::*;
 use util::ResultExt;

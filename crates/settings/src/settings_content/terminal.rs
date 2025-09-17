@@ -160,7 +160,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the terminal.
     ///

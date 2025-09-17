@@ -443,28 +443,32 @@ pub fn set_theme(
     }
 }
 
-//     /// Sets the icon theme for the given appearance to the icon theme with the specified name.
-//     pub fn set_icon_theme(&mut self, icon_theme_name: String, appearance: Appearance) {
-//         if let Some(selection) = self.icon_theme.as_mut() {
-//             let icon_theme_to_update = match selection {
-//                 IconThemeSelection::Static(theme) => theme,
-//                 IconThemeSelection::Dynamic { mode, light, dark } => match mode {
-//                     ThemeMode::Light => light,
-//                     ThemeMode::Dark => dark,
-//                     ThemeMode::System => match appearance {
-//                         Appearance::Light => light,
-//                         Appearance::Dark => dark,
-//                     },
-//                 },
-//             };
+/// Sets the icon theme for the given appearance to the icon theme with the specified name.
+pub fn set_icon_theme(
+    current: &mut SettingsContent,
+    icon_theme_name: String,
+    appearance: Appearance,
+) {
+    if let Some(selection) = current.theme.icon_theme.as_mut() {
+        let icon_theme_to_update = match selection {
+            settings::IconThemeSelection::Static(theme) => theme,
+            settings::IconThemeSelection::Dynamic { mode, light, dark } => match mode {
+                ThemeMode::Light => light,
+                ThemeMode::Dark => dark,
+                ThemeMode::System => match appearance {
+                    Appearance::Light => light,
+                    Appearance::Dark => dark,
+                },
+            },
+        };
 
-//             *icon_theme_to_update = IconThemeName(icon_theme_name.into());
-//         } else {
-//             self.icon_theme = Some(IconThemeSelection::Static(IconThemeName(
-//                 icon_theme_name.into(),
-//             )));
-//         }
-//     }
+        *icon_theme_to_update = IconThemeName(icon_theme_name.into());
+    } else {
+        current.theme.icon_theme = Some(settings::IconThemeSelection::Static(IconThemeName(
+            icon_theme_name.into(),
+        )));
+    }
+}
 
 /// Sets the mode for the theme.
 pub fn set_mode(content: &mut SettingsContent, mode: ThemeMode) {

@@ -27,6 +27,7 @@ use crate::{AllLanguageModelSettings, ui::InstructionListItem};
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel");
 
+// todo!() -> Remove default implementation
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct VercelSettings {
     pub api_url: String,

@@ -1790,6 +1790,7 @@
     "anthropic": {
       "api_url": "https://api.anthropic.com"
     },
+    "bedrock": {},
     "google": {
       "api_url": "https://generativelanguage.googleapis.com"
     },
@@ -1811,7 +1812,14 @@
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1"
-    }
+    },
+    "vercel": {
+      "api_url": "https://api.v0.dev/v1"
+    },
+    "x_ai": {
+      "api_url": "https://api.x.ai/v1"
+    },
+    "zed.dev": {}
   },
   "session": {
     /// Whether or not to restore unsaved buffers on restart.

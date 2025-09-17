@@ -10,7 +10,9 @@ use project::agent_server_store::{
     AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, GEMINI_NAME,
 };
 use serde::{Deserialize, Serialize};
-use settings::DefaultAgentView as DefaultView;
+use settings::{
+    DefaultAgentView as DefaultView, LanguageModelProviderSetting, LanguageModelSelection,
+};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
@@ -1087,8 +1089,8 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if action.persist {
-            update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-                settings.agent_font_size = None;
+            update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                settings.theme.agent_font_size = None;
             });
         } else {
             theme::reset_agent_font_size(cx);
@@ -1174,7 +1176,15 @@ impl AgentPanel {
                     && let Some(model) = provider.default_model(cx)
                 {
                     update_settings_file(self.fs.clone(), cx, move |settings, _| {
-                        settings.agent.get_or_insert_default().set_model(model)
+                        let provider = model.provider_id().0.to_string();
+                        let model = model.id().0.to_string();
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_model(LanguageModelSelection {
+                                provider: LanguageModelProviderSetting(provider),
+                                model,
+                            })
                     });
                 }
 

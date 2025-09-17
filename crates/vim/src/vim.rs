@@ -266,7 +266,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
-            update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
+            update_settings_file(fs, cx, move |setting, _| {
                 setting.vim_mode = Some(!currently_enabled)
             })
         });

@@ -1,8 +1,6 @@
-use anyhow::Result;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::Settings;
+use util::MergeFrom;
 
 /// Settings for slash commands.
 #[derive(Debug, Default, Clone)]
@@ -18,18 +16,33 @@ pub struct CargoWorkspaceCommandSettings {
     pub enabled: bool,
 }
 
+// todo!() I think this setting is bogus... default.json has "slash_commands": {"project"}
 impl Settings for SlashCommandSettings {
-    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
             cargo_workspace: CargoWorkspaceCommandSettings {
-                enabled: content.project.slash_commands.unwrap(),
+                enabled: content
+                    .project
+                    .slash_commands
+                    .clone()
+                    .unwrap()
+                    .cargo_workspace
+                    .unwrap()
+                    .enabled
+                    .unwrap(),
             },
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
-        todo!()
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        let Some(slash_command) = content.project.slash_commands.as_ref() else {
+            return;
+        };
+        let Some(cargo_workspace) = slash_command.cargo_workspace.as_ref() else {
+            return;
+        };
+        self.cargo_workspace
+            .enabled
+            .merge_from(&cargo_workspace.enabled);
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

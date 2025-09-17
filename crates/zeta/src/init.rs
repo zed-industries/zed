@@ -44,15 +44,14 @@ pub fn init(cx: &mut App) {
         );
 
         workspace.register_action(|workspace, _: &ResetOnboarding, _window, cx| {
-            update_settings_file::<AllLanguageSettings>(
-                workspace.app_state().fs.clone(),
-                cx,
-                move |file, _| {
-                    file.features
-                        .get_or_insert(Default::default())
-                        .edit_prediction_provider = Some(EditPredictionProvider::None)
-                },
-            );
+            update_settings_file(workspace.app_state().fs.clone(), cx, move |settings, _| {
+                settings
+                    .project
+                    .all_languages
+                    .features
+                    .get_or_insert_default()
+                    .edit_prediction_provider = Some(EditPredictionProvider::None)
+            });
         });
     })
     .detach();

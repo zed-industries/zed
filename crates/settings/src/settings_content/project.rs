@@ -172,6 +172,22 @@ pub enum ContextServerSettingsContent {
         settings: serde_json::Value,
     },
 }
+impl ContextServerSettingsContent {
+    pub fn set_enabled(&mut self, enabled: bool) {
+        match self {
+            ContextServerSettingsContent::Custom {
+                enabled: custom_enabled,
+                command: _,
+            } => {
+                *custom_enabled = enabled;
+            }
+            ContextServerSettingsContent::Extension {
+                enabled: ext_enabled,
+                settings: _,
+            } => *ext_enabled = enabled,
+        }
+    }
+}
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct ContextServerCommand {

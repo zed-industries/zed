@@ -38,7 +38,7 @@ use std::{
     u32,
 };
 
-use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
+use outline_panel_settings::{LeftRightDockPosition, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
@@ -4836,8 +4836,8 @@ impl Panel for OutlinePanel {
 
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
         match OutlinePanelSettings::get_global(cx).dock {
-            OutlinePanelDockPosition::Left => DockPosition::Left,
-            OutlinePanelDockPosition::Right => DockPosition::Right,
+            LeftRightDockPosition::Left => DockPosition::Left,
+            LeftRightDockPosition::Right => DockPosition::Right,
         }
     }
 
@@ -4848,8 +4848,8 @@ impl Panel for OutlinePanel {
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
         settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
             let dock = match position {
-                DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
-                DockPosition::Right => OutlinePanelDockPosition::Right,
+                DockPosition::Left | DockPosition::Bottom => LeftRightDockPosition::Left,
+                DockPosition::Right => LeftRightDockPosition::Right,
             };
             settings.outline_panel.get_or_insert_default().dock = Some(dock);
         });
