@@ -45,7 +45,7 @@ zed_actions.workspace = true
 workspace-hack.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
-winreg = "0.55.0"
+windows-registry = "0.6.0"
 
 [dev-dependencies]
 dap.workspace = true
