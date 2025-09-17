@@ -78,7 +78,6 @@ impl SelectionsCollection {
         if self.pending.is_some() {
             count += 1;
         }
-        debug_assert!(count > 0);
         count
     }
 

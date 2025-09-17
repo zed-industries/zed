@@ -15117,11 +15117,9 @@ impl Editor {
         let full_edits = selections
             .into_iter()
             .filter_map(|selection| {
-                // Only requires two branches once if-let-chains stabilize (#53667)
-                let child = if !selection.is_empty() {
-                    selection.range()
-                } else if let Some((_, ancestor_range)) =
-                    buffer.syntax_ancestor(selection.start..selection.end)
+                let child = if selection.is_empty()
+                    && let Some((_, ancestor_range)) =
+                        buffer.syntax_ancestor(selection.start..selection.end)
                 {
                     match ancestor_range {
                         MultiOrSingleBufferOffsetRange::Single(range) => range,
@@ -15149,6 +15147,9 @@ impl Editor {
                 Some((selection.id, parent, text))
             })
             .collect::<Vec<_>>();
+        if full_edits.is_empty() {
+            return;
+        }
 
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |buffer, cx| {
