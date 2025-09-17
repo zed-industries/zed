@@ -138,6 +138,7 @@ impl AgentTool for FindPathTool {
                                 mime_type: None,
                                 size: None,
                                 title: None,
+                                meta: None,
                             }),
                         })
                         .collect(),

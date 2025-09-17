@@ -97,9 +97,13 @@ impl Room {
 
     pub async fn publish_local_microphone_track(
         &self,
+        user_name: String,
+        is_staff: bool,
         cx: &mut AsyncApp,
     ) -> Result<(LocalTrackPublication, playback::AudioStream)> {
-        let (track, stream) = self.playback.capture_local_microphone_track()?;
+        let (track, stream) = self
+            .playback
+            .capture_local_microphone_track(user_name, is_staff, &cx)?;
         let publication = self
             .local_participant()
             .publish_track(
@@ -129,7 +133,7 @@ impl Room {
         cx: &mut App,
     ) -> Result<playback::AudioStream> {
         if AudioSettings::get_global(cx).rodio_audio {
-            info!("Using experimental.rodio_audio audio pipeline");
+            info!("Using experimental.rodio_audio audio pipeline for output");
             playback::play_remote_audio_track(&track.0, cx)
         } else {
             Ok(self.playback.play_remote_audio_track(&track.0))

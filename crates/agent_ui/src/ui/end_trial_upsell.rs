@@ -2,18 +2,22 @@ use std::sync::Arc;
 
 use ai_onboarding::{AgentPanelOnboardingCard, PlanDefinitions};
 use client::zed_urls;
-use feature_flags::{BillingV2FeatureFlag, FeatureFlagAppExt as _};
+use cloud_llm_client::{Plan, PlanV1};
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Divider, Tooltip, prelude::*};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct EndTrialUpsell {
+    plan: Plan,
     dismiss_upsell: Arc<dyn Fn(&mut Window, &mut App)>,
 }
 
 impl EndTrialUpsell {
-    pub fn new(dismiss_upsell: Arc<dyn Fn(&mut Window, &mut App)>) -> Self {
-        Self { dismiss_upsell }
+    pub fn new(plan: Plan, dismiss_upsell: Arc<dyn Fn(&mut Window, &mut App)>) -> Self {
+        Self {
+            plan,
+            dismiss_upsell,
+        }
     }
 }
 
@@ -32,7 +36,7 @@ impl RenderOnce for EndTrialUpsell {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.pro_plan(cx.has_flag::<BillingV2FeatureFlag>(), false))
+            .child(PlanDefinitions.pro_plan(self.plan.is_v2(), false))
             .child(
                 Button::new("cta-button", "Upgrade to Zed Pro")
                     .full_width()
@@ -63,7 +67,7 @@ impl RenderOnce for EndTrialUpsell {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(PlanDefinitions.free_plan(cx.has_flag::<BillingV2FeatureFlag>()));
+            .child(PlanDefinitions.free_plan(self.plan.is_v2()));
 
         AgentPanelOnboardingCard::new()
             .child(Headline::new("Your Zed Pro Trial has expired"))
@@ -108,6 +112,7 @@ impl Component for EndTrialUpsell {
         Some(
             v_flex()
                 .child(EndTrialUpsell {
+                    plan: Plan::V1(PlanV1::ZedFree),
                     dismiss_upsell: Arc::new(|_, _| {}),
                 })
                 .into_any_element(),

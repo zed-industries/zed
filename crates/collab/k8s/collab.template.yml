@@ -226,12 +226,6 @@ spec:
                 secretKeyRef:
                   name: supermaven
                   key: api_key
-            - name: USER_BACKFILLER_GITHUB_ACCESS_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: user-backfiller
-                  key: github_access_token
-                  optional: true
             - name: INVITE_LINK_PREFIX
               value: ${INVITE_LINK_PREFIX}
             - name: RUST_BACKTRACE

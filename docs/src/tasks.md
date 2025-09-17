@@ -145,6 +145,21 @@ You can also adjust the currently selected task in a modal (`tab` is the default
 You can use the `cmd` modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't have a high rank in the task modal).
 The intended use of ephemeral tasks is to stay in the flow with continuous `task: rerun` usage.
 
+### More task rerun control
+
+By default, tasks capture their variables into a context once, and this "resolved task" is being rerun always.
+
+This can be controlled with the `"reevaluate_context"` argument to the task: setting it to `true` will force the task to be reevaluated before each run.
+
+```json
+{
+  "context": "Workspace",
+  "bindings": {
+    "alt-t": ["task::Rerun", { "reevaluate_context": true }]
+  }
+}
+```
+
 ## Custom keybindings for tasks
 
 You can define your own keybindings for your tasks via an additional argument to `task::Spawn`. If you wanted to bind the aforementioned `echo current file's path` task to `alt-g`, you would add the following snippet in your [`keymap.json`](./key-bindings.md) file:

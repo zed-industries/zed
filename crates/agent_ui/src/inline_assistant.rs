@@ -744,19 +744,14 @@ impl InlineAssistant {
             .update(cx, |editor, cx| {
                 let scroll_top = editor.scroll_position(cx).y;
                 let scroll_bottom = scroll_top + editor.visible_line_count().unwrap_or(0.);
-                let prompt_row = editor
+                editor_assists.scroll_lock = editor
                     .row_for_block(decorations.prompt_block_id, cx)
-                    .unwrap()
-                    .0 as f32;
-
-                if (scroll_top..scroll_bottom).contains(&prompt_row) {
-                    editor_assists.scroll_lock = Some(InlineAssistScrollLock {
+                    .map(|row| row.0 as f32)
+                    .filter(|prompt_row| (scroll_top..scroll_bottom).contains(&prompt_row))
+                    .map(|prompt_row| InlineAssistScrollLock {
                         assist_id,
                         distance_from_top: prompt_row - scroll_top,
                     });
-                } else {
-                    editor_assists.scroll_lock = None;
-                }
             })
             .ok();
     }
@@ -917,14 +912,12 @@ impl InlineAssistant {
 
         editor.update(cx, |editor, cx| {
             let scroll_position = editor.scroll_position(cx);
-            let target_scroll_top = editor
-                .row_for_block(decorations.prompt_block_id, cx)
-                .unwrap()
-                .0 as f32
+            let target_scroll_top = editor.row_for_block(decorations.prompt_block_id, cx)?.0 as f32
                 - scroll_lock.distance_from_top;
             if target_scroll_top != scroll_position.y {
                 editor.set_scroll_position(point(scroll_position.x, target_scroll_top), window, cx);
             }
+            Some(())
         });
     }
 
@@ -968,14 +961,14 @@ impl InlineAssistant {
                     if let Some(decorations) = assist.decorations.as_ref() {
                         let distance_from_top = editor.update(cx, |editor, cx| {
                             let scroll_top = editor.scroll_position(cx).y;
-                            let prompt_row = editor
-                                .row_for_block(decorations.prompt_block_id, cx)
-                                .unwrap()
-                                .0 as f32;
-                            prompt_row - scroll_top
+                            let prompt_row =
+                                editor.row_for_block(decorations.prompt_block_id, cx)?.0 as f32;
+                            Some(prompt_row - scroll_top)
                         });
 
-                        if distance_from_top != scroll_lock.distance_from_top {
+                        if distance_from_top.is_none_or(|distance_from_top| {
+                            distance_from_top != scroll_lock.distance_from_top
+                        }) {
                             editor_assists.scroll_lock = None;
                         }
                     }
@@ -1813,16 +1806,13 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             has_diagnostics = true;
         }
         if has_diagnostics {
-            if let Some(symbols_containing_start) = snapshot.symbols_containing(range.start, None)
-                && let Some(symbol) = symbols_containing_start.last()
-            {
+            let symbols_containing_start = snapshot.symbols_containing(range.start, None);
+            if let Some(symbol) = symbols_containing_start.last() {
                 range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
                 range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
             }
-
-            if let Some(symbols_containing_end) = snapshot.symbols_containing(range.end, None)
-                && let Some(symbol) = symbols_containing_end.last()
-            {
+            let symbols_containing_end = snapshot.symbols_containing(range.end, None);
+            if let Some(symbol) = symbols_containing_end.last() {
                 range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
                 range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
             }

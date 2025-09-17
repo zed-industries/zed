@@ -289,7 +289,7 @@ impl PickerDelegate for AttachModalDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
         let candidate = self.candidates.get(hit.candidate_id)?;
 
         Some(

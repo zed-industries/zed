@@ -24,7 +24,7 @@ use rpc::{
     ErrorCode, ErrorExt,
     proto::{self, ChannelVisibility, PeerId},
 };
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{mem, sync::Arc};
@@ -280,7 +280,7 @@ impl CollabPanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Filter...", cx);
+                editor.set_placeholder_text("Filter...", window, cx);
                 editor
             });
 

@@ -1258,8 +1258,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
             move |update| {
                 snapshot
                     .lock()
-                    .apply_remote_update(update, &settings.file_scan_inclusions)
-                    .unwrap();
+                    .apply_remote_update(update, &settings.file_scan_inclusions);
                 async { true }
             }
         });
@@ -1489,8 +1488,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         for update in updates.lock().iter() {
             if update.scan_id >= updated_snapshot.scan_id() as u64 {
                 updated_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                    .unwrap();
+                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
@@ -1625,9 +1623,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     for (i, mut prev_snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
             if update.scan_id >= prev_snapshot.scan_id() as u64 {
-                prev_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                    .unwrap();
+                prev_snapshot.apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
@@ -2120,7 +2116,6 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 
-    eprintln!(">>>>>>>>>> touch");
     fs.touch_path(path!("/root/subproject")).await;
     worktree
         .update(cx, |worktree, _| {
@@ -2139,6 +2134,117 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
             .collect::<Vec<_>>()
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+}
+
+#[gpui::test]
+async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let home = paths::home_dir();
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        home,
+        json!({
+            ".config": {
+                "git": {
+                    "ignore": "foo\n/bar\nbaz\n"
+                }
+            },
+            "project": {
+                ".git": {},
+                ".gitignore": "!baz",
+                "foo": "",
+                "bar": "",
+                "sub": {
+                    "bar": "",
+                },
+                "subrepo": {
+                    ".git": {},
+                    "bar": ""
+                },
+                "baz": ""
+            }
+        }),
+    )
+    .await;
+    let worktree = Worktree::local(
+        home.join("project"),
+        true,
+        fs.clone(),
+        Arc::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // .gitignore overrides excludesFile, and anchored paths in excludesFile are resolved
+    // relative to the nearest containing repository
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["foo", "bar", "subrepo/bar"],
+            &["sub/bar", "baz"],
+            &[],
+        );
+    });
+
+    // Ignore statuses are updated when excludesFile changes
+    fs.write(
+        &home.join(".config").join("git").join("ignore"),
+        "/bar\nbaz\n".as_bytes(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["bar", "subrepo/bar"],
+            &["foo", "sub/bar", "baz"],
+            &[],
+        );
+    });
+
+    // Statuses are updated when .git added/removed
+    fs.remove_dir(
+        &home.join("project").join("subrepo").join(".git"),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["bar"],
+            &["foo", "sub/bar", "baz", "subrepo/bar"],
+            &[],
+        );
+    });
 }
 
 #[track_caller]

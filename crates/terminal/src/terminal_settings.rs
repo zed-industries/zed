@@ -4,7 +4,7 @@ use alacritty_terminal::vte::ansi::{
 use collections::HashMap;
 use gpui::{AbsoluteLength, App, FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 
 use settings::{SettingsKey, SettingsSources, SettingsUi};
 use std::path::PathBuf;

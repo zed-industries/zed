@@ -8,7 +8,7 @@ use ec4rs::{
     property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{App, Modifiers};
+use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
 use schemars::{JsonSchema, json_schema};
 use serde::{
@@ -123,6 +123,8 @@ pub struct LanguageSettings {
     pub edit_predictions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
+    /// Visible characters used to render whitespace when show_whitespaces is enabled.
+    pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
@@ -578,6 +580,11 @@ pub struct LanguageSettingsContent {
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
+    /// Visible characters used to render whitespace when show_whitespaces is enabled.
+    ///
+    /// Default: "•" for spaces, "→" for tabs.
+    #[serde(default)]
+    pub whitespace_map: Option<WhitespaceMap>,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     ///
     /// Default: true
@@ -855,6 +862,28 @@ pub enum ShowWhitespaceSetting {
     Trailing,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, SettingsUi)]
+pub struct WhitespaceMap {
+    #[serde(default)]
+    pub space: Option<String>,
+    #[serde(default)]
+    pub tab: Option<String>,
+}
+
+impl WhitespaceMap {
+    pub fn space(&self) -> SharedString {
+        self.space
+            .as_ref()
+            .map_or_else(|| SharedString::from("•"), |s| SharedString::from(s))
+    }
+
+    pub fn tab(&self) -> SharedString {
+        self.tab
+            .as_ref()
+            .map_or_else(|| SharedString::from("→"), |s| SharedString::from(s))
+    }
+}
+
 /// Controls which formatter should be used when formatting code.
 #[derive(Clone, Debug, Default, PartialEq, Eq, SettingsUi)]
 pub enum SelectedFormatter {
@@ -952,11 +981,17 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
 }
 
 /// Controls which formatters should be used when formatting code.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(untagged)]
 pub enum FormatterList {
     Single(Formatter),
-    Vec(Vec<Formatter>),
+    Vec(#[settings_ui(skip)] Vec<Formatter>),
+}
+
+impl Default for FormatterList {
+    fn default() -> Self {
+        Self::Single(Formatter::default())
+    }
 }
 
 impl AsRef<[Formatter]> for FormatterList {
@@ -969,22 +1004,28 @@ impl AsRef<[Formatter]> for FormatterList {
 }
 
 /// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
     /// Format code using the current language server.
-    LanguageServer { name: Option<String> },
+    LanguageServer {
+        #[settings_ui(skip)]
+        name: Option<String>,
+    },
     /// Format code using Zed's Prettier integration.
+    #[default]
     Prettier,
     /// Format code using an external command.
     External {
         /// The external program to run.
+        #[settings_ui(skip)]
         command: Arc<str>,
         /// The arguments to pass to the program.
+        #[settings_ui(skip)]
         arguments: Option<Arc<[String]>>,
     },
     /// Files should be formatted using code actions executed by language servers.
-    CodeActions(HashMap<String, bool>),
+    CodeActions(#[settings_ui(skip)] HashMap<String, bool>),
 }
 
 /// The settings for indent guides.
@@ -1643,6 +1684,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         src.edit_predictions_disabled_in.clone(),
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
+    merge(&mut settings.whitespace_map, src.whitespace_map.clone());
     merge(
         &mut settings.extend_comment_on_newline,
         src.extend_comment_on_newline,

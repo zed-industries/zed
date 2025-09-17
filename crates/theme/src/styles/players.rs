@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 
 use gpui::Hsla;
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
 use crate::{
     PlayerColorContent, amber, blue, jade, lime, orange, pink, purple, red, try_parse_color,

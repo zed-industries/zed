@@ -38,7 +38,7 @@ use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_derive::Serialize;
+use serde::Serialize;
 use settings::{
     Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi, update_settings_file,
 };
@@ -516,11 +516,7 @@ impl Vim {
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                if HelixModeSetting::get_global(cx).0 {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
-                } else {
-                    vim.switch_mode(Mode::Normal, false, window, cx)
-                }
+                vim.switch_mode(Mode::Normal, false, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
@@ -1030,6 +1026,13 @@ impl Vim {
                 editor.set_relative_line_number(Some(is_relative), cx)
             });
         }
+        if HelixModeSetting::get_global(cx).0 {
+            if self.mode == Mode::Normal {
+                self.mode = Mode::HelixNormal
+            } else if self.mode == Mode::Visual {
+                self.mode = Mode::HelixSelect
+            }
+        }
 
         if leave_selections {
             return;
@@ -1072,16 +1075,16 @@ impl Vim {
                 }
 
                 let snapshot = s.display_map();
-                if let Some(pending) = s.pending.as_mut()
-                    && pending.selection.reversed
+                if let Some(pending) = s.pending_anchor_mut()
+                    && pending.reversed
                     && mode.is_visual()
                     && !last_mode.is_visual()
                 {
-                    let mut end = pending.selection.end.to_point(&snapshot.buffer_snapshot);
+                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot);
                     end = snapshot
                         .buffer_snapshot
                         .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.selection.end = snapshot.buffer_snapshot.anchor_before(end);
+                    pending.end = snapshot.buffer_snapshot.anchor_before(end);
                 }
 
                 s.move_with(|map, selection| {
@@ -1151,7 +1154,7 @@ impl Vim {
             }
             Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
             Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
                 cursor_shape.visual.unwrap_or(CursorShape::Block)
             }
             Mode::Insert => cursor_shape.insert.unwrap_or({
@@ -1175,7 +1178,8 @@ impl Vim {
             | Mode::Replace
             | Mode::Visual
             | Mode::VisualLine
-            | Mode::VisualBlock => false,
+            | Mode::VisualBlock
+            | Mode::HelixSelect => false,
         }
     }
 
@@ -1190,7 +1194,8 @@ impl Vim {
             | Mode::VisualLine
             | Mode::VisualBlock
             | Mode::Replace
-            | Mode::HelixNormal => false,
+            | Mode::HelixNormal
+            | Mode::HelixSelect => false,
             Mode::Normal => true,
         }
     }
@@ -1202,6 +1207,7 @@ impl Vim {
             Mode::Insert => "insert",
             Mode::Replace => "replace",
             Mode::HelixNormal => "helix_normal",
+            Mode::HelixSelect => "helix_select",
         }
         .to_string();
 
@@ -1227,7 +1233,12 @@ impl Vim {
             }
         }
 
-        if mode == "normal" || mode == "visual" || mode == "operator" || mode == "helix_normal" {
+        if mode == "normal"
+            || mode == "visual"
+            || mode == "operator"
+            || mode == "helix_normal"
+            || mode == "helix_select"
+        {
             context.add("VimControl");
         }
         context.set("vim_mode", mode);
@@ -1321,7 +1332,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, _| {
             editor
                 .selections
-                .disjoint_anchors()
+                .disjoint_anchors_arc()
                 .iter()
                 .map(|selection| selection.tail()..selection.head())
                 .collect()
@@ -1522,7 +1533,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match self.mode {
-            Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
+            Mode::VisualLine | Mode::VisualBlock | Mode::Visual | Mode::HelixSelect => {
                 self.update_editor(cx, |vim, editor, cx| {
                     let original_mode = vim.undo_modes.get(transaction_id);
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {

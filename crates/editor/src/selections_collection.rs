@@ -28,13 +28,13 @@ pub struct PendingSelection {
 pub struct SelectionsCollection {
     display_map: Entity<DisplayMap>,
     buffer: Entity<MultiBuffer>,
-    pub next_selection_id: usize,
+    next_selection_id: usize,
     pub line_mode: bool,
     /// The non-pending, non-overlapping selections.
     /// The [SelectionsCollection::pending] selection could possibly overlap these
-    pub disjoint: Arc<[Selection<Anchor>]>,
+    disjoint: Arc<[Selection<Anchor>]>,
     /// A pending selection, such as when the mouse is being dragged
-    pub pending: Option<PendingSelection>,
+    pending: Option<PendingSelection>,
 }
 
 impl SelectionsCollection {
@@ -84,20 +84,27 @@ impl SelectionsCollection {
     /// The non-pending, non-overlapping selections. There could be a pending selection that
     /// overlaps these if the mouse is being dragged, etc. This could also be empty if there is a
     /// pending selection. Returned as selections over Anchors.
-    pub fn disjoint_anchors(&self) -> Arc<[Selection<Anchor>]> {
+    pub fn disjoint_anchors_arc(&self) -> Arc<[Selection<Anchor>]> {
         self.disjoint.clone()
+    }
+
+    /// The non-pending, non-overlapping selections. There could be a pending selection that
+    /// overlaps these if the mouse is being dragged, etc. This could also be empty if there is a
+    /// pending selection. Returned as selections over Anchors.
+    pub fn disjoint_anchors(&self) -> &[Selection<Anchor>] {
+        &self.disjoint
     }
 
     pub fn disjoint_anchor_ranges(&self) -> impl Iterator<Item = Range<Anchor>> {
         // Mapping the Arc slice would borrow it, whereas indexing captures it.
-        let disjoint = self.disjoint_anchors();
+        let disjoint = self.disjoint_anchors_arc();
         (0..disjoint.len()).map(move |ix| disjoint[ix].range())
     }
 
     /// Non-overlapping selections using anchors, including the pending selection.
     pub fn all_anchors(&self, cx: &mut App) -> Arc<[Selection<Anchor>]> {
         if self.pending.is_none() {
-            self.disjoint_anchors()
+            self.disjoint_anchors_arc()
         } else {
             let all_offset_selections = self.all::<usize>(cx);
             let buffer = self.buffer(cx);
@@ -108,10 +115,12 @@ impl SelectionsCollection {
         }
     }
 
-    pub fn pending_anchor(&self) -> Option<Selection<Anchor>> {
-        self.pending
-            .as_ref()
-            .map(|pending| pending.selection.clone())
+    pub fn pending_anchor(&self) -> Option<&Selection<Anchor>> {
+        self.pending.as_ref().map(|pending| &pending.selection)
+    }
+
+    pub fn pending_anchor_mut(&mut self) -> Option<&mut Selection<Anchor>> {
+        self.pending.as_mut().map(|pending| &mut pending.selection)
     }
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
@@ -120,7 +129,7 @@ impl SelectionsCollection {
     ) -> Option<Selection<D>> {
         let map = self.display_map(cx);
 
-        resolve_selections(self.pending_anchor().as_ref(), &map).next()
+        resolve_selections(self.pending_anchor(), &map).next()
     }
 
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
@@ -234,8 +243,7 @@ impl SelectionsCollection {
         let map = self.display_map(cx);
         let disjoint_anchors = &self.disjoint;
         let mut disjoint = resolve_selections_display(disjoint_anchors.iter(), &map).peekable();
-        let mut pending_opt =
-            resolve_selections_display(self.pending_anchor().as_ref(), &map).next();
+        let mut pending_opt = resolve_selections_display(self.pending_anchor(), &map).next();
         let selections = iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
@@ -343,9 +351,9 @@ impl SelectionsCollection {
     #[cfg(any(test, feature = "test-support"))]
     pub fn display_ranges(&self, cx: &mut App) -> Vec<Range<DisplayPoint>> {
         let display_map = self.display_map(cx);
-        self.disjoint_anchors()
+        self.disjoint_anchors_arc()
             .iter()
-            .chain(self.pending_anchor().as_ref())
+            .chain(self.pending_anchor())
             .map(|s| {
                 if s.reversed {
                     s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
@@ -411,6 +419,10 @@ impl SelectionsCollection {
             "There must be at least one selection"
         );
         (mutable_collection.selections_changed, result)
+    }
+
+    pub fn next_selection_id(&self) -> usize {
+        self.next_selection_id
     }
 }
 

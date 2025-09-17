@@ -246,6 +246,8 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.
+
 ## Autoscroll on Clicks
 
 - Description: Whether to scroll when clicking near the edge of the visible text area.
@@ -2023,6 +2025,9 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true
     },
+    "branch_picker": {
+      "show_author_name": true
+    },
     "hunk_style": "staged_hollow"
   }
 }
@@ -2149,6 +2154,36 @@ Example:
   "git": {
     "inline_blame": {
       "padding": 10
+    }
+  }
+}
+```
+
+### Branch Picker
+
+- Description: Configuration related to the branch picker.
+- Setting: `branch_picker`
+- Default:
+
+```json
+{
+  "git": {
+    "branch_picker": {
+      "show_author_name": false
+    }
+  }
+}
+```
+
+**Options**
+
+1. Show the author name in the branch picker:
+
+```json
+{
+  "git": {
+    "branch_picker": {
+      "show_author_name": true
     }
   }
 }
@@ -3594,7 +3629,7 @@ List of `integer` column numbers
 
 ### Terminal: Cursor Shape
 
-- Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
+- Description: Controls the visual shape of the cursor in the terminal. When not explicitly set, it defaults to a block shape.
 - Setting: `cursor_shape`
 - Default: `null` (defaults to block)
 
@@ -3993,6 +4028,23 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
+## REPL
+
+- Description: Repl settings.
+- Setting: `repl`
+- Default:
+
+```json
+"repl": {
+  // Maximum number of columns to keep in REPL's scrollback buffer.
+  // Clamped with [20, 512] range.
+  "max_columns": 128,
+  // Maximum number of lines to keep in REPL's scrollback buffer.
+  // Clamped with [4, 256] range.
+  "max_lines": 32
+},
+```
+
 ## Theme
 
 - Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
@@ -4073,6 +4125,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json
 "title_bar": {
+  "show": "always",
   "show_branch_icon": false,
   "show_branch_name": true,
   "show_project_items": true,
