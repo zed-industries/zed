@@ -150,7 +150,7 @@ impl CommitView {
                     0,
                     cx.entity_id().as_non_zero_u64().into(),
                     LineEnding::default(),
-                    format_commit(&commit).into(),
+                    format_commit(&commit, stash.is_some()).into(),
                 );
                 metadata_buffer_id = Some(buffer.remote_id());
                 Buffer::build(buffer, Some(file.clone()), Capability::ReadWrite)
@@ -382,9 +382,13 @@ async fn build_buffer_diff(
     })
 }
 
-fn format_commit(commit: &CommitDetails) -> String {
+fn format_commit(commit: &CommitDetails, is_stash: bool) -> String {
     let mut result = String::new();
-    writeln!(&mut result, "commit {}", commit.sha).unwrap();
+    if is_stash {
+        writeln!(&mut result, "stash commit {}", commit.sha).unwrap();
+    } else {
+        writeln!(&mut result, "commit {}", commit.sha).unwrap();
+    }
     writeln!(
         &mut result,
         "Author: {} <{}>",
@@ -624,18 +628,16 @@ impl CommitViewToolbar {
         let commit_view = self.commit_view.clone();
 
         cx.spawn_in(window, async move |_, cx| {
-            if let Some(ref commit_view_weak) = commit_view {
-                if let Some(commit_view_entity) = commit_view_weak.upgrade() {
-                    workspace
-                        .update_in(cx, |workspace, window, cx| {
-                            let active_pane = workspace.active_pane().clone();
-                            let commit_view_id = commit_view_entity.entity_id();
-                            active_pane.update(cx, |pane, cx| {
-                                pane.close_item_by_id(commit_view_id, SaveIntent::Close, window, cx)
-                            })
-                        })?
-                        .await?;
-                }
+            if let Some(commit_view_entity) = commit_view.as_ref().and_then(|c| c.upgrade()) {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        let active_pane = workspace.active_pane();
+                        let commit_view_id = commit_view_entity.entity_id();
+                        active_pane.update(cx, |pane, cx| {
+                            pane.close_item_by_id(commit_view_id, SaveIntent::Close, window, cx)
+                        })
+                    })?
+                    .await?;
             }
 
             anyhow::Ok(())
