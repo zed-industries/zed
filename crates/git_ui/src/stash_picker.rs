@@ -264,6 +264,7 @@ impl StashListDelegate {
             return;
         };
         let stash_hash = entry_match.entry.oid.to_string();
+        let stash_index = entry_match.entry.index;
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -271,7 +272,7 @@ impl StashListDelegate {
             stash_hash,
             repo.downgrade(),
             self.workspace.clone(),
-            true,
+            Some(stash_index),
             window,
             cx,
         );
