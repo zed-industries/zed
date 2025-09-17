@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use editor::{Editor, EditorSettingsControls};
+use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt};
 use gpui::{App, Entity, EventEmitter, FocusHandle, Focusable, ReadGlobal, ScrollHandle, actions};
 use settings::{

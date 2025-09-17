@@ -13507,6 +13507,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "shlex",
  "smol",
  "tempfile",

@@ -44,6 +44,9 @@ pub struct SettingsContent {
     #[serde(flatten)]
     pub editor: EditorSettingsContent,
 
+    #[serde(flatten)]
+    pub remote: RemoteSettingsContent,
+
     /// Settings related to the file finder.
     pub file_finder: Option<FileFinderSettingsContent>,
 
@@ -711,4 +714,53 @@ pub enum ImageFileSizeUnit {
     Binary,
     /// Displays file size in decimal units (e.g., KB, MB).
     Decimal,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct RemoteSettingsContent {
+    pub ssh_connections: Option<Vec<SshConnection>>,
+    pub read_ssh_config: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct SshConnection {
+    pub host: SharedString,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub projects: collections::BTreeSet<SshProject>,
+    /// Name to use for this server in UI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
+    // By default Zed will download the binary to the host directly.
+    // If this is set to true, Zed will download the binary to your local machine,
+    // and then upload it over the SSH connection. Useful if your SSH server has
+    // limited outbound internet access.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_binary_over_ssh: Option<bool>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port_forwards: Option<Vec<SshPortForwardOption>>,
+}
+
+#[derive(
+    Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema,
+)]
+pub struct SshProject {
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
+pub struct SshPortForwardOption {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_host: Option<String>,
+    pub local_port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_host: Option<String>,
+    pub remote_port: u16,
 }

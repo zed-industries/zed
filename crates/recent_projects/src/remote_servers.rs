@@ -1,7 +1,7 @@
 use crate::{
     remote_connections::{
-        RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettingsContent, SshConnection,
-        SshConnectionHeader, SshProject, SshSettings, connect_over_ssh, open_remote_project,
+        RemoteConnectionModal, RemoteConnectionPrompt, SshConnection, SshConnectionHeader,
+        SshSettings, connect_over_ssh, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -20,7 +20,10 @@ use remote::{
     RemoteClient, RemoteConnectionOptions, SshConnectionOptions,
     remote_client::ConnectionIdentifier,
 };
-use settings::{Settings, SettingsStore, update_settings_file, watch_config_file};
+use settings::{
+    RemoteSettingsContent, Settings, SettingsStore, SshProject, update_settings_file,
+    watch_config_file,
+};
 use smol::stream::StreamExt as _;
 use std::{
     borrow::Cow,
@@ -173,13 +176,14 @@ impl ProjectPicker {
 
                     cx.update(|_, cx| {
                         let fs = app_state.fs.clone();
-                        update_settings_file::<SshSettings>(fs, cx, {
+                        update_settings_file(fs, cx, {
                             let paths = paths
                                 .iter()
                                 .map(|path| path.to_string_lossy().to_string())
                                 .collect();
                             move |setting, _| {
                                 if let Some(server) = setting
+                                    .remote
                                     .ssh_connections
                                     .as_mut()
                                     .and_then(|connections| connections.get_mut(ix))
@@ -987,7 +991,7 @@ impl RemoteServerProjects {
         else {
             return;
         };
-        update_settings_file::<SshSettings>(fs, cx, move |setting, cx| f(setting, cx));
+        update_settings_file(fs, cx, move |setting, cx| f(&mut setting.remote, cx));
     }
 
     fn delete_ssh_server(&mut self, server: usize, cx: &mut Context<Self>) {
@@ -1403,24 +1407,15 @@ impl RemoteServerProjects {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ssh_settings = SshSettings::get_global(cx);
-        let mut should_rebuild = false;
 
-        if ssh_settings
-            .ssh_connections
-            .as_ref()
-            .is_some_and(|connections| {
-                state
-                    .servers
-                    .iter()
-                    .filter_map(|server| match server {
-                        RemoteEntry::Project { connection, .. } => Some(connection),
-                        RemoteEntry::SshConfig { .. } => None,
-                    })
-                    .ne(connections.iter())
+        let mut should_rebuild = state
+            .servers
+            .iter()
+            .filter_map(|server| match server {
+                RemoteEntry::Project { connection, .. } => Some(connection),
+                RemoteEntry::SshConfig { .. } => None,
             })
-        {
-            should_rebuild = true;
-        };
+            .ne(&ssh_settings.ssh_connections);
 
         if !should_rebuild && ssh_settings.read_ssh_config {
             let current_ssh_hosts: BTreeSet<SharedString> = state

@@ -1059,17 +1059,14 @@ impl AgentPanel {
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
                 if persist {
-                    update_settings_file::<ThemeSettings>(
-                        self.fs.clone(),
-                        cx,
-                        move |settings, cx| {
-                            let agent_font_size =
-                                ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
-                            let _ = settings
-                                .agent_font_size
-                                .insert(Some(theme::clamp_font_size(agent_font_size).into()));
-                        },
-                    );
+                    update_settings_file(self.fs.clone(), cx, move |settings, cx| {
+                        let agent_font_size =
+                            ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
+                        let _ = settings
+                            .theme
+                            .agent_font_size
+                            .insert(Some(theme::clamp_font_size(agent_font_size).into()));
+                    });
                 } else {
                     theme::adjust_agent_font_size(cx, |size| size + delta);
                 }
@@ -1176,11 +1173,9 @@ impl AgentPanel {
                     .is_none_or(|model| model.provider.id() != provider.id())
                     && let Some(model) = provider.default_model(cx)
                 {
-                    update_settings_file::<AgentSettings>(
-                        self.fs.clone(),
-                        cx,
-                        move |settings, _| settings.set_model(model),
-                    );
+                    update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                        settings.agent.get_or_insert_default().set_model(model)
+                    });
                 }
 
                 self.new_thread(&NewThread::default(), window, cx);
@@ -1425,7 +1420,7 @@ impl Focusable for AgentPanel {
 }
 
 fn agent_panel_dock_position(cx: &App) -> DockPosition {
-    AgentSettings::get_global(cx).dock
+    AgentSettings::get_global(cx).dock.into()
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}
@@ -1444,13 +1439,11 @@ impl Panel for AgentPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<AgentSettings>(self.fs.clone(), cx, move |settings, _| {
-            let dock = match position {
-                DockPosition::Left => AgentDockPosition::Left,
-                DockPosition::Bottom => AgentDockPosition::Bottom,
-                DockPosition::Right => AgentDockPosition::Right,
-            };
-            settings.set_dock(dock);
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .set_dock(position.into());
         });
     }
 

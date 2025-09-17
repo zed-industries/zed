@@ -413,8 +413,8 @@ impl AgentConfiguration {
             always_allow_tool_actions,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
-                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
-                    settings.set_always_allow_tool_actions(allow);
+                update_settings_file(fs.clone(), cx, move |settings, _| {
+                    settings.agent.get_or_insert_default.set_always_allow_tool_actions(allow);
                 });
             },
         )
@@ -431,8 +431,11 @@ impl AgentConfiguration {
             single_file_review,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
-                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
-                    settings.set_single_file_review(allow);
+                update_settings_file(fs.clone(), cx, move |settings, _| {
+                    settings
+                        .agent
+                        .get_or_insert_default()
+                        .set_single_file_review(allow);
                 });
             },
         )
@@ -1279,7 +1282,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
             let settings = cx.global::<SettingsStore>();
 
             let mut unique_server_name = None;
-            let edits = settings.edits_for_update::<AllAgentServersSettings>(&text, |file| {
+            let edits = settings.edits_for_update(&text, |settings| {
                 let server_name: Option<SharedString> = (0..u8::MAX)
                     .map(|i| {
                         if i == 0 {
@@ -1288,20 +1291,26 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                             format!("your_agent_{}", i).into()
                         }
                     })
-                    .find(|name| !file.custom.contains_key(name));
+                    .find(|name| {
+                        !settings
+                            .agent_servers
+                            .is_some_and(|agent_servers| agent_servers.custom.contains_key(name))
+                    });
                 if let Some(server_name) = server_name {
                     unique_server_name = Some(server_name.clone());
-                    file.custom.insert(
-                        server_name,
-                        CustomAgentServerSettings {
-                            command: AgentServerCommand {
+                    settings
+                        .agent_servers
+                        .get_or_insert_default()
+                        .custom
+                        .insert(
+                            server_name,
+                            settings::CustomAgentServerSettings {
                                 path: "path_to_executable".into(),
                                 args: vec![],
                                 env: Some(HashMap::default()),
+                                default_mode: None,
                             },
-                            default_mode: None,
-                        },
-                    );
+                        );
                 }
             });
 

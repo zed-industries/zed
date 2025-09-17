@@ -8,8 +8,8 @@ use language_model::LanguageModel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    DefaultAgentView, LanguageModelParameters, LanguageModelSelection, NotifyWhenAgentWaiting,
-    Settings, SettingsContent,
+    DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
+    NotifyWhenAgentWaiting, Settings, SettingsContent,
 };
 use util::MergeFrom;
 
@@ -24,7 +24,7 @@ pub fn init(cx: &mut App) {
     AgentSettings::register(cx);
 }
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,

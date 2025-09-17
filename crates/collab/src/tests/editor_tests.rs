@@ -1789,8 +1789,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
                     show_value_hints: true,
                     edit_debounce_ms: 0,
@@ -1806,8 +1806,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints = Some(InlayHintSettings {
                     show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
@@ -2039,8 +2039,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints = Some(InlayHintSettings {
                     show_value_hints: true,
                     enabled: false,
                     edit_debounce_ms: 0,
@@ -2056,8 +2056,8 @@ async fn test_inlay_hint_refresh_is_forwarded(
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints = Some(InlayHintSettings {
                     show_value_hints: true,
                     enabled: true,
                     edit_debounce_ms: 0,
@@ -2242,14 +2242,14 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::None);
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::None);
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
             });
         });
     });
