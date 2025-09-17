@@ -27,7 +27,6 @@ schemars.workspace = true
 search.workspace = true
 settings.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 text.workspace = true
 theme.workspace = true
 ui.workspace = true

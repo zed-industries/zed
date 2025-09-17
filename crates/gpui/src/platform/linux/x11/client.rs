@@ -28,7 +28,7 @@ use x11rb::{
     protocol::xkb::ConnectionExt as _,
     protocol::xproto::{
         AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
-        ConnectionExt as _, EventMask, KeyPressEvent, Visibility,
+        ConnectionExt as _, EventMask, Visibility,
     },
     protocol::{Event, randr, render, xinput, xkb, xproto},
     resource_manager::Database,
@@ -525,7 +525,6 @@ impl X11Client {
             let mut windows_to_refresh = HashSet::new();
 
             let mut last_key_release = None;
-            let mut last_key_press: Option<KeyPressEvent> = None;
 
             // event handlers for new keyboard / remapping refresh the state without using event
             // details, this deduplicates them.
@@ -545,7 +544,6 @@ impl X11Client {
                                     if let Some(last_key_release) = last_key_release.take() {
                                         events.push(last_key_release);
                                     }
-                                    last_key_press = None;
                                     events.push(last_keymap_change_event);
                                 }
 
@@ -558,14 +556,7 @@ impl X11Client {
                                     if let Some(last_key_release) = last_key_release.take() {
                                         events.push(last_key_release);
                                     }
-                                    last_key_press = None;
                                     events.push(last_keymap_change_event);
-                                }
-
-                                if let Some(last_press) = last_key_press.as_ref()
-                                    && last_press.detail == key_press.detail
-                                {
-                                    continue;
                                 }
 
                                 if let Some(Event::KeyRelease(key_release)) =
@@ -580,7 +571,6 @@ impl X11Client {
                                     }
                                 }
                                 events.push(Event::KeyPress(key_press));
-                                last_key_press = Some(key_press);
                             }
                             Event::XkbNewKeyboardNotify(_) | Event::XkbMapNotify(_) => {
                                 if let Some(release_event) = last_key_release.take() {

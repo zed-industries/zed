@@ -1,4 +1,5 @@
 {
+  "project_name": null,
   // The name of the Zed theme to use for the UI.
   //
   // `mode` is one of:
@@ -361,6 +362,11 @@
   // - It is adjacent to an edge (start or end)
   // - It is adjacent to a whitespace (left or right)
   "show_whitespaces": "selection",
+  // Visible characters used to render whitespace when show_whitespaces is enabled.
+  "whitespace_map": {
+    "space": "•",
+    "tab": "→"
+  },
   // Settings related to calls in Zed
   "calls": {
     // Join calls with the microphone live by default
@@ -385,6 +391,8 @@
   "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
+    // When to show the title bar: "always" | "never" | "hide_in_full_screen".
+    "show": "always",
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
     // Whether to show the branch name button in the titlebar.
@@ -828,6 +836,9 @@
       // }
     ],
     // When enabled, the agent can run potentially destructive actions without asking for your confirmation.
+    //
+    // Note: This setting has no effect on external agents that support permission modes, such as Claude Code.
+    //       You can set `agent_servers.claude.default_mode` to `bypassPermissions` to skip all permission requests.
     "always_allow_tool_actions": false,
     // When enabled, the agent will stream edits.
     "stream_edits": false,
@@ -903,7 +914,11 @@
     /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
     ///
     /// Default: true
-    "expand_terminal_card": true
+    "expand_terminal_card": true,
+    // Minimum number of lines to display in the agent message editor.
+    //
+    // Default: 4
+    "message_editor_min_lines": 4
   },
   // The settings for slash commands.
   "slash_commands": {
@@ -1194,6 +1209,10 @@
       "show_commit_summary": false,
       // The minimum column number to show the inline blame information at
       "min_column": 0
+    },
+    // Control which information is shown in the branch picker.
+    "branch_picker": {
+      "show_author_name": true
     },
     // How git hunks are displayed visually in the editor.
     // This setting can take two values:
@@ -1679,6 +1698,11 @@
       "allow_rewrap": "anywhere"
     },
     "Python": {
+      "formatter": {
+        "language_server": {
+          "name": "ruff"
+        }
+      },
       "debuggers": ["Debugpy"]
     },
     "Ruby": {
@@ -1823,6 +1847,15 @@
     //    "python": "conda-base"
     //    "typescript": "deno"
     // }
+  },
+  // REPL settings.
+  "repl": {
+    // Maximum number of columns to keep in REPL's scrollback buffer.
+    // Clamped with [20, 512] range.
+    "max_columns": 128,
+    // Maximum number of lines to keep in REPL's scrollback buffer.
+    // Clamped with [4, 256] range.
+    "max_lines": 32
   },
   // Vim settings
   "vim": {

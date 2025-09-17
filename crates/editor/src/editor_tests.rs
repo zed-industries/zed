@@ -6731,6 +6731,58 @@ async fn test_hard_wrap(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_cut_line_ends(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state(indoc! {"
+        The quick« brownˇ»
+        fox jumps overˇ
+        the lazy dog"});
+    cx.update_editor(|e, window, cx| e.cut(&Cut, window, cx));
+    cx.assert_editor_state(indoc! {"
+        The quickˇ
+        ˇthe lazy dog"});
+
+    cx.set_state(indoc! {"
+        The quick« brownˇ»
+        fox jumps overˇ
+        the lazy dog"});
+    cx.update_editor(|e, window, cx| e.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx));
+    cx.assert_editor_state(indoc! {"
+        The quickˇ
+        fox jumps overˇthe lazy dog"});
+
+    cx.set_state(indoc! {"
+        The quick« brownˇ»
+        fox jumps overˇ
+        the lazy dog"});
+    cx.update_editor(|e, window, cx| {
+        e.cut_to_end_of_line(
+            &CutToEndOfLine {
+                stop_at_newlines: true,
+            },
+            window,
+            cx,
+        )
+    });
+    cx.assert_editor_state(indoc! {"
+        The quickˇ
+        fox jumps overˇ
+        the lazy dog"});
+
+    cx.set_state(indoc! {"
+        The quick« brownˇ»
+        fox jumps overˇ
+        the lazy dog"});
+    cx.update_editor(|e, window, cx| e.kill_ring_cut(&KillRingCut, window, cx));
+    cx.assert_editor_state(indoc! {"
+        The quickˇ
+        fox jumps overˇthe lazy dog"});
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -8591,10 +8643,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
         assert_text_with_selections(
             editor,
             indoc! {r#"
-                use mod1::mod2::{mod3, mo«ˇ»d4};
+                use mod1::mod2::{mod3, moˇd4};
 
                 fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
-                    let var1 = "te«ˇ»xt";
+                    let var1 = "teˇxt";
                 }
             "#},
             cx,
@@ -8609,10 +8661,10 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
         assert_text_with_selections(
             editor,
             indoc! {r#"
-                use mod1::mod2::{mod3, mo«ˇ»d4};
+                use mod1::mod2::{mod3, moˇd4};
 
                 fn fn_1(para«ˇm1: bool, pa»ram2: &str) {
-                    let var1 = "te«ˇ»xt";
+                    let var1 = "teˇxt";
                 }
             "#},
             cx,
@@ -8713,6 +8765,184 @@ async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContex
     });
     editor.update(cx, |editor, cx| {
         assert_text_with_selections(editor, "«ˇlet a = 2;»", cx);
+    });
+}
+
+#[gpui::test]
+async fn test_select_larger_syntax_node_for_cursor_at_symbol(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "JavaScript".into(),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+
+    let text = r#"
+        let a = {
+            key: "value",
+        };
+    "#
+    .unindent();
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    editor
+        .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
+        .await;
+
+    // Test case 1: Cursor after '{'
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 9)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {ˇ
+                    key: "value",
+                };
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = «ˇ{
+                    key: "value",
+                }»;
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 2: Cursor after ':'
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 8)..DisplayPoint::new(DisplayRow(1), 8)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {
+                    key:ˇ "value",
+                };
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {
+                    «ˇkey: "value"»,
+                };
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = «ˇ{
+                    key: "value",
+                }»;
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 3: Cursor after ','
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(1), 17)..DisplayPoint::new(DisplayRow(1), 17)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {
+                    key: "value",ˇ
+                };
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = «ˇ{
+                    key: "value",
+                }»;
+            "#},
+            cx,
+        );
+    });
+
+    // Test case 4: Cursor after ';'
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(2), 2)..DisplayPoint::new(DisplayRow(2), 2)
+            ]);
+        });
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                let a = {
+                    key: "value",
+                };ˇ
+            "#},
+            cx,
+        );
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
+    });
+    editor.update(cx, |editor, cx| {
+        assert_text_with_selections(
+            editor,
+            indoc! {r#"
+                «ˇlet a = {
+                    key: "value",
+                };
+                »"#},
+            cx,
+        );
     });
 }
 
@@ -19035,7 +19265,7 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut TestAppContext) {
     cx.executor().run_until_parked();
 
     // When the start of a hunk coincides with the start of its excerpt,
-    // the hunk is expanded. When the start of a a hunk is earlier than
+    // the hunk is expanded. When the start of a hunk is earlier than
     // the start of its excerpt, the hunk is not expanded.
     cx.assert_state_with_diff(
         "
@@ -21172,6 +21402,159 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_find_all_references_editor_reuse(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            references_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(
+        &r#"
+        fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(4, 4), lsp::Position::new(4, 7)),
+                },
+            ]))
+        });
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+            let mut a = two();
+        }
+
+        fn ˇtwo() {}"#
+            .unindent(),
+    );
+
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(editors.len(), 2, "We should have opened a new multibuffer");
+    });
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}"#
+            .unindent(),
+    );
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+
+        fn two() {}"#
+            .unindent(),
+    );
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            2,
+            "should have re-used the previous multibuffer"
+        );
+    });
+
+    cx.set_state(
+        &r#"fn one() {
+            let mut a = ˇtwo();
+        }
+        fn three() {}
+        fn two() {}"#
+            .unindent(),
+    );
+    cx.lsp
+        .set_request_handler::<lsp::request::References, _, _>(move |params, _| async move {
+            Ok(Some(vec![
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri.clone(),
+                    range: lsp::Range::new(lsp::Position::new(0, 16), lsp::Position::new(0, 19)),
+                },
+                lsp::Location {
+                    uri: params.text_document_position.text_document.uri,
+                    range: lsp::Range::new(lsp::Position::new(5, 4), lsp::Position::new(5, 7)),
+                },
+            ]))
+        });
+    let navigated = cx
+        .update_editor(|editor, window, cx| {
+            editor.find_all_references(&FindAllReferences, window, cx)
+        })
+        .unwrap()
+        .await
+        .expect("Failed to navigate to references");
+    assert_eq!(
+        navigated,
+        Navigated::Yes,
+        "Should have navigated to references from the FindAllReferences response"
+    );
+    cx.assert_editor_state(
+        &r#"fn one() {
+                let mut a = ˇtwo();
+            }
+            fn three() {}
+            fn two() {}"#
+            .unindent(),
+    );
+    let editors = cx.update_workspace(|workspace, _, cx| {
+        workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
+    });
+    cx.update_editor(|_, _, _| {
+        assert_eq!(
+            editors.len(),
+            3,
+            "should have used a new multibuffer as offsets changed"
+        );
+    });
+}
 #[gpui::test]
 async fn test_find_enclosing_node_with_task(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -25423,6 +25806,101 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
             "Previous sibling selection should be different from next"
         );
     });
+}
+
+#[gpui::test]
+async fn test_next_prev_document_highlight(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
+
+    // Set up document highlights manually (simulating LSP response)
+    cx.update_editor(|editor, _window, cx| {
+        let buffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+
+        // Create highlights for "variable" occurrences
+        let highlight_ranges = [
+            Point::new(0, 4)..Point::new(0, 12),  // First "variable"
+            Point::new(1, 14)..Point::new(1, 22), // Second "variable"
+            Point::new(2, 13)..Point::new(2, 21), // Third "variable"
+        ];
+
+        let anchor_ranges: Vec<_> = highlight_ranges
+            .iter()
+            .map(|range| range.clone().to_anchors(&buffer_snapshot))
+            .collect();
+
+        editor.highlight_background::<DocumentHighlightRead>(
+            &anchor_ranges,
+            |theme| theme.colors().editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    // Go to next highlight - should move to second "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = ˇvariable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to next highlight - should move to third "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = variable + 1;
+let result = ˇvariable * 2;",
+    );
+
+    // Go to next highlight - should stay at third "variable" (no wrap-around)
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_next_document_highlight(&GoToNextDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = variable + 1;
+let result = ˇvariable * 2;",
+    );
+
+    // Now test going backwards from third position
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let variable = 42;
+let another = ˇvariable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to previous highlight - should move to first "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
+
+    // Go to previous highlight - should stay on first "variable"
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_prev_document_highlight(&GoToPreviousDocumentHighlight, window, cx);
+    });
+    cx.assert_editor_state(
+        "let ˇvariable = 42;
+let another = variable + 1;
+let result = variable * 2;",
+    );
 }
 
 #[track_caller]

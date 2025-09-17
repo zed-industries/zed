@@ -36,6 +36,7 @@ pub mod picker_prompt;
 pub mod project_diff;
 pub(crate) mod remote_output;
 pub mod repository_selector;
+pub mod stash_picker;
 pub mod text_diff_view;
 
 actions!(
@@ -62,6 +63,7 @@ pub fn init(cx: &mut App) {
         git_panel::register(workspace);
         repository_selector::register(workspace);
         branch_picker::register(workspace);
+        stash_picker::register(workspace);
 
         let project = workspace.project().read(cx);
         if project.is_read_only(cx) {
@@ -133,6 +135,14 @@ pub fn init(cx: &mut App) {
                 panel.stash_pop(action, window, cx);
             });
         });
+        workspace.register_action(|workspace, action: &git::StashApply, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.stash_apply(action, window, cx);
+            });
+        });
         workspace.register_action(|workspace, action: &git::StageAll, window, cx| {
             let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
                 return;
@@ -148,6 +158,14 @@ pub fn init(cx: &mut App) {
             panel.update(cx, |panel, cx| {
                 panel.unstage_all(action, window, cx);
             });
+        });
+        workspace.register_action(|workspace, _: &git::Uncommit, window, cx| {
+            let Some(panel) = workspace.panel::<git_panel::GitPanel>(cx) else {
+                return;
+            };
+            panel.update(cx, |panel, cx| {
+                panel.uncommit(window, cx);
+            })
         });
         CommandPaletteFilter::update_global(cx, |filter, _cx| {
             filter.hide_action_types(&[
@@ -629,7 +647,7 @@ impl GitCloneModal {
     pub fn show(panel: Entity<GitPanel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let repo_input = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Enter repository URL…", cx);
+            editor.set_placeholder_text("Enter repository URL…", window, cx);
             editor
         });
         let focus_handle = repo_input.focus_handle(cx);

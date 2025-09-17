@@ -2,14 +2,13 @@ use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncApp;
-use language::{LspAdapter, LspAdapterDelegate, Toolchain};
+use language::{LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
-use project::{Fs, lsp_store::language_server_settings};
+use project::lsp_store::language_server_settings;
 use serde_json::json;
 use smol::fs;
 use std::{
-    any::Any,
     ffi::OsString,
     path::{Path, PathBuf},
     sync::Arc,
@@ -34,10 +33,18 @@ impl CssLspAdapter {
     }
 }
 
-#[async_trait(?Send)]
-impl LspAdapter for CssLspAdapter {
-    fn name(&self) -> LanguageServerName {
-        LanguageServerName("vscode-css-language-server".into())
+impl LspInstaller for CssLspAdapter {
+    type BinaryVersion = String;
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: bool,
+        _: &mut AsyncApp,
+    ) -> Result<String> {
+        self.node
+            .npm_package_latest_version("vscode-langservers-extracted")
+            .await
     }
 
     async fn check_if_user_installed(
@@ -58,25 +65,12 @@ impl LspAdapter for CssLspAdapter {
         })
     }
 
-    async fn fetch_latest_server_version(
-        &self,
-        _: &dyn LspAdapterDelegate,
-        _: &AsyncApp,
-    ) -> Result<Box<dyn 'static + Any + Send>> {
-        Ok(Box::new(
-            self.node
-                .npm_package_latest_version("vscode-langservers-extracted")
-                .await?,
-        ) as Box<_>)
-    }
-
     async fn fetch_server_binary(
         &self,
-        latest_version: Box<dyn 'static + Send + Any>,
+        latest_version: String,
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
 
         self.node
@@ -95,11 +89,10 @@ impl LspAdapter for CssLspAdapter {
 
     async fn check_if_version_installed(
         &self,
-        version: &(dyn 'static + Send + Any),
+        version: &String,
         container_dir: &PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        let version = version.downcast_ref::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
 
         let should_install_language_server = self
@@ -130,10 +123,16 @@ impl LspAdapter for CssLspAdapter {
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir, &self.node).await
     }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for CssLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        LanguageServerName("vscode-css-language-server".into())
+    }
 
     async fn initialization_options(
         self: Arc<Self>,
-        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({
@@ -143,7 +142,6 @@ impl LspAdapter for CssLspAdapter {
 
     async fn workspace_configuration(
         self: Arc<Self>,
-        _: &dyn Fs,
         delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
         cx: &mut AsyncApp,
@@ -237,7 +235,7 @@ mod tests {
         .unindent();
 
         let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
-        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None).unwrap());
+        let outline = buffer.read_with(cx, |buffer, _| buffer.snapshot().outline(None));
         assert_eq!(
             outline
                 .items

@@ -83,6 +83,10 @@ unsafe fn build_classes() {
             let mut decl = ClassDecl::new("GPUIApplicationDelegate", class!(NSResponder)).unwrap();
             decl.add_ivar::<*mut c_void>(MAC_PLATFORM_IVAR);
             decl.add_method(
+                sel!(applicationWillFinishLaunching:),
+                will_finish_launching as extern "C" fn(&mut Object, Sel, id),
+            );
+            decl.add_method(
                 sel!(applicationDidFinishLaunching:),
                 did_finish_launching as extern "C" fn(&mut Object, Sel, id),
             );
@@ -1353,6 +1357,23 @@ unsafe fn get_mac_platform(object: &mut Object) -> &MacPlatform {
         let platform_ptr: *mut c_void = *object.get_ivar(MAC_PLATFORM_IVAR);
         assert!(!platform_ptr.is_null());
         &*(platform_ptr as *const MacPlatform)
+    }
+}
+
+extern "C" fn will_finish_launching(_this: &mut Object, _: Sel, _: id) {
+    unsafe {
+        let user_defaults: id = msg_send![class!(NSUserDefaults), standardUserDefaults];
+
+        // The autofill heuristic controller causes slowdown and high CPU usage.
+        // We don't know exactly why. This disables the full heuristic controller.
+        //
+        // Adapted from: https://github.com/ghostty-org/ghostty/pull/8625
+        let name = ns_string("NSAutoFillHeuristicControllerEnabled");
+        let existing_value: id = msg_send![user_defaults, objectForKey: name];
+        if existing_value == nil {
+            let false_value: id = msg_send![class!(NSNumber), numberWithBool:false];
+            let _: () = msg_send![user_defaults, setObject: false_value forKey: name];
+        }
     }
 }
 

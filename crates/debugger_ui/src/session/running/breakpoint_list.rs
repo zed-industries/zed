@@ -10,7 +10,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use gpui::{
     Action, AppContext, ClickEvent, Entity, FocusHandle, Focusable, MouseButton, ScrollStrategy,
-    Stateful, Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
+    Task, UniformListScrollHandle, WeakEntity, actions, uniform_list,
 };
 use language::Point;
 use project::{
@@ -23,8 +23,8 @@ use project::{
     worktree_store::WorktreeStore,
 };
 use ui::{
-    Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render, Scrollbar,
-    ScrollbarState, StatefulInteractiveElement, Tooltip, prelude::*,
+    Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render,
+    StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
@@ -49,7 +49,6 @@ pub(crate) struct BreakpointList {
     breakpoint_store: Entity<BreakpointStore>,
     dap_store: Entity<DapStore>,
     worktree_store: Entity<WorktreeStore>,
-    scrollbar_state: ScrollbarState,
     breakpoints: Vec<BreakpointEntry>,
     session: Option<Entity<Session>>,
     focus_handle: FocusHandle,
@@ -87,7 +86,6 @@ impl BreakpointList {
         let dap_store = project.dap_store();
         let focus_handle = cx.focus_handle();
         let scroll_handle = UniformListScrollHandle::new();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let adapter_name = session.as_ref().map(|session| session.read(cx).adapter());
         cx.new(|cx| {
@@ -95,7 +93,6 @@ impl BreakpointList {
                 breakpoint_store,
                 dap_store,
                 worktree_store,
-                scrollbar_state,
                 breakpoints: Default::default(),
                 workspace,
                 session,
@@ -219,7 +216,7 @@ impl BreakpointList {
         });
 
         self.input.update(cx, |this, cx| {
-            this.set_placeholder_text(placeholder, cx);
+            this.set_placeholder_text(placeholder, window, cx);
             this.set_read_only(is_exception_breakpoint);
             this.set_text(active_value.as_deref().unwrap_or(""), window, cx);
         });
@@ -576,39 +573,6 @@ impl BreakpointList {
         .flex_1()
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("breakpoint-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
-    }
-
     pub(crate) fn render_control_strip(&self) -> AnyElement {
         let selection_kind = self.selection_kind();
         let focus_handle = self.focus_handle.clone();
@@ -789,7 +753,7 @@ impl Render for BreakpointList {
             .size_full()
             .pt_1()
             .child(self.render_list(cx))
-            .child(self.render_vertical_scrollbar(cx))
+            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
             .when_some(self.strip_mode, |this, _| {
                 this.child(Divider::horizontal().color(DividerColor::Border))
                     .child(

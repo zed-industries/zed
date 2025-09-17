@@ -7,8 +7,9 @@ use cloud_llm_client::{
     CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, CURRENT_PLAN_HEADER_NAME, CompletionBody,
     CompletionEvent, CompletionRequestStatus, CountTokensBody, CountTokensResponse,
     EXPIRED_LLM_TOKEN_HEADER_NAME, ListModelsResponse, MODEL_REQUESTS_RESOURCE_HEADER_VALUE, Plan,
-    SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME,
-    TOOL_USE_LIMIT_REACHED_HEADER_NAME, ZED_VERSION_HEADER_NAME,
+    PlanV1, PlanV2, SERVER_SUPPORTS_STATUS_MESSAGES_HEADER_NAME,
+    SUBSCRIPTION_LIMIT_RESOURCE_HEADER_NAME, TOOL_USE_LIMIT_REACHED_HEADER_NAME,
+    ZED_VERSION_HEADER_NAME,
 };
 use futures::{
     AsyncBufReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream,
@@ -214,11 +215,21 @@ impl State {
 
         self.default_model = models
             .iter()
-            .find(|model| model.id == response.default_model)
+            .find(|model| {
+                response
+                    .default_model
+                    .as_ref()
+                    .is_some_and(|default_model_id| &model.id == default_model_id)
+            })
             .cloned();
         self.default_fast_model = models
             .iter()
-            .find(|model| model.id == response.default_fast_model)
+            .find(|model| {
+                response
+                    .default_fast_model
+                    .as_ref()
+                    .is_some_and(|default_fast_model_id| &model.id == default_fast_model_id)
+            })
             .cloned();
         self.recommended_models = response
             .recommended_models
@@ -480,7 +491,8 @@ impl CloudLanguageModel {
                         .headers()
                         .get(CURRENT_PLAN_HEADER_NAME)
                         .and_then(|plan| plan.to_str().ok())
-                        .and_then(|plan| cloud_llm_client::Plan::from_str(plan).ok())
+                        .and_then(|plan| cloud_llm_client::PlanV1::from_str(plan).ok())
+                        .map(Plan::V1)
                 {
                     return Err(anyhow!(ModelRequestLimitReachedError { plan }));
                 }
@@ -539,29 +551,36 @@ where
 
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body)
-            && cloud_error.code.starts_with("upstream_http_")
-        {
-            let status = if let Some(status) = cloud_error.upstream_status {
-                status
-            } else if cloud_error.code.ends_with("_error") {
-                error.status
-            } else {
-                // If there's a status code in the code string (e.g. "upstream_http_429")
-                // then use that; otherwise, see if the JSON contains a status code.
-                cloud_error
-                    .code
-                    .strip_prefix("upstream_http_")
-                    .and_then(|code_str| code_str.parse::<u16>().ok())
-                    .and_then(|code| StatusCode::from_u16(code).ok())
-                    .unwrap_or(error.status)
-            };
+        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body) {
+            if cloud_error.code.starts_with("upstream_http_") {
+                let status = if let Some(status) = cloud_error.upstream_status {
+                    status
+                } else if cloud_error.code.ends_with("_error") {
+                    error.status
+                } else {
+                    // If there's a status code in the code string (e.g. "upstream_http_429")
+                    // then use that; otherwise, see if the JSON contains a status code.
+                    cloud_error
+                        .code
+                        .strip_prefix("upstream_http_")
+                        .and_then(|code_str| code_str.parse::<u16>().ok())
+                        .and_then(|code| StatusCode::from_u16(code).ok())
+                        .unwrap_or(error.status)
+                };
 
-            return LanguageModelCompletionError::UpstreamProviderError {
-                message: cloud_error.message,
-                status,
-                retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
-            };
+                return LanguageModelCompletionError::UpstreamProviderError {
+                    message: cloud_error.message,
+                    status,
+                    retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
+                };
+            }
+
+            return LanguageModelCompletionError::from_http_status(
+                PROVIDER_NAME,
+                error.status,
+                cloud_error.message,
+                None,
+            );
         }
 
         let retry_after = None;
@@ -994,15 +1013,17 @@ impl RenderOnce for ZedAiConfiguration {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let young_account_banner = YoungAccountBanner;
 
-        let is_pro = self.plan == Some(Plan::ZedPro);
+        let is_pro = self.plan.is_some_and(|plan| {
+            matches!(plan, Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))
+        });
         let subscription_text = match (self.plan, self.subscription_period) {
-            (Some(Plan::ZedPro), Some(_)) => {
+            (Some(Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro)), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro subscription."
             }
-            (Some(Plan::ZedProTrial), Some(_)) => {
+            (Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro trial."
             }
-            (Some(Plan::ZedFree), Some(_)) => {
+            (Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree)), Some(_)) => {
                 "You have basic access to Zed's hosted models through the Free plan."
             }
             _ => {
@@ -1161,15 +1182,15 @@ impl Component for ZedAiConfiguration {
                     ),
                     single_example(
                         "Free Plan",
-                        configuration(true, Some(Plan::ZedFree), true, false),
+                        configuration(true, Some(Plan::V1(PlanV1::ZedFree)), true, false),
                     ),
                     single_example(
                         "Zed Pro Trial Plan",
-                        configuration(true, Some(Plan::ZedProTrial), true, false),
+                        configuration(true, Some(Plan::V1(PlanV1::ZedProTrial)), true, false),
                     ),
                     single_example(
                         "Zed Pro Plan",
-                        configuration(true, Some(Plan::ZedPro), true, false),
+                        configuration(true, Some(Plan::V1(PlanV1::ZedPro)), true, false),
                     ),
                 ])
                 .into_any_element(),

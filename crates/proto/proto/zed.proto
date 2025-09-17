@@ -210,8 +210,6 @@ message Envelope {
 
         UpdateNotification update_notification = 174;
 
-        MultiLspQuery multi_lsp_query = 175;
-        MultiLspQueryResponse multi_lsp_query_response = 176;
         RestartLanguageServers restart_language_servers = 208;
 
         RejoinRemoteProjects rejoin_remote_projects = 186;
@@ -413,7 +411,10 @@ message Envelope {
         ExternalAgentsUpdated external_agents_updated = 375;
 
         ExternalAgentLoadingStatusUpdated external_agent_loading_status_updated = 376;
-        NewExternalAgentVersionAvailable new_external_agent_version_available = 377; // current max
+        NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
+
+        StashDrop stash_drop = 378;
+        StashApply stash_apply = 379; // current max
     }
 
     reserved 87 to 88;
@@ -421,7 +422,7 @@ message Envelope {
     reserved 158 to 161;
     reserved 164;
     reserved 166 to 169;
-    reserved 177 to 185;
+    reserved 175 to 185;
     reserved 188;
     reserved 189 to 192;
     reserved 193 to 195;

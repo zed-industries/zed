@@ -153,7 +153,7 @@ pub struct Style {
     #[refineable]
     pub overflow: Point<Overflow>,
     /// How much space (in points) should be reserved for the scrollbars of `Overflow::Scroll` and `Overflow::Auto` nodes.
-    pub scrollbar_width: f32,
+    pub scrollbar_width: AbsoluteLength,
     /// Whether both x and y axis should be scrollable at the same time.
     pub allow_concurrent_scroll: bool,
     /// Whether scrolling should be restricted to the axis indicated by the mouse wheel.
@@ -745,7 +745,7 @@ impl Default for Style {
             },
             allow_concurrent_scroll: false,
             restrict_scroll_to_axis: false,
-            scrollbar_width: 0.0,
+            scrollbar_width: AbsoluteLength::default(),
             position: Position::Relative,
             inset: Edges::auto(),
             margin: Edges::<Length>::zero(),
@@ -886,43 +886,32 @@ impl HighlightStyle {
     }
     /// Blend this highlight style with another.
     /// Non-continuous properties, like font_weight and font_style, are overwritten.
-    pub fn highlight(&mut self, other: HighlightStyle) {
-        match (self.color, other.color) {
-            (Some(self_color), Some(other_color)) => {
-                self.color = Some(Hsla::blend(other_color, self_color));
-            }
-            (None, Some(other_color)) => {
-                self.color = Some(other_color);
-            }
-            _ => {}
-        }
-
-        if other.font_weight.is_some() {
-            self.font_weight = other.font_weight;
-        }
-
-        if other.font_style.is_some() {
-            self.font_style = other.font_style;
-        }
-
-        if other.background_color.is_some() {
-            self.background_color = other.background_color;
-        }
-
-        if other.underline.is_some() {
-            self.underline = other.underline;
-        }
-
-        if other.strikethrough.is_some() {
-            self.strikethrough = other.strikethrough;
-        }
-
-        match (other.fade_out, self.fade_out) {
-            (Some(source_fade), None) => self.fade_out = Some(source_fade),
-            (Some(source_fade), Some(dest_fade)) => {
-                self.fade_out = Some((dest_fade * (1. + source_fade)).clamp(0., 1.));
-            }
-            _ => {}
+    #[must_use]
+    pub fn highlight(self, other: HighlightStyle) -> Self {
+        Self {
+            color: other
+                .color
+                .map(|other_color| {
+                    if let Some(color) = self.color {
+                        color.blend(other_color)
+                    } else {
+                        other_color
+                    }
+                })
+                .or(self.color),
+            font_weight: other.font_weight.or(self.font_weight),
+            font_style: other.font_style.or(self.font_style),
+            background_color: other.background_color.or(self.background_color),
+            underline: other.underline.or(self.underline),
+            strikethrough: other.strikethrough.or(self.strikethrough),
+            fade_out: other
+                .fade_out
+                .map(|source_fade| {
+                    self.fade_out
+                        .map(|dest_fade| (dest_fade * (1. + source_fade)).clamp(0., 1.))
+                        .unwrap_or(source_fade)
+                })
+                .or(self.fade_out),
         }
     }
 }
@@ -987,10 +976,11 @@ pub fn combine_highlights(
         while let Some((endpoint_ix, highlight_id, is_start)) = endpoints.peek() {
             let prev_index = mem::replace(&mut ix, *endpoint_ix);
             if ix > prev_index && !active_styles.is_empty() {
-                let mut current_style = HighlightStyle::default();
-                for highlight_id in &active_styles {
-                    current_style.highlight(highlights[*highlight_id]);
-                }
+                let current_style = active_styles
+                    .iter()
+                    .fold(HighlightStyle::default(), |acc, highlight_id| {
+                        acc.highlight(highlights[*highlight_id])
+                    });
                 return Some((prev_index..ix, current_style));
             }
 
@@ -1306,9 +1296,94 @@ impl From<Position> for taffy::style::Position {
 
 #[cfg(test)]
 mod tests {
-    use crate::{blue, green, red, yellow};
+    use crate::{blue, green, px, red, yellow};
 
     use super::*;
+
+    #[test]
+    fn test_basic_highlight_style_combination() {
+        let style_a = HighlightStyle::default();
+        let style_b = HighlightStyle::default();
+        let style_a = style_a.highlight(style_b);
+        assert_eq!(
+            style_a,
+            HighlightStyle::default(),
+            "Combining empty styles should not produce a non-empty style."
+        );
+
+        let mut style_b = HighlightStyle {
+            color: Some(red()),
+            strikethrough: Some(StrikethroughStyle {
+                thickness: px(2.),
+                color: Some(blue()),
+            }),
+            fade_out: Some(0.),
+            font_style: Some(FontStyle::Italic),
+            font_weight: Some(FontWeight(300.)),
+            background_color: Some(yellow()),
+            underline: Some(UnderlineStyle {
+                thickness: px(2.),
+                color: Some(red()),
+                wavy: true,
+            }),
+        };
+        let expected_style = style_b;
+
+        let style_a = style_a.highlight(style_b);
+        assert_eq!(
+            style_a, expected_style,
+            "Blending an empty style with another style should return the other style"
+        );
+
+        let style_b = style_b.highlight(Default::default());
+        assert_eq!(
+            style_b, expected_style,
+            "Blending a style with an empty style should not change the style."
+        );
+
+        let mut style_c = expected_style;
+
+        let style_d = HighlightStyle {
+            color: Some(blue().alpha(0.7)),
+            strikethrough: Some(StrikethroughStyle {
+                thickness: px(4.),
+                color: Some(crate::red()),
+            }),
+            fade_out: Some(0.),
+            font_style: Some(FontStyle::Oblique),
+            font_weight: Some(FontWeight(800.)),
+            background_color: Some(green()),
+            underline: Some(UnderlineStyle {
+                thickness: px(4.),
+                color: None,
+                wavy: false,
+            }),
+        };
+
+        let expected_style = HighlightStyle {
+            color: Some(red().blend(blue().alpha(0.7))),
+            strikethrough: Some(StrikethroughStyle {
+                thickness: px(4.),
+                color: Some(red()),
+            }),
+            // TODO this does not seem right
+            fade_out: Some(0.),
+            font_style: Some(FontStyle::Oblique),
+            font_weight: Some(FontWeight(800.)),
+            background_color: Some(green()),
+            underline: Some(UnderlineStyle {
+                thickness: px(4.),
+                color: None,
+                wavy: false,
+            }),
+        };
+
+        let style_c = style_c.highlight(style_d);
+        assert_eq!(
+            style_c, expected_style,
+            "Blending styles should blend properties where possible and override all others"
+        );
+    }
 
     #[test]
     fn test_combine_highlights() {
@@ -1337,14 +1412,14 @@ mod tests {
                 (
                     1..2,
                     HighlightStyle {
-                        color: Some(green()),
+                        color: Some(blue()),
                         ..Default::default()
                     }
                 ),
                 (
                     2..3,
                     HighlightStyle {
-                        color: Some(green()),
+                        color: Some(blue()),
                         font_style: Some(FontStyle::Italic),
                         ..Default::default()
                     }
