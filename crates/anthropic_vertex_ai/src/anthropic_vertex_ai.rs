@@ -158,10 +158,9 @@ impl Model {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
+            Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => 1_000_000,
             Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking => 264_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -170,10 +169,9 @@ impl Model {
 
     pub fn max_output_tokens(&self) -> u64 {
         match self {
+            Self::ClaudeSonnet4 | Self::ClaudeSonnet4Thinking => 64_000,
             Self::ClaudeOpus4
             | Self::ClaudeOpus4Thinking
-            | Self::ClaudeSonnet4
-            | Self::ClaudeSonnet4Thinking
             | Self::Claude3_7Sonnet
             | Self::Claude3_7SonnetThinking => 8_192,
             Self::Custom {
@@ -402,7 +400,8 @@ pub async fn stream_completion_with_rate_limit_info(
         .method(Method::POST)
         .uri(uri)
         .header("Authorization", format!("Bearer {}", access_token))
-        .header("Content-Type", "application/json");
+        .header("Content-Type", "application/json")
+        .header("anthropic-beta", ["context-1m-2025-08-07"].join(","));
 
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;
