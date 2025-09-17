@@ -3019,6 +3019,12 @@ impl EditorElement {
             .ilog10()
             + 1;
 
+        let git_gutter_width = Self::gutter_strip_width(line_height)
+            + gutter_dimensions
+                .git_blame_entries_width
+                .unwrap_or_default();
+        let available_width = gutter_dimensions.left_padding - git_gutter_width;
+
         buffer_rows
             .iter()
             .enumerate()
@@ -3033,9 +3039,6 @@ impl EditorElement {
                     ExpandExcerptDirection::Down => IconName::ExpandDown,
                     ExpandExcerptDirection::UpAndDown => IconName::ExpandVertical,
                 };
-
-                let git_gutter_width = Self::gutter_strip_width(line_height);
-                let available_width = gutter_dimensions.left_padding - git_gutter_width;
 
                 let editor = self.editor.clone();
                 let is_wide = max_line_number_length
