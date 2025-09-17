@@ -5060,7 +5060,6 @@ dependencies = [
  "tree-sitter",
  "util",
  "workspace-hack",
- "worktree",
  "zlog",
 ]
 
