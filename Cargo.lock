@@ -658,6 +658,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "strum 0.27.1",
  "thiserror 2.0.12",
  "workspace-hack",
@@ -7368,6 +7369,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "strum 0.27.1",
  "workspace-hack",
 ]
@@ -9153,6 +9155,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "smol",
  "telemetry_events",
  "thiserror 2.0.12",
@@ -11134,6 +11137,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "workspace-hack",
 ]
 
@@ -11242,6 +11246,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "strum 0.27.1",
  "workspace-hack",
 ]
@@ -11256,6 +11261,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "settings",
  "strum 0.27.1",
  "thiserror 2.0.12",
  "util",

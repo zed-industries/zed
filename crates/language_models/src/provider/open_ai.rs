@@ -15,8 +15,7 @@ use language_model::{
 };
 use menu;
 use open_ai::{ImageUrl, Model, ReasoningEffort, ResponseStreamEvent, stream_completion};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use settings::OpenAiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr as _;
@@ -36,16 +35,6 @@ const PROVIDER_NAME: LanguageModelProviderName = language_model::OPEN_AI_PROVIDE
 pub struct OpenAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
-    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 pub struct OpenAiLanguageModelProvider {

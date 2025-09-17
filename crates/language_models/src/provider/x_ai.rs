@@ -12,13 +12,12 @@ use language_model::{
 };
 use menu;
 use open_ai::ResponseStreamEvent;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use x_ai::Model;
 
+pub use settings::XaiAvailableModel as AvailableModel;
 use ui::{ElevationIndex, List, Tooltip, prelude::*};
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -32,15 +31,6 @@ const PROVIDER_NAME: &str = "xAI";
 pub struct XAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
 }
 
 pub struct XAiLanguageModelProvider {
