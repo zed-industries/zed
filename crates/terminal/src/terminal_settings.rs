@@ -108,7 +108,7 @@ impl settings::Settings for TerminalSettings {
                 breadcrumbs: content.toolbar.unwrap().breadcrumbs.unwrap(),
             },
             scrollbar: ScrollbarSettings {
-                show: content.scrollbar.unwrap().show.unwrap(),
+                show: content.scrollbar.unwrap().show.flatten(),
             },
             minimum_contrast: content.minimum_contrast.unwrap(),
         }

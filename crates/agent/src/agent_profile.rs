@@ -49,7 +49,7 @@ impl AgentProfile {
                 .unwrap_or_default(),
         };
 
-        update_settings_file::<AgentSettings>(fs, cx, {
+        update_settings_file(fs, cx, {
             let id = id.clone();
             move |settings, _cx| {
                 profile_settings.save_to_settings(id, settings).log_err();

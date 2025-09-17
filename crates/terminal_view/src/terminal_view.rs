@@ -25,7 +25,7 @@ use terminal::{
         index::Point,
         term::{TermMode, point_to_viewport, search::RegexSearch},
     },
-    terminal_settings::{self, CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
+    terminal_settings::{CursorShape, TerminalSettings},
 };
 use terminal_element::TerminalElement;
 use terminal_panel::TerminalPanel;
@@ -50,7 +50,7 @@ use workspace::{
 };
 
 use serde::Deserialize;
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, TerminalBlink, WorkingDirectory};
 use smol::Timer;
 use zed_actions::assistant::InlineAssist;
 
@@ -997,12 +997,7 @@ impl ScrollbarVisibility for TerminalScrollbarSettingsWrapper {
         TerminalSettings::get_global(cx)
             .scrollbar
             .show
-            .map(|value| match value {
-                terminal_settings::ShowScrollbar::Auto => scrollbars::ShowScrollbar::Auto,
-                terminal_settings::ShowScrollbar::System => scrollbars::ShowScrollbar::System,
-                terminal_settings::ShowScrollbar::Always => scrollbars::ShowScrollbar::Always,
-                terminal_settings::ShowScrollbar::Never => scrollbars::ShowScrollbar::Never,
-            })
+            .map(Into::into)
             .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
 }
