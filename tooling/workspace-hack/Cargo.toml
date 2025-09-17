@@ -75,6 +75,7 @@ hmac = { version = "0.12", default-features = false, features = ["reset"] }
 hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "server", "stream"] }
 idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 jiff = { version = "0.2" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -213,6 +214,7 @@ hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "
 idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
 itertools-594e8ee84c453af0 = { package = "itertools", version = "0.13" }
+itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
 jiff = { version = "0.2" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
@@ -333,7 +335,6 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
@@ -395,7 +396,6 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 naga = { version = "25", features = ["msl-out", "wgsl-in"] }
 nix-b73a96c0a5f6a7d9 = { package = "nix", version = "0.29", features = ["fs", "pthread", "signal", "user"] }
@@ -474,7 +474,6 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
@@ -555,7 +554,6 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
@@ -614,7 +612,6 @@ foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-features = false, features = ["js", "rdrand"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
-itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
 num = { version = "0.4" }
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
@@ -690,7 +687,6 @@ getrandom-6f8ce4dd05d13bba = { package = "getrandom", version = "0.2", default-f
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "tls12"] }
 inout = { version = "0.1", default-features = false, features = ["block-padding"] }
-itertools-a6292c17cd707f01 = { package = "itertools", version = "0.11" }
 linux-raw-sys-274715c4dabd11b0 = { package = "linux-raw-sys", version = "0.9", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "xdp"] }
 linux-raw-sys-9fbad63c4bcf4a8f = { package = "linux-raw-sys", version = "0.4", default-features = false, features = ["elf", "errno", "general", "if_ether", "ioctl", "net", "netlink", "no_std", "prctl", "system", "xdp"] }
 livekit-runtime = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d" }
