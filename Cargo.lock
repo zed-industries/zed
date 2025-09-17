@@ -13770,6 +13770,7 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
+ "indoc",
  "language",
  "log",
  "markdown",
