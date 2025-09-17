@@ -14988,15 +14988,13 @@ impl Editor {
                 let mut new_range = old_range.clone();
                 while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
                 {
-                    if !node.is_named() {
-                        new_range = node.start_byte()..node.end_byte();
-                        continue;
-                    }
-
                     new_range = match containing_range {
                         MultiOrSingleBufferOffsetRange::Single(_) => break,
                         MultiOrSingleBufferOffsetRange::Multi(range) => range,
                     };
+                    if !node.is_named() {
+                        continue;
+                    }
                     if !display_map.intersects_fold(new_range.start)
                         && !display_map.intersects_fold(new_range.end)
                     {
