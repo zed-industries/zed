@@ -27,7 +27,7 @@ use project::{
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
-use settings::{InlayHintSettings, InlineBlameSettings, SettingsStore};
+use settings::{InlayHintSettingsContent, InlineBlameSettings, SettingsStore};
 use std::{
     collections::BTreeSet,
     ops::{Deref as _, Range},
@@ -1786,34 +1786,36 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.inlay_hints = Some(InlayHintSettings {
-                    enabled: true,
-                    show_value_hints: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: false,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        enabled: true,
+                        show_value_hints: true,
+                        edit_debounce_ms: 0,
+                        scroll_debounce_ms: 0,
+                        show_type_hints: true,
+                        show_parameter_hints: false,
+                        show_other_hints: true,
+                        show_background: false,
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: false,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: true,
+                        enabled: true,
+                        edit_debounce_ms: 0,
+                        scroll_debounce_ms: 0,
+                        show_type_hints: true,
+                        show_parameter_hints: false,
+                        show_other_hints: true,
+                        show_background: false,
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
@@ -2036,34 +2038,36 @@ async fn test_inlay_hint_refresh_is_forwarded(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: false,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: false,
-                    show_parameter_hints: false,
-                    show_other_hints: false,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: true,
+                        enabled: false,
+                        edit_debounce_ms: 0,
+                        scroll_debounce_ms: 0,
+                        show_type_hints: false,
+                        show_parameter_hints: false,
+                        show_other_hints: false,
+                        show_background: false,
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |settings| {
-                settings.project.all_languages.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: true,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: true,
+                        enabled: true,
+                        edit_debounce_ms: 0,
+                        scroll_debounce_ms: 0,
+                        show_type_hints: true,
+                        show_parameter_hints: true,
+                        show_other_hints: true,
+                        show_background: false,
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });

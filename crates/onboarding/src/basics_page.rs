@@ -251,9 +251,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                     fs.clone(),
                     cx,
                     move |setting, _| {
-                        dbg!(&setting.telemetry);
                         setting.telemetry.get_or_insert_default().metrics = Some(enabled);
-                        dbg!(&setting.telemetry);
                     }
                     ,
                 );
@@ -295,9 +293,7 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                         fs.clone(),
                         cx,
                         move |setting, _| {
-                            dbg!(&setting.telemetry);
                             setting.telemetry.get_or_insert_default().diagnostics = Some(enabled);
-                            dbg!(&setting.telemetry);
                         },
 
                     );

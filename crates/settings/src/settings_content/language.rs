@@ -218,7 +218,7 @@ pub struct LanguageSettingsContent {
     /// Default: true
     pub extend_comment_on_newline: Option<bool>,
     /// Inlay hint related settings.
-    pub inlay_hints: Option<InlayHintSettings>,
+    pub inlay_hints: Option<InlayHintSettingsContent>,
     /// Whether to automatically type closing characters for you. For example,
     /// when you type (, Zed will automatically add a closing ) at the correct position.
     ///
@@ -348,79 +348,53 @@ pub struct JsxTagAutoCloseSettings {
 /// The settings for inlay hints.
 /// todo!() the fields of this struct should likely be optional,
 /// and a similar struct exposed from the language crate.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct InlayHintSettings {
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct InlayHintSettingsContent {
     /// Global switch to toggle hints on and off.
     ///
     /// Default: false
-    #[serde(default)]
-    pub enabled: bool,
+    pub enabled: Option<bool>,
     /// Global switch to toggle inline values on and off when debugging.
     ///
     /// Default: true
-    #[serde(default = "default_true")]
-    pub show_value_hints: bool,
+    pub show_value_hints: Option<bool>,
     /// Whether type hints should be shown.
     ///
     /// Default: true
-    #[serde(default = "default_true")]
-    pub show_type_hints: bool,
+    pub show_type_hints: Option<bool>,
     /// Whether parameter hints should be shown.
     ///
     /// Default: true
-    #[serde(default = "default_true")]
-    pub show_parameter_hints: bool,
+    pub show_parameter_hints: Option<bool>,
     /// Whether other hints should be shown.
     ///
     /// Default: true
-    #[serde(default = "default_true")]
-    pub show_other_hints: bool,
+    pub show_other_hints: Option<bool>,
     /// Whether to show a background for inlay hints.
     ///
     /// If set to `true`, the background will use the `hint.background` color
     /// from the current theme.
     ///
     /// Default: false
-    #[serde(default)]
-    pub show_background: bool,
+    pub show_background: Option<bool>,
     /// Whether or not to debounce inlay hints updates after buffer edits.
     ///
     /// Set to 0 to disable debouncing.
     ///
     /// Default: 700
-    #[serde(default = "edit_debounce_ms")]
-    pub edit_debounce_ms: u64,
+    pub edit_debounce_ms: Option<u64>,
     /// Whether or not to debounce inlay hints updates after buffer scrolls.
     ///
     /// Set to 0 to disable debouncing.
     ///
     /// Default: 50
-    #[serde(default = "scroll_debounce_ms")]
-    pub scroll_debounce_ms: u64,
+    pub scroll_debounce_ms: Option<u64>,
     /// Toggles inlay hints (hides or shows) when the user presses the modifiers specified.
     /// If only a subset of the modifiers specified is pressed, hints are not toggled.
-    /// If no modifiers are specified, this is equivalent to `None`.
+    /// If no modifiers are specified, this is equivalent to `null`.
     ///
-    /// Default: None
-    #[serde(default)]
+    /// Default: null
     pub toggle_on_modifiers_press: Option<Modifiers>,
-}
-
-impl InlayHintSettings {
-    /// Returns the kinds of inlay hints that are enabled based on the settings.
-    pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
-        let mut kinds = HashSet::default();
-        if self.show_type_hints {
-            kinds.insert(Some(InlayHintKind::Type));
-        }
-        if self.show_parameter_hints {
-            kinds.insert(Some(InlayHintKind::Parameter));
-        }
-        if self.show_other_hints {
-            kinds.insert(None);
-        }
-        kinds
-    }
 }
 
 /// The kind of an inlay hint.
@@ -433,7 +407,7 @@ pub enum InlayHintKind {
 }
 
 impl InlayHintKind {
-    /// Returns the [`InlayHintKind`] from the given name.
+    /// Returns the [`InlayHintKind`]fromthe given name.
     ///
     /// Returns `None` if `name` does not match any of the expected
     /// string representations.
@@ -454,15 +428,7 @@ impl InlayHintKind {
     }
 }
 
-fn edit_debounce_ms() -> u64 {
-    700
-}
-
-fn scroll_debounce_ms() -> u64 {
-    50
-}
-
-/// Controls how completions are processed for this language.
+/// Controls how completions are processedfor this anguage.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettings {

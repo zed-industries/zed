@@ -7,7 +7,7 @@ use ec4rs::{
     property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::App;
+use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
@@ -130,7 +130,7 @@ pub struct LanguageSettings {
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
-    pub inlay_hints: settings::InlayHintSettings,
+    pub inlay_hints: InlayHintSettings,
     /// Whether to automatically close brackets.
     pub use_autoclose: bool,
     /// Whether to automatically surround text with brackets.
@@ -208,6 +208,73 @@ impl LanguageSettings {
                 }
             })
             .collect::<Vec<_>>()
+    }
+}
+
+// The settings for inlay hints.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct InlayHintSettings {
+    /// Global switch to toggle hints on and off.
+    ///
+    /// Default: false
+    pub enabled: bool,
+    /// Global switch to toggle inline values on and off when debugging.
+    ///
+    /// Default: true
+    pub show_value_hints: bool,
+    /// Whether type hints should be shown.
+    ///
+    /// Default: true
+    pub show_type_hints: bool,
+    /// Whether parameter hints should be shown.
+    ///
+    /// Default: true
+    pub show_parameter_hints: bool,
+    /// Whether other hints should be shown.
+    ///
+    /// Default: true
+    pub show_other_hints: bool,
+    /// Whether to show a background for inlay hints.
+    ///
+    /// If set to `true`, the background will use the `hint.background` color
+    /// from the current theme.
+    ///
+    /// Default: false
+    pub show_background: bool,
+    /// Whether or not to debounce inlay hints updates after buffer edits.
+    ///
+    /// Set to 0 to disable debouncing.
+    ///
+    /// Default: 700
+    pub edit_debounce_ms: u64,
+    /// Whether or not to debounce inlay hints updates after buffer scrolls.
+    ///
+    /// Set to 0 to disable debouncing.
+    ///
+    /// Default: 50
+    pub scroll_debounce_ms: u64,
+    /// Toggles inlay hints (hides or shows) when the user presses the modifiers specified.
+    /// If only a subset of the modifiers specified is pressed, hints are not toggled.
+    /// If no modifiers are specified, this is equivalent to `None`.
+    ///
+    /// Default: None
+    pub toggle_on_modifiers_press: Option<Modifiers>,
+}
+
+impl InlayHintSettings {
+    /// Returns the kinds of inlay hints that are enabled based on the settings.
+    pub fn enabled_inlay_hint_kinds(&self) -> HashSet<Option<InlayHintKind>> {
+        let mut kinds = HashSet::default();
+        if self.show_type_hints {
+            kinds.insert(Some(InlayHintKind::Type));
+        }
+        if self.show_parameter_hints {
+            kinds.insert(Some(InlayHintKind::Parameter));
+        }
+        if self.show_other_hints {
+            kinds.insert(None);
+        }
+        kinds
     }
 }
 
@@ -377,6 +444,7 @@ impl settings::Settings for AllLanguageSettings {
     fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let all_languages = &content.project.all_languages;
         let defaults = all_languages.defaults.clone();
+        let inlay_hints = defaults.inlay_hints.unwrap();
         let default_language_settings = LanguageSettings {
             tab_size: defaults.tab_size.unwrap(),
             hard_tabs: defaults.hard_tabs.unwrap(),
@@ -401,7 +469,17 @@ impl settings::Settings for AllLanguageSettings {
             show_whitespaces: defaults.show_whitespaces.unwrap(),
             whitespace_map: defaults.whitespace_map.unwrap(),
             extend_comment_on_newline: defaults.extend_comment_on_newline.unwrap(),
-            inlay_hints: defaults.inlay_hints.unwrap(),
+            inlay_hints: InlayHintSettings {
+                enabled: inlay_hints.enabled.unwrap(),
+                show_value_hints: inlay_hints.show_value_hints.unwrap(),
+                show_type_hints: inlay_hints.show_type_hints.unwrap(),
+                show_parameter_hints: inlay_hints.show_parameter_hints.unwrap(),
+                show_other_hints: inlay_hints.show_other_hints.unwrap(),
+                show_background: inlay_hints.show_background.unwrap(),
+                edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
+                scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
+                toggle_on_modifiers_press: inlay_hints.toggle_on_modifiers_press,
+            },
             use_autoclose: defaults.use_autoclose.unwrap(),
             use_auto_surround: defaults.use_auto_surround.unwrap(),
             use_on_type_format: defaults.use_on_type_format.unwrap(),
@@ -805,7 +883,44 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     settings
         .extend_comment_on_newline
         .merge_from(&src.extend_comment_on_newline);
-    settings.inlay_hints.merge_from(&src.inlay_hints.clone());
+    if let Some(inlay_hints) = &src.inlay_hints {
+        settings
+            .inlay_hints
+            .enabled
+            .merge_from(&inlay_hints.enabled);
+        settings
+            .inlay_hints
+            .show_value_hints
+            .merge_from(&inlay_hints.show_value_hints);
+        settings
+            .inlay_hints
+            .show_type_hints
+            .merge_from(&inlay_hints.show_type_hints);
+        settings
+            .inlay_hints
+            .show_parameter_hints
+            .merge_from(&inlay_hints.show_parameter_hints);
+        settings
+            .inlay_hints
+            .show_other_hints
+            .merge_from(&inlay_hints.show_other_hints);
+        settings
+            .inlay_hints
+            .show_background
+            .merge_from(&inlay_hints.show_background);
+        settings
+            .inlay_hints
+            .edit_debounce_ms
+            .merge_from(&inlay_hints.edit_debounce_ms);
+        settings
+            .inlay_hints
+            .scroll_debounce_ms
+            .merge_from(&inlay_hints.scroll_debounce_ms);
+        if let Some(toggle_on_modifiers_press) = &inlay_hints.toggle_on_modifiers_press {
+            settings.inlay_hints.toggle_on_modifiers_press =
+                Some(toggle_on_modifiers_press.clone());
+        }
+    }
     settings
         .show_completions_on_input
         .merge_from(&src.show_completions_on_input);

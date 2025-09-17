@@ -424,7 +424,6 @@ impl SettingsStore {
                 async move {
                     let res = async move {
                         let old_text = Self::load_settings(&fs).await?;
-                        dbg!(&old_text);
                         let new_text = update(old_text, cx)?;
                         let settings_path = paths::settings_file().as_path();
                         if fs.is_file(settings_path).await {
@@ -555,10 +554,8 @@ impl SettingsStore {
         text: &str,
         update: impl FnOnce(&mut SettingsContent),
     ) -> Vec<(Range<usize>, String)> {
-        dbg!(&text);
         let old_content: UserSettingsContent =
             parse_json_with_comments(text).log_err().unwrap_or_default();
-        dbg!(&old_content);
         let mut new_content = old_content.clone();
         update(&mut new_content.content);
 

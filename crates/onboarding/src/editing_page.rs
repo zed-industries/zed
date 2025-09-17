@@ -58,19 +58,14 @@ fn write_inlay_hints(enabled: bool, cx: &mut App) {
     curr_settings.defaults.inlay_hints.enabled = enabled;
     AllLanguageSettings::override_global(curr_settings, cx);
 
-    update_settings_file(fs, cx, move |settings, cx| {
+    update_settings_file(fs, cx, move |settings, _cx| {
         settings
             .project
             .all_languages
             .defaults
             .inlay_hints
-            .get_or_insert_with(|| {
-                AllLanguageSettings::get_global(cx)
-                    .clone()
-                    .defaults
-                    .inlay_hints
-            })
-            .enabled = enabled;
+            .get_or_insert_default()
+            .enabled = Some(enabled);
     });
 }
 
