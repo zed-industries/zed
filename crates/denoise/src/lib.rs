@@ -79,9 +79,12 @@ impl<S: Source> Denoiser<S> {
         let (input_tx, input_rx) = mpsc::channel();
         let (denoised_tx, denoised_rx) = mpsc::channel();
 
-        thread::spawn(move || {
-            run_neural_denoiser(denoised_tx, input_rx);
-        });
+        thread::Builder::new()
+            .name("NeuralDenoiser".to_owned())
+            .spawn(move || {
+                run_neural_denoiser(denoised_tx, input_rx);
+            })
+            .unwrap();
 
         Ok(Self {
             inner: source,
