@@ -339,59 +339,70 @@ fn main() -> Result<()> {
         "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
     );
 
-    let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
-        let exit_status = exit_status.clone();
-        let user_data_dir_for_thread = user_data_dir.clone();
-        move || {
-            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-            let (tx, rx) = (handshake.requests, handshake.responses);
+    let sender: JoinHandle<anyhow::Result<()>> = thread::Builder::new()
+        .name("CliReceiver".to_string())
+        .spawn({
+            let exit_status = exit_status.clone();
+            let user_data_dir_for_thread = user_data_dir.clone();
+            move || {
+                let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+                let (tx, rx) = (handshake.requests, handshake.responses);
 
-            #[cfg(target_os = "windows")]
-            let wsl = args.wsl;
-            #[cfg(not(target_os = "windows"))]
-            let wsl = None;
+                #[cfg(target_os = "windows")]
+                let wsl = args.wsl;
+                #[cfg(not(target_os = "windows"))]
+                let wsl = None;
 
-            tx.send(CliRequest::Open {
-                paths,
-                urls,
-                diff_paths,
-                wsl,
-                wait: args.wait,
-                open_new_workspace,
-                env,
-                user_data_dir: user_data_dir_for_thread,
-            })?;
+                tx.send(CliRequest::Open {
+                    paths,
+                    urls,
+                    diff_paths,
+                    wsl,
+                    wait: args.wait,
+                    open_new_workspace,
+                    env,
+                    user_data_dir: user_data_dir_for_thread,
+                })?;
 
-            while let Ok(response) = rx.recv() {
-                match response {
-                    CliResponse::Ping => {}
-                    CliResponse::Stdout { message } => println!("{message}"),
-                    CliResponse::Stderr { message } => eprintln!("{message}"),
-                    CliResponse::Exit { status } => {
-                        exit_status.lock().replace(status);
-                        return Ok(());
+                while let Ok(response) = rx.recv() {
+                    match response {
+                        CliResponse::Ping => {}
+                        CliResponse::Stdout { message } => println!("{message}"),
+                        CliResponse::Stderr { message } => eprintln!("{message}"),
+                        CliResponse::Exit { status } => {
+                            exit_status.lock().replace(status);
+                            return Ok(());
+                        }
                     }
                 }
-            }
 
-            Ok(())
-        }
-    });
+                Ok(())
+            }
+        })
+        .unwrap();
 
     let stdin_pipe_handle: Option<JoinHandle<anyhow::Result<()>>> =
         stdin_tmp_file.map(|mut tmp_file| {
-            thread::spawn(move || {
-                let mut stdin = std::io::stdin().lock();
-                if !io::IsTerminal::is_terminal(&stdin) {
-                    io::copy(&mut stdin, &mut tmp_file)?;
-                }
-                Ok(())
-            })
+            thread::Builder::new()
+                .name("CliStdin".to_string())
+                .spawn(move || {
+                    let mut stdin = std::io::stdin().lock();
+                    if !io::IsTerminal::is_terminal(&stdin) {
+                        io::copy(&mut stdin, &mut tmp_file)?;
+                    }
+                    Ok(())
+                })
+                .unwrap()
         });
 
     let anonymous_fd_pipe_handles: Vec<_> = anonymous_fd_tmp_files
         .into_iter()
-        .map(|(mut file, mut tmp_file)| thread::spawn(move || io::copy(&mut file, &mut tmp_file)))
+        .map(|(mut file, mut tmp_file)| {
+            thread::Builder::new()
+                .name("CliAnonymousFd".to_string())
+                .spawn(move || io::copy(&mut file, &mut tmp_file))
+                .unwrap()
+        })
         .collect();
 
     if args.foreground {
