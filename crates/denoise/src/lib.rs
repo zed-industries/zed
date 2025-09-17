@@ -264,6 +264,7 @@ impl<S: Source> Denoiser<S> {
     }
 }
 
+#[inline]
 fn read_sub_block(s: &mut impl Source) -> Option<[f32; BLOCK_SHIFT]> {
     let mut res = [0f32; BLOCK_SHIFT];
     for sample in &mut res {

@@ -781,6 +781,7 @@ codegen-units = 16
 
 [profile.dev.package]
 audio = { opt-level = 3 }
+denoise = { opt-level = 3 }
 taffy = { opt-level = 3 }
 cranelift-codegen = { opt-level = 3 }
 cranelift-codegen-meta = { opt-level = 3 }
