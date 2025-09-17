@@ -25,7 +25,7 @@ use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
 
 use collections::{HashMap, HashSet, hash_map};
-use language::language_settings::InlayHintSettings;
+use settings::InlayHintSettings;
 use smol::lock::Semaphore;
 use sum_tree::Bias;
 use text::{BufferId, ToOffset, ToPoint};
@@ -1301,13 +1301,13 @@ pub mod tests {
     use futures::StreamExt;
     use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
-    use language::{Capability, FakeLspAdapter, language_settings::AllLanguageSettingsContent};
+    use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use lsp::FakeLanguageServer;
     use parking_lot::Mutex;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{AllLanguageSettingsContent, InlayHintSettings, SettingsStore};
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use text::Point;
     use util::path;

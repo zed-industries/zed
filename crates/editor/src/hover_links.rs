@@ -931,8 +931,8 @@ mod tests {
     use futures::StreamExt;
     use gpui::Modifiers;
     use indoc::indoc;
-    use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
+    use settings::InlayHintSettings;
     use util::{assert_set_eq, path};
     use workspace::item::Item;
 

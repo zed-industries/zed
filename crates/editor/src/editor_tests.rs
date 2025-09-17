@@ -25,8 +25,8 @@ use language::{
     DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
     LanguageName, Override, Point,
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, FormatterList,
-        LanguageSettingsContent, LspInsertMode, PrettierSettings, SelectedFormatter,
+        CompletionSettings, FormatterList, LanguageSettingsContent, LspInsertMode,
+        SelectedFormatter,
     },
     tree_sitter_python,
 };
@@ -38,9 +38,10 @@ use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    project_settings::{LspSettings, ProjectSettings},
+    project_settings::LspSettings,
 };
 use serde_json::{self, json};
+use settings::{AllLanguageSettingsContent, ProjectSettingsContent};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
     iter,
@@ -11699,10 +11700,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     update_test_language_settings(cx, |settings| {
         // Enable Prettier formatting for the same buffer, and ensure
         // LSP is called instead of Prettier.
-        settings.defaults.prettier = Some(PrettierSettings {
-            allowed: true,
-            ..PrettierSettings::default()
-        });
+        settings.defaults.prettier.get_or_insert_default().allowed = true;
     });
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
@@ -12088,10 +12086,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
-        settings.defaults.prettier = Some(PrettierSettings {
-            allowed: true,
-            ..PrettierSettings::default()
-        });
+        settings.defaults.prettier.get_or_insert_default().allowed = true;
     });
     let mut fake_servers = language_registry.register_fake_lsp(
         "TypeScript",
@@ -12402,8 +12397,8 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(true);
             });
         });
     });
@@ -12542,9 +12537,9 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(false);
-                settings.show_signature_help_after_edits = Some(false);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(false);
+                settings.editor.show_signature_help_after_edits = Some(false);
             });
         });
     });
@@ -12669,9 +12664,9 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
     // Ensure that signature_help is called when enabled afte edits
     cx.update(|_, cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(false);
-                settings.show_signature_help_after_edits = Some(true);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(false);
+                settings.editor.show_signature_help_after_edits = Some(true);
             });
         });
     });
@@ -12711,9 +12706,9 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
     // Ensure that signature_help is called when auto signature help override is enabled
     cx.update(|_, cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
-                settings.show_signature_help_after_edits = Some(false);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(true);
+                settings.editor.show_signature_help_after_edits = Some(false);
             });
         });
     });
@@ -12755,8 +12750,8 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(true);
             });
         });
     });
@@ -17067,7 +17062,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
         language_settings.languages.0.insert(
-            language_name.clone(),
+            language_name.clone().0,
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
                 ..Default::default()
@@ -17991,10 +17986,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
-        settings.defaults.prettier = Some(PrettierSettings {
-            allowed: true,
-            ..PrettierSettings::default()
-        });
+        settings.defaults.prettier.get_or_insert_default().allowed = true;
     });
 
     let test_plugin = "test_plugin";
@@ -23672,8 +23664,8 @@ println!("5");
     });
 
     cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
-            s.restore_on_file_reopen = Some(false);
+        store.update_user_settings(cx, |s| {
+            s.workspace.restore_on_file_reopen = Some(false);
         });
     });
     editor.update_in(cx, |editor, window, cx| {
@@ -23697,8 +23689,8 @@ println!("5");
         assert!(pane.active_item().is_none());
     });
     cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
-            s.restore_on_file_reopen = Some(true);
+        store.update_user_settings(cx, |s| {
+            s.workspace.restore_on_file_reopen = Some(true);
         });
     });
 
@@ -25120,18 +25112,18 @@ pub(crate) fn update_test_language_settings(
 ) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, f);
+            store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
         });
     });
 }
 
 pub(crate) fn update_test_project_settings(
     cx: &mut TestAppContext,
-    f: impl Fn(&mut ProjectSettings),
+    f: impl Fn(&mut ProjectSettingsContent),
 ) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, f);
+            store.update_user_settings(cx, |settings| f(&mut settings.project));
         });
     });
 }

@@ -1,15 +1,12 @@
 use fs::Fs;
 use gpui::{App, RenderOnce, SharedString};
 
-use crate::{Settings, settings_content::SettingsContent, update_settings_file};
+use crate::{settings_content::SettingsContent, update_settings_file};
 
 /// A UI control that can be used to edit a setting.
 pub trait EditableSettingControl: RenderOnce {
     /// The type of the setting value.
     type Value: Send;
-
-    /// The settings type to which this setting belongs.
-    type Settings: Settings;
 
     /// Returns the name of this setting.
     fn name(&self) -> SharedString;

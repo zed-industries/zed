@@ -379,7 +379,7 @@ pub struct JsxTagAutoCloseSettings {
 }
 
 /// The settings for inlay hints.
-/// todo(settings_refactor) the fields of this struct should likely be optional,
+/// todo!() the fields of this struct should likely be optional,
 /// and a similar struct exposed from the language crate.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct InlayHintSettings {

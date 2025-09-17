@@ -1,10 +1,12 @@
 mod agent;
+mod editor;
 mod language;
 mod project;
 mod terminal;
 mod theme;
 mod workspace;
 pub use agent::*;
+pub use editor::*;
 pub use language::*;
 pub use project::*;
 pub use terminal::*;
@@ -35,6 +37,9 @@ pub struct SettingsContent {
 
     #[serde(flatten)]
     pub workspace: WorkspaceSettingsContent,
+
+    #[serde(flatten)]
+    pub editor: EditorSettingsContent,
 
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,

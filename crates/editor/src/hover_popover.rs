@@ -1004,8 +1004,8 @@ mod tests {
     use collections::BTreeSet;
     use gpui::App;
     use indoc::indoc;
-    use language::language_settings::InlayHintSettings;
     use markdown::parser::MarkdownEvent;
+    use settings::InlayHintSettings;
     use smol::stream::StreamExt;
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;

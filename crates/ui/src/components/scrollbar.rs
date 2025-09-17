@@ -44,6 +44,17 @@ pub mod scrollbars {
         Never,
     }
 
+    impl From<settings::ShowScrollbar> for ShowScrollbar {
+        fn from(value: settings::ShowScrollbar) -> Self {
+            match value {
+                settings::ShowScrollbar::Auto => ShowScrollbar::Auto,
+                settings::ShowScrollbar::System => ShowScrollbar::System,
+                settings::ShowScrollbar::Always => ShowScrollbar::Always,
+                settings::ShowScrollbar::Never => ShowScrollbar::Never,
+            }
+        }
+    }
+
     impl ShowScrollbar {
         pub(super) fn show(&self) -> bool {
             *self != Self::Never

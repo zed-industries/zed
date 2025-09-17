@@ -30,10 +30,9 @@ use gpui::{
 
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{SettingsUi, WorktreeId};
+use settings::WorktreeId;
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -174,10 +173,7 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CursorShape {
     /// A vertical bar
     #[default]
@@ -188,6 +184,17 @@ pub enum CursorShape {
     Underline,
     /// A box drawn around the following character
     Hollow,
+}
+
+impl From<settings::CursorShape> for CursorShape {
+    fn from(shape: settings::CursorShape) -> Self {
+        match shape {
+            settings::CursorShape::Bar => CursorShape::Bar,
+            settings::CursorShape::Block => CursorShape::Block,
+            settings::CursorShape::Underline => CursorShape::Underline,
+            settings::CursorShape::Hollow => CursorShape::Hollow,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

@@ -192,7 +192,7 @@ impl TerminalLineHeight {
     }
 }
 
-/// When to show the scrollbar in the terminal.
+/// When to show the scrollbar.
 ///
 /// Default: auto
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]

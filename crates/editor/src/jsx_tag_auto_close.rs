@@ -620,14 +620,17 @@ mod jsx_tag_autoclose_tests {
 
     use super::*;
     use gpui::{AppContext as _, TestAppContext};
-    use language::language_settings::JsxTagAutoCloseSettings;
     use languages::language;
     use multi_buffer::ExcerptRange;
     use text::Selection;
 
     async fn test_setup(cx: &mut TestAppContext) -> EditorTestContext {
         init_test(cx, |settings| {
-            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+            settings
+                .defaults
+                .jsx_tag_auto_close
+                .get_or_insert_default()
+                .enabled = true;
         });
 
         let mut cx = EditorTestContext::new(cx).await;
@@ -789,7 +792,11 @@ mod jsx_tag_autoclose_tests {
     #[gpui::test]
     async fn test_multibuffer(cx: &mut TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
+            settings
+                .defaults
+                .jsx_tag_auto_close
+                .get_or_insert_default()
+                .enabled = true;
         });
 
         let buffer_a = cx.new(|cx| {
