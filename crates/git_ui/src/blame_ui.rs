@@ -91,7 +91,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
-                                    false,
+                                    None,
                                     window,
                                     cx,
                                 )
@@ -329,7 +329,7 @@ impl BlameRenderer for GitBlameRenderer {
                                                                     commit_summary.sha.to_string(),
                                                                     repository.downgrade(),
                                                                     workspace.clone(),
-                                                                    false,
+                                                                    None,
                                                                     window,
                                                                     cx,
                                                                 );
@@ -374,7 +374,7 @@ impl BlameRenderer for GitBlameRenderer {
             blame_entry.sha.to_string(),
             repository.downgrade(),
             workspace,
-            false,
+            None,
             window,
             cx,
         )

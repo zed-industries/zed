@@ -3554,7 +3554,7 @@ impl GitPanel {
                                     commit.sha.to_string(),
                                     repo.clone(),
                                     workspace.clone(),
-                                    false,
+                                    None,
                                     window,
                                     cx,
                                 );
