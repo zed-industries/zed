@@ -41,6 +41,8 @@ pub struct SettingsContent {
     #[serde(flatten)]
     pub editor: EditorSettingsContent,
 
+    pub git_panel: Option<GitPanelSettingsContent>,
+
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
 
@@ -363,4 +365,58 @@ pub struct ExtensionSettingsContent {
     pub auto_install_extensions: HashMap<Arc<str>, bool>,
     #[serde(default)]
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
+}
+
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct GitPanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel.
+    ///
+    /// Default: left
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 360
+    pub default_width: Option<f32>,
+    /// How entry statuses are displayed.
+    ///
+    /// Default: icon
+    pub status_style: Option<StatusStyle>,
+    /// How and when the scrollbar should be displayed.
+    ///
+    /// Default: inherits editor scrollbar settings
+    pub scrollbar: Option<ScrollbarSettings>,
+
+    /// What the default branch name should be when
+    /// `init.defaultBranch` is not set in git
+    ///
+    /// Default: main
+    pub fallback_branch_name: Option<String>,
+
+    /// Whether to sort entries in the panel by path
+    /// or by status (the default).
+    ///
+    /// Default: false
+    pub sort_by_path: Option<bool>,
+
+    /// Whether to collapse untracked files in the diff panel.
+    ///
+    /// Default: false
+    pub collapse_untracked_diff: Option<bool>,
+}
+
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StatusStyle {
+    #[default]
+    Icon,
+    LabelColor,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ScrollbarSettings {
+    pub show: Option<ShowScrollbar>,
 }

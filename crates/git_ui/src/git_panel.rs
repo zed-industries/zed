@@ -2439,8 +2439,9 @@ impl GitPanel {
             let workspace = workspace.read(cx);
             let fs = workspace.app_state().fs.clone();
             cx.update_global::<SettingsStore, _>(|store, _cx| {
-                store.update_settings_file::<GitPanelSettings>(fs, move |settings, _cx| {
-                    settings.sort_by_path = Some(!current_setting);
+                store.update_settings_file(fs, move |settings, _cx| {
+                    settings.git_panel.get_or_insert_default().sort_by_path =
+                        Some(!current_setting);
                 });
             });
         }
@@ -4353,11 +4354,9 @@ impl Panel for GitPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<GitPanelSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| settings.dock = Some(position),
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.git_panel.get_or_insert_default().dock = Some(position.into())
+        });
     }
 
     fn size(&self, _: &Window, cx: &App) -> Pixels {
