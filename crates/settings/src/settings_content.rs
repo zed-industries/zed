@@ -21,12 +21,14 @@ use gpui::{App, SharedString};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
 use crate::ActiveSettingsProfileName;
 
+#[skip_serializing_none]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SettingsContent {
     #[serde(flatten)]
@@ -159,12 +161,14 @@ impl SettingsContent {
 }
 
 // todo!() what should this be?
+#[skip_serializing_none]
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ServerSettingsContent {
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
@@ -230,6 +234,7 @@ pub enum BaseKeymapContent {
     None,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TitleBarSettingsContent {
     /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
@@ -275,6 +280,7 @@ pub enum TitleBarVisibility {
 }
 
 /// Configuration of audio in Zed.
+#[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct AudioSettingsContent {
     /// Opt into the new audio system.
@@ -296,6 +302,7 @@ pub struct AudioSettingsContent {
 }
 
 /// Control what info is collected by Zed.
+#[skip_serializing_none]
 #[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
@@ -308,6 +315,7 @@ pub struct TelemetrySettingsContent {
     pub metrics: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone)]
 pub struct DebuggerSettingsContent {
     /// Determines the stepping granularity.
@@ -363,6 +371,7 @@ pub enum DockPosition {
 }
 
 /// Settings for slash commands.
+#[skip_serializing_none]
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, PartialEq, Eq)]
 pub struct SlashCommandSettings {
     /// Settings for the `/cargo-workspace` slash command.
@@ -370,6 +379,7 @@ pub struct SlashCommandSettings {
 }
 
 /// Settings for the `/cargo-workspace` slash command.
+#[skip_serializing_none]
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, PartialEq, Eq)]
 pub struct CargoWorkspaceCommandSettings {
     /// Whether `/cargo-workspace` is enabled.
@@ -377,6 +387,7 @@ pub struct CargoWorkspaceCommandSettings {
 }
 
 /// Configuration of voice calls in Zed.
+#[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct CallSettingsContent {
     /// Whether the microphone should be muted when joining a channel or a call.
@@ -390,6 +401,7 @@ pub struct CallSettingsContent {
     pub share_on_join: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Deserialize, Serialize, PartialEq, Debug, Default, Clone, JsonSchema)]
 pub struct ExtensionSettingsContent {
     /// The extensions that should be automatically installed by Zed.
@@ -404,6 +416,7 @@ pub struct ExtensionSettingsContent {
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct GitPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
@@ -453,11 +466,13 @@ pub enum StatusStyle {
     LabelColor,
 }
 
+#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
 pub struct NotificationPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
@@ -474,6 +489,7 @@ pub struct NotificationPanelSettingsContent {
     pub default_width: Option<f32>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
@@ -490,6 +506,7 @@ pub struct PanelSettingsContent {
     pub default_width: Option<f32>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
 pub struct MessageEditorSettings {
     /// Whether to automatically replace emoji shortcodes with emoji characters.
@@ -499,6 +516,7 @@ pub struct MessageEditorSettings {
     pub auto_replace_emoji_shortcode: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
 pub struct FileFinderSettingsContent {
     /// Whether to show file icons in the file finder.
@@ -541,6 +559,7 @@ pub enum FileFinderWidthContent {
     Full,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug, JsonSchema)]
 pub struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
@@ -574,6 +593,7 @@ pub enum UseSystemClipboard {
 }
 
 /// The settings for cursor shape.
+#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
@@ -595,6 +615,7 @@ pub struct CursorShapeSettings {
 }
 
 /// Settings specific to journaling
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct JournalSettingsContent {
     /// The path of the directory where journal entries are stored.
@@ -615,6 +636,7 @@ pub enum HourFormat {
     Hour24,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
 pub struct OutlinePanelSettingsContent {
     /// Whether to show the outline panel button in the status bar.
@@ -683,6 +705,7 @@ pub enum ShowIndentGuides {
     Never,
 }
 
+#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct IndentGuidesSettingsContent {
     /// When to show the scrollbar in the outline panel.
@@ -698,6 +721,7 @@ pub enum LineIndicatorFormat {
 }
 
 /// The settings for the image viewer.
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 pub struct ImageViewerSettingsContent {
     /// The unit to use for displaying image file sizes.
@@ -706,6 +730,7 @@ pub struct ImageViewerSettingsContent {
     pub unit: Option<ImageFileSizeUnit>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFileSizeUnit {
@@ -716,38 +741,35 @@ pub enum ImageFileSizeUnit {
     Decimal,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub read_ssh_config: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct SshConnection {
     pub host: SharedString,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
     pub projects: collections::BTreeSet<SshProject>,
     /// Name to use for this server in UI.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
     // By default Zed will download the binary to the host directly.
     // If this is set to true, Zed will download the binary to your local machine,
     // and then upload it over the SSH connection. Useful if your SSH server has
     // limited outbound internet access.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub upload_binary_over_ssh: Option<bool>,
 
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
 }
 
+#[skip_serializing_none]
 #[derive(
     Clone, Debug, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema,
 )]
@@ -755,6 +777,7 @@ pub struct SshProject {
     pub paths: Vec<String>,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
 pub struct SshPortForwardOption {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -766,6 +789,7 @@ pub struct SshPortForwardOption {
 }
 
 /// Settings for configuring REPL display and behavior.
+#[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ReplSettingsContent {
     /// Maximum number of lines to keep in REPL's scrollback buffer.

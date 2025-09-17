@@ -3,9 +3,11 @@ use std::num::NonZeroUsize;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
@@ -105,6 +107,7 @@ pub struct WorkspaceSettingsContent {
     pub zoomed_padding: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
@@ -134,6 +137,7 @@ pub struct ItemSettingsContent {
     pub show_close_button: Option<ShowCloseButton>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct PreviewTabsSettingsContent {
     /// Whether to show opened editors as preview tabs.
@@ -186,6 +190,7 @@ pub enum ActivateOnClose {
     LeftNeighbour,
 }
 
+#[skip_serializing_none]
 #[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivePanelModifiers {
@@ -252,6 +257,7 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
@@ -295,6 +301,7 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
+#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct CenteredLayoutSettings {
@@ -329,6 +336,7 @@ impl OnLastWindowClosed {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
@@ -414,6 +422,7 @@ pub enum ProjectPanelEntrySpacing {
     Standard,
 }
 
+#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ProjectPanelIndentGuidesSettings {
     pub show: Option<ShowIndentGuides>,

@@ -1575,6 +1575,32 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_update_git_settings(cx: &mut App) {
+        let store = SettingsStore::new(cx, &test_settings());
+
+        let actual = store.new_text_for_update("{}".to_string(), |current| {
+            current
+                .git
+                .get_or_insert_default()
+                .inline_blame
+                .get_or_insert_default()
+                .enabled = Some(true);
+        });
+        assert_eq!(
+            actual,
+            r#"{
+            "git": {
+                "inline_blame": {
+                    "enabled": true
+                }
+            }
+        }
+        "#
+            .unindent()
+        );
+    }
+
+    #[gpui::test]
     fn test_global_settings(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<TitleBarSettings>(cx);

@@ -7,11 +7,13 @@ use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
+use serde_with::skip_serializing_none;
 use std::sync::Arc;
 use util::schemars::replace_subschema;
 
 use crate::ParameterizedJsonSchema;
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
@@ -33,6 +35,7 @@ pub struct AllLanguageSettingsContent {
 }
 
 /// The settings for enabling/disabling features.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
@@ -52,6 +55,7 @@ pub enum EditPredictionProvider {
 }
 
 /// The contents of the edit prediction settings.
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
@@ -68,6 +72,7 @@ pub struct EditPredictionSettingsContent {
     pub enabled_in_text_threads: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct CopilotSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
@@ -116,6 +121,7 @@ pub enum SoftWrap {
 }
 
 /// The settings for a particular language.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
@@ -303,6 +309,7 @@ pub enum ShowWhitespaceSetting {
     Trailing,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct WhitespaceMap {
     #[serde(default)]
@@ -338,9 +345,11 @@ pub enum RewrapBehavior {
     Anywhere,
 }
 
+#[skip_serializing_none]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JsxTagAutoCloseSettings {
     /// Enables or disables auto-closing of JSX tags.
+    // todo! option
     #[serde(default)]
     pub enabled: bool,
 }
@@ -348,6 +357,7 @@ pub struct JsxTagAutoCloseSettings {
 /// The settings for inlay hints.
 /// todo!() the fields of this struct should likely be optional,
 /// and a similar struct exposed from the language crate.
+#[skip_serializing_none]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct InlayHintSettingsContent {
     /// Global switch to toggle hints on and off.
@@ -429,6 +439,7 @@ impl InlayHintKind {
 }
 
 /// Controls how completions are processedfor this anguage.
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettings {
@@ -506,6 +517,7 @@ fn default_3() -> usize {
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
+#[skip_serializing_none]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PrettierSettingsContent {
     /// Enables or disables formatting with Prettier for a given language.
@@ -766,6 +778,7 @@ pub enum Formatter {
 }
 
 /// The settings for indent guides.
+#[skip_serializing_none]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct IndentGuideSettings {
     /// Whether to display indent guides in the editor.
@@ -808,6 +821,7 @@ fn active_line_width() -> u32 {
 }
 
 /// The task settings for a particular language.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
 pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
@@ -828,6 +842,7 @@ pub struct LanguageTaskConfig {
 
 /// Map from language name to settings. Its `ParameterizedJsonSchema` allows only known language
 /// names in the keys.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct LanguageToSettingsMap(pub HashMap<SharedString, LanguageSettingsContent>);
 

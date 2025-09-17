@@ -3,10 +3,12 @@ use std::{path::PathBuf, sync::Arc};
 use collections::{BTreeMap, HashMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use util::serde::default_true;
 
 use crate::{AllLanguageSettingsContent, SlashCommandSettings};
 
+#[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
@@ -44,6 +46,7 @@ pub struct ProjectSettingsContent {
     pub git_hosting_providers: Option<Vec<GitHostingProviderConfig>>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct WorktreeSettingsContent {
     /// The displayed name of this project. If not set, the root directory name
@@ -81,6 +84,7 @@ pub struct WorktreeSettingsContent {
     pub private_files: Option<Vec<String>>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
@@ -107,6 +111,7 @@ impl Default for LspSettings {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 pub struct BinarySettings {
     pub path: Option<String>,
@@ -115,6 +120,7 @@ pub struct BinarySettings {
     pub ignore_system_version: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 pub struct FetchSettings {
     // Whether to consider pre-releases for fetching
@@ -122,6 +128,7 @@ pub struct FetchSettings {
 }
 
 /// Common language server settings.
+#[skip_serializing_none]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct GlobalLspSettingsContent {
     /// Whether to show the LSP servers button in the status bar.
@@ -131,6 +138,7 @@ pub struct GlobalLspSettingsContent {
 }
 
 // todo! binary is actually just required, shouldn't be an option
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct DapSettings {
@@ -139,6 +147,7 @@ pub struct DapSettings {
     pub args: Vec<String>,
 }
 
+#[skip_serializing_none]
 #[derive(Default, Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct SessionSettingsContent {
     /// Whether or not to restore unsaved buffers on restart.
@@ -189,6 +198,7 @@ impl ContextServerSettingsContent {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
@@ -224,6 +234,7 @@ impl std::fmt::Debug for ContextServerCommand {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
@@ -259,6 +270,7 @@ pub enum GitGutterSetting {
     Hide,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
@@ -287,6 +299,7 @@ pub struct InlineBlameSettings {
     pub show_commit_summary: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettingsContent {
@@ -306,6 +319,7 @@ pub enum GitHunkStyleSetting {
     UnstagedHollow,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettingsContent {
     /// Whether to show the project diagnostics button in the status bar.
@@ -321,6 +335,7 @@ pub struct DiagnosticsSettingsContent {
     pub inline: Option<InlineDiagnosticsSettingsContent>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct LspPullDiagnosticsSettingsContent {
     /// Whether to pull for diagnostics or not.
@@ -334,6 +349,7 @@ pub struct LspPullDiagnosticsSettingsContent {
     pub debounce_ms: Option<u64>,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, Eq)]
 pub struct InlineDiagnosticsSettingsContent {
     /// Whether or not to show inline diagnostics
@@ -360,6 +376,7 @@ pub struct InlineDiagnosticsSettingsContent {
     pub max_severity: Option<DiagnosticSeverityContent>,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NodeBinarySettings {
     /// The path to the Node binary.
@@ -395,6 +412,7 @@ pub enum DiagnosticSeverityContent {
 }
 
 /// A custom Git hosting provider.
+#[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct GitHostingProviderConfig {
     /// The type of the provider.

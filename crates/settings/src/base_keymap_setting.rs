@@ -7,6 +7,7 @@ use crate::{
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use settings::{Settings, VsCodeSettings};
 use settings_ui_macros::{SettingsKey, SettingsUi};
 
@@ -148,6 +149,7 @@ impl BaseKeymap {
 )]
 // extracted so that it can be an option, and still work with derive(SettingsUi)
 #[settings_key(None)]
+#[skip_serializing_none]
 pub struct BaseKeymapSetting {
     pub base_keymap: Option<BaseKeymap>,
 }

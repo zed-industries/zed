@@ -3,9 +3,11 @@ use std::num;
 use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 use crate::{DiagnosticSeverityContent, ShowScrollbar};
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
@@ -191,6 +193,7 @@ pub struct EditorSettingsContent {
 }
 
 // Status bar related settings
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct StatusBarContent {
     /// Whether to display the active language button in the status bar.
@@ -204,6 +207,7 @@ pub struct StatusBarContent {
 }
 
 // Toolbar related settings
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ToolbarContent {
     /// Whether to display breadcrumbs in the editor toolbar.
@@ -230,6 +234,7 @@ pub struct ToolbarContent {
 }
 
 /// Scrollbar related settings
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
@@ -265,6 +270,7 @@ pub struct ScrollbarContent {
 }
 
 /// Minimap related settings
+#[skip_serializing_none]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
@@ -299,6 +305,7 @@ pub struct MinimapContent {
 }
 
 /// Forcefully enable or disable the scrollbar for each axis
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct ScrollbarAxesContent {
     /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
@@ -313,6 +320,7 @@ pub struct ScrollbarAxesContent {
 }
 
 /// Gutter related settings
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
@@ -525,6 +533,7 @@ pub enum SnippetSortOrder {
 }
 
 /// Default options for buffer and project search items.
+#[skip_serializing_none]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SearchSettingsContent {
     /// Whether to show the project search button in the status bar.
@@ -535,6 +544,7 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
 }
 
+#[skip_serializing_none]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct JupyterContent {
@@ -550,6 +560,7 @@ pub struct JupyterContent {
 }
 
 /// Whether to allow drag and drop text selection in buffer.
+#[skip_serializing_none]
 #[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct DragAndDropSelectionContent {
     /// When true, enables drag and drop text selection in buffer.

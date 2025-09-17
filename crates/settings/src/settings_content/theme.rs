@@ -6,7 +6,11 @@ use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::sync::Arc;
 
+use serde_with::skip_serializing_none;
+
 /// Settings for rendering text in UI and text buffers.
+
+#[skip_serializing_none]
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
@@ -188,6 +192,7 @@ impl UiDensity {
 
 /// Newtype for font family name. Its `ParameterizedJsonSchema` lists the font families known at
 /// runtime.
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct FontFamilyName(pub Arc<str>);
@@ -220,6 +225,7 @@ where
 }
 
 /// The content of a serialized theme.
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct ThemeStyleContent {
@@ -254,16 +260,19 @@ pub struct PlayerColorContent {
 }
 
 /// Newtype for a theme name. Its `ParameterizedJsonSchema` lists the theme names known at runtime.
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct ThemeName(pub Arc<str>);
 
 /// Newtype for a icon theme name. Its `ParameterizedJsonSchema` lists the icon theme names known at
 /// runtime.
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct IconThemeName(pub Arc<str>);
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct ThemeColorsContent {
@@ -768,6 +777,7 @@ pub struct ThemeColorsContent {
     pub version_control_conflict_theirs_background: Option<String>,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct HighlightStyleContent {
@@ -801,6 +811,7 @@ where
     Ok(T::deserialize(value).ok())
 }
 
+#[skip_serializing_none]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct StatusColorsContent {

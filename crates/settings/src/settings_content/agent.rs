@@ -2,10 +2,12 @@ use collections::{HashMap, IndexMap};
 use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
 use crate::DockPosition;
 
+#[skip_serializing_none]
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, Debug, Default)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
@@ -160,6 +162,8 @@ impl AgentSettingsContent {
         self.default_profile = Some(profile_id);
     }
 }
+
+#[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
@@ -171,6 +175,7 @@ pub struct AgentProfileContent {
     pub context_servers: IndexMap<Arc<str>, ContextServerPresetContent>,
 }
 
+#[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
@@ -193,6 +198,7 @@ pub enum NotifyWhenAgentWaiting {
     Never,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct LanguageModelSelection {
     pub provider: LanguageModelProviderSetting,
@@ -208,6 +214,7 @@ pub enum CompletionMode {
     Burn,
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
@@ -256,6 +263,7 @@ impl From<&str> for LanguageModelProviderSetting {
     }
 }
 
+#[skip_serializing_none]
 #[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, Debug)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
@@ -266,6 +274,7 @@ pub struct AllAgentServersSettings {
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
 
+#[skip_serializing_none]
 #[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
     /// Absolute path to a binary to be used when launching this agent.
@@ -297,6 +306,7 @@ pub struct BuiltinAgentServerSettings {
     pub default_mode: Option<String>,
 }
 
+#[skip_serializing_none]
 #[derive(Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
 pub struct CustomAgentServerSettings {
     #[serde(rename = "command")]

@@ -4,9 +4,11 @@ use collections::HashMap;
 use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
 
 use crate::FontFamilyName;
 
+#[skip_serializing_none]
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalSettingsContent {
     /// What shell to use when opening a terminal.
@@ -160,6 +162,7 @@ pub enum WorkingDirectory {
     Always { directory: String },
 }
 
+#[skip_serializing_none]
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the terminal.
@@ -243,6 +246,7 @@ pub enum AlternateScroll {
 }
 
 // Toolbar related settings
+#[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct TerminalToolbarContent {
     /// Whether to display the terminal title in breadcrumbs inside the terminal pane.
@@ -269,7 +273,7 @@ pub enum VenvSettings {
         directories: Option<Vec<PathBuf>>,
     },
 }
-
+#[skip_serializing_none]
 pub struct VenvSettingsContent<'a> {
     pub activate_script: ActivateScript,
     pub venv_name: &'a str,
