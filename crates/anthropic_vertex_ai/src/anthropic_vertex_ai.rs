@@ -198,9 +198,10 @@ impl Model {
     pub fn mode(&self) -> ModelMode {
         match self {
             Self::ClaudeOpus4 | Self::ClaudeSonnet4 | Self::Claude3_7Sonnet => ModelMode::Default,
-            Self::ClaudeOpus4Thinking
-            | Self::ClaudeSonnet4Thinking
-            | Self::Claude3_7SonnetThinking => ModelMode::Thinking {
+            Self::ClaudeSonnet4Thinking => ModelMode::Thinking {
+                budget_tokens: Some(32_000),
+            },
+            Self::ClaudeOpus4Thinking | Self::Claude3_7SonnetThinking => ModelMode::Thinking {
                 budget_tokens: Some(4_096),
             },
             Self::Custom { mode, .. } => mode.clone(),
