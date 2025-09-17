@@ -102,7 +102,7 @@ impl BlameRenderer for GitBlameRenderer {
                                     blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
-                                    false,
+                                    None,
                                     window,
                                     cx,
                                 )
@@ -311,10 +311,10 @@ impl BlameRenderer for GitBlameRenderer {
                                                 .icon_position(IconPosition::Start)
                                                 .on_click(move |_, window, cx| {
                                                     CommitView::open(
-                                                        commit_summary.sha.clone(),
+                                                        commit_summary.sha.clone().into(),
                                                         repository.downgrade(),
                                                         workspace.clone(),
-                                                        false,
+                                                        None,
                                                         window,
                                                         cx,
                                                     );
@@ -355,7 +355,7 @@ impl BlameRenderer for GitBlameRenderer {
             blame_entry.sha.to_string(),
             repository.downgrade(),
             workspace,
-            false,
+            None,
             window,
             cx,
         )

@@ -321,7 +321,7 @@ impl Render for CommitTooltip {
                                                         commit_summary.sha.to_string(),
                                                         repo.downgrade(),
                                                         workspace.clone(),
-                                                        false,
+                                                        None,
                                                         window,
                                                         cx,
                                                     );
