@@ -484,7 +484,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
-            ProjectSettings::register(cx);
+            Project::init_settings(cx);
             AllLanguageSettings::register(cx);
         });
         let initial_text = "
@@ -585,7 +585,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
-            ProjectSettings::register(cx);
+            Project::init_settings(cx);
             AllLanguageSettings::register(cx);
         });
 
