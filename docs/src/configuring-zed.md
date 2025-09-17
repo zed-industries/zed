@@ -246,6 +246,8 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.
+
 ## Autoscroll on Clicks
 
 - Description: Whether to scroll when clicking near the edge of the visible text area.
