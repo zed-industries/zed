@@ -99,10 +99,12 @@ fn resolve_schema_request(
                 .into_iter()
                 .map(|icon_theme| icon_theme.name)
                 .collect::<Vec<SharedString>>();
+            let theme_names = &theme::ThemeRegistry::global(cx).list_names();
             cx.global::<settings::SettingsStore>().json_schema(
                 &settings::SettingsJsonSchemaParams {
                     language_names,
                     font_names,
+                    theme_names,
                     icon_theme_names,
                 },
                 cx,

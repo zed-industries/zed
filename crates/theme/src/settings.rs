@@ -1004,10 +1004,10 @@ pub struct ThemeName(pub Arc<str>);
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        add_and_get_ref: |generator, _params, cx| {
+        add_and_get_ref: |generator, params, _cx| {
             replace_subschema::<ThemeName>(generator, || json_schema!({
                 "type": "string",
-                "enum": ThemeRegistry::global(cx).list_names(),
+                "enum": params.theme_names,
             }))
         }
     }

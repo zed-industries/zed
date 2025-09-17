@@ -10,6 +10,7 @@ use util::RangeExt;
 pub struct SettingsJsonSchemaParams<'a> {
     pub language_names: &'a [String],
     pub font_names: &'a [String],
+    pub theme_names: &'a [SharedString],
     pub icon_theme_names: &'a [SharedString],
 }
 
