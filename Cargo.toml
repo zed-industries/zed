@@ -634,6 +634,7 @@ sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
 simplelog = "0.12.2"
+slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
 sqlformat = "0.2"

@@ -12,18 +12,28 @@ workspace = true
 path = "src/edit_prediction_context.rs"
 
 [dependencies]
+anyhow.workspace = true
+arrayvec.workspace = true
+collections.workspace = true
+gpui.workspace = true
 language.workspace = true
-workspace-hack.workspace = true
-tree-sitter.workspace = true
-text.workspace = true
 log.workspace = true
+project.workspace = true
+slotmap.workspace = true
+text.workspace = true
+tree-sitter.workspace = true
 util.workspace = true
+workspace-hack.workspace = true
 
 [dev-dependencies]
+futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+project = {workspace= true, features = ["test-support"]}
+serde_json.workspace = true
+settings = {workspace= true, features = ["test-support"]}
 text = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
 zlog.workspace = true

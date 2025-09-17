@@ -5138,11 +5138,19 @@ dependencies = [
 name = "edit_prediction_context"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "arrayvec",
+ "collections",
+ "futures 0.3.31",
  "gpui",
  "indoc",
  "language",
  "log",
  "pretty_assertions",
+ "project",
+ "serde_json",
+ "settings",
+ "slotmap",
  "text",
  "tree-sitter",
  "util",
