@@ -244,7 +244,7 @@ impl AsRef<Path> for SanitizedPath {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PathStyle {
     Posix,
     Windows,
@@ -566,10 +566,11 @@ impl PathWithPosition {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PathMatcher {
     sources: Vec<String>,
     glob: GlobSet,
+    path_style: PathStyle,
 }
 
 // impl std::fmt::Display for PathMatcher {
@@ -587,7 +588,10 @@ impl PartialEq for PathMatcher {
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(globs: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self, globset::Error> {
+    pub fn new(
+        globs: impl IntoIterator<Item = impl AsRef<str>>,
+        path_style: PathStyle,
+    ) -> Result<Self, globset::Error> {
         let globs = globs
             .into_iter()
             .map(|as_str| Glob::new(as_str.as_ref()))
@@ -598,7 +602,11 @@ impl PathMatcher {
             glob_builder.add(single_glob);
         }
         let glob = glob_builder.build()?;
-        Ok(PathMatcher { glob, sources })
+        Ok(PathMatcher {
+            glob,
+            sources,
+            path_style,
+        })
     }
 
     pub fn sources(&self) -> &[String] {
@@ -616,7 +624,7 @@ impl PathMatcher {
 
     fn check_with_end_separator(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        let separator = std::path::MAIN_SEPARATOR_STR;
+        let separator = self.path_style.separator();
         if path_str.ends_with(separator) {
             false
         } else {
@@ -1252,7 +1260,8 @@ mod tests {
     #[test]
     fn edge_of_glob() {
         let path = Path::new("/work/node_modules");
-        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
+        let path_matcher =
+            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"
@@ -1262,7 +1271,8 @@ mod tests {
     #[test]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
-        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
+        let path_matcher =
+            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"

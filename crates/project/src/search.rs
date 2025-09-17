@@ -4,6 +4,7 @@ use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
 use language::{Buffer, BufferSnapshot, CharKind};
+use rpc::proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE;
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
@@ -239,7 +240,7 @@ impl SearchQuery {
         is_case_sensitive.map(|c| (c, new_query))
     }
 
-    pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
+    pub fn from_proto(message: proto::SearchQuery, path_style: PathStyle) -> Result<Self> {
         let files_to_include = if message.files_to_include.is_empty() {
             message
                 .files_to_include_legacy
@@ -271,8 +272,8 @@ impl SearchQuery {
                 message.case_sensitive,
                 message.include_ignored,
                 false,
-                PathMatcher::new(files_to_include)?,
-                PathMatcher::new(files_to_exclude)?,
+                PathMatcher::new(files_to_include, path_style)?,
+                PathMatcher::new(files_to_exclude, path_style)?,
                 message.match_full_paths,
                 None, // search opened only don't need search remote
             )
@@ -282,8 +283,8 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
-                PathMatcher::new(files_to_include)?,
-                PathMatcher::new(files_to_exclude)?,
+                PathMatcher::new(files_to_include, path_style)?,
+                PathMatcher::new(files_to_exclude, path_style)?,
                 false,
                 None, // search opened only don't need search remote
             )

@@ -2481,7 +2481,7 @@ impl ProjectPanel {
                         .project
                         .read(cx)
                         .absolute_path(&clipboard_project_path, cx)?;
-                    Some(relativize_path(
+                    RelPath::from_std_path(&relativize_path(
                         &target_base_path,
                         clipboard_abs_path.as_path(),
                     ))

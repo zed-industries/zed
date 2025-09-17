@@ -146,7 +146,7 @@ impl Tool for EditFileTool {
 
         // If any path component matches the local settings folder, then this could affect
         // the editor in ways beyond the project source, so prompt.
-        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let local_settings_folder = paths::local_settings_folder_name();
         let path = Path::new(&input.path);
         if path
             .components()
@@ -195,7 +195,7 @@ impl Tool for EditFileTool {
                 let mut description = input.display_description.clone();
 
                 // Add context about why confirmation may be needed
-                let local_settings_folder = paths::local_settings_folder_relative_path();
+                let local_settings_folder = paths::local_settings_folder_name();
                 if path
                     .components()
                     .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
@@ -1979,7 +1979,7 @@ mod tests {
         let project = Project::test(fs.clone(), [path!("/home/user/myproject").as_ref()], cx).await;
 
         // Get the actual local settings folder name
-        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let local_settings_folder = paths::local_settings_folder_name();
 
         // Test various config path patterns
         let test_cases = vec![

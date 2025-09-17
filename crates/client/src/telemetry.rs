@@ -405,7 +405,7 @@ impl Telemetry {
         let mut project_types: HashSet<&str> = HashSet::new();
 
         for (path, _, _) in updated_entries_set.iter() {
-            let Some(file_name) = path.file_name().and_then(|f| f.to_str()) else {
+            let Some(file_name) = path.file_name() else {
                 continue;
             };
 

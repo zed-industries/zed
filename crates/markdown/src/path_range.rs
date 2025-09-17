@@ -1,8 +1,8 @@
-use std::{ops::Range, path::Path, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PathWithRange {
-    pub path: Arc<Path>,
+    pub path: Arc<str>,
     pub range: Option<Range<LineCol>>,
 }
 
@@ -78,12 +78,12 @@ impl PathWithRange {
                 };
 
                 Self {
-                    path: Path::new(path).into(),
+                    path: path.into(),
                     range,
                 }
             }
             None => Self {
-                path: Path::new(str).into(),
+                path: str.into(),
                 range: None,
             },
         }

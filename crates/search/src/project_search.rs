@@ -1146,7 +1146,7 @@ impl ProjectSearchView {
         let included_files = self
             .filters_enabled
             .then(|| {
-                match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
+                match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx), cx) {
                     Ok(included_files) => {
                         let should_unmark_error =
                             self.panels_with_errors.remove(&InputPanel::Include);
@@ -1170,7 +1170,7 @@ impl ProjectSearchView {
         let excluded_files = self
             .filters_enabled
             .then(|| {
-                match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
+                match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx), cx) {
                     Ok(excluded_files) => {
                         let should_unmark_error =
                             self.panels_with_errors.remove(&InputPanel::Exclude);
@@ -1292,14 +1292,15 @@ impl ProjectSearchView {
         buffers
     }
 
-    fn parse_path_matches(text: &str) -> anyhow::Result<PathMatcher> {
+    fn parse_path_matches(&self, text: String, cx: &App) -> anyhow::Result<PathMatcher> {
+        let path_style = self.entity.read(cx).project.read(cx).path_style();
         let queries = text
             .split(',')
             .map(str::trim)
             .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        Ok(PathMatcher::new(&queries)?)
+        Ok(PathMatcher::new(&queries, path_style)?)
     }
 
     fn select_match(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {

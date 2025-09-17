@@ -1115,7 +1115,7 @@ impl DebugPanel {
                     let fs =
                         workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
-                    path.push(paths::local_settings_folder_relative_path());
+                    path.push(paths::local_settings_folder_name());
                     if !fs.is_dir(path.as_path()).await {
                         fs.create_dir(path.as_path()).await?;
                     }

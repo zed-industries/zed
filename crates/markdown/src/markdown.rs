@@ -7,6 +7,7 @@ use gpui::HitboxBehavior;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
+use util::rel_path::RelPath;
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -14,7 +15,6 @@ use std::collections::HashSet;
 use std::iter;
 use std::mem;
 use std::ops::Range;
-use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -335,7 +335,9 @@ impl Markdown {
                 }
 
                 for path in paths {
-                    if let Ok(language) = registry.language_for_file_path(&path).await {
+                    if let Some(rel_path) = RelPath::new(&path)
+                        && let Ok(language) = registry.language_for_file_path(&rel_path).await
+                    {
                         languages_by_path.insert(path, language);
                     }
                 }
@@ -435,7 +437,7 @@ pub struct ParsedMarkdown {
     pub source: SharedString,
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
     pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
-    pub languages_by_path: TreeMap<Arc<Path>, Arc<Language>>,
+    pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
 }
 
 impl ParsedMarkdown {

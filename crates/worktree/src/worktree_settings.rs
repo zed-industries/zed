@@ -5,7 +5,10 @@ use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
-use util::paths::PathMatcher;
+use util::{
+    paths::{PathMatcher, PathStyle},
+    rel_path::RelPath,
+};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorktreeSettings {
@@ -16,19 +19,19 @@ pub struct WorktreeSettings {
 }
 
 impl WorktreeSettings {
-    pub fn is_path_private(&self, path: &Path) -> bool {
+    pub fn is_path_private(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.private_files.is_match(ancestor))
+            .any(|ancestor| self.private_files.is_match(ancestor.as_std_path()))
     }
 
-    pub fn is_path_excluded(&self, path: &Path) -> bool {
+    pub fn is_path_excluded(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_exclusions.is_match(&ancestor))
+            .any(|ancestor| self.file_scan_exclusions.is_match(ancestor.as_std_path()))
     }
 
-    pub fn is_path_always_included(&self, path: &Path) -> bool {
+    pub fn is_path_always_included(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_inclusions.is_match(&ancestor))
+            .any(|ancestor| self.file_scan_inclusions.is_match(ancestor.as_std_path()))
     }
 }
 
@@ -132,5 +135,7 @@ impl Settings for WorktreeSettings {
 }
 
 fn path_matchers(values: &[String], context: &'static str) -> anyhow::Result<PathMatcher> {
-    PathMatcher::new(values).with_context(|| format!("Failed to parse globs from {}", context))
+    // TODO confirm that this is the right path style
+    PathMatcher::new(values, PathStyle::current())
+        .with_context(|| format!("Failed to parse globs from {}", context))
 }

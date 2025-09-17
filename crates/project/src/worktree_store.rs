@@ -37,7 +37,7 @@ use worktree::{
 use crate::{ProjectPath, search::SearchQuery};
 
 struct MatchingEntry {
-    worktree_path: Arc<Path>,
+    worktree_root: Arc<Path>,
     path: ProjectPath,
     respond: oneshot::Sender<ProjectPath>,
 }
@@ -155,8 +155,7 @@ impl WorktreeStore {
         &self,
         abs_path: impl AsRef<Path>,
         cx: &App,
-    ) -> Option<(Entity<Worktree>, PathBuf)> {
-        let abs_path = SanitizedPath::new(&abs_path);
+    ) -> Option<(Entity<Worktree>, RelPath)> {
         for tree in self.worktrees() {
             if let Ok(relative_path) = abs_path.as_path().strip_prefix(tree.read(cx).abs_path()) {
                 return Some((tree.clone(), relative_path.into()));
@@ -305,9 +304,10 @@ impl WorktreeStore {
                         abs_path: response.canonicalized_path,
                     },
                     client,
+                    path_style,
                     cx,
                 )
-            })?;
+            })??;
 
             this.update(cx, |this, cx| {
                 this.add(&worktree, cx);
@@ -477,7 +477,7 @@ impl WorktreeStore {
                 self.worktrees.push(handle);
             } else {
                 self.add(
-                    &Worktree::remote(project_id, replica_id, worktree, client.clone(), cx),
+                    &Worktree::remote(project_id, replica_id, worktree, client.clone(), cx)?,
                     cx,
                 );
             }
@@ -796,7 +796,7 @@ impl WorktreeStore {
                     filter_tx
                         .send(MatchingEntry {
                             respond: tx,
-                            worktree_path: snapshot.abs_path().clone(),
+                            worktree_root: snapshot.abs_path().clone(),
                             path: ProjectPath {
                                 worktree_id: snapshot.id(),
                                 path: Arc::from(path),
@@ -867,7 +867,7 @@ impl WorktreeStore {
                     filter_tx
                         .send(MatchingEntry {
                             respond: tx,
-                            worktree_path: snapshot.abs_path().clone(),
+                            worktree_root: snapshot.abs_path().clone(),
                             path: ProjectPath {
                                 worktree_id: snapshot.id(),
                                 path: entry.path.clone(),
@@ -889,7 +889,7 @@ impl WorktreeStore {
     ) -> Result<()> {
         let mut input = pin!(input);
         while let Some(mut entry) = input.next().await {
-            let abs_path = entry.worktree_path.join(&entry.path.path);
+            let abs_path = entry.worktree_root.join(&entry.path.path);
             let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
                 continue;
             };

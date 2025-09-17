@@ -156,10 +156,14 @@ impl AgentTool for FindPathTool {
 }
 
 fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
-    let path_matcher = match PathMatcher::new([
-        // Sometimes models try to search for "". In this case, return all paths in the project.
-        if glob.is_empty() { "*" } else { glob },
-    ]) {
+    let path_style = project.read(cx).path_style();
+    let path_matcher = match PathMatcher::new(
+        [
+            // Sometimes models try to search for "". In this case, return all paths in the project.
+            if glob.is_empty() { "*" } else { glob },
+        ],
+        path_style,
+    ) {
         Ok(matcher) => matcher,
         Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
     };

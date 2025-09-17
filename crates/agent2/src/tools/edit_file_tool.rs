@@ -148,7 +148,7 @@ impl EditFileTool {
 
         // If any path component matches the local settings folder, then this could affect
         // the editor in ways beyond the project source, so prompt.
-        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let local_settings_folder = paths::local_settings_folder_name();
         let path = Path::new(&input.path);
         if path
             .components()

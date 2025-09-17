@@ -126,6 +126,7 @@ use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
     paths::{PathStyle, RemotePathBuf, SanitizedPath, compare_paths},
+    rel_path::RelPath,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
 pub use worktree::{
@@ -357,7 +358,7 @@ pub enum DebugAdapterClientState {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
-    pub path: Arc<Path>,
+    pub path: Arc<RelPath>,
 }
 
 impl ProjectPath {
@@ -895,7 +896,7 @@ impl DirectoryLister {
         .visible_worktrees(cx)
         .next()
         .map(|worktree| worktree.read(cx).abs_path())
-        .map(|dir| dir.to_string_lossy().to_string())
+        .map(|dir| dir.to_string())
         .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().to_string()))
         .map(|mut s| {
             s.push_str(separator);
@@ -1501,14 +1502,16 @@ impl Project {
         let remote_id = response.payload.project_id;
         let role = response.payload.role();
 
-        // todo(zjk)
-        // Set the proper path style based on the remote
         let worktree_store = cx.new(|_| {
             WorktreeStore::remote(
                 true,
                 client.clone().into(),
                 response.payload.project_id,
-                PathStyle::Posix,
+                if response.payload.windows_paths {
+                    PathStyle::Windows
+                } else {
+                    PathStyle::Posix
+                },
             )
         })?;
         let buffer_store = cx.new(|cx| {
@@ -1580,10 +1583,28 @@ impl Project {
         })?;
 
         let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx))?;
+        let replica_id = response.payload.replica_id as ReplicaId;
+
+        let path_style = if response.payload.windows_paths {
+            PathStyle::Windows
+        } else {
+            PathStyle::Posix
+        };
+
+        let mut worktrees = Vec::new();
+        for worktree in response.payload.worktrees {
+            let worktree = Worktree::remote(
+                remote_id,
+                replica_id,
+                worktree,
+                client.clone(),
+                path_style,
+                cx,
+            )?;
+            worktrees.push(worktree);
+        }
 
         let project = cx.new(|cx| {
-            let replica_id = response.payload.replica_id as ReplicaId;
-
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
             let weak_self = cx.weak_entity();
@@ -1592,8 +1613,14 @@ impl Project {
 
             let mut worktrees = Vec::new();
             for worktree in response.payload.worktrees {
-                let worktree =
-                    Worktree::remote(remote_id, replica_id, worktree, client.clone().into(), cx);
+                let worktree = Worktree::remote(
+                    remote_id,
+                    replica_id,
+                    worktree,
+                    client.clone().into(),
+                    path_style,
+                    cx,
+                );
                 worktrees.push(worktree);
             }
 
@@ -2152,7 +2179,7 @@ impl Project {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        relative_worktree_source_path: Option<PathBuf>,
+        relative_worktree_source_path: Option<Arc<RelPath>>,
         new_path: impl Into<Arc<Path>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Entry>>> {
@@ -4524,7 +4551,7 @@ impl Project {
         cx: &App,
     ) -> Option<PathBuf> {
         if self.visible_worktrees(cx).take(2).count() < 2 {
-            return Some(project_path.path.to_path_buf());
+            return Some(project_path.path.as_std_path());
         }
         self.worktree_for_id(project_path.worktree_id, cx)
             .and_then(|worktree| {
@@ -4902,7 +4929,9 @@ impl Project {
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let peer_id = envelope.original_sender_id()?;
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
+        let path_style = this.read_with(&cx, |this, cx| this.path_style())?;
+        let query =
+            SearchQuery::from_proto(message.query.context("missing query field")?, path_style)?;
         let results = this.update(&mut cx, |this, cx| {
             this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;
@@ -5295,6 +5324,10 @@ impl Project {
 
     pub fn agent_location(&self) -> Option<AgentLocation> {
         self.agent_location.clone()
+    }
+
+    pub fn path_style(&self) -> PathStyle {
+        todo!()
     }
 }
 

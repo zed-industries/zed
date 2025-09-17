@@ -1194,7 +1194,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use util::path;
+    use util::{path, paths::PathStyle};
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
@@ -1371,6 +1371,10 @@ mod tests {
 
         fn path(&self) -> &Arc<Path> {
             &self.path
+        }
+
+        fn path_style(&self, _: &App) -> PathStyle {
+            PathStyle::current()
         }
 
         fn full_path(&self, _: &App) -> PathBuf {

@@ -261,7 +261,7 @@ impl EditPredictionSettings {
                 file.as_local()
                     .is_some_and(|local| glob.matcher.is_match(local.abs_path(cx)))
             } else {
-                glob.matcher.is_match(file.path())
+                glob.matcher.is_match(file.path().as_std_path())
             }
         })
     }
@@ -1737,6 +1737,7 @@ pub struct JsxTagAutoCloseSettings {
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
+    use util::rel_path::RelPath;
 
     use super::*;
 
@@ -1819,11 +1820,11 @@ mod tests {
 
         const WORKTREE_NAME: &str = "project";
         let make_test_file = |segments: &[&str]| -> Arc<dyn File> {
-            let mut path_buf = PathBuf::new();
-            path_buf.extend(segments);
+            let path = segments.join("/");
+            let path = RelPath::from_str(&path);
 
             Arc::new(TestFile {
-                path: path_buf.as_path().into(),
+                path: path.into(),
                 root_name: WORKTREE_NAME.to_string(),
                 local_root: Some(PathBuf::from(if cfg!(windows) {
                     "C:\\absolute\\"
@@ -1876,7 +1877,7 @@ mod tests {
         assert!(!settings.enabled_for_file(&test_file, &cx));
 
         let test_file_root: Arc<dyn File> = Arc::new(TestFile {
-            path: PathBuf::from("file.rs").as_path().into(),
+            path: RelPath::from_str("file.rs").into(),
             root_name: WORKTREE_NAME.to_string(),
             local_root: Some(PathBuf::from("/absolute/")),
         });

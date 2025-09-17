@@ -535,7 +535,7 @@ impl ProjectDiff {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path().to_string_lossy().to_string())
+            .map(|key| key.path().to_string())
             .collect()
     }
 }

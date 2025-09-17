@@ -34,7 +34,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 use sysinfo::System;
-use util::ResultExt;
+use util::{ResultExt, paths::PathStyle};
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -630,7 +630,10 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
+        let query = SearchQuery::from_proto(
+            message.query.context("missing query field")?,
+            PathStyle::current(),
+        )?;
         let results = this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
