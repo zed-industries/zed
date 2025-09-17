@@ -8,7 +8,7 @@ use util::MergeFrom;
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,
-    pub dock: LeftRightDockPosition,
+    pub dock: DockSide,
     pub file_icons: bool,
     pub folder_icons: bool,
     pub git_status: bool,
@@ -31,12 +31,6 @@ pub struct ScrollbarSettings {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct IndentGuidesSettings {
     pub show: ShowIndentGuides,
-}
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub struct IndentGuidesSettingsContent {
-    /// When to show the scrollbar in the outline panel.
-    pub show: Option<ShowIndentGuides>,
 }
 
 impl ScrollbarVisibility for OutlinePanelSettings {
@@ -70,7 +64,7 @@ impl Settings for OutlinePanelSettings {
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
         let Some(panel) = content.outline_panel.as_ref() else {
             return;
         };
@@ -92,8 +86,10 @@ impl Settings for OutlinePanelSettings {
             .merge_from(&panel.auto_reveal_entries);
         self.auto_fold_dirs.merge_from(&panel.auto_fold_dirs);
 
-        if let Some(scrollbar) = panel.scrollbar.as_ref() {
-            self.scrollbar.show.merge_from(&scrollbar.show.flatten());
+        if let Some(scrollbar) = panel.scrollbar.as_ref()
+            && let Some(show) = scrollbar.show.flatten()
+        {
+            self.scrollbar.show = Some(show.into())
         }
     }
     fn import_from_vscode(
