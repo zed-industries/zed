@@ -3,10 +3,13 @@ use std::collections::BTreeSet;
 use remote::IrohConnectionOptions;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ui::SharedString;
+
+use crate::remote_connections::SshProject;
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct P2pConnection {
-    pub ticket: String,
+    pub ticket: SharedString,
     #[serde(default)]
     pub projects: BTreeSet<SshProject>,
     /// Name to use for this server in UI.
@@ -22,9 +25,4 @@ impl From<P2pConnection> for IrohConnectionOptions {
             nickname: val.nickname,
         }
     }
-}
-
-#[derive(Clone, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema)]
-pub struct SshProject {
-    pub paths: Vec<String>,
 }

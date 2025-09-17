@@ -35,6 +35,7 @@ use crate::p2p_connection::P2pConnection;
 #[derive(Deserialize)]
 pub struct SshSettings {
     pub ssh_connections: Option<Vec<SshConnection>>,
+    pub p2p_connections: Option<Vec<P2pConnection>>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     #[serde(default = "default_true")]
     pub read_ssh_config: bool,
@@ -43,6 +44,10 @@ pub struct SshSettings {
 impl SshSettings {
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
         self.ssh_connections.clone().into_iter().flatten()
+    }
+
+    pub fn p2p_connections(&self) -> impl Iterator<Item = P2pConnection> + use<> {
+        self.p2p_connections.clone().into_iter().flatten()
     }
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {

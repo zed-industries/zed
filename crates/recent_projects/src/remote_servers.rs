@@ -313,7 +313,7 @@ enum RemoteEntry {
         open_folder: NavigableEntry,
         projects: Vec<(NavigableEntry, SshProject)>,
         configure: NavigableEntry,
-        connection: SshConnection,
+        connection: RemoteConnection,
     },
     SshConfig {
         open_folder: NavigableEntry,
@@ -329,6 +329,15 @@ enum RemoteEntry {
 enum RemoteConnection {
     Ssh(SshConnection),
     P2p(P2pConnection),
+}
+
+impl RemoteConnection {
+    fn nickname(&self) -> Option<&String> {
+        match self {
+            Self::Ssh(conn) => conn.nickname.as_ref(),
+            Self::P2p(conn) => conn.nickname.as_ref(),
+        }
+    }
 }
 
 impl From<RemoteConnection> for RemoteConnectionOptions {
@@ -347,13 +356,13 @@ impl RemoteEntry {
 
     fn connection(&self) -> RemoteConnection {
         match self {
-            Self::Project { connection, .. } => RemoteConnection::Ssh(connection.clone()),
+            Self::Project { connection, .. } => connection.clone(),
             Self::SshConfig { host, .. } => RemoteConnection::Ssh(SshConnection {
                 host: host.clone(),
                 ..SshConnection::default()
             }),
             Self::P2pConfig { ticket, .. } => RemoteConnection::P2p(P2pConnection {
-                ticket: ticket.to_string(),
+                ticket: ticket.clone(),
                 ..P2pConnection::default()
             }),
         }
@@ -396,16 +405,37 @@ impl DefaultState {
                     open_folder,
                     configure,
                     projects,
-                    connection,
+                    connection: RemoteConnection::Ssh(connection),
                 }
             })
             .collect();
+
+        for connection in ssh_settings.p2p_connections() {
+            let open_folder = NavigableEntry::new(&handle, cx);
+            let configure = NavigableEntry::new(&handle, cx);
+            let projects = connection
+                .projects
+                .iter()
+                .map(|project| (NavigableEntry::new(&handle, cx), project.clone()))
+                .collect();
+            servers.push(RemoteEntry::Project {
+                open_folder,
+                configure,
+                projects,
+                connection: RemoteConnection::P2p(connection),
+            });
+        }
 
         if read_ssh_config {
             let mut extra_servers_from_config = ssh_config_servers.clone();
             for server in &servers {
                 if let RemoteEntry::Project { connection, .. } = server {
-                    extra_servers_from_config.remove(&connection.host);
+                    match connection {
+                        RemoteConnection::Ssh(connection) => {
+                            extra_servers_from_config.remove(&connection.host);
+                        }
+                        _ => {}
+                    }
                 }
             }
             servers.extend(extra_servers_from_config.into_iter().map(|host| {
@@ -415,7 +445,17 @@ impl DefaultState {
                 }
             }));
 
-            let extra_servers_from_config = p2p_config_servers.clone();
+            let mut extra_servers_from_config = p2p_config_servers.clone();
+            for server in &servers {
+                if let RemoteEntry::Project { connection, .. } = server {
+                    match connection {
+                        RemoteConnection::P2p(connection) => {
+                            extra_servers_from_config.remove(&connection.ticket);
+                        }
+                        _ => {}
+                    }
+                }
+            }
             servers.extend(extra_servers_from_config.into_iter().map(|ticket| {
                 RemoteEntry::P2pConfig {
                     open_folder: NavigableEntry::new(&handle, cx),
@@ -436,7 +476,7 @@ impl DefaultState {
 #[derive(Clone)]
 struct ViewServerOptionsState {
     server_index: usize,
-    connection: SshConnection,
+    connection: RemoteConnection,
     entries: [NavigableEntry; 4],
 }
 enum Mode {
@@ -718,7 +758,7 @@ impl RemoteServerProjects {
 
     fn view_server_options(
         &mut self,
-        (server_index, connection): (usize, SshConnection),
+        (server_index, connection): (usize, RemoteConnection),
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1080,87 +1120,194 @@ impl RemoteServerProjects {
                     projects,
                     configure,
                     connection,
-                } => List::new()
-                    .empty_message("No projects.")
-                    .children(projects.iter().enumerate().map(|(pix, p)| {
-                        v_flex().gap_0p5().child(self.render_ssh_project(
-                            ix,
-                            ssh_server.clone(),
-                            pix,
-                            p,
-                            window,
-                            cx,
-                        ))
-                    }))
-                    .child(
-                        h_flex()
-                            .id(("new-remote-project-container", ix))
-                            .track_focus(&open_folder.focus_handle)
-                            .anchor_scroll(open_folder.scroll_anchor.clone())
-                            .on_action(cx.listener({
-                                let ssh_connection = connection.clone();
-                                move |this, _: &menu::Confirm, window, cx| {
-                                    this.create_ssh_project(ix, ssh_connection.clone(), window, cx);
-                                }
-                            }))
-                            .child(
-                                ListItem::new(("new-remote-project", ix))
-                                    .toggle_state(
-                                        open_folder.focus_handle.contains_focused(window, cx),
-                                    )
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
-                                    .child(Label::new("Open Folder"))
-                                    .on_click(cx.listener({
-                                        let ssh_connection = connection.clone();
-                                        move |this, _, window, cx| {
-                                            this.create_ssh_project(
-                                                ix,
-                                                ssh_connection.clone(),
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .id(("server-options-container", ix))
-                            .track_focus(&configure.focus_handle)
-                            .anchor_scroll(configure.scroll_anchor.clone())
-                            .on_action(cx.listener({
-                                let ssh_connection = connection.clone();
-                                move |this, _: &menu::Confirm, window, cx| {
-                                    this.view_server_options(
-                                        (ix, ssh_connection.clone()),
-                                        window,
-                                        cx,
-                                    );
-                                }
-                            }))
-                            .child(
-                                ListItem::new(("server-options", ix))
-                                    .toggle_state(
-                                        configure.focus_handle.contains_focused(window, cx),
-                                    )
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Settings).color(Color::Muted))
-                                    .child(Label::new("View Server Options"))
-                                    .on_click(cx.listener({
-                                        let ssh_connection = connection.clone();
-                                        move |this, _, window, cx| {
-                                            this.view_server_options(
-                                                (ix, ssh_connection.clone()),
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            ),
-                    ),
+                } => match connection {
+                    RemoteConnection::Ssh(connection) => List::new()
+                        .empty_message("No projects.")
+                        .children(projects.iter().enumerate().map(|(pix, p)| {
+                            v_flex().gap_0p5().child(self.render_ssh_project(
+                                ix,
+                                ssh_server.clone(),
+                                pix,
+                                p,
+                                window,
+                                cx,
+                            ))
+                        }))
+                        .child(
+                            h_flex()
+                                .id(("new-remote-project-container", ix))
+                                .track_focus(&open_folder.focus_handle)
+                                .anchor_scroll(open_folder.scroll_anchor.clone())
+                                .on_action(cx.listener({
+                                    let ssh_connection = connection.clone();
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        this.create_ssh_project(
+                                            ix,
+                                            ssh_connection.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }))
+                                .child(
+                                    ListItem::new(("new-remote-project", ix))
+                                        .toggle_state(
+                                            open_folder.focus_handle.contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                                        .child(Label::new("Open Folder"))
+                                        .on_click(cx.listener({
+                                            let ssh_connection = connection.clone();
+                                            move |this, _, window, cx| {
+                                                this.create_ssh_project(
+                                                    ix,
+                                                    ssh_connection.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .id(("server-options-container", ix))
+                                .track_focus(&configure.focus_handle)
+                                .anchor_scroll(configure.scroll_anchor.clone())
+                                .on_action(cx.listener({
+                                    let ssh_connection = connection.clone();
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        this.view_server_options(
+                                            (ix, RemoteConnection::Ssh(ssh_connection.clone())),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }))
+                                .child(
+                                    ListItem::new(("server-options", ix))
+                                        .toggle_state(
+                                            configure.focus_handle.contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(
+                                            Icon::new(IconName::Settings).color(Color::Muted),
+                                        )
+                                        .child(Label::new("View Server Options"))
+                                        .on_click(cx.listener({
+                                            let ssh_connection = connection.clone();
+                                            move |this, _, window, cx| {
+                                                this.view_server_options(
+                                                    (
+                                                        ix,
+                                                        RemoteConnection::Ssh(
+                                                            ssh_connection.clone(),
+                                                        ),
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                ),
+                        ),
+                    RemoteConnection::P2p(connection) => List::new()
+                        .empty_message("No projects.")
+                        .children(projects.iter().enumerate().map(|(pix, p)| {
+                            v_flex().gap_0p5().child(self.render_ssh_project(
+                                ix,
+                                ssh_server.clone(),
+                                pix,
+                                p,
+                                window,
+                                cx,
+                            ))
+                        }))
+                        .child(
+                            h_flex()
+                                .id(("new-remote-project-container", ix))
+                                .track_focus(&open_folder.focus_handle)
+                                .anchor_scroll(open_folder.scroll_anchor.clone())
+                                .on_action(cx.listener({
+                                    let p2p_connection = connection.clone();
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        this.create_p2p_project(
+                                            ix,
+                                            p2p_connection.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }))
+                                .child(
+                                    ListItem::new(("new-remote-project", ix))
+                                        .toggle_state(
+                                            open_folder.focus_handle.contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                                        .child(Label::new("Open Folder"))
+                                        .on_click(cx.listener({
+                                            let p2p_connection = connection.clone();
+                                            move |this, _, window, cx| {
+                                                this.create_p2p_project(
+                                                    ix,
+                                                    p2p_connection.clone(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                ),
+                        )
+                        .child(
+                            h_flex()
+                                .id(("server-options-container", ix))
+                                .track_focus(&configure.focus_handle)
+                                .anchor_scroll(configure.scroll_anchor.clone())
+                                .on_action(cx.listener({
+                                    let p2p_connection = connection.clone();
+                                    move |this, _: &menu::Confirm, window, cx| {
+                                        this.view_server_options(
+                                            (ix, RemoteConnection::P2p(p2p_connection.clone())),
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }))
+                                .child(
+                                    ListItem::new(("server-options", ix))
+                                        .toggle_state(
+                                            configure.focus_handle.contains_focused(window, cx),
+                                        )
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(
+                                            Icon::new(IconName::Settings).color(Color::Muted),
+                                        )
+                                        .child(Label::new("View Server Options"))
+                                        .on_click(cx.listener({
+                                            let p2p_connection = connection.clone();
+                                            move |this, _, window, cx| {
+                                                this.view_server_options(
+                                                    (
+                                                        ix,
+                                                        RemoteConnection::P2p(
+                                                            p2p_connection.clone(),
+                                                        ),
+                                                    ),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                ),
+                        ),
+                },
                 RemoteEntry::SshConfig { open_folder, host } => List::new().child(
                     h_flex()
                         .id(("new-remote-project-container", ix))
@@ -1433,7 +1580,7 @@ impl RemoteServerProjects {
                 .p2p_connections
                 .get_or_insert(Default::default())
                 .push(P2pConnection {
-                    ticket: connection_options.ticket.to_string(),
+                    ticket: connection_options.ticket.to_string().into(),
                     projects: BTreeSet::new(),
                     nickname: None,
                 })
@@ -1599,7 +1746,10 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let connection_string = connection.host.clone();
+        let connection_string = match &connection {
+            RemoteConnection::Ssh(conn) => conn.host.clone(),
+            RemoteConnection::P2p(conn) => conn.ticket.clone(),
+        };
 
         let mut view = Navigable::new(
             div()
@@ -1609,7 +1759,7 @@ impl RemoteServerProjects {
                     SshConnectionHeader {
                         connection_string: connection_string.clone(),
                         paths: Default::default(),
-                        nickname: connection.nickname.clone().map(|s| s.into()),
+                        nickname: connection.nickname().clone().map(|s| s.into()),
                     }
                     .render(window, cx),
                 )
@@ -1618,7 +1768,7 @@ impl RemoteServerProjects {
                         .pb_1()
                         .child(ListSeparator)
                         .child({
-                            let label = if connection.nickname.is_some() {
+                            let label = if connection.nickname().is_some() {
                                 "Edit Nickname"
                             } else {
                                 "Add Nickname to Server"
@@ -1902,7 +2052,10 @@ impl RemoteServerProjects {
                     .servers
                     .iter()
                     .filter_map(|server| match server {
-                        RemoteEntry::Project { connection, .. } => Some(connection),
+                        RemoteEntry::Project { connection, .. } => match connection {
+                            RemoteConnection::Ssh(conn) => Some(conn),
+                            _ => None,
+                        },
                         RemoteEntry::SshConfig { .. } => None,
                         RemoteEntry::P2pConfig { .. } => None,
                     })
@@ -1924,7 +2077,12 @@ impl RemoteServerProjects {
             let mut expected_ssh_hosts = self.ssh_config_servers.clone();
             for server in &state.servers {
                 if let RemoteEntry::Project { connection, .. } = server {
-                    expected_ssh_hosts.remove(&connection.host);
+                    match connection {
+                        RemoteConnection::Ssh(conn) => {
+                            expected_ssh_hosts.remove(&conn.host);
+                        }
+                        _ => {}
+                    }
                 }
             }
             should_rebuild = current_ssh_hosts != expected_ssh_hosts;
