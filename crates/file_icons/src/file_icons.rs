@@ -52,6 +52,15 @@ impl FileIcons {
             }
         }
 
+        // handle cases where the file extension is made up of multiple important
+        // parts (e.g Component.stories.tsx) that refer to an alternative icon style
+        if let Some(suffix) = path.multiple_extensions() {
+            let maybe_path = get_icon_from_suffix(suffix.as_str());
+            if maybe_path.is_some() {
+                return maybe_path;
+            }
+        }
+
         // primary case: check if the files extension or the hidden file name
         // matches some icon path
         if let Some(suffix) = path.extension_or_hidden_file_name() {
