@@ -89,10 +89,29 @@ pub(super) fn find_from_grid_point<T: EventListener>(
             (format!("{file_path}:{line_number}"), false, python_match)
         })
     } else if let Some(word_match) = regex_match_at(term, point, &mut regex_searches.word_regex) {
-        let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
+        let text = term.bounds_to_string(*word_match.start(), *word_match.end());
+        let (file_path, actual_match) = if text.contains('/') && !text.contains('.') {
+            if let Some(next_match) = visible_regex_match_iter(term, &mut regex_searches.word_regex)
+                .find(|m| m.start().line == word_match.end().line + 1 && m.start().column.0 <= 2)
+            {
+                let next_text = term.bounds_to_string(*next_match.start(), *next_match.end());
+                if next_text.contains('.') && !next_text.contains('/') {
+                    (
+                        format!("{}{}", text, next_text),
+                        Match::new(*word_match.start(), *next_match.end()),
+                    )
+                } else {
+                    (text, word_match)
+                }
+            } else {
+                (text, word_match)
+            }
+        } else {
+            (text, word_match)
+        };
 
         let (sanitized_match, sanitized_word) = 'sanitize: {
-            let mut word_match = word_match;
+            let mut word_match = actual_match;
             let mut file_path = file_path;
 
             if is_path_surrounded_by_common_symbols(&file_path) {
@@ -1360,5 +1379,28 @@ mod tests {
                 )
             }
         }
+    }
+
+    #[test]
+    fn test_multiline_path() {
+        let mut term = Term::new(Config::default(), &TermSize::new(30, 5), VoidListener);
+        let mut regex_searches = RegexSearches::new();
+
+        for c in "/project/long-filename-na\nme.tsx\n".chars() {
+            if c == '\n' {
+                term.move_down_and_cr(1);
+            } else {
+                term.input(c);
+            }
+        }
+
+        let result = find_from_grid_point(
+            &term,
+            AlacPoint::new(Line(0), Column(15)),
+            &mut regex_searches,
+        );
+
+        assert!(result.is_some());
+        assert!(result.unwrap().0.contains("me.tsx"));
     }
 }
