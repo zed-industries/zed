@@ -58,7 +58,10 @@ impl TabHandles {
     }
 
     fn insert_node(&mut self, node: TabNode) {
+        // Construct a SumTree (which is a bit annoying), we would use a seek to traverse the tree to the index we need.
+        // And then we can use the cursor APIs to pull out ranges of the tree based on the seeking
         let result = self.nodes.binary_search_by(|b| {
+            // We are searching _every_ node, for the
             let a = &node;
             let mut a_parent = a;
             let mut b_parent = b;
@@ -84,6 +87,8 @@ impl TabHandles {
                 self.nodes.insert(index, node);
             }
         }
+        // O(n + log(n)^2) -> Being done theoretically, every time there's a focusable element in the tree
+        // per frame, this costs us O(n(n + log(n)^2)) (actual performance impact will be much lower because this is a tailor series instead of a multiple of n, and one of the Ns will commonly be used less frequently)
     }
 
     pub fn clear(&mut self) {
@@ -183,7 +188,7 @@ mod tests {
         tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(4).tab_stop(true));
 
         // eprintln!("{:?}", &tab_handles.index_buf);
-        eprintln!("{:?}", &tab_handles.handles);
+        // eprintln!("{:?}", &tab_handles.handles);
         // eprintln!(
         //     "{:?}",
         //     tab_handles
@@ -1019,6 +1024,7 @@ mod tests {
         );
 
         #[test]
+        // todo! remove
         #[should_panic(expected = "Missing handle at actual=4")]
         fn test_non_sequential_actual_values_should_fail() {
             // This test intentionally uses non-sequential actual values (missing 4 and 5)
@@ -1039,7 +1045,33 @@ mod tests {
             check(xml);
         }
 
+        fn test() {
+            enum NodeType {
+                TabGroup(u32, &'static [NodeType]),
+                TabIndex(u32, u32),
+                TabStopIndex(u32, u32),
+            }
+
+            let test_case = [
+                NodeType::TabIndex(0, 0),
+                NodeType::TabIndex(1, 1),
+                NodeType::TabGroup(
+                    2,
+                    &[
+                        NodeType::TabGroup(
+                            0,
+                            &[NodeType::TabIndex(0, 2), NodeType::TabIndex(1, 3)],
+                        ),
+                        NodeType::TabIndex(1, 6),
+                    ],
+                ),
+                NodeType::TabIndex(3, 4),
+                NodeType::TabIndex(4, 5),
+            ];
+        }
+
         #[test]
+        // todo! remove
         #[should_panic(expected = "Tab navigation error at position")]
         fn test_wrong_tab_order_should_fail() {
             // This test has all sequential actual values, but they don't match
@@ -1061,18 +1093,42 @@ mod tests {
             check(xml);
         }
 
-        xml_test!(
-            test_sibling_nested_groups,
-            r#"
+        // Tab navigation error!
+        //
+        // Tab navigation error at position 2 (testing next())
+        //
+        // <tab-index=0 actual=0>
+        // <tab-index=1 actual=1>
+        // <tab-group tab-index=2>
+        //   <tab-index=0 actual=2> // <- Current position
+        //   <tab-index=2 actual=5> // <- Actually went here (actual=5)
+        //   <tab-group tab-index=1>
+        //     <tab-index=0 actual=3> // <- Expected to go here (actual=3)
+        //     <tab-index=1 actual=4>
+        //   </tab-group>
+        //   <tab-group tab-index=3>
+        //     <tab-index=0 actual=6>
+        //     <tab-index=1 actual=7>
+        //   </tab-group>
+        // </tab-group>
+        // <tab-index=3 actual=8>
+        // <tab-index=4 actual=9>
+        //
+        //
+        // Expected: actual=3
+        // Actual: "actual=5"
+        #[test]
+        fn test_sibling_nested_groups() {
+            let content = r#"
                 <tab-index=0 actual=0>
                 <tab-index=1 actual=1>
                 <tab-group tab-index=2>
                     <tab-index=0 actual=2>
+                    <tab-index=2 actual=5>
                     <tab-group tab-index=1>
                         <tab-index=0 actual=3>
                         <tab-index=1 actual=4>
                     </tab-group>
-                    <tab-index=2 actual=5>
                     <tab-group tab-index=3>
                         <tab-index=0 actual=6>
                         <tab-index=1 actual=7>
@@ -1080,8 +1136,9 @@ mod tests {
                 </tab-group>
                 <tab-index=3 actual=8>
                 <tab-index=4 actual=9>
-            "#
-        );
+            "#;
+            check(content);
+        }
     }
 
     #[test]

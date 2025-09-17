@@ -704,7 +704,9 @@ pub(crate) struct PaintIndex {
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
-    tab_handle_index: usize,
+    tab_handle_index: Option<NodeIdentifier>,
+    // self.tab_handles[start..end] -> A tree traversal, using that start and end to pick out a sub section
+    // For Range<PaintIndex>, range.start = index of tree traversal, range.end = index of tree traversal.
     line_layout_index: LineLayoutIndex,
 }
 
