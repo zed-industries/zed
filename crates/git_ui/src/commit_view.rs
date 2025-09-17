@@ -3,8 +3,9 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity,
-    EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, WeakEntity, Window,
+    Action, AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context,
+    Entity, EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, WeakEntity,
+    Window, actions,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -18,7 +19,9 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
-use ui::{Button, Color, Icon, IconName, Label, LabelCommon as _, SharedString, prelude::*};
+use ui::{
+    Button, Color, Icon, IconName, Label, LabelCommon as _, SharedString, Tooltip, prelude::*,
+};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -30,6 +33,23 @@ use workspace::{
 };
 
 use crate::git_panel::GitPanel;
+
+actions!(git, [StashApplyCurrent, StashPopCurrent, StashDropCurrent,]);
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
+        register_workspace_action(workspace, |toolbar, _: &StashApplyCurrent, window, cx| {
+            toolbar.apply_stash(window, cx);
+        });
+        register_workspace_action(workspace, |toolbar, _: &StashDropCurrent, window, cx| {
+            toolbar.remove_stash(window, cx);
+        });
+        register_workspace_action(workspace, |toolbar, _: &StashPopCurrent, window, cx| {
+            toolbar.pop_stash(window, cx);
+        });
+    })
+    .detach();
+}
 
 pub struct CommitView {
     commit: CommitDetails,
@@ -563,8 +583,16 @@ impl Item for CommitView {
 }
 
 impl Render for CommitView {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.editor.clone()
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_stash = self.stash.is_some();
+        div()
+            .key_context(if is_stash { "StashDiff" } else { "CommitDiff" })
+            .bg(cx.theme().colors().editor_background)
+            .flex()
+            .items_center()
+            .justify_center()
+            .size_full()
+            .child(self.editor.clone())
     }
 }
 
@@ -763,23 +791,63 @@ impl Render for CommitViewToolbar {
             return div();
         }
 
+        let focus_handle = commit_view.focus_handle(cx);
+
         h_group_xl().my_neg_1().py_1().items_center().child(
             h_group_sm()
                 .child(
                     Button::new("apply_stash", "Apply")
                         .icon(IconName::ArrowDown)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Apply current stash",
+                            &StashApplyCurrent,
+                            &focus_handle,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| this.apply_stash(window, cx))),
                 )
                 .child(
                     Button::new("pop_stash", "Pop")
                         .icon(IconName::ArrowUp)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Pop current stash",
+                            &StashPopCurrent,
+                            &focus_handle,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| this.pop_stash(window, cx))),
                 )
                 .child(
                     Button::new("remove_stash", "Remove")
                         .icon(IconName::Trash)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Remove current stash",
+                            &StashDropCurrent,
+                            &focus_handle,
+                        ))
                         .on_click(cx.listener(|this, _, window, cx| this.remove_stash(window, cx))),
                 ),
         )
     }
+}
+
+fn register_workspace_action<A: Action>(
+    workspace: &mut Workspace,
+    callback: fn(&mut CommitViewToolbar, &A, &mut Window, &mut Context<CommitViewToolbar>),
+) {
+    workspace.register_action(move |workspace, action: &A, window, cx| {
+        if workspace.has_active_modal(window, cx) {
+            cx.propagate();
+            return;
+        }
+
+        workspace.active_pane().update(cx, |pane, cx| {
+            pane.toolbar().update(cx, move |workspace, cx| {
+                if let Some(toolbar) = workspace.item_of_type::<CommitViewToolbar>() {
+                    toolbar.update(cx, move |toolbar, cx| {
+                        callback(toolbar, action, window, cx);
+                        cx.notify();
+                    });
+                }
+            });
+        })
+    });
 }

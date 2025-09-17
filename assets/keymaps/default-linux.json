@@ -1267,6 +1267,14 @@
     }
   },
   {
+    "context": "StashDiff > Editor",
+    "bindings": {
+      "ctrl-space": "git::StashApplyCurrent",
+      "ctrl-shift-space": "git::StashPopCurrent",
+      "ctrl-shift-backspace": "git::StashDropCurrent"
+    }
+  },
+  {
     "context": "SettingsWindow > NavigationMenu",
     "use_key_equivalents": true,
     "bindings": {
