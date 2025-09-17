@@ -177,7 +177,11 @@ impl RelPath {
             };
         }
 
-        Self::new(&string).map(Arc::from)
+        let this = Self::new(&string);
+        if this.is_none() {
+            log::debug!("invalid relative path from std: {string:?}");
+        }
+        this.map(Arc::from)
     }
 
     pub unsafe fn new_unchecked<S: AsRef<str> + ?Sized>(s: &S) -> &Self {
@@ -245,8 +249,13 @@ impl RelPath {
     }
 
     pub fn from_proto(path: &str) -> Option<Arc<Self>> {
-        let this = Self::new(path)?;
-        Some(Arc::from(this))
+        let this = Self::new(path);
+        debug_assert!(
+            this.is_some(),
+            "invalid relative path from proto: {:?}",
+            path
+        );
+        Some(Arc::from(this?))
     }
 
     pub fn as_str(&self) -> &str {

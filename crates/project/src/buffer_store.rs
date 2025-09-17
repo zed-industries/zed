@@ -21,10 +21,10 @@ use language::{
 };
 use rpc::{
     AnyProtoClient, ErrorCode, ErrorExt as _, TypedEnvelope,
-    proto::{self, ToProto},
+    proto::{self},
 };
 use smol::channel::Receiver;
-use std::{io, path::Path, pin::pin, sync::Arc, time::Instant};
+use std::{io, pin::pin, sync::Arc, time::Instant};
 use text::BufferId;
 use util::{ResultExt as _, TryFutureExt, debug_panic, maybe, rel_path::RelPath};
 use worktree::{File, PathChange, ProjectEntryId, Worktree, WorktreeId};
@@ -389,7 +389,7 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.as_ref(), text, line_ending, cx)
+            worktree.write_file(path, text, line_ending, cx)
         });
 
         cx.spawn(async move |this, cx| {
@@ -1402,8 +1402,9 @@ impl BufferStore {
             .await?;
         let buffer_id = buffer.read_with(&cx, |buffer, _| buffer.remote_id())?;
 
-        if let Some(new_path) = envelope.payload.new_path {
-            let new_path = ProjectPath::from_proto(new_path);
+        if let Some(new_path) = envelope.payload.new_path
+            && let Some(new_path) = ProjectPath::from_proto(new_path)
+        {
             this.update(&mut cx, |this, cx| {
                 this.save_buffer_as(buffer.clone(), new_path, cx)
             })?

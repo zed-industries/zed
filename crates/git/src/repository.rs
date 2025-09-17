@@ -28,6 +28,7 @@ use std::{
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
 use util::command::{new_smol_command, new_std_command};
+use util::rel_path::RelPath;
 use util::{ResultExt, paths};
 use uuid::Uuid;
 
@@ -2015,7 +2016,7 @@ pub static WORK_DIRECTORY_REPO_PATH: LazyLock<RepoPath> =
     LazyLock::new(|| RepoPath(Path::new("").into()));
 
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(pub Arc<Path>);
+pub struct RepoPath(pub Arc<RelPath>);
 
 impl RepoPath {
     pub fn new(path: PathBuf) -> Self {

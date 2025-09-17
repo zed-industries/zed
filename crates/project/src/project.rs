@@ -369,11 +369,11 @@ impl ProjectPath {
         }
     }
 
-    pub fn from_proto(p: proto::ProjectPath) -> Self {
-        Self {
+    pub fn from_proto(p: proto::ProjectPath) -> Option<Self> {
+        Some(Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
-            path: Arc::<Path>::from_proto(p.path),
-        }
+            path: RelPath::from_proto(p.path),
+        })
     }
 
     pub fn to_proto(&self) -> proto::ProjectPath {
@@ -386,7 +386,7 @@ impl ProjectPath {
     pub fn root_path(worktree_id: WorktreeId) -> Self {
         Self {
             worktree_id,
-            path: Path::new("").into(),
+            path: RelPath::empty().into(),
         }
     }
 

@@ -156,9 +156,11 @@ impl WorktreeStore {
         &self,
         abs_path: impl AsRef<Path>,
         cx: &App,
-    ) -> Option<(Entity<Worktree>, RelPath)> {
+    ) -> Option<(Entity<Worktree>, Arc<RelPath>)> {
         for tree in self.worktrees() {
-            if let Ok(relative_path) = abs_path.as_path().strip_prefix(tree.read(cx).abs_path()) {
+            if let Ok(relative_path) = abs_path.as_ref().strip_prefix(tree.read(cx).abs_path())
+                && let Some(relative_path) = RelPath::from_std_path(relative_path)
+            {
                 return Some((tree.clone(), relative_path.into()));
             }
         }
@@ -167,7 +169,7 @@ impl WorktreeStore {
 
     pub fn absolutize(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
         let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-        worktree.read(cx).absolutize(&project_path.path).ok()
+        Some(worktree.read(cx).absolutize(&project_path.path))
     }
 
     pub fn find_or_create_worktree(
@@ -175,13 +177,13 @@ impl WorktreeStore {
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Entity<Worktree>, PathBuf)>> {
+    ) -> Task<Result<(Entity<Worktree>, Arc<RelPath>)>> {
         let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_worktree(abs_path, visible, cx);
-            cx.background_spawn(async move { Ok((worktree.await?, PathBuf::new())) })
+            cx.background_spawn(async move { Ok((worktree.await?, RelPath::empty().into())) })
         }
     }
 
@@ -308,7 +310,7 @@ impl WorktreeStore {
                     path_style,
                     cx,
                 )
-            })??;
+            })?;
 
             this.update(cx, |this, cx| {
                 this.add(&worktree, cx);
@@ -486,7 +488,7 @@ impl WorktreeStore {
                         client.clone(),
                         path_style,
                         cx,
-                    )?,
+                    ),
                     cx,
                 );
             }
@@ -749,13 +751,13 @@ impl WorktreeStore {
     fn scan_ignored_dir<'a>(
         fs: &'a Arc<dyn Fs>,
         snapshot: &'a worktree::Snapshot,
-        path: &'a Path,
+        path: &'a RelPath,
         query: &'a SearchQuery,
         filter_tx: &'a Sender<MatchingEntry>,
         output_tx: &'a Sender<oneshot::Receiver<ProjectPath>>,
     ) -> BoxFuture<'a, Result<()>> {
         async move {
-            let abs_path = snapshot.abs_path().join(path);
+            let abs_path = snapshot.absolutize(path);
             let Some(mut files) = fs
                 .read_dir(&abs_path)
                 .await
@@ -780,10 +782,10 @@ impl WorktreeStore {
                 if metadata.is_symlink || metadata.is_fifo {
                     continue;
                 }
-                results.push((
-                    file.strip_prefix(snapshot.abs_path())?.to_path_buf(),
-                    !metadata.is_dir,
-                ))
+                let relative_path = file.strip_prefix(snapshot.abs_path())?;
+                let relative_path =
+                    RelPath::from_std_path(&relative_path).context("getting relative path")?;
+                results.push((relative_path, !metadata.is_dir))
             }
             results.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
             for (path, is_file) in results {
@@ -791,10 +793,10 @@ impl WorktreeStore {
                     if query.filters_path() {
                         let matched_path = if query.match_full_paths() {
                             let mut full_path = PathBuf::from(snapshot.root_name());
-                            full_path.push(&path);
+                            full_path.push(path.as_std_path());
                             query.match_path(&full_path)
                         } else {
-                            query.match_path(&path)
+                            query.match_path(&path.as_std_path())
                         };
                         if !matched_path {
                             continue;
@@ -808,7 +810,7 @@ impl WorktreeStore {
                             worktree_root: snapshot.abs_path().clone(),
                             path: ProjectPath {
                                 worktree_id: snapshot.id(),
-                                path: Arc::from(path),
+                                path,
                             },
                         })
                         .await?;
@@ -854,10 +856,10 @@ impl WorktreeStore {
                 if query.filters_path() {
                     let matched_path = if query.match_full_paths() {
                         let mut full_path = PathBuf::from(snapshot.root_name());
-                        full_path.push(&entry.path);
+                        full_path.push(entry.path.as_std_path());
                         query.match_path(&full_path)
                     } else {
-                        query.match_path(&entry.path)
+                        query.match_path(entry.path.as_std_path())
                     };
                     if !matched_path {
                         continue;
@@ -898,7 +900,7 @@ impl WorktreeStore {
     ) -> Result<()> {
         let mut input = pin!(input);
         while let Some(mut entry) = input.next().await {
-            let abs_path = entry.worktree_root.join(&entry.path.path);
+            let abs_path = entry.worktree_root.join(entry.path.path.as_std_path());
             let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
                 continue;
             };
