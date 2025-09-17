@@ -23,6 +23,8 @@ pub enum Model {
     Grok3,
     #[serde(rename = "grok4")]
     Grok4,
+    #[serde(rename = "grok-code-fast-1")]
+    GrokCodeFast1,
     #[serde(rename = "llama4")]
     Llama4,
     #[serde(rename = "custom")]
@@ -67,6 +69,7 @@ impl Model {
             Self::Five => "oca/gpt5",
             Self::Grok3 => "oca/grok3",
             Self::Grok4 => "oca/grok4",
+            Self::GrokCodeFast1 => "oca/grok-code-fast-1",
             Self::Llama4 => "oca/llama4",
             Self::Custom { name, .. } => name,
         }
@@ -79,6 +82,7 @@ impl Model {
             Self::Five => "OpenAI GPT 5",
             Self::Grok3 => "Grok 3",
             Self::Grok4 => "Grok 4",
+            Self::GrokCodeFast1 => "Grok Code Fast 1",
             Self::Llama4 => "Llama 4",
             Self::Custom {
                 name, display_name, ..
@@ -89,7 +93,7 @@ impl Model {
     pub fn model_vendor(&self) -> ModelVendor {
         match self {
             Self::FourPointOne | Self::O3 | Self::Five => ModelVendor::OpenAI,
-            Self::Grok3 | Self::Grok4 => ModelVendor::XAi,
+            Self::Grok3 | Self::Grok4 | Self::GrokCodeFast1 => ModelVendor::XAi,
             Self::Llama4 => ModelVendor::Meta,
             // Assume custom models are OpenAI compatible
             Self::Custom { .. } => ModelVendor::OpenAI,
@@ -102,7 +106,7 @@ impl Model {
             Self::O3 => 200_000,
             Self::Five => 272_000,
             Self::Grok3 => 131_072,
-            Self::Grok4 => 256_000,
+            Self::Grok4 | Self::GrokCodeFast1 => 256_000,
             Self::Llama4 => 128_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
@@ -117,7 +121,7 @@ impl Model {
             Self::O3 => Some(100_000),
             Self::Five => Some(128_000),
             Self::Grok3 => Some(8_192),
-            Self::Grok4 => Some(64_000),
+            Self::Grok4 | Self::GrokCodeFast1 => Some(64_000),
             Self::Llama4 => None,
         }
     }
@@ -137,7 +141,7 @@ impl Model {
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
             Self::FourPointOne | Self::Grok3 | Self::Grok4 | Self::Llama4 | Self::Five => true,
-            Self::O3 | Model::Custom { .. } => false,
+            Self::GrokCodeFast1 | Self::O3 | Model::Custom { .. } => false,
         }
     }
 
@@ -147,7 +151,11 @@ impl Model {
     pub fn supports_prompt_cache_key(&self) -> bool {
         match self {
             Self::FourPointOne | Self::O3 | Self::Five => true,
-            Self::Grok3 | Self::Grok4 | Self::Llama4 | Model::Custom { .. } => false,
+            Self::GrokCodeFast1
+            | Self::Grok3
+            | Self::Grok4
+            | Self::Llama4
+            | Model::Custom { .. } => false,
         }
     }
 }
