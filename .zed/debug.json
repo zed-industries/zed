@@ -9,16 +9,6 @@
     }
   },
   {
-    "label": "Debug Zed tsx (CodeLLDB)",
-    "adapter": "CodeLLDB",
-    "args": ["~/Zed/repro/tsx"],
-    "build": {
-      "label": "Build Zed",
-      "command": "cargo",
-      "args": ["build"]
-    }
-  },
-  {
     "label": "Debug Zed (GDB)",
     "adapter": "GDB",
     "build": {
