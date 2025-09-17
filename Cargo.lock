@@ -901,7 +901,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assistant_slash_command",
- "cargo_toml",
  "chrono",
  "collections",
  "context_server",
@@ -924,7 +923,6 @@ dependencies = [
  "settings",
  "smol",
  "text",
- "toml 0.8.20",
  "ui",
  "util",
  "workspace",
