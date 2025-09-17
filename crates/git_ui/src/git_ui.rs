@@ -34,7 +34,7 @@ mod askpass_modal;
 pub mod branch_picker;
 mod commit_modal;
 pub mod commit_tooltip;
-mod commit_view;
+pub mod commit_view;
 mod conflict_view;
 pub mod file_diff_view;
 pub mod git_panel;
