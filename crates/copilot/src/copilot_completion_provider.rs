@@ -281,14 +281,11 @@ mod tests {
     use indoc::indoc;
     use language::{
         Point,
-        language_settings::{
-            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, LspInsertMode,
-            WordsCompletionMode,
-        },
+        language_settings::{CompletionSettings, LspInsertMode, WordsCompletionMode},
     };
     use project::Project;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{AllLanguageSettingsContent, SettingsStore};
     use std::future::Future;
     use util::{
         path,
@@ -1128,7 +1125,7 @@ mod tests {
             Project::init_settings(cx);
             workspace::init_settings(cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, f);
+                store.update_user_settings(cx, |settings| f(settings.project.all_languages));
             });
         });
     }

@@ -12,7 +12,6 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
-use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::Editor;
@@ -29,7 +28,7 @@ use project::debugger::session::{Session, SessionQuirks, SessionState, SessionSt
 use project::{DebugScenarioContext, Fs, ProjectPath, TaskSourceKind, WorktreeId};
 use project::{Project, debugger::session::ThreadStatus};
 use rpc::proto::{self};
-use settings::{DockPosition, Settings};
+use settings::Settings;
 use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
@@ -1400,11 +1399,7 @@ impl Panel for DebugPanel {
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
-        match DebuggerSettings::get_global(cx).dock {
-            DockPosition::Left => DockPosition::Left,
-            DockPosition::Bottom => DockPosition::Bottom,
-            DockPosition::Right => DockPosition::Right,
-        }
+        DebuggerSettings::get_global(cx).dock.into()
     }
 
     fn position_is_valid(&self, _: DockPosition) -> bool {
@@ -1426,18 +1421,9 @@ impl Panel for DebugPanel {
             });
         }
 
-        settings::update_settings_file::<DebuggerSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => DebugPanelDockPosition::Left,
-                    DockPosition::Bottom => DebugPanelDockPosition::Bottom,
-                    DockPosition::Right => DebugPanelDockPosition::Right,
-                };
-                settings.dock = dock;
-            },
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.debugger.get_or_insert_default().dock = position.into();
+        });
     }
 
     fn size(&self, _window: &Window, _: &App) -> Pixels {

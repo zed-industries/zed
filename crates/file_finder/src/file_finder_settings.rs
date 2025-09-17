@@ -1,4 +1,3 @@
-use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -13,7 +12,7 @@ pub struct FileFinderSettings {
 }
 
 impl Settings for FileFinderSettings {
-    fn from_defaults(content: &settings::SettingsContent, cx: &mut ui::App) -> Self {
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
         let file_finder = content.file_finder.as_ref().unwrap();
 
         Self {

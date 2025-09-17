@@ -74,7 +74,7 @@ pub trait Settings: 'static + Send + Sync + Sized {
 
     /// Use [the helpers in the vscode_import module](crate::vscode_import) to apply known
     /// equivalent settings from a vscode config to our config
-    fn import_from_vscode(vscode: &VsCodeSettings, current: &mut SettingsContent);
+    fn import_from_vscode(_vscode: &VsCodeSettings, _current: &mut SettingsContent) {}
 
     #[track_caller]
     fn register(cx: &mut App)

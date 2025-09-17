@@ -92,6 +92,8 @@ pub struct SettingsContent {
     /// Example: {"log": {"client": "warn"}}
     pub log: Option<HashMap<String, String>>,
 
+    pub line_indicator_format: Option<LineIndicatorFormat>,
+
     pub outline_panel: Option<OutlinePanelSettingsContent>,
 
     /// Configuration for the Message Editor
@@ -291,7 +293,7 @@ pub struct TelemetrySettingsContent {
     pub metrics: Option<bool>,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone)]
+#[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone)]
 pub struct DebuggerSettingsContent {
     /// Determines the stepping granularity.
     ///
@@ -674,4 +676,12 @@ pub enum ShowIndentGuides {
 pub struct IndentGuidesSettingsContent {
     /// When to show the scrollbar in the outline panel.
     pub show: Option<ShowIndentGuides>,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Debug, JsonSchema, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LineIndicatorFormat {
+    Short,
+    #[default]
+    Long,
 }
