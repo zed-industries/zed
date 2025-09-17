@@ -62,6 +62,9 @@ pub struct SettingsContent {
     // todo!() comments?!
     pub base_keymap: Option<BaseKeymapContent>,
 
+    /// Configuration for the collab panel visual settings.
+    pub collaboration_panel: Option<PanelSettingsContent>,
+
     pub debugger: Option<DebuggerSettingsContent>,
 
     /// Configuration for Diagnostics-related features.
@@ -77,14 +80,21 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub helix_mode: Option<bool>,
+
     /// A map of log scopes to the desired log level.
     /// Useful for filtering out noisy logs or enabling more verbose logging.
     ///
     /// Example: {"log": {"client": "warn"}}
     pub log: Option<HashMap<String, String>>,
 
+    /// Configuration for the Message Editor
+    pub message_editor: Option<MessageEditorSettings>,
+
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
+
+    /// Configuration for the Notification Panel
+    pub notification_panel: Option<NotificationPanelSettingsContent>,
 
     pub proxy: Option<String>,
 
@@ -419,4 +429,75 @@ pub enum StatusStyle {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+pub struct NotificationPanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel.
+    ///
+    /// Default: right
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 300
+    pub default_width: Option<f32>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+pub struct PanelSettingsContent {
+    /// Whether to show the panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Where to dock the panel.
+    ///
+    /// Default: left
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 240
+    pub default_width: Option<f32>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+pub struct MessageEditorSettings {
+    /// Whether to automatically replace emoji shortcodes with emoji characters.
+    /// For example: typing `:wave:` gets replaced with `👋`.
+    ///
+    /// Default: false
+    pub auto_replace_emoji_shortcode: Option<bool>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct FileFinderSettingsContent {
+    /// Whether to show file icons in the file finder.
+    ///
+    /// Default: true
+    pub file_icons: Option<bool>,
+    /// Determines how much space the file finder can take up in relation to the available window width.
+    ///
+    /// Default: small
+    pub modal_max_width: Option<FileFinderWidth>,
+    /// Determines whether the file finder should skip focus for the active file in search results.
+    ///
+    /// Default: true
+    pub skip_focus_for_active_in_search: Option<bool>,
+    /// Determines whether to show the git status in the file finder
+    ///
+    /// Default: true
+    pub git_status: Option<bool>,
+    /// Whether to use gitignored files when searching.
+    /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
+    ///
+    /// Can accept 3 values:
+    /// * `Some(true)`: Use all gitignored files
+    /// * `Some(false)`: Use only the files Zed had indexed
+    /// * `None`: Be smart and search for ignored when called from a gitignored worktree
+    ///
+    /// Default: None
+    pub include_ignored: Option<Option<bool>>,
 }

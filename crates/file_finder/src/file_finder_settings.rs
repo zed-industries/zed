@@ -11,37 +11,6 @@ pub struct FileFinderSettings {
     pub include_ignored: Option<bool>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
-#[settings_key(key = "file_finder")]
-pub struct FileFinderSettingsContent {
-    /// Whether to show file icons in the file finder.
-    ///
-    /// Default: true
-    pub file_icons: Option<bool>,
-    /// Determines how much space the file finder can take up in relation to the available window width.
-    ///
-    /// Default: small
-    pub modal_max_width: Option<FileFinderWidth>,
-    /// Determines whether the file finder should skip focus for the active file in search results.
-    ///
-    /// Default: true
-    pub skip_focus_for_active_in_search: Option<bool>,
-    /// Determines whether to show the git status in the file finder
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
-    /// Whether to use gitignored files when searching.
-    /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
-    ///
-    /// Can accept 3 values:
-    /// * `Some(true)`: Use all gitignored files
-    /// * `Some(false)`: Use only the files Zed had indexed
-    /// * `None`: Be smart and search for ignored when called from a gitignored worktree
-    ///
-    /// Default: None
-    pub include_ignored: Option<Option<bool>>,
-}
-
 impl Settings for FileFinderSettings {
     type FileContent = FileFinderSettingsContent;
 

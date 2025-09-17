@@ -624,7 +624,9 @@ impl Panel for NotificationPanel {
         settings::update_settings_file::<NotificationPanelSettings>(
             self.fs.clone(),
             cx,
-            move |settings, _| settings.dock = Some(position),
+            move |settings, _| {
+                settings.notification_panel.get_or_insert_default().dock = Some(position)
+            },
         );
     }
 
