@@ -202,19 +202,6 @@ impl AudioStack {
         let capture_task = if rodio_pipeline {
             info!("Using experimental.rodio_audio audio pipeline");
             let voip_parts = audio::VoipParts::new(cx)?;
-<<<<<<< HEAD
-            // Audio needs to run real-time and should never be paused. That is why we are using a
-            // normal std::thread and not a background task
-            thread::Builder::new()
-                .name("AudioCapture".to_string())
-                .spawn(move || {
-                    // microphone is non send on mac
-                    let microphone = audio::Audio::open_microphone(voip_parts)?;
-                    send_to_livekit(frame_tx, microphone);
-                    Ok::<(), anyhow::Error>(())
-                })
-                .unwrap();
-=======
             // Audio needs to run real-time and should never be paused. That is
             // why we are using a normal std::thread and not a background task
             thread::spawn(move || {
@@ -229,7 +216,6 @@ impl AudioStack {
                 send_to_livekit(frame_tx, microphone);
                 Ok::<(), anyhow::Error>(())
             });
->>>>>>> e459c8f30c (fixes denoise setting, prepares for migration to 16kHz)
             Task::ready(Ok(()))
         } else {
             self.executor.spawn(async move {
