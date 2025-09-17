@@ -1235,5 +1235,13 @@
     "bindings": {
       "ctrl-shift-enter": "workspace::OpenWithSystem"
     }
+  },
+  {
+    "context": "StashDiff > Editor",
+    "bindings": {
+      "ctrl-space": "git::StashApplyCurrent",
+      "ctrl-shift-space": "git::StashPopCurrent",
+      "ctrl-shift-backspace": "git::StashDropCurrent"
+    }
   }
 ]
