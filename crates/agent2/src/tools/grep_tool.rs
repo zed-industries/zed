@@ -308,7 +308,7 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal};
     use language::{Language, LanguageConfig, LanguageMatcher};
-    use project::{FakeFs, Project, WorktreeSettings};
+    use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use unindent::Unindent;

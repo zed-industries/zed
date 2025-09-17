@@ -239,6 +239,7 @@ fn save_provider_to_settings(
             .map_err(|_| "Failed to write API key to keychain")?;
         cx.update(|cx| {
             update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
+                settings.language_models.getO
                 settings.openai_compatible.get_or_insert_default().insert(
                     provider_name,
                     OpenAiCompatibleSettingsContent {

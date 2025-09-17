@@ -20,7 +20,7 @@ use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
 };
-use settings::update_settings_file;
+use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -873,7 +873,15 @@ impl AgentModelSelector for NativeAgentConnection {
         });
 
         update_settings_file(self.0.read(cx).fs.clone(), cx, move |settings, _cx| {
-            settings.agent.get_or_insert_default().set_model(model);
+            let provider = model.provider_id().0.to_string();
+            let model = model.id().0.to_string();
+            settings
+                .agent
+                .get_or_insert_default()
+                .set_model(LanguageModelSelection {
+                    provider: provider.into(),
+                    model,
+                });
         });
 
         Task::ready(Ok(()))
