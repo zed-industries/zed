@@ -506,7 +506,6 @@ mod tests {
     use super::*;
     use std::{path::Path, sync::Arc};
 
-    use futures::channel::oneshot;
     use gpui::TestAppContext;
     use indoc::indoc;
     use language::{Language, LanguageConfig, LanguageId, LanguageMatcher, tree_sitter_rust};
@@ -655,17 +654,10 @@ mod tests {
             expect_file_decl("a.rs", &decls[1], &project, cx);
         });
 
-        // Drop the buffer and wait for release
-        let (release_tx, release_rx) = oneshot::channel();
-        cx.update(|cx| {
-            cx.observe_release(&buffer, |_, _| {
-                release_tx.send(()).ok();
-            })
-            .detach();
+        // Need to trigger flush_effects so that the observe_release handler will run.
+        cx.update(|_cx| {
+            drop(buffer);
         });
-        drop(buffer);
-        cx.run_until_parked();
-        release_rx.await.ok();
         cx.run_until_parked();
 
         index.read_with(cx, |index, cx| {

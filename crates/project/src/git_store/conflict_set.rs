@@ -257,7 +257,7 @@ impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
 mod tests {
     use std::{path::Path, sync::mpsc};
 
-    use crate::{Project, project_settings::ProjectSettings};
+    use crate::Project;
 
     use super::*;
     use fs::FakeFs;
