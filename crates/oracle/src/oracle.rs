@@ -58,6 +58,7 @@ impl Model {
             "oca/grok3" => Ok(Self::Grok3),
             "oca/grok4" => Ok(Self::Grok4),
             "oca/llama4" => Ok(Self::Llama4),
+            "oca/grok-code-fast-1" => Ok(Self::GrokCodeFast1),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
