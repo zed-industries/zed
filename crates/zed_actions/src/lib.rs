@@ -497,3 +497,19 @@ actions!(
         OpenProjectDebugTasks,
     ]
 );
+
+#[cfg(target_os = "windows")]
+pub mod wsl_actions {
+    use gpui::Action;
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    /// Opens a folder inside Wsl.
+    #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = projects)]
+    #[serde(deny_unknown_fields)]
+    pub struct OpenFolderInWsl {
+        #[serde(default)]
+        pub create_new_window: bool,
+    }
+}
