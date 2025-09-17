@@ -195,12 +195,13 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.2.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "003fb91bf1b8d6e15f72c45fb9171839af8241e81e3839fbb73536af113b7a79"
+checksum = "cc2526e80463b9742afed4829aedd6ae5632d6db778c6cc1fecb80c960c3521b"
 dependencies = [
  "anyhow",
  "async-broadcast",
+ "async-trait",
  "futures 0.3.31",
  "log",
  "parking_lot",
@@ -293,6 +294,7 @@ dependencies = [
  "agent-client-protocol",
  "agent_settings",
  "anyhow",
+ "async-trait",
  "client",
  "collections",
  "env_logger 0.11.8",
@@ -2190,7 +2192,7 @@ dependencies = [
  "bitflags 2.9.0",
  "cexpr",
  "clang-sys",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -13225,7 +13227,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.10.1",
  "heck 0.5.0",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "log",
  "multimap",
  "once_cell",
@@ -13258,7 +13260,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -20621,7 +20623,7 @@ dependencies = [
  "idna",
  "indexmap",
  "inout",
- "itertools 0.11.0",
+ "itertools 0.12.1",
  "itertools 0.13.0",
  "jiff",
  "lazy_static",
