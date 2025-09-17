@@ -5,6 +5,7 @@ When using AI in Zed, you can customize several aspects:
 1. Which [LLM providers](./llm-providers.md) you can use
 2. [Model parameters and usage](./agent-settings.md#model-settings)
 3. [Interactions with the Agent Panel](./agent-settings.md#agent-panel-settings)
+4. [Profile configuration and rules](./agent-settings.md#profile-configuration)
 
 ## Turning AI Off Entirely
 

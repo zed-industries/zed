@@ -1579,7 +1579,7 @@ impl EditAgentTest {
             rules_file: None,
         }];
         let prompt_builder = PromptBuilder::new(None)?;
-        let project_context = ProjectContext::new(worktrees, Vec::default());
+        let project_context = ProjectContext::new(worktrees, Vec::default(), Vec::new());
         let system_prompt = prompt_builder.generate_assistant_system_prompt(
             &project_context,
             &ModelContext {

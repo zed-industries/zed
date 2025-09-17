@@ -1,5 +1,6 @@
 mod add_llm_provider_modal;
 mod configure_context_server_modal;
+mod configure_profile_rules_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
