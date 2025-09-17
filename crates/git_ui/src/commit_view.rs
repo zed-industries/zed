@@ -3,8 +3,8 @@ use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use editor::{Editor, EditorEvent, MultiBuffer, SelectionEffects, multibuffer_context_lines};
 use git::repository::{CommitDetails, CommitDiff, RepoPath};
 use gpui::{
-    AnyElement, AnyView, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, IntoElement, Render, WeakEntity, Window,
+    AnyElement, AnyView, App, AppContext as _, AsyncApp, AsyncWindowContext, Context, Entity,
+    EventEmitter, FocusHandle, Focusable, IntoElement, PromptLevel, Render, WeakEntity, Window,
 };
 use language::{
     Anchor, Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -24,6 +24,7 @@ use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
     item::{BreadcrumbText, ItemEvent, TabContentParams},
+    notifications::NotifyTaskExt,
     pane::SaveIntent,
     searchable::SearchableItemHandle,
 };
@@ -584,74 +585,120 @@ impl CommitViewToolbar {
         self.commit_view.as_ref()?.upgrade()
     }
 
-    fn apply_stash(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let Some(stash) = self.commit_view(cx).and_then(|cv| cv.read(cx).stash) else {
-            return;
-        };
-        self.workspace
-            .update(cx, |workspace, cx| {
-                let Some(repo) = workspace
-                    .panel::<GitPanel>(cx)
-                    .and_then(|p| p.read(cx).active_repository.clone())
-                else {
-                    return;
-                };
-                repo.update(cx, |repo, cx| {
-                    repo.stash_apply(Some(stash), cx).detach();
+    async fn close_commit_view(
+        commit_view: Entity<CommitView>,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut AsyncWindowContext,
+    ) -> anyhow::Result<()> {
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                let active_pane = workspace.active_pane();
+                let commit_view_id = commit_view.entity_id();
+                active_pane.update(cx, |pane, cx| {
+                    pane.close_item_by_id(commit_view_id, SaveIntent::Close, window, cx)
                 })
-            })
-            .ok();
+            })?
+            .await?;
+        anyhow::Ok(())
     }
 
-    fn pop_stash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(stash) = self.commit_view(cx).and_then(|cv| cv.read(cx).stash) else {
+    fn apply_stash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit_view) = self.commit_view(cx) else {
             return;
         };
-        self.workspace
-            .update(cx, |workspace, cx| {
-                let Some(repo) = workspace
-                    .panel::<GitPanel>(cx)
-                    .and_then(|p| p.read(cx).active_repository.clone())
-                else {
-                    return;
-                };
-                repo.update(cx, |repo, cx| {
-                    repo.stash_pop(Some(stash), cx).detach();
-                })
-            })
-            .ok();
-        self.close_commit_view_tab(window, cx);
-    }
+        let Some(stash) = commit_view.read(cx).stash else {
+            return;
+        };
+        let answer = window.prompt(
+            PromptLevel::Info,
+            &format!("Apply stash@{{{}}}?", stash),
+            None,
+            &["Apply", "Cancel"],
+            cx,
+        );
 
-    pub fn close_commit_view_tab(&self, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = self.workspace.clone();
-        let commit_view = self.commit_view.clone();
-
         cx.spawn_in(window, async move |_, cx| {
-            if let Some(commit_view_entity) = commit_view.as_ref().and_then(|c| c.upgrade()) {
+            if answer.await != Ok(0) {
+                return anyhow::Ok(());
+            }
+            let repo = workspace.update(cx, |workspace, cx| {
                 workspace
-                    .update_in(cx, |workspace, window, cx| {
-                        let active_pane = workspace.active_pane();
-                        let commit_view_id = commit_view_entity.entity_id();
-                        active_pane.update(cx, |pane, cx| {
-                            pane.close_item_by_id(commit_view_id, SaveIntent::Close, window, cx)
-                        })
-                    })?
+                    .panel::<GitPanel>(cx)
+                    .and_then(|p| p.read(cx).active_repository.clone())
+            })?;
+
+            if let Some(repo) = repo {
+                repo.update(cx, |repo, cx| repo.stash_apply(Some(stash), cx))?
                     .await?;
+
+                Self::close_commit_view(commit_view, workspace, cx).await?;
             }
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
+        .detach_and_notify_err(window, cx);
+    }
+
+    fn pop_stash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(commit_view) = self.commit_view(cx) else {
+            return;
+        };
+        let Some(stash) = commit_view.read(cx).stash else {
+            return;
+        };
+        let answer = window.prompt(
+            PromptLevel::Info,
+            &format!("Pop stash@{{{}}}?", stash),
+            None,
+            &["Pop", "Cancel"],
+            cx,
+        );
+
+        let workspace = self.workspace.clone();
+
+        cx.spawn_in(window, async move |_, cx| {
+            if answer.await != Ok(0) {
+                return anyhow::Ok(());
+            }
+            let repo = workspace.update(cx, |workspace, cx| {
+                workspace
+                    .panel::<GitPanel>(cx)
+                    .and_then(|p| p.read(cx).active_repository.clone())
+            })?;
+
+            if let Some(repo) = repo {
+                repo.update(cx, |repo, cx| repo.stash_pop(Some(stash), cx))?
+                    .await?;
+
+                Self::close_commit_view(commit_view, workspace, cx).await?;
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_notify_err(window, cx);
     }
 
     fn remove_stash(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(stash) = self.commit_view(cx).and_then(|cv| cv.read(cx).stash) else {
+        let Some(commit_view) = self.commit_view(cx) else {
             return;
         };
+        let Some(stash) = commit_view.read(cx).stash else {
+            return;
+        };
+        let answer = window.prompt(
+            PromptLevel::Info,
+            &format!("Remove stash@{{{}}}?", stash),
+            None,
+            &["Remove", "Cancel"],
+            cx,
+        );
 
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |_, cx| {
+            if answer.await != Ok(0) {
+                return anyhow::Ok(());
+            }
             let repo = workspace.update(cx, |workspace, cx| {
                 workspace
                     .panel::<GitPanel>(cx)
@@ -661,13 +708,13 @@ impl CommitViewToolbar {
             if let Some(repo) = repo {
                 repo.update(cx, |repo, cx| repo.stash_drop(Some(stash), cx))?
                     .await??;
+
+                Self::close_commit_view(commit_view, workspace, cx).await?;
             }
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx);
-
-        self.close_commit_view_tab(window, cx);
+        .detach_and_notify_err(window, cx);
     }
 }
 
