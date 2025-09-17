@@ -1540,6 +1540,7 @@ mod tests {
                 store.update_user_settings::<language::language_settings::AllLanguageSettings>(
                     cx,
                     |settings| {
+                        se
                         settings.defaults.format_on_save = Some(FormatOnSave::On);
                         settings.defaults.formatter =
                             Some(language::language_settings::SelectedFormatter::Auto);

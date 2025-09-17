@@ -11,7 +11,7 @@ use language_model::{
     LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionCall,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OllamaFunctionCall,
     OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
 pub use settings::OllamaAvailableModel as AvailableModel;
