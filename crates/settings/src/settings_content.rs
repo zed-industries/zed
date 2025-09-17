@@ -107,6 +107,8 @@ pub struct SettingsContent {
 
     pub outline_panel: Option<OutlinePanelSettingsContent>,
 
+    pub project_panel: Option<ProjectPanelSettingsContent>,
+
     /// Configuration for the Message Editor
     pub message_editor: Option<MessageEditorSettings>,
 
@@ -628,7 +630,7 @@ pub struct OutlinePanelSettingsContent {
     /// The position of outline panel
     ///
     /// Default: left
-    pub dock: Option<OutlinePanelDockPosition>,
+    pub dock: Option<DockSide>,
     /// Whether to show file icons in the outline panel.
     ///
     /// Default: true
@@ -671,7 +673,7 @@ pub struct OutlinePanelSettingsContent {
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum OutlinePanelDockPosition {
+pub enum DockSide {
     Left,
     Right,
 }

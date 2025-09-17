@@ -4,7 +4,7 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::DockPosition;
+use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
 
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSettingsContent {
@@ -327,4 +327,94 @@ impl OnLastWindowClosed {
             OnLastWindowClosed::QuitApp => true,
         }
     }
+}
+
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct ProjectPanelSettingsContent {
+    /// Whether to show the project panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Whether to hide gitignore files in the project panel.
+    ///
+    /// Default: false
+    pub hide_gitignore: Option<bool>,
+    /// Customize default width (in pixels) taken by project panel
+    ///
+    /// Default: 240
+    pub default_width: Option<f32>,
+    /// The position of project panel
+    ///
+    /// Default: left
+    pub dock: Option<DockSide>,
+    /// Spacing between worktree entries in the project panel.
+    ///
+    /// Default: comfortable
+    pub entry_spacing: Option<ProjectPanelEntrySpacing>,
+    /// Whether to show file icons in the project panel.
+    ///
+    /// Default: true
+    pub file_icons: Option<bool>,
+    /// Whether to show folder icons or chevrons for directories in the project panel.
+    ///
+    /// Default: true
+    pub folder_icons: Option<bool>,
+    /// Whether to show the git status in the project panel.
+    ///
+    /// Default: true
+    pub git_status: Option<bool>,
+    /// Amount of indentation (in pixels) for nested items.
+    ///
+    /// Default: 20
+    pub indent_size: Option<f32>,
+    /// Whether to reveal it in the project panel automatically,
+    /// when a corresponding project entry becomes active.
+    /// Gitignored entries are never auto revealed.
+    ///
+    /// Default: true
+    pub auto_reveal_entries: Option<bool>,
+    /// Whether to fold directories automatically
+    /// when directory has only one directory inside.
+    ///
+    /// Default: true
+    pub auto_fold_dirs: Option<bool>,
+    /// Whether the project panel should open on startup.
+    ///
+    /// Default: true
+    pub starts_open: Option<bool>,
+    /// Scrollbar-related settings
+    pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Which files containing diagnostic errors/warnings to mark in the project panel.
+    ///
+    /// Default: all
+    pub show_diagnostics: Option<ShowDiagnostics>,
+    /// Settings related to indent guides in the project panel.
+    pub indent_guides: Option<ProjectPanelIndentGuidesSettings>,
+    /// Whether to hide the root entry when only one folder is open in the window.
+    ///
+    /// Default: false
+    pub hide_root: Option<bool>,
+    /// Whether to stick parent directories at top of the project panel.
+    ///
+    /// Default: true
+    pub sticky_scroll: Option<bool>,
+    /// Whether to enable drag-and-drop operations in the project panel.
+    ///
+    /// Default: true
+    pub drag_and_drop: Option<bool>,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectPanelEntrySpacing {
+    /// Comfortable spacing of entries.
+    #[default]
+    Comfortable,
+    /// The standard spacing of entries.
+    Standard,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ProjectPanelIndentGuidesSettings {
+    pub show: Option<ShowIndentGuides>,
 }
