@@ -1258,8 +1258,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
             move |update| {
                 snapshot
                     .lock()
-                    .apply_remote_update(update, &settings.file_scan_inclusions)
-                    .unwrap();
+                    .apply_remote_update(update, &settings.file_scan_inclusions);
                 async { true }
             }
         });
@@ -1489,8 +1488,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         for update in updates.lock().iter() {
             if update.scan_id >= updated_snapshot.scan_id() as u64 {
                 updated_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                    .unwrap();
+                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
@@ -1625,9 +1623,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     for (i, mut prev_snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
             if update.scan_id >= prev_snapshot.scan_id() as u64 {
-                prev_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                    .unwrap();
+                prev_snapshot.apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 

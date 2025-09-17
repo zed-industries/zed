@@ -16,6 +16,7 @@ use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
 use pet_core::os_environment::Environment;
 use pet_core::python_environment::{PythonEnvironment, PythonEnvironmentKind};
+use pet_virtualenv::is_virtualenv_dir;
 use project::Fs;
 use project::lsp_store::language_server_settings;
 use serde_json::{Value, json};
@@ -460,7 +461,7 @@ impl LspAdapter for PyrightLspAdapter {
                     pet_core::python_environment::PythonEnvironment,
                 >(toolchain.as_json.clone())
             {
-                if user_settings.is_null() {
+                if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
@@ -491,9 +492,13 @@ impl LspAdapter for PyrightLspAdapter {
                 // Get or create the python section
                 let python = object
                     .entry("python")
-                    .or_insert(Value::Object(serde_json::Map::default()))
-                    .as_object_mut()
-                    .unwrap();
+                    .and_modify(|v| {
+                        if !v.is_object() {
+                            *v = Value::Object(serde_json::Map::default());
+                        }
+                    })
+                    .or_insert(Value::Object(serde_json::Map::default()));
+                let python = python.as_object_mut().unwrap();
 
                 // Set both pythonPath and defaultInterpreterPath for compatibility
                 python.insert(
@@ -900,6 +905,21 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .to_string()
 }
 
+fn is_python_env_global(k: &PythonEnvironmentKind) -> bool {
+    matches!(
+        k,
+        PythonEnvironmentKind::Homebrew
+            | PythonEnvironmentKind::Pyenv
+            | PythonEnvironmentKind::GlobalPaths
+            | PythonEnvironmentKind::MacPythonOrg
+            | PythonEnvironmentKind::MacCommandLineTools
+            | PythonEnvironmentKind::LinuxGlobal
+            | PythonEnvironmentKind::MacXCode
+            | PythonEnvironmentKind::WindowsStore
+            | PythonEnvironmentKind::WindowsRegistry
+    )
+}
+
 fn python_env_kind_display(k: &PythonEnvironmentKind) -> &'static str {
     match k {
         PythonEnvironmentKind::Conda => "Conda",
@@ -966,6 +986,26 @@ async fn get_worktree_venv_declaration(worktree_root: &Path) -> Option<String> {
     Some(venv_name.trim().to_string())
 }
 
+fn get_venv_parent_dir(env: &PythonEnvironment) -> Option<PathBuf> {
+    // If global, we aren't a virtual environment
+    if let Some(kind) = env.kind
+        && is_python_env_global(&kind)
+    {
+        return None;
+    }
+
+    // Check to be sure we are a virtual environment using pet's most generic
+    // virtual environment type, VirtualEnv
+    let venv = env
+        .executable
+        .as_ref()
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .filter(|p| is_virtualenv_dir(p))?;
+
+    venv.parent().map(|parent| parent.to_path_buf())
+}
+
 #[async_trait]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(
@@ -1025,11 +1065,15 @@ impl ToolchainLister for PythonToolchainProvider {
                     });
 
             // Compare project paths against worktree root
-            let proj_ordering = || match (&lhs.project, &rhs.project) {
-                (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
-                (Some(l), None) if l == &wr => Ordering::Less,
-                (None, Some(r)) if r == &wr => Ordering::Greater,
-                _ => Ordering::Equal,
+            let proj_ordering = || {
+                let lhs_project = lhs.project.clone().or_else(|| get_venv_parent_dir(lhs));
+                let rhs_project = rhs.project.clone().or_else(|| get_venv_parent_dir(rhs));
+                match (&lhs_project, &rhs_project) {
+                    (Some(l), Some(r)) => (r == &wr).cmp(&(l == &wr)),
+                    (Some(l), None) if l == &wr => Ordering::Less,
+                    (None, Some(r)) if r == &wr => Ordering::Greater,
+                    _ => Ordering::Equal,
+                }
             };
 
             // Compare environment priorities
@@ -1131,7 +1175,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     let activate_keyword = match shell {
                         ShellKind::Cmd => ".",
                         ShellKind::Nushell => "overlay use",
-                        ShellKind::Powershell => ".",
+                        ShellKind::PowerShell => ".",
                         ShellKind::Fish => "source",
                         ShellKind::Csh => "source",
                         ShellKind::Posix => "source",
@@ -1141,7 +1185,7 @@ impl ToolchainLister for PythonToolchainProvider {
                         ShellKind::Csh => "activate.csh",
                         ShellKind::Fish => "activate.fish",
                         ShellKind::Nushell => "activate.nu",
-                        ShellKind::Powershell => "activate.ps1",
+                        ShellKind::PowerShell => "activate.ps1",
                         ShellKind::Cmd => "activate.bat",
                     };
                     let path = prefix.join(BINARY_DIR).join(activate_script_name);
@@ -1165,7 +1209,7 @@ impl ToolchainLister for PythonToolchainProvider {
                     ShellKind::Fish => Some(format!("\"{pyenv}\" shell - fish {version}")),
                     ShellKind::Posix => Some(format!("\"{pyenv}\" shell - sh {version}")),
                     ShellKind::Nushell => Some(format!("\"{pyenv}\" shell - nu {version}")),
-                    ShellKind::Powershell => None,
+                    ShellKind::PowerShell => None,
                     ShellKind::Csh => None,
                     ShellKind::Cmd => None,
                 })
@@ -1425,7 +1469,7 @@ impl LspAdapter for PyLspAdapter {
 
             // If user did not explicitly modify their python venv, use one from picker.
             if let Some(toolchain) = toolchain {
-                if user_settings.is_null() {
+                if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
@@ -1747,7 +1791,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     pet_core::python_environment::PythonEnvironment,
                 >(toolchain.as_json.clone())
             {
-                if user_settings.is_null() {
+                if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();

@@ -914,15 +914,11 @@
     /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
     ///
     /// Default: true
-    "expand_terminal_card": true
-  },
-  // The settings for slash commands.
-  "slash_commands": {
-    // Settings for the `/project` slash command.
-    "project": {
-      // Whether `/project` is enabled.
-      "enabled": false
-    }
+    "expand_terminal_card": true,
+    // Minimum number of lines to display in the agent message editor.
+    //
+    // Default: 4
+    "message_editor_min_lines": 4
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,

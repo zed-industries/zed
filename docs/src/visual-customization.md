@@ -185,6 +185,10 @@ TBD: Centered layout related settings
 
   // Visually show tabs and spaces  (none, all, selection, boundary, trailing)
   "show_whitespaces": "selection",
+  "whitespace_map": { // Which characters to show when `show_whitespaces` enabled
+    "space": "•",
+    "tab": "→"
+  },
 
   "unnecessary_code_fade": 0.3, // How much to fade out unused code.
 

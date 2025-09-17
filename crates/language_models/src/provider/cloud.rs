@@ -215,11 +215,21 @@ impl State {
 
         self.default_model = models
             .iter()
-            .find(|model| model.id == response.default_model)
+            .find(|model| {
+                response
+                    .default_model
+                    .as_ref()
+                    .is_some_and(|default_model_id| &model.id == default_model_id)
+            })
             .cloned();
         self.default_fast_model = models
             .iter()
-            .find(|model| model.id == response.default_fast_model)
+            .find(|model| {
+                response
+                    .default_fast_model
+                    .as_ref()
+                    .is_some_and(|default_fast_model_id| &model.id == default_fast_model_id)
+            })
             .cloned();
         self.recommended_models = response
             .recommended_models
@@ -541,29 +551,36 @@ where
 
 impl From<ApiError> for LanguageModelCompletionError {
     fn from(error: ApiError) -> Self {
-        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body)
-            && cloud_error.code.starts_with("upstream_http_")
-        {
-            let status = if let Some(status) = cloud_error.upstream_status {
-                status
-            } else if cloud_error.code.ends_with("_error") {
-                error.status
-            } else {
-                // If there's a status code in the code string (e.g. "upstream_http_429")
-                // then use that; otherwise, see if the JSON contains a status code.
-                cloud_error
-                    .code
-                    .strip_prefix("upstream_http_")
-                    .and_then(|code_str| code_str.parse::<u16>().ok())
-                    .and_then(|code| StatusCode::from_u16(code).ok())
-                    .unwrap_or(error.status)
-            };
+        if let Ok(cloud_error) = serde_json::from_str::<CloudApiError>(&error.body) {
+            if cloud_error.code.starts_with("upstream_http_") {
+                let status = if let Some(status) = cloud_error.upstream_status {
+                    status
+                } else if cloud_error.code.ends_with("_error") {
+                    error.status
+                } else {
+                    // If there's a status code in the code string (e.g. "upstream_http_429")
+                    // then use that; otherwise, see if the JSON contains a status code.
+                    cloud_error
+                        .code
+                        .strip_prefix("upstream_http_")
+                        .and_then(|code_str| code_str.parse::<u16>().ok())
+                        .and_then(|code| StatusCode::from_u16(code).ok())
+                        .unwrap_or(error.status)
+                };
 
-            return LanguageModelCompletionError::UpstreamProviderError {
-                message: cloud_error.message,
-                status,
-                retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
-            };
+                return LanguageModelCompletionError::UpstreamProviderError {
+                    message: cloud_error.message,
+                    status,
+                    retry_after: cloud_error.retry_after.map(Duration::from_secs_f64),
+                };
+            }
+
+            return LanguageModelCompletionError::from_http_status(
+                PROVIDER_NAME,
+                error.status,
+                cloud_error.message,
+                None,
+            );
         }
 
         let retry_after = None;

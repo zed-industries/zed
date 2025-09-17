@@ -9,6 +9,7 @@ use component::{example_group, single_example};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, TextStyle};
 use settings::Settings;
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::prelude::*;
 
@@ -100,6 +101,11 @@ impl SingleLineInput {
 
     pub fn text(&self, cx: &App) -> String {
         self.editor().read(cx).text(cx)
+    }
+
+    pub fn set_text(&self, text: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
+        self.editor()
+            .update(cx, |editor, cx| editor.set_text(text, window, cx))
     }
 }
 

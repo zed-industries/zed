@@ -32,3 +32,6 @@ workspace-hack.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 which.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, "features" = ["test-support"] }

@@ -37,7 +37,6 @@ postage.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 settings.workspace = true
 telemetry.workspace = true
 util.workspace = true

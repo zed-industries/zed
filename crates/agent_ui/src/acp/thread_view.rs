@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -70,9 +70,6 @@ use crate::{
     CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll,
     RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
-
-pub const MIN_EDITOR_LINES: usize = 4;
-pub const MAX_EDITOR_LINES: usize = 8;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -357,8 +354,8 @@ impl AcpThreadView {
                 agent.name(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
-                    min_lines: MIN_EDITOR_LINES,
-                    max_lines: Some(MAX_EDITOR_LINES),
+                    min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
+                    max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
                 },
                 window,
                 cx,
@@ -857,10 +854,11 @@ impl AcpThreadView {
                     cx,
                 )
             } else {
+                let agent_settings = AgentSettings::get_global(cx);
                 editor.set_mode(
                     EditorMode::AutoHeight {
-                        min_lines: MIN_EDITOR_LINES,
-                        max_lines: Some(MAX_EDITOR_LINES),
+                        min_lines: agent_settings.message_editor_min_lines,
+                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
                     },
                     cx,
                 )
@@ -1584,19 +1582,6 @@ impl AcpThreadView {
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
-            task.command = task
-                .command
-                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
-                .transpose()?;
-            task.args = task
-                .args
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
@@ -3197,10 +3182,14 @@ impl AcpThreadView {
                                     };
 
                                     Button::new(SharedString::from(method_id.clone()), name)
-                                        .when(ix == 0, |el| {
-                                            el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                        })
                                         .label_size(LabelSize::Small)
+                                        .map(|this| {
+                                            if ix == 0 {
+                                                this.style(ButtonStyle::Tinted(TintColor::Warning))
+                                            } else {
+                                                this.style(ButtonStyle::Outlined)
+                                            }
+                                        })
                                         .on_click({
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
@@ -5678,6 +5667,23 @@ pub(crate) mod tests {
                 "Expected refusal error to be set"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_spawn_external_agent_login_handles_spaces(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Verify paths with spaces aren't pre-quoted
+        let path_with_spaces = "/Users/test/Library/Application Support/Zed/cli.js";
+        let login_task = task::SpawnInTerminal {
+            command: Some("node".to_string()),
+            args: vec![path_with_spaces.to_string(), "/login".to_string()],
+            ..Default::default()
+        };
+
+        // Args should be passed as-is, not pre-quoted
+        assert!(!login_task.args[0].starts_with('"'));
+        assert!(!login_task.args[0].starts_with('\''));
     }
 
     #[gpui::test]

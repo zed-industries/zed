@@ -376,26 +376,34 @@ fn main() -> Result<()> {
                         return Ok(());
                     }
                 }
-            }
 
-            Ok(())
-        }
-    });
+                Ok(())
+            }
+        })
+        .unwrap();
 
     let stdin_pipe_handle: Option<JoinHandle<anyhow::Result<()>>> =
         stdin_tmp_file.map(|mut tmp_file| {
-            thread::spawn(move || {
-                let mut stdin = std::io::stdin().lock();
-                if !io::IsTerminal::is_terminal(&stdin) {
-                    io::copy(&mut stdin, &mut tmp_file)?;
-                }
-                Ok(())
-            })
+            thread::Builder::new()
+                .name("CliStdin".to_string())
+                .spawn(move || {
+                    let mut stdin = std::io::stdin().lock();
+                    if !io::IsTerminal::is_terminal(&stdin) {
+                        io::copy(&mut stdin, &mut tmp_file)?;
+                    }
+                    Ok(())
+                })
+                .unwrap()
         });
 
     let anonymous_fd_pipe_handles: Vec<_> = anonymous_fd_tmp_files
         .into_iter()
-        .map(|(mut file, mut tmp_file)| thread::spawn(move || io::copy(&mut file, &mut tmp_file)))
+        .map(|(mut file, mut tmp_file)| {
+            thread::Builder::new()
+                .name("CliAnonymousFd".to_string())
+                .spawn(move || io::copy(&mut file, &mut tmp_file))
+                .unwrap()
+        })
         .collect();
 
     if args.foreground {

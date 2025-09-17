@@ -23,6 +23,7 @@ action_log.workspace = true
 agent-client-protocol.workspace = true
 agent_settings.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 client.workspace = true
 collections.workspace = true
 env_logger = { workspace = true, optional = true }
@@ -30,6 +31,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 gpui_tokio = { workspace = true, optional = true }
+http_client.workspace = true
 indoc.workspace = true
 language.workspace = true
 language_model.workspace = true

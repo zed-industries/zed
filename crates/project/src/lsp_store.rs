@@ -10540,7 +10540,10 @@ impl LspStore {
             for (worktree_id, servers) in &local.lsp_tree.instances {
                 if *worktree_id != key.worktree_id {
                     for server_map in servers.roots.values() {
-                        if server_map.contains_key(&key.name) {
+                        if server_map
+                            .values()
+                            .any(|(node, _)| node.id() == Some(server_id))
+                        {
                             worktrees_using_server.push(*worktree_id);
                         }
                     }
@@ -10550,6 +10553,7 @@ impl LspStore {
 
         let mut buffer_paths_registered = Vec::new();
         self.buffer_store.clone().update(cx, |buffer_store, cx| {
+            let mut lsp_adapters = HashMap::default();
             for buffer_handle in buffer_store.buffers() {
                 let buffer = buffer_handle.read(cx);
                 let file = match File::from_dyn(buffer.file()) {
@@ -10562,9 +10566,9 @@ impl LspStore {
                 };
 
                 if !worktrees_using_server.contains(&file.worktree.read(cx).id())
-                    || !self
-                        .languages
-                        .lsp_adapters(&language.name())
+                    || !lsp_adapters
+                        .entry(language.name())
+                        .or_insert_with(|| self.languages.lsp_adapters(&language.name()))
                         .iter()
                         .any(|a| a.name == key.name)
                 {

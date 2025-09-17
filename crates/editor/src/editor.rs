@@ -2414,14 +2414,10 @@ impl Editor {
     pub fn is_range_selected(&mut self, range: &Range<Anchor>, cx: &mut Context<Self>) -> bool {
         if self
             .selections
-            .pending
-            .as_ref()
+            .pending_anchor()
             .is_some_and(|pending_selection| {
                 let snapshot = self.buffer().read(cx).snapshot(cx);
-                pending_selection
-                    .selection
-                    .range()
-                    .includes(range, &snapshot)
+                pending_selection.range().includes(range, &snapshot)
             })
         {
             return true;
@@ -3054,7 +3050,7 @@ impl Editor {
             }
         }
 
-        let selection_anchors = self.selections.disjoint_anchors();
+        let selection_anchors = self.selections.disjoint_anchors_arc();
 
         if self.focus_handle.is_focused(window) && self.leader_id.is_none() {
             self.buffer.update(cx, |buffer, cx| {
@@ -3170,7 +3166,7 @@ impl Editor {
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
         cx.emit(EditorEvent::SelectionsChanged { local });
 
-        let selections = &self.selections.disjoint;
+        let selections = &self.selections.disjoint_anchors_arc();
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
         }
@@ -3282,14 +3278,14 @@ impl Editor {
         other: Entity<Editor>,
         cx: &mut Context<Self>,
     ) -> gpui::Subscription {
-        let other_selections = other.read(cx).selections.disjoint.to_vec();
+        let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
         self.selections.change_with(cx, |selections| {
             selections.select_anchors(other_selections);
         });
 
         let other_subscription = cx.subscribe(&other, |this, other, other_evt, cx| {
             if let EditorEvent::SelectionsChanged { local: true } = other_evt {
-                let other_selections = other.read(cx).selections.disjoint.to_vec();
+                let other_selections = other.read(cx).selections.disjoint_anchors().to_vec();
                 if other_selections.is_empty() {
                     return;
                 }
@@ -3301,7 +3297,7 @@ impl Editor {
 
         let this_subscription = cx.subscribe_self::<EditorEvent>(move |this, this_evt, cx| {
             if let EditorEvent::SelectionsChanged { local: true } = this_evt {
-                let these_selections = this.selections.disjoint.to_vec();
+                let these_selections = this.selections.disjoint_anchors().to_vec();
                 if these_selections.is_empty() {
                     return;
                 }
@@ -3339,7 +3335,7 @@ impl Editor {
             effects,
             old_cursor_position: self.selections.newest_anchor().head(),
             history_entry: SelectionHistoryEntry {
-                selections: self.selections.disjoint_anchors(),
+                selections: self.selections.disjoint_anchors_arc(),
                 select_next_state: self.select_next_state.clone(),
                 select_prev_state: self.select_prev_state.clone(),
                 add_selections_state: self.add_selections_state.clone(),
@@ -3499,6 +3495,7 @@ impl Editor {
         let mut pending_selection = self
             .selections
             .pending_anchor()
+            .cloned()
             .expect("extend_selection not called with pending selection");
         if position >= tail {
             pending_selection.start = tail_anchor;
@@ -3520,7 +3517,7 @@ impl Editor {
         };
 
         self.change_selections(effects, window, cx, |s| {
-            s.set_pending(pending_selection, pending_mode)
+            s.set_pending(pending_selection.clone(), pending_mode)
         });
     }
 
@@ -3595,7 +3592,7 @@ impl Editor {
                 Some(selected_points[0].id)
             } else {
                 let clicked_point_already_selected =
-                    self.selections.disjoint.iter().find(|selection| {
+                    self.selections.disjoint_anchors().iter().find(|selection| {
                         selection.start.to_point(buffer) == start.to_point(buffer)
                             || selection.end.to_point(buffer) == end.to_point(buffer)
                     });
@@ -3700,7 +3697,7 @@ impl Editor {
 
         if self.columnar_selection_state.is_some() {
             self.select_columns(position, goal_column, &display_map, window, cx);
-        } else if let Some(mut pending) = self.selections.pending_anchor() {
+        } else if let Some(mut pending) = self.selections.pending_anchor().cloned() {
             let buffer = &display_map.buffer_snapshot;
             let head;
             let tail;
@@ -3776,7 +3773,7 @@ impl Editor {
             }
 
             self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                s.set_pending(pending, mode);
+                s.set_pending(pending.clone(), mode);
             });
         } else {
             log::error!("update_selection dispatched with no pending selection");
@@ -3885,7 +3882,8 @@ impl Editor {
         };
 
         pending_nonempty_selection
-            || (self.columnar_selection_state.is_some() && self.selections.disjoint.len() > 1)
+            || (self.columnar_selection_state.is_some()
+                && self.selections.disjoint_anchors().len() > 1)
     }
 
     pub fn has_pending_selection(&self) -> bool {
@@ -5473,18 +5471,32 @@ impl Editor {
         if position.diff_base_anchor.is_some() {
             return;
         }
-        let (buffer, buffer_position) =
-            if let Some(output) = self.buffer.read(cx).text_anchor_for_position(position, cx) {
-                output
-            } else {
-                return;
-            };
+        let buffer_position = multibuffer_snapshot.anchor_before(position);
+        let Some(buffer) = buffer_position
+            .buffer_id
+            .and_then(|buffer_id| self.buffer.read(cx).buffer(buffer_id))
+        else {
+            return;
+        };
         let buffer_snapshot = buffer.read(cx).snapshot();
 
         let query: Option<Arc<String>> =
-            Self::completion_query(&multibuffer_snapshot, position).map(|query| query.into());
+            Self::completion_query(&multibuffer_snapshot, buffer_position)
+                .map(|query| query.into());
 
         drop(multibuffer_snapshot);
+
+        // Hide the current completions menu when query is empty. Without this, cached
+        // completions from before the trigger char may be reused (#32774).
+        if query.is_none() {
+            let menu_is_open = matches!(
+                self.context_menu.borrow().as_ref(),
+                Some(CodeContextMenu::Completions(_))
+            );
+            if menu_is_open {
+                self.hide_context_menu(window, cx);
+            }
+        }
 
         let mut ignore_word_threshold = false;
         let provider = match requested_source {
@@ -5506,37 +5518,6 @@ impl Editor {
         let filter_completions = provider
             .as_ref()
             .is_none_or(|provider| provider.filter_completions());
-
-        let trigger_kind = match trigger {
-            Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
-                CompletionTriggerKind::TRIGGER_CHARACTER
-            }
-            _ => CompletionTriggerKind::INVOKED,
-        };
-        let completion_context = CompletionContext {
-            trigger_character: trigger.and_then(|trigger| {
-                if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
-                    Some(String::from(trigger))
-                } else {
-                    None
-                }
-            }),
-            trigger_kind,
-        };
-
-        // Hide the current completions menu when a trigger char is typed. Without this, cached
-        // completions from before the trigger char may be reused (#32774). Snippet choices could
-        // involve trigger chars, so this is skipped in that case.
-        if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER && self.snippet_stack.is_empty()
-        {
-            let menu_is_open = matches!(
-                self.context_menu.borrow().as_ref(),
-                Some(CodeContextMenu::Completions(_))
-            );
-            if menu_is_open {
-                self.hide_context_menu(window, cx);
-            }
-        }
 
         if let Some(CodeContextMenu::Completions(menu)) = self.context_menu.borrow_mut().as_mut() {
             if filter_completions {
@@ -5567,6 +5548,29 @@ impl Editor {
                 }
             }
         };
+
+        let trigger_kind = match trigger {
+            Some(trigger) if buffer.read(cx).completion_triggers().contains(trigger) => {
+                CompletionTriggerKind::TRIGGER_CHARACTER
+            }
+            _ => CompletionTriggerKind::INVOKED,
+        };
+        let completion_context = CompletionContext {
+            trigger_character: trigger.and_then(|trigger| {
+                if trigger_kind == CompletionTriggerKind::TRIGGER_CHARACTER {
+                    Some(String::from(trigger))
+                } else {
+                    None
+                }
+            }),
+            trigger_kind,
+        };
+
+        let Anchor {
+            excerpt_id: buffer_excerpt_id,
+            text_anchor: buffer_position,
+            ..
+        } = buffer_position;
 
         let (word_replace_range, word_to_exclude) = if let (word_range, Some(CharKind::Word)) =
             buffer_snapshot.surrounding_word(buffer_position, false)
@@ -5623,7 +5627,7 @@ impl Editor {
         let (mut words, provider_responses) = match &provider {
             Some(provider) => {
                 let provider_responses = provider.completions(
-                    position.excerpt_id,
+                    buffer_excerpt_id,
                     &buffer,
                     buffer_position,
                     completion_context,
@@ -6059,7 +6063,7 @@ impl Editor {
 
             editor.refresh_edit_prediction(true, false, window, cx);
         });
-        self.invalidate_autoclose_regions(&self.selections.disjoint_anchors(), &snapshot);
+        self.invalidate_autoclose_regions(&self.selections.disjoint_anchors_arc(), &snapshot);
 
         let show_new_completions_on_confirm = completion
             .confirm
@@ -7466,7 +7470,7 @@ impl Editor {
                     s.select_anchor_ranges([last_edit_end..last_edit_end]);
                 });
 
-                let selections = self.selections.disjoint_anchors();
+                let selections = self.selections.disjoint_anchors_arc();
                 if let Some(transaction_id_now) = self.buffer.read(cx).last_transaction_id(cx) {
                     let has_new_transaction = transaction_id_prev != Some(transaction_id_now);
                     if has_new_transaction {
@@ -7711,7 +7715,7 @@ impl Editor {
         let Some(mode) = Self::columnar_selection_mode(modifiers, cx) else {
             return;
         };
-        if self.selections.pending.is_none() {
+        if self.selections.pending_anchor().is_none() {
             return;
         }
 
@@ -10511,7 +10515,7 @@ impl Editor {
 
     fn enable_wrap_selections_in_tag(&self, cx: &App) -> bool {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        for selection in self.selections.disjoint_anchors().iter() {
+        for selection in self.selections.disjoint_anchors_arc().iter() {
             if snapshot
                 .language_at(selection.start)
                 .and_then(|lang| lang.config().wrap_characters.as_ref())
@@ -10845,7 +10849,7 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let cursors = self
             .selections
-            .disjoint_anchors()
+            .disjoint_anchors_arc()
             .iter()
             .map(|selection| {
                 let cursor_position: Point = selection.head().to_point(&snapshot.buffer_snapshot);
@@ -14536,7 +14540,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let selections = self.selections.disjoint_anchors();
+        let selections = self.selections.disjoint_anchors_arc();
         match selections.first() {
             Some(first) if selections.len() >= 2 => {
                 self.change_selections(Default::default(), window, cx, |s| {
@@ -14560,7 +14564,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
-        let selections = self.selections.disjoint_anchors();
+        let selections = self.selections.disjoint_anchors_arc();
         match selections.last() {
             Some(last) if selections.len() >= 2 => {
                 self.change_selections(Default::default(), window, cx, |s| {
@@ -14988,15 +14992,13 @@ impl Editor {
                 let mut new_range = old_range.clone();
                 while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone())
                 {
-                    if !node.is_named() {
-                        new_range = node.start_byte()..node.end_byte();
-                        continue;
-                    }
-
                     new_range = match containing_range {
                         MultiOrSingleBufferOffsetRange::Single(_) => break,
                         MultiOrSingleBufferOffsetRange::Multi(range) => range,
                     };
+                    if !node.is_named() {
+                        continue;
+                    }
                     if !display_map.intersects_fold(new_range.start)
                         && !display_map.intersects_fold(new_range.end)
                     {
@@ -15119,11 +15121,9 @@ impl Editor {
         let full_edits = selections
             .into_iter()
             .filter_map(|selection| {
-                // Only requires two branches once if-let-chains stabilize (#53667)
-                let child = if !selection.is_empty() {
-                    selection.range()
-                } else if let Some((_, ancestor_range)) =
-                    buffer.syntax_ancestor(selection.start..selection.end)
+                let child = if selection.is_empty()
+                    && let Some((_, ancestor_range)) =
+                        buffer.syntax_ancestor(selection.start..selection.end)
                 {
                     match ancestor_range {
                         MultiOrSingleBufferOffsetRange::Single(range) => range,
@@ -15151,6 +15151,9 @@ impl Editor {
                 Some((selection.id, parent, text))
             })
             .collect::<Vec<_>>();
+        if full_edits.is_empty() {
+            return;
+        }
 
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |buffer, cx| {
@@ -15659,7 +15662,7 @@ impl Editor {
 
         cx: &mut Context<Self>,
     ) {
-        let selections = self.selections.disjoint_anchors();
+        let selections = self.selections.disjoint_anchors_arc();
 
         let lines = if lines == 0 {
             EditorSettings::get_global(cx).expand_excerpt_lines
@@ -17118,7 +17121,7 @@ impl Editor {
                     .transaction(transaction_id_prev)
                     .map(|t| t.0.clone())
             })
-            .unwrap_or_else(|| self.selections.disjoint_anchors());
+            .unwrap_or_else(|| self.selections.disjoint_anchors_arc());
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| {
@@ -17658,7 +17661,7 @@ impl Editor {
             .update(cx, |buffer, cx| buffer.start_transaction_at(now, cx))
         {
             self.selection_history
-                .insert_transaction(tx_id, self.selections.disjoint_anchors());
+                .insert_transaction(tx_id, self.selections.disjoint_anchors_arc());
             cx.emit(EditorEvent::TransactionBegun {
                 transaction_id: tx_id,
             });
@@ -17680,7 +17683,7 @@ impl Editor {
             if let Some((_, end_selections)) =
                 self.selection_history.transaction_mut(transaction_id)
             {
-                *end_selections = Some(self.selections.disjoint_anchors());
+                *end_selections = Some(self.selections.disjoint_anchors_arc());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
@@ -18350,7 +18353,12 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        let ranges: Vec<_> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.range())
+            .collect();
         self.toggle_diff_hunks_in_ranges(ranges, cx);
     }
 
@@ -18388,7 +18396,12 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        let ranges: Vec<_> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.range())
+            .collect();
         let stage = self.has_stageable_diff_hunks_in_ranges(&ranges, &snapshot);
         self.stage_or_unstage_diff_hunks(stage, ranges, cx);
     }
@@ -18552,7 +18565,12 @@ impl Editor {
     }
 
     pub fn expand_selected_diff_hunks(&mut self, cx: &mut Context<Self>) {
-        let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        let ranges: Vec<_> = self
+            .selections
+            .disjoint_anchors()
+            .iter()
+            .map(|s| s.range())
+            .collect();
         self.buffer
             .update(cx, |buffer, cx| buffer.expand_diff_hunks(ranges, cx))
     }
@@ -20549,7 +20567,9 @@ impl Editor {
                     )
                     .detach();
                 }
-                self.update_lsp_data(false, Some(buffer_id), window, cx);
+                if self.active_diagnostics != ActiveDiagnostic::All {
+                    self.update_lsp_data(false, Some(buffer_id), window, cx);
+                }
                 cx.emit(EditorEvent::ExcerptsAdded {
                     buffer: buffer.clone(),
                     predecessor: *predecessor,
@@ -21270,7 +21290,7 @@ impl Editor {
                 buffer.finalize_last_transaction(cx);
                 if self.leader_id.is_none() {
                     buffer.set_active_selections(
-                        &self.selections.disjoint_anchors(),
+                        &self.selections.disjoint_anchors_arc(),
                         self.selections.line_mode,
                         self.cursor_shape,
                         cx,
@@ -23566,7 +23586,7 @@ impl EntityInputHandler for Editor {
             let marked_ranges = {
                 let snapshot = this.buffer.read(cx).read(cx);
                 this.selections
-                    .disjoint_anchors()
+                    .disjoint_anchors_arc()
                     .iter()
                     .map(|selection| {
                         selection.start.bias_left(&snapshot)..selection.end.bias_right(&snapshot)

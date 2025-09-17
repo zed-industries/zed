@@ -75,6 +75,7 @@ pub struct AgentSettings {
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
+    pub message_editor_min_lines: usize,
 }
 
 impl AgentSettings {
@@ -106,6 +107,10 @@ impl AgentSettings {
             provider: provider.into(),
             model,
         });
+    }
+
+    pub fn set_message_editor_max_lines(&self) -> usize {
+        self.message_editor_min_lines * 2
     }
 }
 
@@ -320,6 +325,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     use_modifier_to_send: Option<bool>,
+    /// Minimum number of lines of height the agent message editor should have.
+    ///
+    /// Default: 4
+    message_editor_min_lines: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
@@ -355,21 +364,30 @@ impl JsonSchema for LanguageModelProviderSetting {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // list the builtin providers as a subset so that we still auto complete them in the settings
         json_schema!({
-            "enum": [
-                "amazon-bedrock",
-                "anthropic",
-                "copilot_chat",
-                "deepseek",
-                "google",
-                "lmstudio",
-                "mistral",
-                "ollama",
-                "openai",
-                "openrouter",
-                "vercel",
-                "x_ai",
-                "zed.dev"
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": [
+                        "amazon-bedrock",
+                        "anthropic",
+                        "copilot_chat",
+                        "deepseek",
+                        "google",
+                        "lmstudio",
+                        "mistral",
+                        "ollama",
+                        "openai",
+                        "openrouter",
+                        "vercel",
+                        "x_ai",
+                        "zed.dev"
+                    ]
+                },
+                {
+                    "type": "string",
+                }
             ]
         })
     }
@@ -471,6 +489,10 @@ impl Settings for AgentSettings {
             merge(
                 &mut settings.use_modifier_to_send,
                 value.use_modifier_to_send,
+            );
+            merge(
+                &mut settings.message_editor_min_lines,
+                value.message_editor_min_lines,
             );
 
             settings

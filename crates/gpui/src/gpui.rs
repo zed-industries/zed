@@ -112,7 +112,6 @@ pub mod private {
     pub use inventory;
     pub use schemars;
     pub use serde;
-    pub use serde_derive;
     pub use serde_json;
 }
 

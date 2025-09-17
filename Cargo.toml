@@ -52,10 +52,12 @@ members = [
     "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/deepseek",
+    "crates/denoise",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
     "crates/edit_prediction_button",
+    "crates/edit_prediction_context",
     "crates/editor",
     "crates/eval",
     "crates/explorer_command_injector",
@@ -312,6 +314,7 @@ icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
+edit_prediction_context = { path = "crates/edit_prediction_context" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
@@ -434,7 +437,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.2.1", features = ["unstable"] }
+agent-client-protocol = { version = "0.4.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -582,6 +585,7 @@ pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", re
 pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -617,9 +621,8 @@ rustls-platform-verifier = "0.5.0"
 scap = { git = "https://github.com/zed-industries/scap", rev = "808aa5c45b41e8f44729d02e38fd00a2fe2722e7", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
-serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
+serde = { version = "1.0.221", features = ["derive", "rc"] }
+serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
@@ -631,6 +634,7 @@ sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
 simplelog = "0.12.2"
+slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
 sqlformat = "0.2"

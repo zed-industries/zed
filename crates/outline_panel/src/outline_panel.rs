@@ -2481,6 +2481,7 @@ impl OutlinePanel {
             &OutlineItem {
                 depth,
                 annotation_range: None,
+                signature_range: None,
                 range: search_data.context_range.clone(),
                 text: search_data.context_text.clone(),
                 highlight_ranges: search_data
@@ -4692,7 +4693,10 @@ impl OutlinePanel {
                 .custom_scrollbars(
                     Scrollbars::for_settings::<OutlinePanelSettings>()
                         .tracked_scroll_handle(self.scroll_handle.clone())
-                        .with_track_along(ScrollAxes::Horizontal)
+                        .with_track_along(
+                            ScrollAxes::Horizontal,
+                            cx.theme().colors().panel_background,
+                        )
                         .tracked_entity(cx.entity_id()),
                     window,
                     cx,

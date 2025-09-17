@@ -286,6 +286,7 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
         "HEEX",
         "HTML",
         "JavaScript",
+        "TypeScript",
         "PHP",
         "Svelte",
         "TSX",

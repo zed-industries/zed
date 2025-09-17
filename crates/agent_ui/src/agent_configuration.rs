@@ -274,13 +274,28 @@ impl AgentConfiguration {
                                     *is_expanded = !*is_expanded;
                                 }
                             })),
-                    )
-                    .when(provider.is_authenticated(cx), |parent| {
+                    ),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .px_2()
+                    .gap_1()
+                    .when(is_expanded, |parent| match configuration_view {
+                        Some(configuration_view) => parent.child(configuration_view),
+                        None => parent.child(Label::new(format!(
+                            "No configuration view for {provider_name}",
+                        ))),
+                    })
+                    .when(is_expanded && provider.is_authenticated(cx), |parent| {
                         parent.child(
                             Button::new(
                                 SharedString::from(format!("new-thread-{provider_id}")),
                                 "Start New Thread",
                             )
+                            .full_width()
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface)
                             .icon_position(IconPosition::Start)
                             .icon(IconName::Thread)
                             .icon_size(IconSize::Small)
@@ -295,17 +310,6 @@ impl AgentConfiguration {
                                 }
                             })),
                         )
-                    }),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .px_2()
-                    .when(is_expanded, |parent| match configuration_view {
-                        Some(configuration_view) => parent.child(configuration_view),
-                        None => parent.child(Label::new(format!(
-                            "No configuration view for {provider_name}",
-                        ))),
                     }),
             )
     }
@@ -561,11 +565,28 @@ impl AgentConfiguration {
                         .color(Color::Muted),
                     ),
             )
-            .children(
-                context_server_ids.into_iter().map(|context_server_id| {
-                    self.render_context_server(context_server_id, window, cx)
-                }),
-            )
+            .map(|parent| {
+                if context_server_ids.is_empty() {
+                    parent.child(
+                        h_flex()
+                            .p_4()
+                            .justify_center()
+                            .border_1()
+                            .border_dashed()
+                            .border_color(cx.theme().colors().border.opacity(0.6))
+                            .rounded_sm()
+                            .child(
+                                Label::new("No MCP servers added yet.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                } else {
+                    parent.children(context_server_ids.into_iter().map(|context_server_id| {
+                        self.render_context_server(context_server_id, window, cx)
+                    }))
+                }
+            })
             .child(
                 h_flex()
                     .justify_between()
@@ -818,6 +839,8 @@ impl AgentConfiguration {
                     )
                     .child(
                         h_flex()
+                            .flex_1()
+                            .min_w_0()
                             .child(
                                 Disclosure::new(
                                     "tool-list-disclosure",
@@ -841,17 +864,19 @@ impl AgentConfiguration {
                                     .id(SharedString::from(format!("tooltip-{}", item_id)))
                                     .h_full()
                                     .w_3()
-                                    .mx_1()
+                                    .ml_1()
+                                    .mr_1p5()
                                     .justify_center()
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).ml_0p5())
+                            .child(Label::new(item_id).truncate())
                             .child(
                                 div()
                                     .id("extension-source")
                                     .mt_0p5()
                                     .mx_1()
+                                    .flex_none()
                                     .tooltip(Tooltip::text(source_tooltip))
                                     .child(
                                         Icon::new(source_icon)
@@ -873,7 +898,8 @@ impl AgentConfiguration {
                     )
                     .child(
                         h_flex()
-                            .gap_1()
+                            .gap_0p5()
+                            .flex_none()
                             .child(context_server_configuration_menu)
                             .child(
                                 Switch::new("context-server-switch", is_running.into())
@@ -1123,6 +1149,7 @@ impl AgentConfiguration {
                     SharedString::from(format!("start_acp_thread-{name}")),
                     "Start New Thread",
                 )
+                .layer(ElevationIndex::ModalSurface)
                 .label_size(LabelSize::Small)
                 .icon(IconName::Thread)
                 .icon_position(IconPosition::Start)
