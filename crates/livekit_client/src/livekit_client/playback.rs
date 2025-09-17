@@ -204,17 +204,20 @@ impl AudioStack {
             let voip_parts = audio::VoipParts::new(cx)?;
             // Audio needs to run real-time and should never be paused. That is
             // why we are using a normal std::thread and not a background task
-            thread::spawn(move || {
-                // microphone is non send on mac
-                let microphone = match audio::Audio::open_microphone(voip_parts) {
-                    Ok(m) => m,
-                    Err(e) => {
-                        log::error!("Could not open microphone: {e}");
-                        return;
-                    }
-                };
-                send_to_livekit(frame_tx, microphone);
-            });
+            thread::Builder::new()
+                .name("MicrophoneToLivekit".to_string())
+                .spawn(move || {
+                    // microphone is non send on mac
+                    let microphone = match audio::Audio::open_microphone(voip_parts) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            log::error!("Could not open microphone: {e}");
+                            return;
+                        }
+                    };
+                    send_to_livekit(frame_tx, microphone);
+                })
+                .expect("should be able to spawn threads");
             Task::ready(Ok(()))
         } else {
             self.executor.spawn(async move {

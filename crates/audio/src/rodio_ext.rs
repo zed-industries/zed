@@ -112,7 +112,6 @@ impl<S: Source> RodioExt for S {
     }
     fn denoise(self) -> Result<Denoiser<Self>, DenoiserError> {
         let res = Denoiser::try_new(self);
-        log::info!("result of new: {res:?}");
         res
     }
     fn constant_params(
@@ -176,8 +175,8 @@ impl<S: Source> Iterator for ToMono<S> {
         match self.input_channel_count.get() {
             1 => self.next(),
             2 => {
-                let first_channel = self.next()?;
-                let second_channel = self.next()?;
+                let first_channel = self.inner.next().unwrap();
+                let second_channel = self.inner.next()?;
                 self.update_mean(second_channel);
 
                 if self.real_stereo() {
