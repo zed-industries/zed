@@ -22,10 +22,10 @@ test-support = ["collections/test-support", "gpui/test-support"]
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+audio.workspace = true
 collections.workspace = true
 cpal.workspace = true
 futures.workspace = true
-audio.workspace = true
 gpui = { workspace = true, features = ["screen-capture", "x11", "wayland", "windows-manifest"] }
 gpui_tokio.workspace = true
 http_client_tls.workspace = true
@@ -35,13 +35,14 @@ log.workspace = true
 nanoid.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
-smallvec.workspace = true
+rodio = { workspace = true, features = ["wav_output", "recording"] }
+serde.workspace = true
+serde_urlencoded.workspace = true
 settings.workspace = true
+smallvec.workspace = true
 tokio-tungstenite.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
-
-rodio = { workspace = true, features = ["wav_output"] }
 
 [target.'cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))'.dependencies]
 libwebrtc = { rev = "5f04705ac3f356350ae31534ffbc476abc9ea83d", git = "https://github.com/zed-industries/livekit-rust-sdks" }

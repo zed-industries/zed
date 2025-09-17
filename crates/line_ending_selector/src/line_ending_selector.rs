@@ -171,7 +171,7 @@ impl PickerDelegate for LineEndingSelectorDelegate {
         _: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let line_ending = self.matches[ix];
+        let line_ending = self.matches.get(ix)?;
         let label = match line_ending {
             LineEnding::Unix => "LF",
             LineEnding::Windows => "CRLF",
@@ -183,7 +183,7 @@ impl PickerDelegate for LineEndingSelectorDelegate {
             .toggle_state(selected)
             .child(Label::new(label));
 
-        if self.line_ending == line_ending {
+        if &self.line_ending == line_ending {
             list_item = list_item.end_slot(Icon::new(IconName::Check).color(Color::Muted));
         }
 

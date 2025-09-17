@@ -39,6 +39,9 @@ async fn test_open_path_prompt(cx: &mut TestAppContext) {
 
     let (picker, cx) = build_open_path_prompt(project, false, PathStyle::current(), cx);
 
+    insert_query(path!("sadjaoislkdjasldj"), &picker, cx).await;
+    assert_eq!(collect_match_candidates(&picker, cx), Vec::<String>::new());
+
     let query = path!("/root");
     insert_query(query, &picker, cx).await;
     assert_eq!(collect_match_candidates(&picker, cx), vec!["root"]);

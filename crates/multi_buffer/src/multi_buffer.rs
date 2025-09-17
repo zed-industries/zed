@@ -2092,17 +2092,14 @@ impl MultiBuffer {
         let snapshot = self.read(cx);
         let buffers = self.buffers.borrow();
         let mut cursor = snapshot.excerpts.cursor::<Option<&Locator>>(&());
-        for locator in buffers
-            .get(&buffer_id)
-            .map(|state| &state.excerpts)
-            .into_iter()
-            .flatten()
-        {
-            cursor.seek_forward(&Some(locator), Bias::Left);
-            if let Some(excerpt) = cursor.item()
-                && excerpt.locator == *locator
-            {
-                excerpts.push((excerpt.id, excerpt.range.clone()));
+        if let Some(locators) = buffers.get(&buffer_id).map(|state| &state.excerpts) {
+            for locator in locators {
+                cursor.seek_forward(&Some(locator), Bias::Left);
+                if let Some(excerpt) = cursor.item()
+                    && excerpt.locator == *locator
+                {
+                    excerpts.push((excerpt.id, excerpt.range.clone()));
+                }
             }
         }
 
@@ -6119,7 +6116,7 @@ impl MultiBufferSnapshot {
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
         let (excerpt_id, _, buffer) = self.as_singleton()?;
-        let outline = buffer.outline(theme)?;
+        let outline = buffer.outline(theme);
         Some(Outline::new(
             outline
                 .items
@@ -6132,6 +6129,12 @@ impl MultiBufferSnapshot {
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
+                        signature_range: item.signature_range.and_then(|signature_range| {
+                            Some(
+                                self.anchor_in_excerpt(*excerpt_id, signature_range.start)?
+                                    ..self.anchor_in_excerpt(*excerpt_id, signature_range.end)?,
+                            )
+                        }),
                         body_range: item.body_range.and_then(|body_range| {
                             Some(
                                 self.anchor_in_excerpt(*excerpt_id, body_range.start)?
@@ -6164,7 +6167,6 @@ impl MultiBufferSnapshot {
                 .buffer
                 .symbols_containing(anchor.text_anchor, theme)
                 .into_iter()
-                .flatten()
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
@@ -6173,6 +6175,12 @@ impl MultiBufferSnapshot {
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
+                        signature_range: item.signature_range.and_then(|signature_range| {
+                            Some(
+                                self.anchor_in_excerpt(excerpt_id, signature_range.start)?
+                                    ..self.anchor_in_excerpt(excerpt_id, signature_range.end)?,
+                            )
+                        }),
                         body_range: item.body_range.and_then(|body_range| {
                             Some(
                                 self.anchor_in_excerpt(excerpt_id, body_range.start)?
@@ -6405,6 +6413,45 @@ impl MultiBufferSnapshot {
 
     pub fn diff_for_buffer_id(&self, buffer_id: BufferId) -> Option<&BufferDiffSnapshot> {
         self.diffs.get(&buffer_id)
+    }
+
+    /// Visually annotates a position or range with the `Debug` representation of a value. The
+    /// callsite of this function is used as a key - previous annotations will be removed.
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn debug<V, R>(&self, ranges: &R, value: V)
+    where
+        R: debug::ToMultiBufferDebugRanges,
+        V: std::fmt::Debug,
+    {
+        self.debug_with_key(std::panic::Location::caller(), ranges, value);
+    }
+
+    /// Visually annotates a position or range with the `Debug` representation of a value. Previous
+    /// debug annotations with the same key will be removed. The key is also used to determine the
+    /// annotation's color.
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    pub fn debug_with_key<K, R, V>(&self, key: &K, ranges: &R, value: V)
+    where
+        K: std::hash::Hash + 'static,
+        R: debug::ToMultiBufferDebugRanges,
+        V: std::fmt::Debug,
+    {
+        let text_ranges = ranges
+            .to_multi_buffer_debug_ranges(self)
+            .into_iter()
+            .flat_map(|range| {
+                self.range_to_buffer_ranges(range).into_iter().map(
+                    |(buffer, range, _excerpt_id)| {
+                        buffer.anchor_after(range.start)..buffer.anchor_before(range.end)
+                    },
+                )
+            })
+            .collect();
+        text::debug::GlobalDebugRanges::with_locked(|debug_ranges| {
+            debug_ranges.insert(key, text_ranges, format!("{value:?}").into())
+        });
     }
 }
 
@@ -7741,12 +7788,21 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 let diff_transform_end = diff_transform_end.min(self.range.end);
 
                 if diff_transform_end < chunk_end {
-                    let (before, after) =
-                        chunk.text.split_at(diff_transform_end - self.range.start);
+                    let split_idx = diff_transform_end - self.range.start;
+                    let (before, after) = chunk.text.split_at(split_idx);
                     self.range.start = diff_transform_end;
+                    let mask = (1 << split_idx) - 1;
+                    let chars = chunk.chars & mask;
+                    let tabs = chunk.tabs & mask;
+
                     chunk.text = after;
+                    chunk.chars = chunk.chars >> split_idx;
+                    chunk.tabs = chunk.tabs >> split_idx;
+
                     Some(Chunk {
                         text: before,
+                        chars,
+                        tabs,
                         ..chunk.clone()
                     })
                 } else {
@@ -7790,6 +7846,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     self.range.start += "\n".len();
                     Chunk {
                         text: "\n",
+                        chars: 1u128,
                         ..Default::default()
                     }
                 };
@@ -7886,9 +7943,11 @@ impl<'a> Iterator for ExcerptChunks<'a> {
 
         if self.footer_height > 0 {
             let text = unsafe { str::from_utf8_unchecked(&NEWLINES[..self.footer_height]) };
+            let chars = (1 << self.footer_height) - 1;
             self.footer_height = 0;
             return Some(Chunk {
                 text,
+                chars,
                 ..Default::default()
             });
         }
@@ -7973,5 +8032,77 @@ impl ToPointUtf16 for PointUtf16 {
 impl From<ExcerptId> for EntityId {
     fn from(id: ExcerptId) -> Self {
         EntityId::from(id.0 as u64)
+    }
+}
+
+#[cfg(debug_assertions)]
+pub mod debug {
+    use super::*;
+
+    pub trait ToMultiBufferDebugRanges {
+        fn to_multi_buffer_debug_ranges(&self, snapshot: &MultiBufferSnapshot)
+        -> Vec<Range<usize>>;
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for T {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            [self.to_offset(snapshot)].to_multi_buffer_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Range<T> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            [self.start.to_offset(snapshot)..self.end.to_offset(snapshot)]
+                .to_multi_buffer_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Vec<T> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.as_slice().to_multi_buffer_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for Vec<Range<T>> {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.as_slice().to_multi_buffer_debug_ranges(snapshot)
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for [T] {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.iter()
+                .map(|item| {
+                    let offset = item.to_offset(snapshot);
+                    offset..offset
+                })
+                .collect()
+        }
+    }
+
+    impl<T: ToOffset> ToMultiBufferDebugRanges for [Range<T>] {
+        fn to_multi_buffer_debug_ranges(
+            &self,
+            snapshot: &MultiBufferSnapshot,
+        ) -> Vec<Range<usize>> {
+            self.iter()
+                .map(|range| range.start.to_offset(snapshot)..range.end.to_offset(snapshot))
+                .collect()
+        }
     }
 }

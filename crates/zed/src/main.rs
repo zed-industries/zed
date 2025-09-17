@@ -19,7 +19,6 @@ use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
-use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
 use prompt_store::PromptBuilder;
@@ -278,13 +277,6 @@ pub fn main() {
                 .unwrap_or_else(|| "no sha".to_owned()),
         }))
         .detach();
-    reliability::init_panic_hook(
-        app_version,
-        app_commit_sha.clone(),
-        system_id.as_ref().map(|id| id.to_string()),
-        installation_id.as_ref().map(|id| id.to_string()),
-        session_id.clone(),
-    );
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
@@ -405,16 +397,7 @@ pub fn main() {
             std::env::consts::OS,
             std::env::consts::ARCH
         );
-        let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-        let proxy_url = proxy_str
-            .as_ref()
-            .and_then(|input| {
-                input
-                    .parse::<Url>()
-                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                    .ok()
-            })
-            .or_else(read_proxy_from_env);
+        let proxy_url = ProxySettings::get_global(cx).proxy_url();
         let http = {
             let _guard = Tokio::handle(cx).enter();
 
@@ -467,7 +450,7 @@ pub fn main() {
 
         debug_adapter_extension::init(extension_host_proxy.clone(), cx);
         language::init(cx);
-        languages::init(languages.clone(), node_runtime.clone(), cx);
+        languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
         let workspace_store = cx.new(|cx| WorkspaceStore::new(client.clone(), cx));
 
@@ -542,8 +525,6 @@ pub fn main() {
         reliability::init(
             client.http_client(),
             system_id.as_ref().map(|id| id.to_string()),
-            installation_id.clone().map(|id| id.to_string()),
-            session_id.clone(),
             cx,
         );
 

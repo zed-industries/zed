@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Clone, Deserialize)]
+#[derive(Clone)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -70,12 +70,14 @@ pub struct LanguageServerBinary {
 }
 
 /// Configures the search (and installation) of language servers.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LanguageServerBinaryOptions {
     /// Whether the adapter should look at the users system
     pub allow_path_lookup: bool,
     /// Whether the adapter should download its own version
     pub allow_binary_download: bool,
+    /// Whether the adapter should download a pre-release version
+    pub pre_release: bool,
 }
 
 /// A running language server process.

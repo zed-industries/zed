@@ -261,10 +261,8 @@ impl AgentTool for GrepTool {
                     let end_row = range.end.row;
                     output.push_str("\n### ");
 
-                    if let Some(parent_symbols) = &parent_symbols {
-                        for symbol in parent_symbols {
-                            write!(output, "{} › ", symbol.text)?;
-                        }
+                    for symbol in parent_symbols {
+                        write!(output, "{} › ", symbol.text)?;
                     }
 
                     if range.start.row == end_row {

@@ -217,8 +217,8 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let string_match = &self.matches[ix];
-        let symbol = &self.symbols[string_match.candidate_id];
+        let string_match = &self.matches.get(ix)?;
+        let symbol = &self.symbols.get(string_match.candidate_id)?;
         let syntax_runs = styled_runs_for_code_label(&symbol.label, cx.theme().syntax());
 
         let mut path = symbol.path.path.to_string_lossy();

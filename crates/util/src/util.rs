@@ -1095,6 +1095,15 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     }
 }
 
+#[track_caller]
+pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
+    #[cfg(debug_assertions)]
+    if option.is_none() {
+        panic!("Unexpected None");
+    }
+    option
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

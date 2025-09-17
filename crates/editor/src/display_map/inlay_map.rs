@@ -11,7 +11,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, Cursor, Dimensions, SumTree};
-use text::{Patch, Rope};
+use text::{ChunkBitmaps, Patch, Rope};
 use ui::{ActiveTheme, IntoElement as _, ParentElement as _, Styled as _, div};
 
 use super::{Highlights, custom_highlights::CustomHighlightsChunks, fold_map::ChunkRendererId};
@@ -245,8 +245,9 @@ pub struct InlayChunks<'a> {
     transforms: Cursor<'a, Transform, Dimensions<InlayOffset, usize>>,
     buffer_chunks: CustomHighlightsChunks<'a>,
     buffer_chunk: Option<Chunk<'a>>,
-    inlay_chunks: Option<text::Chunks<'a>>,
-    inlay_chunk: Option<&'a str>,
+    inlay_chunks: Option<text::ChunkWithBitmaps<'a>>,
+    /// text, char bitmap, tabs bitmap
+    inlay_chunk: Option<ChunkBitmaps<'a>>,
     output_offset: InlayOffset,
     max_output_offset: InlayOffset,
     highlight_styles: HighlightStyles,
@@ -316,11 +317,25 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 let (prefix, suffix) = chunk.text.split_at(split_index);
 
+                let (chars, tabs) = if split_index == 128 {
+                    let output = (chunk.chars, chunk.tabs);
+                    chunk.chars = 0;
+                    chunk.tabs = 0;
+                    output
+                } else {
+                    let mask = (1 << split_index) - 1;
+                    let output = (chunk.chars & mask, chunk.tabs & mask);
+                    chunk.chars = chunk.chars >> split_index;
+                    chunk.tabs = chunk.tabs >> split_index;
+                    output
+                };
                 chunk.text = suffix;
                 self.output_offset.0 += prefix.len();
                 InlayChunk {
                     chunk: Chunk {
                         text: prefix,
+                        chars,
+                        tabs,
                         ..chunk.clone()
                     },
                     renderer: None,
@@ -385,9 +400,9 @@ impl<'a> Iterator for InlayChunks<'a> {
                         next_inlay_highlight_endpoint = usize::MAX;
                     } else {
                         next_inlay_highlight_endpoint = range.end - offset_in_inlay.0;
-                        highlight_style
-                            .get_or_insert_with(Default::default)
-                            .highlight(*style);
+                        highlight_style = highlight_style
+                            .map(|highlight| highlight.highlight(*style))
+                            .or_else(|| Some(*style));
                     }
                 } else {
                     next_inlay_highlight_endpoint = usize::MAX;
@@ -397,9 +412,14 @@ impl<'a> Iterator for InlayChunks<'a> {
                     let start = offset_in_inlay;
                     let end = cmp::min(self.max_output_offset, self.transforms.end().0)
                         - self.transforms.start().0;
-                    inlay.text.chunks_in_range(start.0..end.0)
+                    let chunks = inlay.text.chunks_in_range(start.0..end.0);
+                    text::ChunkWithBitmaps(chunks)
                 });
-                let inlay_chunk = self
+                let ChunkBitmaps {
+                    text: inlay_chunk,
+                    chars,
+                    tabs,
+                } = self
                     .inlay_chunk
                     .get_or_insert_with(|| inlay_chunks.next().unwrap());
 
@@ -421,6 +441,20 @@ impl<'a> Iterator for InlayChunks<'a> {
 
                 let (chunk, remainder) = inlay_chunk.split_at(split_index);
                 *inlay_chunk = remainder;
+
+                let (chars, tabs) = if split_index == 128 {
+                    let output = (*chars, *tabs);
+                    *chars = 0;
+                    *tabs = 0;
+                    output
+                } else {
+                    let mask = (1 << split_index as u32) - 1;
+                    let output = (*chars & mask, *tabs & mask);
+                    *chars = *chars >> split_index;
+                    *tabs = *tabs >> split_index;
+                    output
+                };
+
                 if inlay_chunk.is_empty() {
                     self.inlay_chunk = None;
                 }
@@ -430,6 +464,8 @@ impl<'a> Iterator for InlayChunks<'a> {
                 InlayChunk {
                     chunk: Chunk {
                         text: chunk,
+                        chars,
+                        tabs,
                         highlight_style,
                         is_inlay: true,
                         ..Chunk::default()
@@ -1224,6 +1260,7 @@ mod tests {
     use std::{any::TypeId, cmp::Reverse, env, sync::Arc};
     use sum_tree::TreeMap;
     use text::Patch;
+    use util::RandomCharIter;
     use util::post_inc;
 
     #[test]
@@ -1960,6 +1997,102 @@ mod tests {
                         "to_buffer_point({:?}) = {:?}",
                         clipped_right_point,
                         inlay_snapshot.to_buffer_point(clipped_right_point),
+                    );
+                }
+            }
+        }
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_chunk_bitmaps(cx: &mut gpui::App, mut rng: StdRng) {
+        init_test(cx);
+
+        // Generate random buffer using existing test infrastructure
+        let text_len = rng.random_range(0..10000);
+        let buffer = if rng.random() {
+            let text = RandomCharIter::new(&mut rng)
+                .take(text_len)
+                .collect::<String>();
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(&mut rng, cx)
+        };
+
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (mut inlay_map, _) = InlayMap::new(buffer_snapshot.clone());
+
+        // Perform random mutations to add inlays
+        let mut next_inlay_id = 0;
+        let mutation_count = rng.random_range(1..10);
+        for _ in 0..mutation_count {
+            inlay_map.randomly_mutate(&mut next_inlay_id, &mut rng);
+        }
+
+        let (snapshot, _) = inlay_map.sync(buffer_snapshot, vec![]);
+
+        // Get all chunks and verify their bitmaps
+        let chunks = snapshot.chunks(
+            InlayOffset(0)..InlayOffset(snapshot.len().0),
+            false,
+            Highlights::default(),
+        );
+
+        for chunk in chunks.into_iter().map(|inlay_chunk| inlay_chunk.chunk) {
+            let chunk_text = chunk.text;
+            let chars_bitmap = chunk.chars;
+            let tabs_bitmap = chunk.tabs;
+
+            // Check empty chunks have empty bitmaps
+            if chunk_text.is_empty() {
+                assert_eq!(
+                    chars_bitmap, 0,
+                    "Empty chunk should have empty chars bitmap"
+                );
+                assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
+                continue;
+            }
+
+            // Verify that chunk text doesn't exceed 128 bytes
+            assert!(
+                chunk_text.len() <= 128,
+                "Chunk text length {} exceeds 128 bytes",
+                chunk_text.len()
+            );
+
+            // Verify chars bitmap
+            let char_indices = chunk_text
+                .char_indices()
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>();
+
+            for byte_idx in 0..chunk_text.len() {
+                let should_have_bit = char_indices.contains(&byte_idx);
+                let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+                if has_bit != should_have_bit {
+                    eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                    eprintln!("Char indices: {:?}", char_indices);
+                    eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+                    assert_eq!(
+                        has_bit, should_have_bit,
+                        "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                        byte_idx, chunk_text, should_have_bit, has_bit
+                    );
+                }
+            }
+
+            // Verify tabs bitmap
+            for (byte_idx, byte) in chunk_text.bytes().enumerate() {
+                let is_tab = byte == b'\t';
+                let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+
+                if has_bit != is_tab {
+                    eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                    eprintln!("Tabs bitmap: {:#b}", tabs_bitmap);
+                    assert_eq!(
+                        has_bit, is_tab,
+                        "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
+                        byte_idx, chunk_text, byte as char, is_tab, has_bit
                     );
                 }
             }
