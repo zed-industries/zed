@@ -116,12 +116,7 @@ impl Settings for WorkspaceSettings {
             max_tabs: workspace.max_tabs.clone(),
             when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.clone().unwrap(),
             on_last_window_closed: workspace.on_last_window_closed.clone().unwrap(),
-            resize_all_panels_in_dock: workspace
-                .resize_all_panels_in_dock
-                .iter()
-                .copied()
-                .map(Into::into)
-                .collect(),
+            resize_all_panels_in_dock: workspace.resize_all_panels_in_dock.iter().collect(),
             close_on_file_delete: workspace.close_on_file_delete.clone().unwrap(),
             use_system_window_tabs: workspace.use_system_window_tabs.clone().unwrap(),
             zoomed_padding: workspace.zoomed_padding.clone().unwrap(),

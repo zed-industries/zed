@@ -4,6 +4,8 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::DockPosition;
+
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
@@ -331,12 +333,4 @@ impl OnLastWindowClosed {
             OnLastWindowClosed::QuitApp => true,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum DockPosition {
-    Left,
-    Bottom,
-    Right,
 }

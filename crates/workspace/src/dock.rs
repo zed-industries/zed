@@ -9,6 +9,7 @@ use gpui::{
     Render, SharedString, StyleRefinement, Styled, Subscription, WeakEntity, Window, deferred, div,
     px,
 };
+pub use settings::DockPosition;
 use settings::SettingsStore;
 use std::sync::Arc;
 use ui::{ContextMenu, Divider, DividerColor, IconButton, Tooltip, h_flex};
@@ -206,13 +207,6 @@ impl Focusable for Dock {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DockPosition {
-    Left,
-    Bottom,
-    Right,
 }
 
 impl From<settings::DockPosition> for DockPosition {
