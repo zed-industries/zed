@@ -339,6 +339,8 @@ impl<'a> DoubleEndedIterator for RelPathComponents<'a> {
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use super::*;
 
     #[test]
@@ -400,5 +402,15 @@ mod tests {
         );
         assert_eq!(RelPath::from_str("foo").parent(), Some(RelPath::empty()));
         assert_eq!(RelPath::from_str("").parent(), None);
+    }
+    #[test]
+    fn test_rel_path_partial_ord_is_compatible_with_std() {
+        let test_cases = ["a/b/c", "relative/path/with/dot.", "relative/path/with.dot"];
+        for [lhs, rhs] in test_cases.iter().array_combinations::<2>() {
+            assert_eq!(
+                Path::new(lhs).cmp(Path::new(rhs)),
+                RelPath::new(lhs).unwrap().cmp(RelPath::new(rhs).unwrap())
+            );
+        }
     }
 }
