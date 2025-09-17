@@ -721,11 +721,6 @@ struct RemoteExternalAgentServer {
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
-// new method: status_updated
-// does nothing in the all-local case
-// for RemoteExternalAgentServer, sends on the stored tx
-// etc.
-
 impl ExternalAgentServer for RemoteExternalAgentServer {
     fn get_command(
         &mut self,
