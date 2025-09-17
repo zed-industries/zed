@@ -12,7 +12,7 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabHandles, TaffyLayoutEngine, Task,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TabIndexMap, TaffyLayoutEngine, Task,
     TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
     WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
@@ -684,7 +684,7 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
-    pub(crate) tab_handles: TabHandles,
+    pub(crate) tab_handles: TabIndexMap,
 }
 
 #[derive(Clone, Default)]
@@ -704,7 +704,7 @@ pub(crate) struct PaintIndex {
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
-    tab_handle_index: Option<NodeIdentifier>,
+    tab_handle_index: Option<()>, // todo! actual type
     // self.tab_handles[start..end] -> A tree traversal, using that start and end to pick out a sub section
     // For Range<PaintIndex>, range.start = index of tree traversal, range.end = index of tree traversal.
     line_layout_index: LineLayoutIndex,
@@ -735,7 +735,7 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
-            tab_handles: TabHandles::default(),
+            tab_handles: TabIndexMap::default(),
         }
     }
 
@@ -2213,7 +2213,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
-            tab_handle_index: self.next_frame.tab_handles.nodes.len(),
+            tab_handle_index: None, // todo! self.next_frame.tab_handles.nodes.len(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2243,12 +2243,13 @@ impl Window {
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
-        self.next_frame.tab_handles.nodes.extend(
-            self.rendered_frame.tab_handles.nodes
-                [range.start.tab_handle_index..range.end.tab_handle_index]
-                .iter()
-                .cloned(),
-        );
+        // todo! impl
+        // self.next_frame.tab_handles.nodes.extend(
+        //     self.rendered_frame.tab_handles.nodes
+        //         [range.start.tab_handle_index..range.end.tab_handle_index]
+        //         .iter()
+        //         .cloned(),
+        // );
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
