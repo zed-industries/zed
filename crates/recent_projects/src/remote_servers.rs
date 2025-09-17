@@ -522,7 +522,43 @@ impl Mode {
 }
 
 impl RemoteServerProjects {
+    #[cfg(target_os = "windows")]
+    pub fn wsl(
+        create_new_window: bool,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::AddWslDistro(AddWslDistro::new(window, cx)),
+            create_new_window,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
     pub fn new(
+        create_new_window: bool,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::default_mode(&BTreeSet::new(), cx),
+            create_new_window,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
+    fn new_inner(
+        mode: Mode,
         create_new_window: bool,
         fs: Arc<dyn Fs>,
         window: &mut Window,
@@ -558,7 +594,7 @@ impl RemoteServerProjects {
             });
 
         Self {
-            mode: Mode::default_mode(&BTreeSet::new(), cx),
+            mode,
             focus_handle,
             workspace,
             retained_connections: Vec::new(),

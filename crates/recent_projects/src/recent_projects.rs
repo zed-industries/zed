@@ -90,6 +90,18 @@ pub fn init(cx: &mut App) {
         });
     });
 
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenWsl, cx| {
+        let create_new_window = open_wsl.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let handle = cx.entity().downgrade();
+            let fs = workspace.project().read(cx).fs().clone();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::wsl(create_new_window, fs, window, handle, cx)
+            });
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
