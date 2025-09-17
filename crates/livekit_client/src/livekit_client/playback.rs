@@ -214,7 +214,6 @@ impl AudioStack {
                     }
                 };
                 send_to_livekit(frame_tx, microphone);
-                Ok::<(), anyhow::Error>(())
             });
             Task::ready(Ok(()))
         } else {

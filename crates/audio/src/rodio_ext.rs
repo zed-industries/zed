@@ -8,7 +8,8 @@ use std::{
 };
 
 use crossbeam::queue::ArrayQueue;
-use rodio::{ChannelCount, Sample, SampleRate, Source};
+use denoise::{Denoiser, DenoiserError};
+use rodio::{ChannelCount, Sample, SampleRate, Source, source::UniformSourceIterator};
 
 #[derive(Debug, thiserror::Error)]
 #[error("Replay duration is too short must be >= 100ms")]

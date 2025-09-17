@@ -9,7 +9,7 @@ mod non_windows_and_freebsd_deps {
     pub(super) use log::info;
     pub(super) use parking_lot::Mutex;
     pub(super) use rodio::cpal::Sample;
-    pub(super) use rodio::source::{LimitSettings, UniformSourceIterator};
+    pub(super) use rodio::source::LimitSettings;
     pub(super) use std::sync::Arc;
 }
 
