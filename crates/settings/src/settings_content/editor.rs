@@ -1,5 +1,6 @@
 use std::num;
 
+use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -541,6 +542,11 @@ pub struct JupyterContent {
     ///
     /// Default: true
     pub enabled: Option<bool>,
+
+    /// Default kernels to select for each language.
+    ///
+    /// Default: `{}`
+    pub kernel_selections: Option<HashMap<String, String>>,
 }
 
 /// Whether to allow drag and drop text selection in buffer.

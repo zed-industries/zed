@@ -88,6 +88,8 @@ pub struct SettingsContent {
     /// The settings for the image viewer.
     pub image_viewer: Option<ImageViewerSettingsContent>,
 
+    pub repl: Option<ReplSettingsContent>,
+
     /// Whether or not to enable Helix mode.
     ///
     /// Default: false
@@ -765,4 +767,19 @@ pub struct SshPortForwardOption {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_host: Option<String>,
     pub remote_port: u16,
+}
+
+/// Settings for configuring REPL display and behavior.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ReplSettingsContent {
+    /// Maximum number of lines to keep in REPL's scrollback buffer.
+    /// Clamped with [4, 256] range.
+    ///
+    /// Default: 32
+    pub max_lines: Option<usize>,
+    /// Maximum number of columns to keep in REPL's scrollback buffer.
+    /// Clamped with [20, 512] range.
+    ///
+    /// Default: 128
+    pub max_columns: Option<usize>,
 }

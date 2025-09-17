@@ -1879,7 +1879,8 @@
   },
   // Jupyter settings
   "jupyter": {
-    "enabled": true
+    "enabled": true,
+    "kernel_selections": {}
     // Specify the language name as the key and the kernel name as the value.
     // "kernel_selections": {
     //    "python": "conda-base"
