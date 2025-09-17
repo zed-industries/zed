@@ -363,6 +363,7 @@ fn main() -> Result<()> {
                     wsl,
                     wait: args.wait,
                     open_new_workspace,
+                    reuse: args.reuse,
                     env,
                     user_data_dir: user_data_dir_for_thread,
                 })?;
