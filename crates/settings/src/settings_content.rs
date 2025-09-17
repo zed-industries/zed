@@ -46,6 +46,10 @@ pub struct SettingsContent {
 
     /// Configuration of audio in Zed.
     pub audio: Option<AudioSettingsContent>,
+
+    /// Whether or not to automatically check for updates.
+    ///
+    /// Default: true
     pub auto_update: Option<bool>,
 
     // todo!() comments?!
