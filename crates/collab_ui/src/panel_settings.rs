@@ -19,6 +19,7 @@ pub struct NotificationPanelSettings {
 }
 
 #[derive(Clone, Default, Debug)]
+// todo! are these settings even relevant any more?
 pub struct MessageEditorSettings {
     /// Whether to automatically replace emoji shortcodes with emoji characters.
     /// For example: typing `:wave:` gets replaced with `👋`.

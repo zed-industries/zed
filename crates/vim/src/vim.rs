@@ -1793,39 +1793,6 @@ impl Vim {
     }
 }
 
-/// Controls when to use system clipboard.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum UseSystemClipboard {
-    /// Don't use system clipboard.
-    Never,
-    /// Use system clipboard.
-    Always,
-    /// Use system clipboard for yank operations.
-    OnYank,
-}
-
-/// The settings for cursor shape.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-struct CursorShapeSettings {
-    /// Cursor shape for the normal mode.
-    ///
-    /// Default: block
-    pub normal: Option<CursorShape>,
-    /// Cursor shape for the replace mode.
-    ///
-    /// Default: underline
-    pub replace: Option<CursorShape>,
-    /// Cursor shape for the visual mode.
-    ///
-    /// Default: block
-    pub visual: Option<CursorShape>,
-    /// Cursor shape for the insert mode.
-    ///
-    /// The default value follows the primary cursor_shape.
-    pub insert: Option<CursorShape>,
-}
-
 #[derive(Deserialize)]
 struct VimSettings {
     pub default_mode: Mode,
@@ -1837,32 +1804,7 @@ struct VimSettings {
     pub cursor_shape: CursorShapeSettings,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(key = "vim")]
-struct VimSettingsContent {
-    pub default_mode: Option<ModeContent>,
-    pub toggle_relative_line_numbers: Option<bool>,
-    pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_smartcase_find: Option<bool>,
-    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
-    pub highlight_on_yank_duration: Option<u64>,
-    pub cursor_shape: Option<CursorShapeSettings>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ModeContent {
-    #[default]
-    Normal,
-    Insert,
-    Replace,
-    Visual,
-    VisualLine,
-    VisualBlock,
-    HelixNormal,
-}
-
-impl From<ModeContent> for Mode {
+impl From<settings::ModeContent> for Mode {
     fn from(mode: ModeContent) -> Self {
         match mode {
             ModeContent::Normal => Self::Normal,
@@ -1877,34 +1819,40 @@ impl From<ModeContent> for Mode {
 }
 
 impl Settings for VimSettings {
-    type FileContent = VimSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let settings: VimSettingsContent = sources.json_merge()?;
-
-        Ok(Self {
-            default_mode: settings
-                .default_mode
-                .ok_or_else(Self::missing_default)?
-                .into(),
-            toggle_relative_line_numbers: settings
-                .toggle_relative_line_numbers
-                .ok_or_else(Self::missing_default)?,
-            use_system_clipboard: settings
-                .use_system_clipboard
-                .ok_or_else(Self::missing_default)?,
-            use_smartcase_find: settings
-                .use_smartcase_find
-                .ok_or_else(Self::missing_default)?,
-            custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
-            highlight_on_yank_duration: settings
-                .highlight_on_yank_duration
-                .ok_or_else(Self::missing_default)?,
-            cursor_shape: settings.cursor_shape.ok_or_else(Self::missing_default)?,
-        })
+    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
+        let vim = content.vim.as_ref().unwrap();
+        Self {
+            default_mode: vim.default_mode.unwrap().into(),
+            toggle_relative_line_numbers: vim.toggle_relative_line_numbers.unwrap(),
+            use_system_clipboard: vim.use_system_clipboard.unwrap(),
+            use_smartcase_find: vim.use_smartcase_find.unwrap(),
+            custom_digraphs: vim.custom_digraphs.unwrap(),
+            highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
+            cursor_shape: vim.cursor_shape.unwrap(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
+    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
+        let Some(vim) = content.vim.as_ref() else {
+            return;
+        };
+        self.default_mode
+            .merge_from(&vim.default_mode.map(Into::into));
+        self.toggle_relative_line_numbers
+            .merge_from(&vim.toggle_relative_line_numbers);
+        self.use_system_clipboard
+            .merge_from(&vim.use_system_clipboard);
+        self.use_smartcase_find.merge_from(&vim.use_smartcase_find);
+        self.custom_digraphs.merge_from(&vim.custom_digraphs);
+        self.highlight_on_yank_duration
+            .merge_from(&vim.highlight_on_yank_duration);
+        self.cursor_shape.merge_from(&vim.cursor_shape);
+    }
+
+    fn import_from_vscode(
+        _vscode: &settings::VsCodeSettings,
+        _current: &mut settings::SettingsContent,
+    ) {
         // TODO: translate vim extension settings
     }
 }

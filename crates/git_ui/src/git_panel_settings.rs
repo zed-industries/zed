@@ -2,7 +2,7 @@ use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent, SettingsKey, SettingsSources, SettingsUi, StatusStyle};
+use settings::{Settings, SettingsContent, StatusStyle};
 use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},

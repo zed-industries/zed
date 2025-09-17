@@ -22,17 +22,16 @@ actions!(
 );
 
 /// Settings specific to journaling
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(key = "journal")]
+#[derive(Clone, Debug)]
 pub struct JournalSettings {
     /// The path of the directory where journal entries are stored.
     ///
     /// Default: `~`
-    pub path: Option<String>,
+    pub path: String,
     /// What format to display the hours in.
     ///
     /// Default: hour12
-    pub hour_format: Option<HourFormat>,
+    pub hour_format: HourFormat,
 }
 
 impl Default for JournalSettings {
@@ -44,19 +43,44 @@ impl Default for JournalSettings {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, Default)]
 pub enum HourFormat {
     #[default]
     Hour12,
     Hour24,
 }
 
-impl settings::Settings for JournalSettings {
-    type FileContent = Self;
+impl From<settings::HourFormatContent> for HourFormat {
+    fn from(content: settings::HourFormatContent) -> Self {
+        match content {
+            settings::HourFormatContent::Hour12 => HourFormat::Hour12,
+            settings::HourFormatContent::Hour24 => HourFormat::Hour24,
+        }
+    }
+}
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+impl settings::Settings for JournalSettings {
+    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
+        let journal = content.journal.as_ref().unwrap();
+
+        Self {
+            path: journal.path.unwrap(),
+            hour_format: journal.hour_format.unwrap().into(),
+        }
+    }
+
+    fn refine(&mut self, content: &settings::SettingsContent, cx: &mut App) {
+        let Some(journal) = content.journal.as_ref() else {
+            return;
+        };
+
+        if let Some(path) = journal.path {
+            self.path = path;
+        }
+
+        if let Some(hour_format) = journal.hour_format {
+            self.hour_format = hour_format.into();
+        }
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}

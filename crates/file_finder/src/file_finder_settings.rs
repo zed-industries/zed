@@ -1,21 +1,41 @@
 use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::Settings;
+use util::MergeFrom;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct FileFinderSettings {
     pub file_icons: bool,
-    pub modal_max_width: Option<FileFinderWidth>,
+    pub modal_max_width: FileFinderWidth,
     pub skip_focus_for_active_in_search: bool,
     pub include_ignored: Option<bool>,
 }
 
 impl Settings for FileFinderSettings {
-    type FileContent = FileFinderSettingsContent;
+    fn from_defaults(content: &settings::SettingsContent, cx: &mut ui::App) -> Self {
+        let file_finder = content.file_finder.as_ref().unwrap();
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> Result<Self> {
-        sources.json_merge()
+        Self {
+            file_icons: file_finder.file_icons.unwrap(),
+            modal_max_width: file_finder.modal_max_width.unwrap().into(),
+            skip_focus_for_active_in_search: file_finder.skip_focus_for_active_in_search.unwrap(),
+            include_ignored: file_finder.include_ignored.unwrap(),
+        }
+    }
+
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut ui::App) {
+        let Some(file_finder) = content.file_finder.as_ref() else {
+            return;
+        };
+
+        self.file_icons.merge_from(&file_finder.file_icons);
+        self.modal_max_width
+            .merge_from(&file_finder.modal_max_width.map(Into::into));
+        self.skip_focus_for_active_in_search
+            .merge_from(&file_finder.skip_focus_for_active_in_search);
+        self.include_ignored
+            .merge_from(&file_finder.include_ignored);
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
@@ -30,4 +50,16 @@ pub enum FileFinderWidth {
     Large,
     XLarge,
     Full,
+}
+
+impl From<settings::FileFinderWidthContent> for FileFinderWidth {
+    fn from(content: settings::FileFinderWidthContent) -> Self {
+        match content {
+            settings::FileFinderWidthContent::Small => FileFinderWidth::Small,
+            settings::FileFinderWidthContent::Medium => FileFinderWidth::Medium,
+            settings::FileFinderWidthContent::Large => FileFinderWidth::Large,
+            settings::FileFinderWidthContent::XLarge => FileFinderWidth::XLarge,
+            settings::FileFinderWidthContent::Full => FileFinderWidth::Full,
+        }
+    }
 }

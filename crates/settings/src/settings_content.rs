@@ -41,6 +41,9 @@ pub struct SettingsContent {
     #[serde(flatten)]
     pub editor: EditorSettingsContent,
 
+    /// Settings related to the file finder.
+    pub file_finder: Option<FileFinderSettingsContent>,
+
     pub git_panel: Option<GitPanelSettingsContent>,
 
     pub tabs: Option<ItemSettingsContent>,
@@ -81,11 +84,15 @@ pub struct SettingsContent {
     /// Default: false
     pub helix_mode: Option<bool>,
 
+    pub journal: Option<JournalSettingsContent>,
+
     /// A map of log scopes to the desired log level.
     /// Useful for filtering out noisy logs or enabling more verbose logging.
     ///
     /// Example: {"log": {"client": "warn"}}
     pub log: Option<HashMap<String, String>>,
+
+    pub outline_panel: Option<OutlinePanelSettingsContent>,
 
     /// Configuration for the Message Editor
     pub message_editor: Option<MessageEditorSettings>,
@@ -123,6 +130,9 @@ pub struct SettingsContent {
     ///
     /// Default: false
     pub disable_ai: Option<bool>,
+
+    /// Settings related to Vim mode in Zed.
+    pub vim: Option<VimSettingsContent>,
 }
 
 impl SettingsContent {
@@ -472,7 +482,7 @@ pub struct MessageEditorSettings {
     pub auto_replace_emoji_shortcode: Option<bool>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
 pub struct FileFinderSettingsContent {
     /// Whether to show file icons in the file finder.
     ///
@@ -481,7 +491,7 @@ pub struct FileFinderSettingsContent {
     /// Determines how much space the file finder can take up in relation to the available window width.
     ///
     /// Default: small
-    pub modal_max_width: Option<FileFinderWidth>,
+    pub modal_max_width: Option<FileFinderWidthContent>,
     /// Determines whether the file finder should skip focus for the active file in search results.
     ///
     /// Default: true
@@ -499,5 +509,169 @@ pub struct FileFinderSettingsContent {
     /// * `None`: Be smart and search for ignored when called from a gitignored worktree
     ///
     /// Default: None
+    /// todo!() -> Change this type to an enum
     pub include_ignored: Option<Option<bool>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FileFinderWidthContent {
+    #[default]
+    Small,
+    Medium,
+    Large,
+    XLarge,
+    Full,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug, JsonSchema)]
+pub struct VimSettingsContent {
+    pub default_mode: Option<ModeContent>,
+    pub toggle_relative_line_numbers: Option<bool>,
+    pub use_system_clipboard: Option<UseSystemClipboard>,
+    pub use_smartcase_find: Option<bool>,
+    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
+    pub highlight_on_yank_duration: Option<u64>,
+    pub cursor_shape: Option<CursorShapeSettings>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ModeContent {
+    #[default]
+    Normal,
+    Insert,
+    Replace,
+    Visual,
+    VisualLine,
+    VisualBlock,
+    HelixNormal,
+}
+
+/// Controls when to use system clipboard.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UseSystemClipboard {
+    /// Don't use system clipboard.
+    Never,
+    /// Use system clipboard.
+    Always,
+    /// Use system clipboard for yank operations.
+    OnYank,
+}
+
+/// The settings for cursor shape.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+pub struct CursorShapeSettings {
+    /// Cursor shape for the normal mode.
+    ///
+    /// Default: block
+    pub normal: Option<CursorShape>,
+    /// Cursor shape for the replace mode.
+    ///
+    /// Default: underline
+    pub replace: Option<CursorShape>,
+    /// Cursor shape for the visual mode.
+    ///
+    /// Default: block
+    pub visual: Option<CursorShape>,
+    /// Cursor shape for the insert mode.
+    ///
+    /// The default value follows the primary cursor_shape.
+    pub insert: Option<CursorShape>,
+}
+
+/// Settings specific to journaling
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct JournalSettingsContent {
+    /// The path of the directory where journal entries are stored.
+    ///
+    /// Default: `~`
+    pub path: Option<String>,
+    /// What format to display the hours in.
+    ///
+    /// Default: hour12
+    pub hour_format: Option<HourFormatContent>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum HourFormatContent {
+    #[default]
+    Hour12,
+    Hour24,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+pub struct OutlinePanelSettingsContent {
+    /// Whether to show the outline panel button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    /// Customize default width (in pixels) taken by outline panel
+    ///
+    /// Default: 240
+    pub default_width: Option<f32>,
+    /// The position of outline panel
+    ///
+    /// Default: left
+    pub dock: Option<OutlinePanelDockPosition>,
+    /// Whether to show file icons in the outline panel.
+    ///
+    /// Default: true
+    pub file_icons: Option<bool>,
+    /// Whether to show folder icons or chevrons for directories in the outline panel.
+    ///
+    /// Default: true
+    pub folder_icons: Option<bool>,
+    /// Whether to show the git status in the outline panel.
+    ///
+    /// Default: true
+    pub git_status: Option<bool>,
+    /// Amount of indentation (in pixels) for nested items.
+    ///
+    /// Default: 20
+    pub indent_size: Option<f32>,
+    /// Whether to reveal it in the outline panel automatically,
+    /// when a corresponding project entry becomes active.
+    /// Gitignored entries are never auto revealed.
+    ///
+    /// Default: true
+    pub auto_reveal_entries: Option<bool>,
+    /// Whether to fold directories automatically
+    /// when directory has only one directory inside.
+    ///
+    /// Default: true
+    pub auto_fold_dirs: Option<bool>,
+    /// Settings related to indent guides in the outline panel.
+    pub indent_guides: Option<IndentGuidesSettingsContent>,
+    /// Scrollbar-related settings
+    pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Default depth to expand outline items in the current file.
+    /// The default depth to which outline entries are expanded on reveal.
+    /// - Set to 0 to collapse all items that have children
+    /// - Set to 1 or higher to collapse items at that depth or deeper
+    ///
+    /// Default: 100
+    pub expand_outlines_with_depth: Option<usize>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutlinePanelDockPosition {
+    Left,
+    Right,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowIndentGuides {
+    Always,
+    Never,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettingsContent {
+    /// When to show the scrollbar in the outline panel.
+    pub show: Option<ShowIndentGuides>,
 }
