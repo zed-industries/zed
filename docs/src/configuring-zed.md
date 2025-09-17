@@ -116,7 +116,7 @@ Non-negative `float` values
 
 ## Allow Rewrap
 
-- Description: Controls where the `editor::Rewrap` action is allowed in the current language scope
+- Description: Controls where the {#action editor::Rewrap} action is allowed in the current language scope
 - Setting: `allow_rewrap`
 - Default: `"in_comments"`
 
@@ -178,7 +178,7 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 
 You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions.md#installation-location):
 
-On MacOS:
+On macOS:
 
 ```sh
 ls ~/Library/Application\ Support/Zed/extensions/installed/
@@ -246,6 +246,8 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.
+
 ## Autoscroll on Clicks
 
 - Description: Whether to scroll when clicking near the edge of the visible text area.
@@ -294,7 +296,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 **Options**
 
-1. VSCode
+1. VS Code
 
 ```json
 {
@@ -326,7 +328,7 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
-5. SublimeText
+5. Sublime Text
 
 ```json
 {
@@ -683,6 +685,12 @@ List of `string` values
 
 - Description: Whether to highlight all occurrences of the selected text in an editor.
 - Setting: `selection_highlight`
+- Default: `true`
+
+## Rounded Selection
+
+- Description: Whether the text selection should have rounded corners.
+- Setting: `rounded_selection`
 - Default: `true`
 
 ## Cursor Blink
@@ -2017,6 +2025,9 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true
     },
+    "branch_picker": {
+      "show_author_name": true
+    },
     "hunk_style": "staged_hollow"
   }
 }
@@ -2148,6 +2159,36 @@ Example:
 }
 ```
 
+### Branch Picker
+
+- Description: Configuration related to the branch picker.
+- Setting: `branch_picker`
+- Default:
+
+```json
+{
+  "git": {
+    "branch_picker": {
+      "show_author_name": false
+    }
+  }
+}
+```
+
+**Options**
+
+1. Show the author name in the branch picker:
+
+```json
+{
+  "git": {
+    "branch_picker": {
+      "show_author_name": true
+    }
+  }
+}
+```
+
 ### Hunk Style
 
 - Description: What styling we should use for the diff hunks.
@@ -2186,7 +2227,7 @@ Example:
 
 ## Go to Definition Fallback
 
-- Description: What to do when the "go to definition" action fails to find a definition
+- Description: What to do when the {#action editor::GoToDefinition} action fails to find a definition
 - Setting: `go_to_definition_fallback`
 - Default: `"find_all_references"`
 
@@ -2377,7 +2418,7 @@ Example:
 
 **Options**
 
-Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
 
 ### Light
 
@@ -2387,7 +2428,7 @@ Run the `icon theme selector: toggle` action in the command palette to see a cur
 
 **Options**
 
-Run the `icon theme selector: toggle` action in the command palette to see a current list of valid icon themes names.
+Run the {#action icon_theme_selector::Toggle} action in the command palette to see a current list of valid icon themes names.
 
 ## Image Viewer
 
@@ -2463,7 +2504,7 @@ The following languages have inlay hints preconfigured by Zed:
 - [Go](https://docs.zed.dev/languages/go)
 - [Rust](https://docs.zed.dev/languages/rust)
 - [Svelte](https://docs.zed.dev/languages/svelte)
-- [Typescript](https://docs.zed.dev/languages/typescript)
+- [TypeScript](https://docs.zed.dev/languages/typescript)
 
 Use the `lsp` section for the server configuration. Examples are provided in the corresponding language documentation.
 
@@ -2693,7 +2734,7 @@ Positive `integer` values or `null` for unlimited tabs
 
 **Options**
 
-1. Maps to `Alt` on Linux and Windows and to `Option` on MacOS:
+1. Maps to `Alt` on Linux and Windows and to `Option` on macOS:
 
 ```json
 {
@@ -2701,7 +2742,7 @@ Positive `integer` values or `null` for unlimited tabs
 }
 ```
 
-2. Maps `Control` on Linux and Windows and to `Command` on MacOS:
+2. Maps `Control` on Linux and Windows and to `Command` on macOS:
 
 ```json
 {
@@ -2826,7 +2867,7 @@ Configuration object for defining settings profiles. Example:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
-  - Using the `project_panel::OpenPermanent` action
+  - Using the {#action project_panel::OpenPermanent} action
   - Editing the file
   - Dragging the file to a different pane
 
@@ -3588,7 +3629,7 @@ List of `integer` column numbers
 
 ### Terminal: Cursor Shape
 
-- Description: Whether or not selecting text in the terminal will automatically copy to the system clipboard.
+- Description: Controls the visual shape of the cursor in the terminal. When not explicitly set, it defaults to a block shape.
 - Setting: `cursor_shape`
 - Default: `null` (defaults to block)
 
@@ -3987,6 +4028,23 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
+## REPL
+
+- Description: Repl settings.
+- Setting: `repl`
+- Default:
+
+```json
+"repl": {
+  // Maximum number of columns to keep in REPL's scrollback buffer.
+  // Clamped with [20, 512] range.
+  "max_columns": 128,
+  // Maximum number of lines to keep in REPL's scrollback buffer.
+  // Clamped with [4, 256] range.
+  "max_lines": 32
+},
+```
+
 ## Theme
 
 - Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
@@ -4047,7 +4105,7 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 
 **Options**
 
-Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
 
 ### Light
 
@@ -4057,7 +4115,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 **Options**
 
-Run the `theme selector: toggle` action in the command palette to see a current list of valid themes names.
+Run the {#action theme_selector::Toggle} action in the command palette to see a current list of valid themes names.
 
 ## Title Bar
 
@@ -4067,6 +4125,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ```json
 "title_bar": {
+  "show": "always",
   "show_branch_icon": false,
   "show_branch_name": true,
   "show_project_items": true,
@@ -4388,28 +4447,6 @@ Visit [the Configuration page](./ai/configuration.md) under the AI section to le
 - `button`: Whether to show the collaboration panel button in the status bar
 - `dock`: Where to dock the collaboration panel. Can be `left` or `right`
 - `default_width`: Default width of the collaboration panel
-
-## Chat Panel
-
-- Description: Customizations for the chat panel.
-- Setting: `chat_panel`
-- Default:
-
-```json
-{
-  "chat_panel": {
-    "button": "when_in_call",
-    "dock": "right",
-    "default_width": 240
-  }
-}
-```
-
-**Options**
-
-- `button`: When to show the chat panel button in the status bar. Can be `never`, `always`, or `when_in_call`.
-- `dock`: Where to dock the chat panel. Can be 'left' or 'right'
-- `default_width`: Default width of the chat panel
 
 ## Debugger
 

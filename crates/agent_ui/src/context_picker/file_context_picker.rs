@@ -160,7 +160,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let FileMatch { mat, .. } = &self.matches[ix];
+        let FileMatch { mat, .. } = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)
@@ -330,7 +330,7 @@ pub fn render_file_context_entry(
     });
 
     let file_icon = if is_directory {
-        FileIcons::get_folder_icon(false, cx)
+        FileIcons::get_folder_icon(false, path, cx)
     } else {
         FileIcons::get_icon(path, cx)
     }

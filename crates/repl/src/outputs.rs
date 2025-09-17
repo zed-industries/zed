@@ -33,16 +33,13 @@
 //! This module is designed to work with Jupyter message protocols,
 //! interpreting and displaying various types of Jupyter output.
 
-use std::time::Duration;
-
 use editor::{Editor, MultiBuffer};
-use gpui::{
-    Animation, AnimationExt, AnyElement, ClipboardItem, Entity, Render, Transformation, WeakEntity,
-    percentage,
-};
+use gpui::{AnyElement, ClipboardItem, Entity, Render, WeakEntity};
 use language::Buffer;
 use runtimelib::{ExecutionState, JupyterMessageContent, MimeBundle, MimeType};
-use ui::{Context, IntoElement, Styled, Tooltip, Window, div, prelude::*, v_flex};
+use ui::{
+    CommonAnimationExt, Context, IntoElement, Styled, Tooltip, Window, div, prelude::*, v_flex,
+};
 
 mod image;
 use image::ImageView;
@@ -481,11 +478,7 @@ impl Render for ExecutionView {
                     Icon::new(IconName::ArrowCircle)
                         .size(IconSize::Small)
                         .color(Color::Muted)
-                        .with_animation(
-                            "arrow-circle",
-                            Animation::new(Duration::from_secs(3)).repeat(),
-                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                        ),
+                        .with_rotate_animation(3),
                 )
                 .child(Label::new("Executing...").color(Color::Muted))
                 .into_any_element(),

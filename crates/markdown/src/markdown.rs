@@ -69,6 +69,7 @@ pub struct MarkdownStyle {
     pub heading_level_styles: Option<HeadingLevelStyles>,
     pub table_overflow_x_scroll: bool,
     pub height_is_multiple_of_line_height: bool,
+    pub prevent_mouse_interaction: bool,
 }
 
 impl Default for MarkdownStyle {
@@ -89,6 +90,7 @@ impl Default for MarkdownStyle {
             heading_level_styles: None,
             table_overflow_x_scroll: false,
             height_is_multiple_of_line_height: false,
+            prevent_mouse_interaction: false,
         }
     }
 }
@@ -575,16 +577,22 @@ impl MarkdownElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if self.style.prevent_mouse_interaction {
+            return;
+        }
+
         let is_hovering_link = hitbox.is_hovered(window)
             && !self.markdown.read(cx).selection.pending
             && rendered_text
                 .link_for_position(window.mouse_position())
                 .is_some();
 
-        if is_hovering_link {
-            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
-        } else {
-            window.set_cursor_style(CursorStyle::IBeam, hitbox);
+        if !self.style.prevent_mouse_interaction {
+            if is_hovering_link {
+                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            } else {
+                window.set_cursor_style(CursorStyle::IBeam, hitbox);
+            }
         }
 
         let on_open_url = self.on_url_click.take();
@@ -1071,7 +1079,7 @@ impl Element for MarkdownElement {
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
-                                    parsed_markdown.source()[range.clone()].trim(),
+                                    &parsed_markdown.source()[range.clone()],
                                 );
                                 let content_range = content_range.start + range.start
                                     ..content_range.end + range.start;
@@ -1102,7 +1110,7 @@ impl Element for MarkdownElement {
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
-                                    parsed_markdown.source()[range.clone()].trim(),
+                                    &parsed_markdown.source()[range.clone()],
                                 );
                                 let content_range = content_range.start + range.start
                                     ..content_range.end + range.start;

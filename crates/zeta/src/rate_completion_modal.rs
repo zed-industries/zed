@@ -291,7 +291,7 @@ impl RateCompletionModal {
                 editor.set_show_wrap_guides(false, cx);
                 editor.set_show_indent_guides(false, cx);
                 editor.set_show_edit_predictions(Some(false), window, cx);
-                editor.set_placeholder_text("Add your feedback…", cx);
+                editor.set_placeholder_text("Add your feedback…", window, cx);
                 if focus {
                     cx.focus_self(window);
                 }

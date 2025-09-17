@@ -128,10 +128,12 @@ impl ContextMenuEntry {
     pub fn documentation_aside(
         mut self,
         side: DocumentationSide,
+        edge: DocumentationEdge,
         render: impl Fn(&mut App) -> AnyElement + 'static,
     ) -> Self {
         self.documentation_aside = Some(DocumentationAside {
             side,
+            edge,
             render: Rc::new(render),
         });
 
@@ -161,7 +163,6 @@ pub struct ContextMenu {
     keep_open_on_confirm: bool,
     documentation_aside: Option<(usize, DocumentationAside)>,
     fixed_width: Option<DefiniteLength>,
-    align_popover_top: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -170,15 +171,27 @@ pub enum DocumentationSide {
     Right,
 }
 
+#[derive(Copy, Default, Clone, PartialEq, Eq)]
+pub enum DocumentationEdge {
+    #[default]
+    Top,
+    Bottom,
+}
+
 #[derive(Clone)]
 pub struct DocumentationAside {
     side: DocumentationSide,
+    edge: DocumentationEdge,
     render: Rc<dyn Fn(&mut App) -> AnyElement>,
 }
 
 impl DocumentationAside {
-    pub fn new(side: DocumentationSide, render: Rc<dyn Fn(&mut App) -> AnyElement>) -> Self {
-        Self { side, render }
+    pub fn new(
+        side: DocumentationSide,
+        edge: DocumentationEdge,
+        render: Rc<dyn Fn(&mut App) -> AnyElement>,
+    ) -> Self {
+        Self { side, edge, render }
     }
 }
 
@@ -218,7 +231,6 @@ impl ContextMenu {
                     key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: false,
-                    align_popover_top: true,
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
@@ -261,7 +273,6 @@ impl ContextMenu {
                     key_context: "menu".into(),
                     _on_blur_subscription,
                     keep_open_on_confirm: true,
-                    align_popover_top: true,
                     documentation_aside: None,
                     fixed_width: None,
                     end_slot_action: None,
@@ -302,7 +313,6 @@ impl ContextMenu {
                     |this: &mut ContextMenu, window, cx| this.cancel(&menu::Cancel, window, cx),
                 ),
                 keep_open_on_confirm: false,
-                align_popover_top: true,
                 documentation_aside: None,
                 fixed_width: None,
                 end_slot_action: None,
@@ -788,11 +798,6 @@ impl ContextMenu {
         self
     }
 
-    pub fn align_popover_bottom(mut self) -> Self {
-        self.align_popover_top = false;
-        self
-    }
-
     fn render_menu_item(
         &self,
         ix: usize,
@@ -1102,6 +1107,7 @@ impl Render for ContextMenu {
             WithRemSize::new(ui_font_size)
                 .occlude()
                 .elevation_2(cx)
+                .w_full()
                 .p_2()
                 .overflow_hidden()
                 .when(is_wide_window, |this| this.max_w_96())
@@ -1109,31 +1115,19 @@ impl Render for ContextMenu {
                 .child((aside.render)(cx))
         };
 
-        h_flex()
-            .when(is_wide_window, |this| this.flex_row())
-            .when(!is_wide_window, |this| this.flex_col())
-            .w_full()
-            .map(|div| {
-                if self.align_popover_top {
-                    div.items_start()
-                } else {
-                    div.items_end()
-                }
-            })
-            .gap_1()
-            .child(div().children(aside.clone().and_then(|(_, aside)| {
-                (aside.side == DocumentationSide::Left).then(|| render_aside(aside, cx))
-            })))
-            .child(
+        let render_menu =
+            |cx: &mut Context<Self>, window: &mut Window| {
                 WithRemSize::new(ui_font_size)
                     .occlude()
                     .elevation_2(cx)
                     .flex()
                     .flex_row()
+                    .flex_shrink_0()
                     .child(
                         v_flex()
                             .id("context-menu")
                             .max_h(vh(0.75, window))
+                            .flex_shrink_0()
                             .when_some(self.fixed_width, |this, width| {
                                 this.w(width).overflow_x_hidden()
                             })
@@ -1178,11 +1172,36 @@ impl Render for ContextMenu {
                                     }),
                                 ),
                             ),
-                    ),
-            )
-            .child(div().children(aside.and_then(|(_, aside)| {
-                (aside.side == DocumentationSide::Right).then(|| render_aside(aside, cx))
-            })))
+                    )
+            };
+
+        if is_wide_window {
+            div()
+                .relative()
+                .child(render_menu(cx, window))
+                .children(aside.map(|(_item_index, aside)| {
+                    h_flex()
+                        .absolute()
+                        .when(aside.side == DocumentationSide::Left, |this| {
+                            this.right_full().mr_1()
+                        })
+                        .when(aside.side == DocumentationSide::Right, |this| {
+                            this.left_full().ml_1()
+                        })
+                        .when(aside.edge == DocumentationEdge::Top, |this| this.top_0())
+                        .when(aside.edge == DocumentationEdge::Bottom, |this| {
+                            this.bottom_0()
+                        })
+                        .child(render_aside(aside, cx))
+                }))
+        } else {
+            v_flex()
+                .w_full()
+                .gap_1()
+                .justify_end()
+                .children(aside.map(|(_, aside)| render_aside(aside, cx)))
+                .child(render_menu(cx, window))
+        }
     }
 }
 

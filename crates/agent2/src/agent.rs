@@ -2,7 +2,7 @@ use crate::{
     ContextServerRegistry, Thread, ThreadEvent, ThreadsDatabase, ToolCallAuthorization,
     UserMessageContent, templates::Templates,
 };
-use crate::{HistoryStore, TitleUpdated, TokenUsageUpdated};
+use crate::{HistoryStore, TerminalHandle, ThreadEnvironment, TitleUpdated, TokenUsageUpdated};
 use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
@@ -10,7 +10,8 @@ use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
+use futures::future::Shared;
 use futures::{StreamExt, future};
 use gpui::{
     App, AppContext, AsyncApp, Context, Entity, SharedString, Subscription, Task, WeakEntity,
@@ -23,7 +24,7 @@ use prompt_store::{
 use settings::update_settings_file;
 use std::any::Any;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
@@ -165,33 +166,41 @@ impl LanguageModels {
         cx.background_spawn(async move {
             for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
                 if let Err(err) = authenticate_task.await {
-                    if matches!(err, language_model::AuthenticateError::CredentialsNotFound) {
-                        // Since we're authenticating these providers in the
-                        // background for the purposes of populating the
-                        // language selector, we don't care about providers
-                        // where the credentials are not found.
-                    } else {
-                        // Some providers have noisy failure states that we
-                        // don't want to spam the logs with every time the
-                        // language model selector is initialized.
-                        //
-                        // Ideally these should have more clear failure modes
-                        // that we know are safe to ignore here, like what we do
-                        // with `CredentialsNotFound` above.
-                        match provider_id.0.as_ref() {
-                            "lmstudio" | "ollama" => {
-                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
-                                //
-                                // These fail noisily, so we don't log them.
-                            }
-                            "copilot_chat" => {
-                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
-                            }
-                            _ => {
-                                log::error!(
-                                    "Failed to authenticate provider: {}: {err}",
-                                    provider_name.0
-                                );
+                    match err {
+                        language_model::AuthenticateError::CredentialsNotFound => {
+                            // Since we're authenticating these providers in the
+                            // background for the purposes of populating the
+                            // language selector, we don't care about providers
+                            // where the credentials are not found.
+                        }
+                        language_model::AuthenticateError::ConnectionRefused => {
+                            // Not logging connection refused errors as they are mostly from LM Studio's noisy auth failures.
+                            // LM Studio only has one auth method (endpoint call) which fails for users who haven't enabled it.
+                            // TODO: Better manage LM Studio auth logic to avoid these noisy failures.
+                        }
+                        _ => {
+                            // Some providers have noisy failure states that we
+                            // don't want to spam the logs with every time the
+                            // language model selector is initialized.
+                            //
+                            // Ideally these should have more clear failure modes
+                            // that we know are safe to ignore here, like what we do
+                            // with `CredentialsNotFound` above.
+                            match provider_id.0.as_ref() {
+                                "lmstudio" | "ollama" => {
+                                    // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                    //
+                                    // These fail noisily, so we don't log them.
+                                }
+                                "copilot_chat" => {
+                                    // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                                }
+                                _ => {
+                                    log::error!(
+                                        "Failed to authenticate provider: {}: {err}",
+                                        provider_name.0
+                                    );
+                                }
                             }
                         }
                     }
@@ -276,13 +285,6 @@ impl NativeAgent {
         cx: &mut Context<Self>,
     ) -> Entity<AcpThread> {
         let connection = Rc::new(NativeAgentConnection(cx.entity()));
-        let registry = LanguageModelRegistry::read_global(cx);
-        let summarization_model = registry.thread_summary_model().map(|c| c.model);
-
-        thread_handle.update(cx, |thread, cx| {
-            thread.set_summarization_model(summarization_model, cx);
-            thread.add_default_tools(cx)
-        });
 
         let thread = thread_handle.read(cx);
         let session_id = thread.id().clone();
@@ -301,6 +303,20 @@ impl NativeAgent {
                 cx,
             )
         });
+
+        let registry = LanguageModelRegistry::read_global(cx);
+        let summarization_model = registry.thread_summary_model().map(|c| c.model);
+
+        thread_handle.update(cx, |thread, cx| {
+            thread.set_summarization_model(summarization_model, cx);
+            thread.add_default_tools(
+                Rc::new(AcpThreadEnvironment {
+                    acp_thread: acp_thread.downgrade(),
+                }) as _,
+                cx,
+            )
+        });
+
         let subscriptions = vec![
             cx.observe_release(&acp_thread, |this, acp_thread, _cx| {
                 this.sessions.remove(acp_thread.session_id());
@@ -739,6 +755,7 @@ impl NativeAgentConnection {
                                         acp::ContentBlock::Text(acp::TextContent {
                                             text,
                                             annotations: None,
+                                            meta: None,
                                         }),
                                         false,
                                         cx,
@@ -751,6 +768,7 @@ impl NativeAgentConnection {
                                         acp::ContentBlock::Text(acp::TextContent {
                                             text,
                                             annotations: None,
+                                            meta: None,
                                         }),
                                         true,
                                         cx,
@@ -763,7 +781,9 @@ impl NativeAgentConnection {
                                 response,
                             }) => {
                                 let outcome_task = acp_thread.update(cx, |thread, cx| {
-                                    thread.request_tool_call_authorization(tool_call, options, cx)
+                                    thread.request_tool_call_authorization(
+                                        tool_call, options, true, cx,
+                                    )
                                 })??;
                                 cx.background_spawn(async move {
                                     if let acp::RequestPermissionOutcome::Selected { option_id } =
@@ -794,7 +814,10 @@ impl NativeAgentConnection {
                             }
                             ThreadEvent::Stop(stop_reason) => {
                                 log::debug!("Assistant message complete: {:?}", stop_reason);
-                                return Ok(acp::PromptResponse { stop_reason });
+                                return Ok(acp::PromptResponse {
+                                    stop_reason,
+                                    meta: None,
+                                });
                             }
                         }
                     }
@@ -808,6 +831,7 @@ impl NativeAgentConnection {
             log::debug!("Response stream completed");
             anyhow::Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::EndTurn,
+                meta: None,
             })
         })
     }
@@ -1001,7 +1025,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     ) -> Option<Rc<dyn acp_thread::AgentSessionTruncate>> {
         self.0.read_with(cx, |agent, _cx| {
             agent.sessions.get(session_id).map(|session| {
-                Rc::new(NativeAgentSessionEditor {
+                Rc::new(NativeAgentSessionTruncate {
                     thread: session.thread.clone(),
                     acp_thread: session.acp_thread.clone(),
                 }) as _
@@ -1050,12 +1074,12 @@ impl acp_thread::AgentTelemetry for NativeAgentConnection {
     }
 }
 
-struct NativeAgentSessionEditor {
+struct NativeAgentSessionTruncate {
     thread: Entity<Thread>,
     acp_thread: WeakEntity<AcpThread>,
 }
 
-impl acp_thread::AgentSessionTruncate for NativeAgentSessionEditor {
+impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
     fn run(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
         match self.thread.update(cx, |thread, cx| {
             thread.truncate(message_id.clone(), cx)?;
@@ -1101,6 +1125,66 @@ impl acp_thread::AgentSessionSetTitle for NativeAgentSessionSetTitle {
         let thread = session.thread.clone();
         thread.update(cx, |thread, cx| thread.set_title(title, cx));
         Task::ready(Ok(()))
+    }
+}
+
+pub struct AcpThreadEnvironment {
+    acp_thread: WeakEntity<AcpThread>,
+}
+
+impl ThreadEnvironment for AcpThreadEnvironment {
+    fn create_terminal(
+        &self,
+        command: String,
+        cwd: Option<PathBuf>,
+        output_byte_limit: Option<u64>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Rc<dyn TerminalHandle>>> {
+        let task = self.acp_thread.update(cx, |thread, cx| {
+            thread.create_terminal(command, vec![], vec![], cwd, output_byte_limit, cx)
+        });
+
+        let acp_thread = self.acp_thread.clone();
+        cx.spawn(async move |cx| {
+            let terminal = task?.await?;
+
+            let (drop_tx, drop_rx) = oneshot::channel();
+            let terminal_id = terminal.read_with(cx, |terminal, _cx| terminal.id().clone())?;
+
+            cx.spawn(async move |cx| {
+                drop_rx.await.ok();
+                acp_thread.update(cx, |thread, cx| thread.release_terminal(terminal_id, cx))
+            })
+            .detach();
+
+            let handle = AcpTerminalHandle {
+                terminal,
+                _drop_tx: Some(drop_tx),
+            };
+
+            Ok(Rc::new(handle) as _)
+        })
+    }
+}
+
+pub struct AcpTerminalHandle {
+    terminal: Entity<acp_thread::Terminal>,
+    _drop_tx: Option<oneshot::Sender<()>>,
+}
+
+impl TerminalHandle for AcpTerminalHandle {
+    fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId> {
+        self.terminal.read_with(cx, |term, _cx| term.id().clone())
+    }
+
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>> {
+        self.terminal
+            .read_with(cx, |term, _cx| term.wait_for_exit())
+    }
+
+    fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse> {
+        self.terminal
+            .read_with(cx, |term, cx| term.current_output(cx))
     }
 }
 
@@ -1371,6 +1455,7 @@ mod tests {
                         mime_type: None,
                         size: None,
                         title: None,
+                        meta: None,
                     }),
                     " mean?".into(),
                 ],

@@ -1,8 +1,9 @@
-use editor::ShowScrollbar;
-use gpui::Pixels;
+use editor::EditorSettings;
+use gpui::{App, Pixels};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -18,7 +19,7 @@ pub enum ShowIndentGuides {
     Never,
 }
 
-#[derive(Deserialize, Debug, Clone, Copy, PartialEq, SettingsUi)]
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct OutlinePanelSettings {
     pub button: bool,
     pub default_width: Pixels,
@@ -61,7 +62,8 @@ pub struct IndentGuidesSettingsContent {
     pub show: Option<ShowIndentGuides>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "outline_panel")]
 pub struct OutlinePanelSettingsContent {
     /// Whether to show the outline panel button in the status bar.
     ///
@@ -115,9 +117,15 @@ pub struct OutlinePanelSettingsContent {
     pub expand_outlines_with_depth: Option<usize>,
 }
 
-impl Settings for OutlinePanelSettings {
-    const KEY: Option<&'static str> = Some("outline_panel");
+impl ScrollbarVisibility for OutlinePanelSettings {
+    fn visibility(&self, cx: &App) -> ShowScrollbar {
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
+}
 
+impl Settings for OutlinePanelSettings {
     type FileContent = OutlinePanelSettingsContent;
 
     fn load(

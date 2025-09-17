@@ -22,7 +22,7 @@ use futures::{
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
-use http_client::{HttpClient, HttpClientWithUrl, http};
+use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -31,7 +31,7 @@ use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -96,19 +96,18 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ClientSettingsContent {
     server_url: Option<String>,
 }
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct ClientSettings {
     pub server_url: String,
 }
 
 impl Settings for ClientSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = ClientSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -122,19 +121,32 @@ impl Settings for ClientSettings {
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ProxySettingsContent {
     proxy: Option<String>,
 }
 
-#[derive(Deserialize, Default, SettingsUi)]
+#[derive(Deserialize, Default)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
 }
 
-impl Settings for ProxySettings {
-    const KEY: Option<&'static str> = None;
+impl ProxySettings {
+    pub fn proxy_url(&self) -> Option<Url> {
+        self.proxy
+            .as_ref()
+            .and_then(|input| {
+                input
+                    .parse::<Url>()
+                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                    .ok()
+            })
+            .or_else(read_proxy_from_env)
+    }
+}
 
+impl Settings for ProxySettings {
     type FileContent = ProxySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -520,14 +532,15 @@ impl<T: 'static> Drop for PendingEntitySubscription<T> {
     }
 }
 
-#[derive(Copy, Clone, Deserialize, Debug, SettingsUi)]
+#[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TelemetrySettings {
     pub diagnostics: bool,
     pub metrics: bool,
 }
 
 /// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "telemetry")]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -540,8 +553,6 @@ pub struct TelemetrySettingsContent {
 }
 
 impl settings::Settings for TelemetrySettings {
-    const KEY: Option<&'static str> = Some("telemetry");
-
     type FileContent = TelemetrySettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -691,7 +702,7 @@ impl Client {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
                     #[cfg(not(any(test, feature = "test-support")))]
-                    let mut rng = StdRng::from_entropy();
+                    let mut rng = StdRng::from_os_rng();
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
@@ -721,8 +732,9 @@ impl Client {
                                 },
                                 cx,
                             );
-                            let jitter =
-                                Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
+                            let jitter = Duration::from_millis(
+                                rng.random_range(0..delay.as_millis() as u64),
+                            );
                             cx.background_executor().timer(delay + jitter).await;
                             delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
                         } else {

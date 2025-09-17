@@ -33,6 +33,11 @@ pub fn remote_server_dir_relative() -> &'static Path {
     Path::new(".zed_server")
 }
 
+/// Returns the relative path to the zed_wsl_server directory on the wsl host.
+pub fn remote_wsl_server_dir_relative() -> &'static Path {
+    Path::new(".zed_wsl_server")
+}
+
 /// Sets a custom directory for all user data, overriding the default data directory.
 /// This function must be called before any other path operations that depend on the data directory.
 /// The directory's path will be canonicalized to an absolute path by a blocking FS operation.
@@ -514,4 +519,17 @@ fn add_vscode_user_data_paths(paths: &mut Vec<PathBuf>, product_name: &str) {
                 .join(product_name),
         );
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn global_gitignore_path() -> Option<PathBuf> {
+    Some(home_dir().join(".config").join("git").join("ignore"))
+}
+
+#[cfg(not(any(test, feature = "test-support")))]
+pub fn global_gitignore_path() -> Option<PathBuf> {
+    static GLOBAL_GITIGNORE_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    GLOBAL_GITIGNORE_PATH
+        .get_or_init(::ignore::gitignore::gitconfig_excludes_path)
+        .clone()
 }

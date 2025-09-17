@@ -1,7 +1,6 @@
 use crate::{Keep, KeepAll, OpenAgentDiff, Reject, RejectAll};
 use acp_thread::{AcpThread, AcpThreadEvent};
 use action_log::ActionLog;
-use agent::{Thread, ThreadEvent, ThreadSummary};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
@@ -14,13 +13,11 @@ use editor::{
     scroll::Autoscroll,
 };
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, AnyView, App, AppContext, Empty, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, SharedString, Subscription, Task, Transformation,
-    WeakEntity, Window, percentage, prelude::*,
+    Action, AnyElement, AnyView, App, AppContext, Empty, Entity, EventEmitter, FocusHandle,
+    Focusable, Global, SharedString, Subscription, Task, WeakEntity, Window, prelude::*,
 };
 
 use language::{Buffer, Capability, DiskState, OffsetRangeExt, Point};
-use language_model::StopReason;
 use multi_buffer::PathKey;
 use project::{Project, ProjectItem, ProjectPath};
 use settings::{Settings, SettingsStore};
@@ -29,9 +26,8 @@ use std::{
     collections::hash_map::Entry,
     ops::Range,
     sync::Arc,
-    time::Duration,
 };
-use ui::{IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
 use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -53,34 +49,29 @@ pub struct AgentDiffPane {
 
 #[derive(PartialEq, Eq, Clone)]
 pub enum AgentDiffThread {
-    Native(Entity<Thread>),
     AcpThread(Entity<AcpThread>),
 }
 
 impl AgentDiffThread {
     fn project(&self, cx: &App) -> Entity<Project> {
         match self {
-            AgentDiffThread::Native(thread) => thread.read(cx).project().clone(),
             AgentDiffThread::AcpThread(thread) => thread.read(cx).project().clone(),
         }
     }
     fn action_log(&self, cx: &App) -> Entity<ActionLog> {
         match self {
-            AgentDiffThread::Native(thread) => thread.read(cx).action_log().clone(),
             AgentDiffThread::AcpThread(thread) => thread.read(cx).action_log().clone(),
         }
     }
 
-    fn summary(&self, cx: &App) -> ThreadSummary {
+    fn title(&self, cx: &App) -> SharedString {
         match self {
-            AgentDiffThread::Native(thread) => thread.read(cx).summary().clone(),
-            AgentDiffThread::AcpThread(thread) => ThreadSummary::Ready(thread.read(cx).title()),
+            AgentDiffThread::AcpThread(thread) => thread.read(cx).title(),
         }
     }
 
     fn is_generating(&self, cx: &App) -> bool {
         match self {
-            AgentDiffThread::Native(thread) => thread.read(cx).is_generating(),
             AgentDiffThread::AcpThread(thread) => {
                 thread.read(cx).status() == acp_thread::ThreadStatus::Generating
             }
@@ -89,24 +80,16 @@ impl AgentDiffThread {
 
     fn has_pending_edit_tool_uses(&self, cx: &App) -> bool {
         match self {
-            AgentDiffThread::Native(thread) => thread.read(cx).has_pending_edit_tool_uses(),
             AgentDiffThread::AcpThread(thread) => thread.read(cx).has_pending_edit_tool_calls(),
         }
     }
 
     fn downgrade(&self) -> WeakAgentDiffThread {
         match self {
-            AgentDiffThread::Native(thread) => WeakAgentDiffThread::Native(thread.downgrade()),
             AgentDiffThread::AcpThread(thread) => {
                 WeakAgentDiffThread::AcpThread(thread.downgrade())
             }
         }
-    }
-}
-
-impl From<Entity<Thread>> for AgentDiffThread {
-    fn from(entity: Entity<Thread>) -> Self {
-        AgentDiffThread::Native(entity)
     }
 }
 
@@ -118,22 +101,14 @@ impl From<Entity<AcpThread>> for AgentDiffThread {
 
 #[derive(PartialEq, Eq, Clone)]
 pub enum WeakAgentDiffThread {
-    Native(WeakEntity<Thread>),
     AcpThread(WeakEntity<AcpThread>),
 }
 
 impl WeakAgentDiffThread {
     pub fn upgrade(&self) -> Option<AgentDiffThread> {
         match self {
-            WeakAgentDiffThread::Native(weak) => weak.upgrade().map(AgentDiffThread::Native),
             WeakAgentDiffThread::AcpThread(weak) => weak.upgrade().map(AgentDiffThread::AcpThread),
         }
-    }
-}
-
-impl From<WeakEntity<Thread>> for WeakAgentDiffThread {
-    fn from(entity: WeakEntity<Thread>) -> Self {
-        WeakAgentDiffThread::Native(entity)
     }
 }
 
@@ -205,10 +180,6 @@ impl AgentDiffPane {
                     this.update_excerpts(window, cx)
                 }),
                 match &thread {
-                    AgentDiffThread::Native(thread) => cx
-                        .subscribe(thread, |this, _thread, event, cx| {
-                            this.handle_native_thread_event(event, cx)
-                        }),
                     AgentDiffThread::AcpThread(thread) => cx
                         .subscribe(thread, |this, _thread, event, cx| {
                             this.handle_acp_thread_event(event, cx)
@@ -315,16 +286,10 @@ impl AgentDiffPane {
     }
 
     fn update_title(&mut self, cx: &mut Context<Self>) {
-        let new_title = self.thread.summary(cx).unwrap_or("Agent Changes");
+        let new_title = self.thread.title(cx);
         if new_title != self.title {
             self.title = new_title;
             cx.emit(EditorEvent::TitleChanged);
-        }
-    }
-
-    fn handle_native_thread_event(&mut self, event: &ThreadEvent, cx: &mut Context<Self>) {
-        if let ThreadEvent::SummaryGenerated = event {
-            self.update_title(cx)
         }
     }
 
@@ -571,8 +536,8 @@ impl Item for AgentDiffPane {
     }
 
     fn tab_content(&self, params: TabContentParams, _window: &Window, cx: &App) -> AnyElement {
-        let summary = self.thread.summary(cx).unwrap_or("Agent Changes");
-        Label::new(format!("Review: {}", summary))
+        let title = self.thread.title(cx);
+        Label::new(format!("Review: {}", title))
             .color(if params.selected {
                 Color::Default
             } else {
@@ -1084,11 +1049,7 @@ impl Render for AgentDiffToolbar {
                 Icon::new(IconName::LoadCircle)
                     .size(IconSize::Small)
                     .color(Color::Accent)
-                    .with_animation(
-                        "load_circle",
-                        Animation::new(Duration::from_secs(3)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    ),
+                    .with_rotate_animation(3),
             )
             .into_any();
 
@@ -1345,12 +1306,6 @@ impl AgentDiff {
         });
 
         let thread_subscription = match &thread {
-            AgentDiffThread::Native(thread) => cx.subscribe_in(thread, window, {
-                let workspace = workspace.clone();
-                move |this, _thread, event, window, cx| {
-                    this.handle_native_thread_event(&workspace, event, window, cx)
-                }
-            }),
             AgentDiffThread::AcpThread(thread) => cx.subscribe_in(thread, window, {
                 let workspace = workspace.clone();
                 move |this, thread, event, window, cx| {
@@ -1453,47 +1408,6 @@ impl AgentDiff {
         });
     }
 
-    fn handle_native_thread_event(
-        &mut self,
-        workspace: &WeakEntity<Workspace>,
-        event: &ThreadEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            ThreadEvent::NewRequest
-            | ThreadEvent::Stopped(Ok(StopReason::EndTurn))
-            | ThreadEvent::Stopped(Ok(StopReason::MaxTokens))
-            | ThreadEvent::Stopped(Ok(StopReason::Refusal))
-            | ThreadEvent::Stopped(Err(_))
-            | ThreadEvent::ShowError(_)
-            | ThreadEvent::CompletionCanceled => {
-                self.update_reviewing_editors(workspace, window, cx);
-            }
-            // intentionally being exhaustive in case we add a variant we should handle
-            ThreadEvent::Stopped(Ok(StopReason::ToolUse))
-            | ThreadEvent::StreamedCompletion
-            | ThreadEvent::ReceivedTextChunk
-            | ThreadEvent::StreamedAssistantText(_, _)
-            | ThreadEvent::StreamedAssistantThinking(_, _)
-            | ThreadEvent::StreamedToolUse { .. }
-            | ThreadEvent::InvalidToolInput { .. }
-            | ThreadEvent::MissingToolUse { .. }
-            | ThreadEvent::MessageAdded(_)
-            | ThreadEvent::MessageEdited(_)
-            | ThreadEvent::MessageDeleted(_)
-            | ThreadEvent::SummaryGenerated
-            | ThreadEvent::SummaryChanged
-            | ThreadEvent::UsePendingTools { .. }
-            | ThreadEvent::ToolFinished { .. }
-            | ThreadEvent::CheckpointChanged
-            | ThreadEvent::ToolConfirmationNeeded
-            | ThreadEvent::ToolUseLimitReached
-            | ThreadEvent::CancelEditing
-            | ThreadEvent::ProfileChanged => {}
-        }
-    }
-
     fn handle_acp_thread_event(
         &mut self,
         workspace: &WeakEntity<Workspace>,
@@ -1523,7 +1437,10 @@ impl AgentDiff {
                     self.update_reviewing_editors(workspace, window, cx);
                 }
             }
-            AcpThreadEvent::Stopped | AcpThreadEvent::Error | AcpThreadEvent::LoadError(_) => {
+            AcpThreadEvent::Stopped
+            | AcpThreadEvent::Error
+            | AcpThreadEvent::LoadError(_)
+            | AcpThreadEvent::Refusal => {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
@@ -1531,7 +1448,9 @@ impl AgentDiff {
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequired
             | AcpThreadEvent::PromptCapabilitiesUpdated
-            | AcpThreadEvent::Retry(_) => {}
+            | AcpThreadEvent::AvailableCommandsUpdated(_)
+            | AcpThreadEvent::Retry(_)
+            | AcpThreadEvent::ModeUpdated(_) => {}
         }
     }
 
@@ -1891,16 +1810,14 @@ impl editor::Addon for EditorAgentDiffAddon {
 mod tests {
     use super::*;
     use crate::Keep;
-    use agent::thread_store::{self, ThreadStore};
+    use acp_thread::AgentConnection as _;
     use agent_settings::AgentSettings;
-    use assistant_tool::ToolWorkingSet;
     use editor::EditorSettings;
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{FakeFs, Project};
-    use prompt_store::PromptBuilder;
     use serde_json::json;
     use settings::{Settings, SettingsStore};
-    use std::sync::Arc;
+    use std::{path::Path, rc::Rc};
     use theme::ThemeSettings;
     use util::path;
 
@@ -1913,7 +1830,6 @@ mod tests {
             Project::init_settings(cx);
             AgentSettings::register(cx);
             prompt_store::init(cx);
-            thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
             EditorSettings::register(cx);
@@ -1933,21 +1849,17 @@ mod tests {
             })
             .unwrap();
 
-        let prompt_store = None;
-        let thread_store = cx
+        let connection = Rc::new(acp_thread::StubAgentConnection::new());
+        let thread = cx
             .update(|cx| {
-                ThreadStore::load(
-                    project.clone(),
-                    cx.new(|_| ToolWorkingSet::default()),
-                    prompt_store,
-                    Arc::new(PromptBuilder::new(None).unwrap()),
-                    cx,
-                )
+                connection
+                    .clone()
+                    .new_thread(project.clone(), Path::new(path!("/test")), cx)
             })
             .await
             .unwrap();
-        let thread =
-            AgentDiffThread::Native(thread_store.update(cx, |store, cx| store.create_thread(cx)));
+
+        let thread = AgentDiffThread::AcpThread(thread);
         let action_log = cx.read(|cx| thread.action_log(cx));
 
         let (workspace, cx) =
@@ -2070,7 +1982,6 @@ mod tests {
             Project::init_settings(cx);
             AgentSettings::register(cx);
             prompt_store::init(cx);
-            thread_store::init(cx);
             workspace::init_settings(cx);
             ThemeSettings::register(cx);
             EditorSettings::register(cx);
@@ -2099,22 +2010,6 @@ mod tests {
             })
             .unwrap();
 
-        let prompt_store = None;
-        let thread_store = cx
-            .update(|cx| {
-                ThreadStore::load(
-                    project.clone(),
-                    cx.new(|_| ToolWorkingSet::default()),
-                    prompt_store,
-                    Arc::new(PromptBuilder::new(None).unwrap()),
-                    cx,
-                )
-            })
-            .await
-            .unwrap();
-        let thread = thread_store.update(cx, |store, cx| store.create_thread(cx));
-        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
-
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
@@ -2133,8 +2028,19 @@ mod tests {
             }
         });
 
+        let connection = Rc::new(acp_thread::StubAgentConnection::new());
+        let thread = cx
+            .update(|_, cx| {
+                connection
+                    .clone()
+                    .new_thread(project.clone(), Path::new(path!("/test")), cx)
+            })
+            .await
+            .unwrap();
+        let action_log = thread.read_with(cx, |thread, _| thread.action_log().clone());
+
         // Set the active thread
-        let thread = AgentDiffThread::Native(thread);
+        let thread = AgentDiffThread::AcpThread(thread);
         cx.update(|window, cx| {
             AgentDiff::set_active_thread(&workspace.downgrade(), thread.clone(), window, cx)
         });

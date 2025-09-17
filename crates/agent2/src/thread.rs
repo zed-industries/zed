@@ -45,14 +45,15 @@ use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, update_settings_file};
 use smol::stream::StreamExt;
-use std::fmt::Write;
 use std::{
     collections::BTreeMap,
     ops::RangeInclusive,
     path::Path,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
+use std::{fmt::Write, path::PathBuf};
 use util::{ResultExt, debug_panic, markdown::MarkdownCodeBlock};
 use uuid::Uuid;
 
@@ -523,6 +524,22 @@ pub enum AgentMessageContent {
     ToolUse(LanguageModelToolUse),
 }
 
+pub trait TerminalHandle {
+    fn id(&self, cx: &AsyncApp) -> Result<acp::TerminalId>;
+    fn current_output(&self, cx: &AsyncApp) -> Result<acp::TerminalOutputResponse>;
+    fn wait_for_exit(&self, cx: &AsyncApp) -> Result<Shared<Task<acp::TerminalExitStatus>>>;
+}
+
+pub trait ThreadEnvironment {
+    fn create_terminal(
+        &self,
+        command: String,
+        cwd: Option<PathBuf>,
+        output_byte_limit: Option<u64>,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<Rc<dyn TerminalHandle>>>;
+}
+
 #[derive(Debug)]
 pub enum ThreadEvent {
     UserMessage(UserMessage),
@@ -533,6 +550,14 @@ pub enum ThreadEvent {
     ToolCallAuthorization(ToolCallAuthorization),
     Retry(acp_thread::RetryStatus),
     Stop(acp::StopReason),
+}
+
+#[derive(Debug)]
+pub struct NewTerminal {
+    pub command: String,
+    pub output_byte_limit: Option<u64>,
+    pub cwd: Option<PathBuf>,
+    pub response: oneshot::Sender<Result<Entity<acp_thread::Terminal>>>,
 }
 
 #[derive(Debug)]
@@ -589,6 +614,7 @@ impl Thread {
     fn prompt_capabilities(model: Option<&dyn LanguageModel>) -> acp::PromptCapabilities {
         let image = model.map_or(true, |model| model.supports_images());
         acp::PromptCapabilities {
+            meta: None,
             image,
             audio: false,
             embedded_context: true,
@@ -703,6 +729,7 @@ impl Thread {
             stream
                 .0
                 .unbounded_send(Ok(ThreadEvent::ToolCall(acp::ToolCall {
+                    meta: None,
                     id: acp::ToolCallId(tool_use.id.to_string().into()),
                     title: tool_use.name.to_string(),
                     kind: acp::ToolKind::Other,
@@ -716,7 +743,7 @@ impl Thread {
             return;
         };
 
-        let title = tool.initial_title(tool_use.input.clone());
+        let title = tool.initial_title(tool_use.input.clone(), cx);
         let kind = tool.kind();
         stream.send_tool_call(&tool_use.id, title, kind, tool_use.input.clone());
 
@@ -1024,7 +1051,11 @@ impl Thread {
         }
     }
 
-    pub fn add_default_tools(&mut self, cx: &mut Context<Self>) {
+    pub fn add_default_tools(
+        &mut self,
+        environment: Rc<dyn ThreadEnvironment>,
+        cx: &mut Context<Self>,
+    ) {
         let language_registry = self.project.read(cx).languages().clone();
         self.add_tool(CopyPathTool::new(self.project.clone()));
         self.add_tool(CreateDirectoryTool::new(self.project.clone()));
@@ -1033,7 +1064,11 @@ impl Thread {
             self.action_log.clone(),
         ));
         self.add_tool(DiagnosticsTool::new(self.project.clone()));
-        self.add_tool(EditFileTool::new(cx.weak_entity(), language_registry));
+        self.add_tool(EditFileTool::new(
+            self.project.clone(),
+            cx.weak_entity(),
+            language_registry,
+        ));
         self.add_tool(FetchTool::new(self.project.read(cx).client().http_client()));
         self.add_tool(FindPathTool::new(self.project.clone()));
         self.add_tool(GrepTool::new(self.project.clone()));
@@ -1045,7 +1080,7 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(TerminalTool::new(self.project.clone(), cx));
+        self.add_tool(TerminalTool::new(self.project.clone(), environment));
         self.add_tool(ThinkingTool);
         self.add_tool(WebSearchTool);
     }
@@ -1485,7 +1520,7 @@ impl Thread {
         let mut title = SharedString::from(&tool_use.name);
         let mut kind = acp::ToolKind::Other;
         if let Some(tool) = tool.as_ref() {
-            title = tool.initial_title(tool_use.input.clone());
+            title = tool.initial_title(tool_use.input.clone(), cx);
             kind = tool.kind();
         }
 
@@ -2119,7 +2154,11 @@ where
     fn kind() -> acp::ToolKind;
 
     /// The initial tool title to display. Can be updated during the tool run.
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString;
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        cx: &mut App,
+    ) -> SharedString;
 
     /// Returns the JSON schema that describes the tool's input.
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Schema {
@@ -2167,7 +2206,7 @@ pub trait AnyAgentTool {
     fn name(&self) -> SharedString;
     fn description(&self) -> SharedString;
     fn kind(&self) -> acp::ToolKind;
-    fn initial_title(&self, input: serde_json::Value) -> SharedString;
+    fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString;
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value>;
     fn supported_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
@@ -2203,9 +2242,9 @@ where
         T::kind()
     }
 
-    fn initial_title(&self, input: serde_json::Value) -> SharedString {
+    fn initial_title(&self, input: serde_json::Value, _cx: &mut App) -> SharedString {
         let parsed_input = serde_json::from_value(input.clone()).map_err(|_| input);
-        self.0.initial_title(parsed_input)
+        self.0.initial_title(parsed_input, _cx)
     }
 
     fn input_schema(&self, format: LanguageModelToolSchemaFormat) -> Result<serde_json::Value> {
@@ -2296,6 +2335,7 @@ impl ThreadEventStream {
         input: serde_json::Value,
     ) -> acp::ToolCall {
         acp::ToolCall {
+            meta: None,
             id: acp::ToolCallId(id.to_string().into()),
             title,
             kind,
@@ -2315,6 +2355,7 @@ impl ThreadEventStream {
         self.0
             .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
                 acp::ToolCallUpdate {
+                    meta: None,
                     id: acp::ToolCallId(tool_use_id.to_string().into()),
                     fields,
                 }
@@ -2389,19 +2430,6 @@ impl ToolCallEventStream {
             .ok();
     }
 
-    pub fn update_terminal(&self, terminal: Entity<acp_thread::Terminal>) {
-        self.stream
-            .0
-            .unbounded_send(Ok(ThreadEvent::ToolCallUpdate(
-                acp_thread::ToolCallUpdateTerminal {
-                    id: acp::ToolCallId(self.tool_use_id.to_string().into()),
-                    terminal,
-                }
-                .into(),
-            )))
-            .ok();
-    }
-
     pub fn authorize(&self, title: impl Into<String>, cx: &mut App) -> Task<Result<()>> {
         if agent_settings::AgentSettings::get_global(cx).always_allow_tool_actions {
             return Task::ready(Ok(()));
@@ -2413,6 +2441,7 @@ impl ToolCallEventStream {
             .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
                 ToolCallAuthorization {
                     tool_call: acp::ToolCallUpdate {
+                        meta: None,
                         id: acp::ToolCallId(self.tool_use_id.to_string().into()),
                         fields: acp::ToolCallUpdateFields {
                             title: Some(title.into()),
@@ -2424,16 +2453,19 @@ impl ToolCallEventStream {
                             id: acp::PermissionOptionId("always_allow".into()),
                             name: "Always Allow".into(),
                             kind: acp::PermissionOptionKind::AllowAlways,
+                            meta: None,
                         },
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("allow".into()),
                             name: "Allow".into(),
                             kind: acp::PermissionOptionKind::AllowOnce,
+                            meta: None,
                         },
                         acp::PermissionOption {
                             id: acp::PermissionOptionId("deny".into()),
                             name: "Deny".into(),
                             kind: acp::PermissionOptionKind::RejectOnce,
+                            meta: None,
                         },
                     ],
                     response: response_tx,
@@ -2587,17 +2619,21 @@ impl From<UserMessageContent> for acp::ContentBlock {
             UserMessageContent::Text(text) => acp::ContentBlock::Text(acp::TextContent {
                 text,
                 annotations: None,
+                meta: None,
             }),
             UserMessageContent::Image(image) => acp::ContentBlock::Image(acp::ImageContent {
                 data: image.source.to_string(),
                 mime_type: "image/png".to_string(),
+                meta: None,
                 annotations: None,
                 uri: None,
             }),
             UserMessageContent::Mention { uri, content } => {
                 acp::ContentBlock::Resource(acp::EmbeddedResource {
+                    meta: None,
                     resource: acp::EmbeddedResourceResource::TextResourceContents(
                         acp::TextResourceContents {
+                            meta: None,
                             mime_type: None,
                             text: content,
                             uri: uri.to_uri().to_string(),

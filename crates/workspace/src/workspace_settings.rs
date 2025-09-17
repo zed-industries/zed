@@ -6,9 +6,9 @@ use collections::HashMap;
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: BottomDockLayout,
@@ -118,7 +118,8 @@ pub enum RestoreOnStartupBehavior {
     LastSession,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
@@ -216,14 +217,15 @@ pub struct WorkspaceSettingsContent {
     pub zoomed_padding: Option<bool>,
 }
 
-#[derive(Deserialize, SettingsUi)]
+#[derive(Deserialize)]
 pub struct TabBarSettings {
     pub show: bool,
     pub show_nav_history_buttons: bool,
     pub show_tab_bar_buttons: bool,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "tab_bar")]
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
     ///
@@ -252,6 +254,17 @@ pub enum AutosaveSetting {
     OnWindowChange,
 }
 
+impl AutosaveSetting {
+    pub fn should_save_on_close(&self) -> bool {
+        matches!(
+            &self,
+            AutosaveSetting::OnFocusChange
+                | AutosaveSetting::OnWindowChange
+                | AutosaveSetting::AfterDelay { .. }
+        )
+    }
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionHorizontal {
@@ -266,7 +279,7 @@ pub enum PaneSplitDirectionVertical {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi)]
 #[serde(rename_all = "snake_case")]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
@@ -282,8 +295,6 @@ pub struct CenteredLayoutSettings {
 }
 
 impl Settings for WorkspaceSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = WorkspaceSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
@@ -373,8 +384,6 @@ impl Settings for WorkspaceSettings {
 }
 
 impl Settings for TabBarSettings {
-    const KEY: Option<&'static str> = Some("tab_bar");
-
     type FileContent = TabBarSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

@@ -68,7 +68,7 @@ The list can be obtained as follows:
 
 ### Backend Dependencies (optional) {#backend-dependencies}
 
-If you are looking to develop Zed collaboration features using a local collabortation server, please see: [Local Collaboration](./local-collaboration.md) docs.
+If you are looking to develop Zed collaboration features using a local collaboration server, please see: [Local Collaboration](./local-collaboration.md) docs.
 
 ### Notes
 
@@ -115,6 +115,8 @@ cargo test --workspace
 ## Installing from msys2
 
 Zed does not support unofficial MSYS2 Zed packages built for Mingw-w64. Please report any issues you may have with [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed) to [msys2/MINGW-packages/issues](https://github.com/msys2/MINGW-packages/issues?q=is%3Aissue+is%3Aopen+zed).
+
+Please refer to [MSYS2 documentation](https://www.msys2.org/docs/ides-editors/#zed) first.
 
 ## Troubleshooting
 

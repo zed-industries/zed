@@ -27,12 +27,13 @@ use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, HighlightStyle, SharedString, StyledText,
     Task, TaskLabel, TextStyle,
 };
+
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::WorktreeId;
+use settings::{SettingsUi, WorktreeId};
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -144,7 +145,7 @@ struct BufferBranchState {
 /// state of a buffer.
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
-    pub(crate) syntax: SyntaxSnapshot,
+    pub syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -173,7 +174,9 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
     /// A vertical bar
@@ -282,6 +285,14 @@ pub enum Operation {
         /// The language server ID.
         server_id: LanguageServerId,
     },
+
+    /// An update to the line ending type of this buffer.
+    UpdateLineEnding {
+        /// The line ending type.
+        line_ending: LineEnding,
+        /// The buffer's lamport timestamp.
+        lamport_timestamp: clock::Lamport,
+    },
 }
 
 /// An event that occurs in a buffer.
@@ -313,10 +324,6 @@ pub enum BufferEvent {
     DiagnosticsUpdated,
     /// The buffer gained or lost editing capabilities.
     CapabilityChanged,
-    /// The buffer was explicitly requested to close.
-    Closed,
-    /// The buffer was discarded when closing.
-    Discarded,
 }
 
 /// The file associated with a buffer.
@@ -494,6 +501,10 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// A bitset of which characters are tabs in this string.
+    pub tabs: u128,
+    /// Bitmap of character indices in this chunk
+    pub chars: u128,
     /// Whether this chunk of text was originally a tab character.
     pub is_inlay: bool,
     /// Whether to underline the corresponding text range in the editor.
@@ -629,13 +640,13 @@ impl HighlightedTextBuilder {
             self.text.push_str(chunk.text);
             let end = self.text.len();
 
-            if let Some(mut highlight_style) = chunk
+            if let Some(highlight_style) = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(syntax_theme))
             {
-                if let Some(override_style) = override_style {
-                    highlight_style.highlight(override_style);
-                }
+                let highlight_style = override_style.map_or(highlight_style, |override_style| {
+                    highlight_style.highlight(override_style)
+                });
                 self.highlights.push((start..end, highlight_style));
             } else if let Some(override_style) = override_style {
                 self.highlights.push((start..end, override_style));
@@ -649,7 +660,10 @@ impl HighlightedTextBuilder {
         syntax_snapshot: &'a SyntaxSnapshot,
     ) -> BufferChunks<'a> {
         let captures = syntax_snapshot.captures(range.clone(), snapshot, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
         });
 
         let highlight_maps = captures
@@ -1242,10 +1256,27 @@ impl Buffer {
         self.syntax_map.lock().language_registry()
     }
 
+    /// Assign the line ending type to the buffer.
+    pub fn set_line_ending(&mut self, line_ending: LineEnding, cx: &mut Context<Self>) {
+        self.text.set_line_ending(line_ending);
+
+        let lamport_timestamp = self.text.lamport_clock.tick();
+        self.send_operation(
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            },
+            true,
+            cx,
+        );
+    }
+
     /// Assign the buffer a new [`Capability`].
     pub fn set_capability(&mut self, capability: Capability, cx: &mut Context<Self>) {
-        self.capability = capability;
-        cx.emit(BufferEvent::CapabilityChanged)
+        if self.capability != capability {
+            self.capability = capability;
+            cx.emit(BufferEvent::CapabilityChanged)
+        }
     }
 
     /// This method is called to signal that the buffer has been saved.
@@ -1262,12 +1293,6 @@ impl Buffer {
         self.saved_mtime = mtime;
         self.was_changed();
         cx.emit(BufferEvent::Saved);
-        cx.notify();
-    }
-
-    /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&self, cx: &mut Context<Self>) {
-        cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
@@ -2563,7 +2588,7 @@ impl Buffer {
             Operation::UpdateSelections { selections, .. } => selections
                 .iter()
                 .all(|s| self.can_resolve(&s.start) && self.can_resolve(&s.end)),
-            Operation::UpdateCompletionTriggers { .. } => true,
+            Operation::UpdateCompletionTriggers { .. } | Operation::UpdateLineEnding { .. } => true,
         }
     }
 
@@ -2627,6 +2652,13 @@ impl Buffer {
                         .insert(server_id, triggers.iter().cloned().collect());
                     self.completion_triggers.extend(triggers);
                 }
+                self.text.lamport_clock.observe(lamport_timestamp);
+            }
+            Operation::UpdateLineEnding {
+                line_ending,
+                lamport_timestamp,
+            } => {
+                self.text.set_line_ending(line_ending);
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -2848,12 +2880,12 @@ impl Buffer {
 
             let new_start = last_end.map_or(0, |last_end| last_end + 1);
             let mut range = self.random_byte_range(new_start, rng);
-            if rng.gen_bool(0.2) {
+            if rng.random_bool(0.2) {
                 mem::swap(&mut range.start, &mut range.end);
             }
             last_end = Some(range.end);
 
-            let new_text_len = rng.gen_range(0..10);
+            let new_text_len = rng.random_range(0..10);
             let mut new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
             new_text = new_text.to_uppercase();
 
@@ -3217,7 +3249,10 @@ impl BufferSnapshot {
 
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
         let captures = self.syntax.captures(range, &self.text, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
         });
         let highlight_maps = captures
             .grammars()
@@ -3281,16 +3316,23 @@ impl BufferSnapshot {
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
     pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
-        self.syntax
-            .layers_for_range(0..self.len(), &self.text, true)
+        self.syntax_layers_for_range(0..self.len(), true)
     }
 
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
-        self.syntax
-            .layers_for_range(offset..offset, &self.text, false)
+        self.syntax_layers_for_range(offset..offset, false)
             .filter(|l| l.node().end_byte() > offset)
             .last()
+    }
+
+    pub fn syntax_layers_for_range<D: ToOffset>(
+        &self,
+        range: Range<D>,
+        include_hidden: bool,
+    ) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
+        self.syntax
+            .layers_for_range(range, &self.text, include_hidden)
     }
 
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
@@ -3434,47 +3476,72 @@ impl BufferSnapshot {
         (start..end, word_kind)
     }
 
-    /// Returns the closest syntax node enclosing the given range.
+    /// Moves the TreeCursor to the smallest descendant or ancestor syntax node enclosing the given
+    /// range. When `require_larger` is true, the node found must be larger than the query range.
+    ///
+    /// Returns true if a node was found, and false otherwise. In the `false` case the cursor will
+    /// be moved to the root of the tree.
+    fn goto_node_enclosing_range(
+        cursor: &mut tree_sitter::TreeCursor,
+        query_range: &Range<usize>,
+        require_larger: bool,
+    ) -> bool {
+        let mut ascending = false;
+        loop {
+            let mut range = cursor.node().byte_range();
+            if query_range.is_empty() {
+                // When the query range is empty and the current node starts after it, move to the
+                // previous sibling to find the node the containing node.
+                if range.start > query_range.start {
+                    cursor.goto_previous_sibling();
+                    range = cursor.node().byte_range();
+                }
+            } else {
+                // When the query range is non-empty and the current node ends exactly at the start,
+                // move to the next sibling to find a node that extends beyond the start.
+                if range.end == query_range.start {
+                    cursor.goto_next_sibling();
+                    range = cursor.node().byte_range();
+                }
+            }
+
+            let encloses = range.contains_inclusive(query_range)
+                && (!require_larger || range.len() > query_range.len());
+            if !encloses {
+                ascending = true;
+                if !cursor.goto_parent() {
+                    return false;
+                }
+                continue;
+            } else if ascending {
+                return true;
+            }
+
+            // Descend into the current node.
+            if cursor
+                .goto_first_child_for_byte(query_range.start)
+                .is_none()
+            {
+                return true;
+            }
+        }
+    }
+
     pub fn syntax_ancestor<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
     ) -> Option<tree_sitter::Node<'a>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut result: Option<tree_sitter::Node<'a>> = None;
-        'outer: for layer in self
+        for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
         {
             let mut cursor = layer.node().walk();
 
-            // Descend to the first leaf that touches the start of the range.
-            //
-            // If the range is non-empty and the current node ends exactly at the start,
-            // move to the next sibling to find a node that extends beyond the start.
-            //
-            // If the range is empty and the current node starts after the range position,
-            // move to the previous sibling to find the node that contains the position.
-            while cursor.goto_first_child_for_byte(range.start).is_some() {
-                if !range.is_empty() && cursor.node().end_byte() == range.start {
-                    cursor.goto_next_sibling();
-                }
-                if range.is_empty() && cursor.node().start_byte() > range.start {
-                    cursor.goto_previous_sibling();
-                }
-            }
-
-            // Ascend to the smallest ancestor that strictly contains the range.
-            loop {
-                let node_range = cursor.node().byte_range();
-                if node_range.start <= range.start
-                    && node_range.end >= range.end
-                    && node_range.len() > range.len()
-                {
-                    break;
-                }
-                if !cursor.goto_parent() {
-                    continue 'outer;
-                }
+            // Find the node that both contains the range and is larger than it.
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, true) {
+                continue;
             }
 
             let left_node = cursor.node();
@@ -3517,6 +3584,108 @@ impl BufferSnapshot {
         result
     }
 
+    /// Find the previous sibling syntax node at the given range.
+    ///
+    /// This function locates the syntax node that precedes the node containing
+    /// the given range. It searches hierarchically by:
+    /// 1. Finding the node that contains the given range
+    /// 2. Looking for the previous sibling at the same tree level
+    /// 3. If no sibling is found, moving up to parent levels and searching for siblings
+    ///
+    /// Returns `None` if there is no previous sibling at any ancestor level.
+    pub fn syntax_prev_sibling<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+
+        for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            let mut cursor = layer.node().walk();
+
+            // Find the node that contains the range
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, false) {
+                continue;
+            }
+
+            // Look for the previous sibling, moving up ancestor levels if needed
+            loop {
+                if cursor.goto_previous_sibling() {
+                    let layer_result = cursor.node();
+
+                    if let Some(previous_result) = &result {
+                        if previous_result.byte_range().end < layer_result.byte_range().end {
+                            continue;
+                        }
+                    }
+                    result = Some(layer_result);
+                    break;
+                }
+
+                // No sibling found at this level, try moving up to parent
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Find the next sibling syntax node at the given range.
+    ///
+    /// This function locates the syntax node that follows the node containing
+    /// the given range. It searches hierarchically by:
+    /// 1. Finding the node that contains the given range
+    /// 2. Looking for the next sibling at the same tree level
+    /// 3. If no sibling is found, moving up to parent levels and searching for siblings
+    ///
+    /// Returns `None` if there is no next sibling at any ancestor level.
+    pub fn syntax_next_sibling<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut result: Option<tree_sitter::Node<'a>> = None;
+
+        for layer in self
+            .syntax
+            .layers_for_range(range.clone(), &self.text, true)
+        {
+            let mut cursor = layer.node().walk();
+
+            // Find the node that contains the range
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, false) {
+                continue;
+            }
+
+            // Look for the next sibling, moving up ancestor levels if needed
+            loop {
+                if cursor.goto_next_sibling() {
+                    let layer_result = cursor.node();
+
+                    if let Some(previous_result) = &result {
+                        if previous_result.byte_range().start > layer_result.byte_range().start {
+                            continue;
+                        }
+                    }
+                    result = Some(layer_result);
+                    break;
+                }
+
+                // No sibling found at this level, try moving up to parent
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
+        }
+
+        result
+    }
+
     /// Returns the root syntax node within the given row
     pub fn syntax_root_ancestor(&self, position: Anchor) -> Option<tree_sitter::Node<'_>> {
         let start_offset = position.to_offset(self);
@@ -3551,9 +3720,8 @@ impl BufferSnapshot {
     ///
     /// This method allows passing an optional [`SyntaxTheme`] to
     /// syntax-highlight the returned symbols.
-    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
-        self.outline_items_containing(0..self.len(), true, theme)
-            .map(Outline::new)
+    pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Outline<Anchor> {
+        Outline::new(self.outline_items_containing(0..self.len(), true, theme))
     }
 
     /// Returns all the symbols that contain the given position.
@@ -3564,20 +3732,20 @@ impl BufferSnapshot {
         &self,
         position: T,
         theme: Option<&SyntaxTheme>,
-    ) -> Option<Vec<OutlineItem<Anchor>>> {
+    ) -> Vec<OutlineItem<Anchor>> {
         let position = position.to_offset(self);
         let mut items = self.outline_items_containing(
             position.saturating_sub(1)..self.len().min(position + 1),
             false,
             theme,
-        )?;
+        );
         let mut prev_depth = None;
         items.retain(|item| {
             let result = prev_depth.is_none_or(|prev_depth| item.depth > prev_depth);
             prev_depth = Some(item.depth);
             result
         });
-        Some(items)
+        items
     }
 
     pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
@@ -3627,21 +3795,19 @@ impl BufferSnapshot {
         range: Range<T>,
         include_extra_context: bool,
         theme: Option<&SyntaxTheme>,
-    ) -> Option<Vec<OutlineItem<Anchor>>> {
+    ) -> Vec<OutlineItem<Anchor>> {
         let range = range.to_offset(self);
         let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
             grammar.outline_config.as_ref().map(|c| &c.query)
         });
-        let configs = matches
-            .grammars()
-            .iter()
-            .map(|g| g.outline_config.as_ref().unwrap())
-            .collect::<Vec<_>>();
 
         let mut items = Vec::new();
         let mut annotation_row_ranges: Vec<Range<u32>> = Vec::new();
         while let Some(mat) = matches.peek() {
-            let config = &configs[mat.grammar_index];
+            let config = matches.grammars()[mat.grammar_index]
+                .outline_config
+                .as_ref()
+                .unwrap();
             if let Some(item) =
                 self.next_outline_item(config, &mat, &range, include_extra_context, theme)
             {
@@ -3706,9 +3872,12 @@ impl BufferSnapshot {
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
                 name_ranges: item.name_ranges,
-                body_range: item.body_range.map(|body_range| {
-                    self.anchor_after(body_range.start)..self.anchor_before(body_range.end)
-                }),
+                signature_range: item
+                    .signature_range
+                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
+                body_range: item
+                    .body_range
+                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
                 annotation_range: annotation_row_range.map(|annotation_range| {
                     self.anchor_after(Point::new(annotation_range.start, 0))
                         ..self.anchor_before(Point::new(
@@ -3720,7 +3889,7 @@ impl BufferSnapshot {
             item_ends_stack.push(item.range.end);
         }
 
-        Some(anchor_items)
+        anchor_items
     }
 
     fn next_outline_item(
@@ -3748,38 +3917,51 @@ impl BufferSnapshot {
 
         let mut open_point = None;
         let mut close_point = None;
-        let mut buffer_ranges = Vec::new();
-        for capture in mat.captures {
-            let node_is_name;
-            if capture.index == config.name_capture_ix {
-                node_is_name = true;
-            } else if Some(capture.index) == config.context_capture_ix
-                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
-            {
-                node_is_name = false;
-            } else {
-                if Some(capture.index) == config.open_capture_ix {
-                    open_point = Some(Point::from_ts_point(capture.node.end_position()));
-                } else if Some(capture.index) == config.close_capture_ix {
-                    close_point = Some(Point::from_ts_point(capture.node.start_position()));
-                }
 
-                continue;
+        let mut signature_start = None;
+        let mut signature_end = None;
+        let mut extend_signature_range = |node: tree_sitter::Node| {
+            if signature_start.is_none() {
+                signature_start = Some(Point::from_ts_point(node.start_position()));
             }
+            signature_end = Some(Point::from_ts_point(node.end_position()));
+        };
 
-            let mut range = capture.node.start_byte()..capture.node.end_byte();
-            let start = capture.node.start_position();
-            if capture.node.end_position().row > start.row {
+        let mut buffer_ranges = Vec::new();
+        let mut add_to_buffer_ranges = |node: tree_sitter::Node, node_is_name| {
+            let mut range = node.start_byte()..node.end_byte();
+            let start = node.start_position();
+            if node.end_position().row > start.row {
                 range.end = range.start + self.line_len(start.row as u32) as usize - start.column;
             }
 
             if !range.is_empty() {
                 buffer_ranges.push((range, node_is_name));
             }
+        };
+
+        for capture in mat.captures {
+            if capture.index == config.name_capture_ix {
+                add_to_buffer_ranges(capture.node, true);
+                extend_signature_range(capture.node);
+            } else if Some(capture.index) == config.context_capture_ix
+                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
+            {
+                add_to_buffer_ranges(capture.node, false);
+                extend_signature_range(capture.node);
+            } else {
+                if Some(capture.index) == config.open_capture_ix {
+                    open_point = Some(Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.close_capture_ix {
+                    close_point = Some(Point::from_ts_point(capture.node.start_position()));
+                }
+            }
         }
+
         if buffer_ranges.is_empty() {
             return None;
         }
+
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
@@ -3788,7 +3970,6 @@ impl BufferSnapshot {
             true,
         );
         let mut last_buffer_range_end = 0;
-
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
             if space_added {
@@ -3830,12 +4011,17 @@ impl BufferSnapshot {
             last_buffer_range_end = buffer_range.end;
         }
 
+        let signature_range = signature_start
+            .zip(signature_end)
+            .map(|(start, end)| start..end);
+
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
             text,
             highlight_ranges,
             name_ranges,
+            signature_range,
             body_range: open_point.zip(close_point).map(|(start, end)| start..end),
             annotation_range: None,
         })
@@ -4772,7 +4958,12 @@ impl<'a> Iterator for BufferChunks<'a> {
         }
         self.diagnostic_endpoints = diagnostic_endpoints;
 
-        if let Some(chunk) = self.chunks.peek() {
+        if let Some(ChunkBitmaps {
+            text: chunk,
+            chars: chars_map,
+            tabs,
+        }) = self.chunks.peek_tabs()
+        {
             let chunk_start = self.range.start;
             let mut chunk_end = (self.chunks.offset() + chunk.len())
                 .min(next_capture_start)
@@ -4787,6 +4978,16 @@ impl<'a> Iterator for BufferChunks<'a> {
 
             let slice =
                 &chunk[chunk_start - self.chunks.offset()..chunk_end - self.chunks.offset()];
+            let bit_end = chunk_end - self.chunks.offset();
+
+            let mask = if bit_end >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << bit_end) - 1
+            };
+            let tabs = (tabs >> (chunk_start - self.chunks.offset())) & mask;
+            let chars_map = (chars_map >> (chunk_start - self.chunks.offset())) & mask;
+
             self.range.start = chunk_end;
             if self.range.start == self.chunks.offset() + chunk.len() {
                 self.chunks.next().unwrap();
@@ -4798,6 +4999,8 @@ impl<'a> Iterator for BufferChunks<'a> {
                 underline: self.underline,
                 diagnostic_severity: self.current_diagnostic_severity(),
                 is_unnecessary: self.current_code_is_unnecessary(),
+                tabs,
+                chars: chars_map,
                 ..Chunk::default()
             })
         } else {
@@ -4819,6 +5022,9 @@ impl operation_queue::Operation for Operation {
                 lamport_timestamp, ..
             }
             | Operation::UpdateCompletionTriggers {
+                lamport_timestamp, ..
+            }
+            | Operation::UpdateLineEnding {
                 lamport_timestamp, ..
             } => *lamport_timestamp,
         }

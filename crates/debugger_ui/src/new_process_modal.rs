@@ -20,7 +20,7 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
-use project::{DebugScenarioContext, TaskContexts, TaskSourceKind, task_store::TaskStore};
+use project::{DebugScenarioContext, Project, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
 use task::{DebugScenario, RevealTarget, ZedDebugConfig};
 use theme::ThemeSettings;
@@ -88,8 +88,10 @@ impl NewProcessModal {
             })?;
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_handle = workspace.weak_handle();
+                let project = workspace.project().clone();
                 workspace.toggle_modal(window, cx, |window, cx| {
-                    let attach_mode = AttachMode::new(None, workspace_handle.clone(), window, cx);
+                    let attach_mode =
+                        AttachMode::new(None, workspace_handle.clone(), project, window, cx);
 
                     let debug_picker = cx.new(|cx| {
                         let delegate =
@@ -801,12 +803,12 @@ impl ConfigureMode {
     pub(super) fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
         let program = cx.new(|cx| Editor::single_line(window, cx));
         program.update(cx, |this, cx| {
-            this.set_placeholder_text("ENV=Zed ~/bin/program --option", cx);
+            this.set_placeholder_text("ENV=Zed ~/bin/program --option", window, cx);
         });
 
         let cwd = cx.new(|cx| Editor::single_line(window, cx));
         cwd.update(cx, |this, cx| {
-            this.set_placeholder_text("Ex: $ZED_WORKTREE_ROOT", cx);
+            this.set_placeholder_text("Ex: $ZED_WORKTREE_ROOT", window, cx);
         });
 
         cx.new(|_| Self {
@@ -940,6 +942,7 @@ impl AttachMode {
     pub(super) fn new(
         debugger: Option<DebugAdapterName>,
         workspace: WeakEntity<Workspace>,
+        project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<NewProcessModal>,
     ) -> Entity<Self> {
@@ -950,7 +953,7 @@ impl AttachMode {
             stop_on_entry: Some(false),
         };
         let attach_picker = cx.new(|cx| {
-            let modal = AttachModal::new(definition.clone(), workspace, false, window, cx);
+            let modal = AttachModal::new(definition.clone(), workspace, project, false, window, cx);
             window.focus(&modal.focus_handle(cx));
 
             modal
@@ -1443,7 +1446,7 @@ impl PickerDelegate for DebugDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
 
         let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),

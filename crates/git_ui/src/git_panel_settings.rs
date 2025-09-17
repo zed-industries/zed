@@ -1,8 +1,9 @@
-use editor::ShowScrollbar;
+use editor::EditorSettings;
 use gpui::Pixels;
 use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use workspace::dock::DockPosition;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -36,7 +37,8 @@ pub enum StatusStyle {
     LabelColor,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
+#[settings_key(key = "git_panel")]
 pub struct GitPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -77,7 +79,7 @@ pub struct GitPanelSettingsContent {
     pub collapse_untracked_diff: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, Clone, PartialEq, SettingsUi)]
+#[derive(Deserialize, Debug, Clone, PartialEq)]
 pub struct GitPanelSettings {
     pub button: bool,
     pub dock: DockPosition,
@@ -89,9 +91,23 @@ pub struct GitPanelSettings {
     pub collapse_untracked_diff: bool,
 }
 
-impl Settings for GitPanelSettings {
-    const KEY: Option<&'static str> = Some("git_panel");
+impl ScrollbarVisibility for GitPanelSettings {
+    fn visibility(&self, cx: &ui::App) -> ShowScrollbar {
+        // TODO: This PR should have defined Editor's `scrollbar.axis`
+        // as an Option<ScrollbarAxis>, not a ScrollbarAxes as it would allow you to
+        // `.unwrap_or(EditorSettings::get_global(cx).scrollbar.show)`.
+        //
+        // Once this is fixed we can extend the GitPanelSettings with a `scrollbar.axis`
+        // so we can show each axis based on the settings.
+        //
+        // We should fix this. PR: https://github.com/zed-industries/zed/pull/19495
+        self.scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
+    }
+}
 
+impl Settings for GitPanelSettings {
     type FileContent = GitPanelSettingsContent;
 
     fn load(

@@ -2,7 +2,7 @@ use editor::{Editor, EditorSettings, MultiBufferSnapshot};
 use gpui::{App, Entity, FocusHandle, Focusable, Subscription, Task, WeakEntity};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 use std::{fmt::Write, num::NonZeroU32, time::Duration};
 use text::{Point, Selection};
 use ui::{
@@ -293,7 +293,7 @@ impl StatusItemView for CursorPosition {
     }
 }
 
-#[derive(Clone, Copy, Default, PartialEq, JsonSchema, Deserialize, Serialize, SettingsUi)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, JsonSchema, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum LineIndicatorFormat {
     Short,
@@ -301,26 +301,32 @@ pub(crate) enum LineIndicatorFormat {
     Long,
 }
 
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize)]
-#[serde(transparent)]
-pub(crate) struct LineIndicatorFormatContent(LineIndicatorFormat);
+#[derive(
+    Clone, Copy, Default, Debug, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey,
+)]
+#[settings_key(None)]
+pub(crate) struct LineIndicatorFormatContent {
+    line_indicator_format: Option<LineIndicatorFormat>,
+}
 
 impl Settings for LineIndicatorFormat {
-    const KEY: Option<&'static str> = Some("line_indicator_format");
-
-    type FileContent = Option<LineIndicatorFormatContent>;
+    type FileContent = LineIndicatorFormatContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
         let format = [
             sources.release_channel,
-            sources.operating_system,
+            sources.profile,
             sources.user,
+            sources.operating_system,
+            Some(sources.default),
         ]
         .into_iter()
-        .find_map(|value| value.copied().flatten())
-        .unwrap_or(sources.default.ok_or_else(Self::missing_default)?);
+        .flatten()
+        .filter_map(|val| val.line_indicator_format)
+        .next()
+        .ok_or_else(Self::missing_default)?;
 
-        Ok(format.0)
+        Ok(format)
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
