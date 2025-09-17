@@ -475,11 +475,6 @@ impl PickerDelegate for StashListDelegate {
                     .size(LabelSize::Small),
             );
 
-        let tooltip_text = format!(
-            "stash@{{{}}} created {}",
-            entry_match.entry.index, entry_match.formatted_timestamp
-        );
-
         let show_button = div()
             .id("show-button")
             .on_mouse_up(
