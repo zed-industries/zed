@@ -6,7 +6,6 @@ use crate::{HistoryStore, TerminalHandle, ThreadEnvironment, TitleUpdated, Token
 use acp_thread::{AcpThread, AgentModelSelector};
 use action_log::ActionLog;
 use agent_client_protocol as acp;
-use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashSet, IndexMap};
 use fs::Fs;
@@ -873,13 +872,9 @@ impl AgentModelSelector for NativeAgentConnection {
             thread.set_model(model.clone(), cx);
         });
 
-        update_settings_file::<AgentSettings>(
-            self.0.read(cx).fs.clone(),
-            cx,
-            move |settings, _cx| {
-                settings.set_model(model);
-            },
-        );
+        update_settings_file(self.0.read(cx).fs.clone(), cx, move |settings, _cx| {
+            settings.agent.get_or_insert_default().set_model(model);
+        });
 
         Task::ready(Ok(()))
     }

@@ -421,13 +421,13 @@ mod tests {
         // Configure settings explicitly
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions = Some(vec![
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions = Some(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
                         "**/.hidden_subdir".to_string(),
                     ]);
-                    settings.private_files = Some(vec![
+                    settings.project.worktree.private_files = Some(vec![
                         "**/.mysecrets".to_string(),
                         "**/*.privatekey".to_string(),
                         "**/*.mysensitive".to_string(),
