@@ -821,6 +821,8 @@
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
+    // The view to use by default (thread, or text_thread)
+    "default_view": "thread",
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
@@ -929,7 +931,11 @@
     /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
     ///
     /// Default: true
-    "expand_terminal_card": true
+    "expand_terminal_card": true,
+    /// Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
+    ///
+    /// Default: false
+    "use_modifier_to_send": false
   },
   // The settings for slash commands.
   "slash_commands": {
