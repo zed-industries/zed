@@ -784,7 +784,15 @@ impl<'a> Chunks<'a> {
             slice_start..slice_end
         };
 
-        let bitmask = (1u128 << slice_range.end as u128).saturating_sub(1);
+        // Ensure slice_range.end doesn't exceed valid bitmap positions
+        // Find the highest set bit in chunk.chars to determine valid bitmap range
+        let max_bit_position = if chunk.chars() == 0 {
+            0
+        } else {
+            128 - chunk.chars().leading_zeros() as usize
+        };
+        let end = cmp::min(slice_range.end, max_bit_position);
+        let bitmask = (1u128 << end).wrapping_sub(1);
 
         let chars = (chunk.chars() & bitmask) >> slice_range.start;
         let tabs = (chunk.tabs & bitmask) >> slice_range.start;
