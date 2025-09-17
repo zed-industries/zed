@@ -139,6 +139,11 @@ impl OllamaLanguageModelProvider {
         self.http_client.clone()
     }
 
+    pub fn api_key(&self, cx: &App) -> Option<Arc<str>> {
+        let api_url = Self::api_url(cx);
+        self.state.read(cx).api_key_state.key(&api_url)
+    }
+
     pub fn refresh_models(&self, cx: &mut App) {
         self.state.update(cx, |state, cx| {
             state.restart_fetch_models_task(cx);
@@ -182,7 +187,7 @@ impl OllamaLanguageModelProvider {
         &AllLanguageModelSettings::get_global(cx).ollama
     }
 
-    fn api_url(cx: &App) -> SharedString {
+    pub fn api_url(cx: &App) -> SharedString {
         let api_url = &Self::settings(cx).api_url;
         if api_url.is_empty() {
             OLLAMA_API_URL.into()

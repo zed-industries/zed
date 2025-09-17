@@ -23,13 +23,16 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 edit_prediction.workspace = true
+futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
+log.workspace = true
 ollama.workspace = true
 project.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 workspace-hack.workspace = true

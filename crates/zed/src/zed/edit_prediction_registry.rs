@@ -5,9 +5,11 @@ use editor::Editor;
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
+use language_model::LanguageModelProvider;
 use language_models::AllLanguageModelSettings;
+use language_models::provider::ollama::OllamaLanguageModelProvider;
 use ollama;
-use ollama_edit_predictions::{OllamaEditPredictionProvider, OllamaEditPredictionState as State};
+use ollama_edit_predictions::OllamaEditPredictionProvider;
 use settings::{Settings as _, SettingsStore};
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 use supermaven::{Supermaven, SupermavenCompletionProvider};
@@ -15,20 +17,35 @@ use ui::Window;
 use zeta::ZetaEditPredictionProvider;
 
 pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
-    let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-    let api_url: gpui::SharedString = if settings.api_url.is_empty() {
-        ollama::OLLAMA_API_URL.into()
-    } else {
-        settings.api_url.clone().into()
-    };
-    let models = settings.available_models.clone();
-    let ollama_service = State::new(client.http_client(), api_url, None, cx);
+    let ollama_provider = cx.new(|cx| OllamaLanguageModelProvider::new(client.http_client(), cx));
 
-    ollama_service.update(cx, |service, cx| {
-        service.set_models(models, cx);
-    });
+    OllamaLanguageModelProvider::set_global(ollama_provider, cx);
 
-    State::set_global(ollama_service, cx);
+    // Authenticate the provider to ensure API key is loaded from keychain/environment.
+    // This is critical for the edit prediction provider to work correctly - without this,
+    // the OllamaEditPredictionProvider will not have access to the API key when making
+    // requests to the Ollama API, even though it correctly tries to retrieve the key
+    // from the global provider during request time. The authentication loads the API key
+    // from the system keychain or OLLAMA_API_KEY environment variable.
+    if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+        let api_url = language_models::provider::ollama::OllamaLanguageModelProvider::api_url(cx);
+        log::info!(
+            "Initializing Ollama edit predictions with API URL: {}",
+            api_url
+        );
+
+        if api_url.contains("ollama.com") {
+            log::info!(
+                "Detected Ollama Turbo configuration. Supported models: gpt-oss:20b, gpt-oss:120b, deepseek-v3.1:671b"
+            );
+            log::info!("Make sure you have a valid OLLAMA_API_KEY for Ollama Turbo access");
+        } else {
+            log::info!("Using local Ollama instance at: {}", api_url);
+        }
+
+        let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
+        task.detach();
+    }
 
     let editors: Rc<RefCell<HashMap<WeakEntity<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new({
@@ -108,11 +125,9 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                     cx,
                 );
             } else if provider == EditPredictionProvider::Ollama {
-                if let Some(service) = State::global(cx) {
-                    let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-                    let models = settings.available_models.clone();
-                    service.update(cx, |service, cx| {
-                        service.set_models(models, cx);
+                if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                    provider.update(cx, |provider, cx| {
+                        provider.refresh_models(cx);
                     });
                 }
             }
@@ -260,11 +275,11 @@ fn assign_edit_prediction_provider(
             // Get model from settings or use discovered models
             let model = if let Some(first_model) = settings.available_models.first() {
                 Some(first_model.name.clone())
-            } else if let Some(service) = State::global(cx) {
+            } else if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
                 // Use first discovered model
-                service
+                provider
                     .read(cx)
-                    .available_models()
+                    .available_models_for_completion(cx)
                     .first()
                     .map(|m| m.name.clone())
             } else {
@@ -292,6 +307,7 @@ mod tests {
     use editor::{Editor, MultiBuffer};
     use gpui::TestAppContext;
     use language::Buffer;
+
     use language_models::{AllLanguageModelSettings, provider::ollama::OllamaSettings};
 
     #[gpui::test]
@@ -327,5 +343,32 @@ mod tests {
                 cx,
             )
         })
+    }
+
+    #[gpui::test]
+    async fn test_ollama_provider_authentication_on_init(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        cx.update(|cx| {
+            // Verify that no global provider exists initially
+            assert!(OllamaLanguageModelProvider::global(cx).is_none());
+
+            // Call init to set up the provider
+            init(app_state.client.clone(), app_state.user_store.clone(), cx);
+
+            // Verify that the global provider was created and set
+            let provider = OllamaLanguageModelProvider::global(cx);
+            assert!(
+                provider.is_some(),
+                "Global OllamaLanguageModelProvider should be set after init"
+            );
+
+            // The provider should have attempted authentication
+            // We can't easily verify this without mocking, but we can verify the provider is in a valid state
+            if let Some(provider) = provider {
+                // The provider should be accessible and not panic when used
+                let _models = provider.read(cx).available_models_for_completion(cx);
+            }
+        });
     }
 }

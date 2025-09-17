@@ -16,9 +16,10 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
+#[cfg(test)]
+use language_model::LanguageModelProvider;
 use language_models::AllLanguageModelSettings;
-
-use ollama_edit_predictions::OllamaEditPredictionState as State;
+use language_models::provider::ollama::OllamaLanguageModelProvider;
 
 use paths;
 use project::DisableAiSettings;
@@ -416,8 +417,8 @@ impl EditPredictionButton {
         cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
-        if let Some(service) = State::global(cx) {
-            cx.observe(&service, |_, _, cx| cx.notify()).detach();
+        if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+            cx.observe(&provider, |_, _, cx| cx.notify()).detach();
         }
 
         Self {
@@ -873,9 +874,9 @@ impl EditPredictionButton {
         let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, window, cx| {
             // Automatically refresh models when menu is opened
-            if let Some(service) = State::global(cx) {
-                service.update(cx, |service, cx| {
-                    service.refresh_models(cx);
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                provider.update(cx, |provider, cx| {
+                    provider.refresh_models(cx);
                 });
             }
             let settings = AllLanguageModelSettings::get_global(cx);
@@ -885,8 +886,8 @@ impl EditPredictionButton {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = State::global(cx) {
-                let discovered_models = service.read(cx).available_models();
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 for model in discovered_models {
                     // Convert from ollama::Model to language_models AvailableModel
                     let available_model = language_models::provider::ollama::AvailableModel {
@@ -1032,8 +1033,8 @@ impl EditPredictionButton {
                 models.insert(0, selected_model);
             } else {
                 // Model not in settings - check if it's a discovered model and add it
-                if let Some(service) = State::global(cx) {
-                    let discovered_models = service.read(cx).available_models();
+                if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                    let discovered_models = provider.read(cx).available_models_for_completion(cx);
                     if let Some(discovered_model) =
                         discovered_models.iter().find(|m| m.name == model_name)
                     {
@@ -1325,17 +1326,23 @@ mod tests {
         fake_http_client.set_response("/api/show", capabilities.to_string());
 
         // Create and set global Ollama service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
+        let provider = cx.update(|cx| {
+            let provider = cx.new(|cx| {
+                language_models::provider::ollama::OllamaLanguageModelProvider::new(
+                    fake_http_client.clone(),
+                    cx,
+                )
+            });
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
 
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+            // Authenticate the provider to enable model discovery
+            #[cfg(test)]
+            {
+                let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
+                task.detach();
+            }
+
+            provider
         });
 
         // Wait for model discovery
@@ -1343,8 +1350,8 @@ mod tests {
 
         // Verify models are accessible through the service
         cx.update(|cx| {
-            if let Some(service) = State::global(cx) {
-                let discovered_models = service.read(cx).available_models();
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 assert_eq!(discovered_models.len(), 2);
 
                 let model_names: Vec<&str> =
@@ -1356,9 +1363,9 @@ mod tests {
             }
         });
 
-        // Verify the global service has the expected models
-        service.read_with(cx, |service, _| {
-            let models = service.available_models();
+        // Verify the global provider has the expected models
+        provider.read_with(cx, |provider, cx| {
+            let models = provider.available_models_for_completion(cx);
             assert_eq!(models.len(), 2);
 
             let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
@@ -1399,19 +1406,31 @@ mod tests {
         );
 
         // Create and set global service
-        let service =
-            cx.update(|cx| State::new(fake_http_client, "http://localhost:11434".into(), None, cx));
+        let _provider = cx.update(|cx| {
+            let provider = cx.new(|cx| {
+                language_models::provider::ollama::OllamaLanguageModelProvider::new(
+                    fake_http_client,
+                    cx,
+                )
+            });
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
 
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+            // Authenticate the provider to enable model discovery
+            #[cfg(test)]
+            {
+                let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
+                task.detach();
+            }
+
+            provider
         });
 
         cx.background_executor.run_until_parked();
 
         // Test that discovered models are accessible
         cx.update(|cx| {
-            if let Some(service) = State::global(cx) {
-                let discovered_models = service.read(cx).available_models();
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 assert_eq!(discovered_models.len(), 1);
                 assert_eq!(discovered_models[0].name, "qwen2.5-coder:7b");
             } else {
@@ -1429,17 +1448,23 @@ mod tests {
         // Initially empty models
         fake_http_client.set_response("/api/tags", serde_json::json!({"models": []}).to_string());
 
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
+        let _provider = cx.update(|cx| {
+            let provider = cx.new(|cx| {
+                language_models::provider::ollama::OllamaLanguageModelProvider::new(
+                    fake_http_client.clone(),
+                    cx,
+                )
+            });
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
 
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+            // Authenticate the provider to enable model discovery
+            #[cfg(test)]
+            {
+                let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
+                task.detach();
+            }
+
+            provider
         });
 
         cx.background_executor.run_until_parked();
@@ -1457,8 +1482,11 @@ mod tests {
         });
 
         // Verify initially no models
-        service.read_with(cx, |service, _| {
-            assert_eq!(service.available_models().len(), 0);
+        cx.update(|cx| {
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let models = provider.read(cx).available_models_for_completion(cx);
+                assert_eq!(models.len(), 0);
+            }
         });
 
         // Update mock to return models
@@ -1487,17 +1515,23 @@ mod tests {
         );
 
         // Trigger refresh
-        service.update(cx, |service, cx| {
-            service.refresh_models(cx);
+        cx.update(|cx| {
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                provider.update(cx, |provider, cx| {
+                    provider.refresh_models(cx);
+                });
+            }
         });
 
         cx.background_executor.run_until_parked();
 
         // Verify models were refreshed
-        service.read_with(cx, |service, _| {
-            let models = service.available_models();
-            assert_eq!(models.len(), 1);
-            assert_eq!(models[0].name, "phi3:mini");
+        cx.update(|cx| {
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let models = provider.read(cx).available_models_for_completion(cx);
+                assert_eq!(models.len(), 1);
+                assert_eq!(models[0].name, "phi3:mini");
+            }
         });
 
         // The button should have been notified and will rebuild its menu with new models
@@ -1517,22 +1551,33 @@ mod tests {
             serde_json::json!({"capabilities": []}).to_string(),
         );
 
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
+        let _provider = cx.update(|cx| {
+            let provider = cx.new(|cx| {
+                language_models::provider::ollama::OllamaLanguageModelProvider::new(
+                    fake_http_client.clone(),
+                    cx,
+                )
+            });
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
+
+            // Authenticate the provider to enable model discovery
+            #[cfg(test)]
+            {
+                let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
+                task.detach();
+            }
+
+            provider
         });
-        cx.update(|cx| State::set_global(service.clone(), cx));
 
         // Wait for initial fetch to complete (should have no models)
         cx.background_executor.run_until_parked();
 
-        // Verify no models initially
-        service.read_with(cx, |service, _| {
-            assert_eq!(service.available_models().len(), 0);
+        cx.update(|cx| {
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let models = provider.read(cx).available_models_for_completion(cx);
+                assert_eq!(models.len(), 0);
+            }
         });
 
         // Now update the response to have a model
@@ -1577,10 +1622,12 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         // Verify that the models were refreshed as a side effect of building the menu
-        service.read_with(cx, |service, _| {
-            let models = service.available_models();
-            assert_eq!(models.len(), 1);
-            assert_eq!(models[0].name, "newly-discovered:7b");
+        cx.update(|_, cx| {
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let models = provider.read(cx).available_models_for_completion(cx);
+                assert_eq!(models.len(), 1);
+                assert_eq!(models[0].name, "newly-discovered:7b");
+            }
         });
     }
 
@@ -1616,26 +1663,32 @@ mod tests {
             serde_json::json!({"capabilities": []}).to_string(),
         );
 
-        // Create and set global service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
+        // Create and set global Ollama service
+        let _provider = cx.update(|cx| {
+            let provider = cx.new(|cx| {
+                language_models::provider::ollama::OllamaLanguageModelProvider::new(
+                    fake_http_client.clone(),
+                    cx,
+                )
+            });
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
 
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+            // Authenticate the provider to enable model discovery
+            #[cfg(test)]
+            {
+                let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
+                task.detach();
+            }
+
+            provider
         });
 
         cx.background_executor.run_until_parked();
 
         // Verify model is discovered by the service
         let discovered_model_exists = cx.update(|cx| {
-            if let Some(service) = State::global(cx) {
-                let discovered_models = service.read(cx).available_models();
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 discovered_models
                     .iter()
                     .any(|m| m.name == "discovered-model:latest")
@@ -1665,8 +1718,8 @@ mod tests {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = State::global(cx) {
-                let discovered_models = service.read(cx).available_models();
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 for model in discovered_models {
                     // Convert from ollama::Model to language_models AvailableModel
                     let available_model = language_models::provider::ollama::AvailableModel {
@@ -1729,18 +1782,24 @@ mod tests {
             serde_json::json!({"capabilities": []}).to_string(),
         );
 
-        // Create and set global service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
+        // Create and set global Ollama service
+        let _provider = cx.update(|cx| {
+            let provider = cx.new(|cx| {
+                language_models::provider::ollama::OllamaLanguageModelProvider::new(
+                    fake_http_client.clone(),
+                    cx,
+                )
+            });
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
 
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+            // Authenticate the provider to enable model discovery
+            #[cfg(test)]
+            {
+                let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
+                task.detach();
+            }
+
+            provider
         });
 
         cx.background_executor.run_until_parked();
@@ -1755,19 +1814,11 @@ mod tests {
             let mut available_models = ollama_settings.available_models.clone();
 
             // Add discovered models from the global Ollama service
-            if let Some(service) = State::global(cx) {
-                let discovered_models = service.read(cx).available_models();
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 for model in discovered_models {
-                    // Convert from ollama::Model to language_models AvailableModel
-                    let available_model = language_models::provider::ollama::AvailableModel {
-                        name: model.name.clone(),
-                        display_name: model.display_name.clone(),
-                        max_tokens: model.max_tokens,
-                        keep_alive: model.keep_alive.clone(),
-                        supports_tools: model.supports_tools,
-                        supports_images: model.supports_images,
-                        supports_thinking: model.supports_thinking,
-                    };
+                    // Models are already in the correct format from available_models_for_completion
+                    let available_model = model.clone();
 
                     // Add if not already in settings (settings take precedence)
                     if !available_models.iter().any(|m| m.name == model.name) {
@@ -1782,8 +1833,8 @@ mod tests {
 
             // Verify that the switch_ollama_model function can find the discovered model
             // by checking it exists in the service
-            if let Some(service) = State::global(cx) {
-                let discovered_models = service.read(cx).available_models();
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 let found_model = discovered_models
                     .iter()
                     .find(|m| m.name == "discovered-model:latest");
@@ -1828,31 +1879,37 @@ mod tests {
         );
 
         // Create and set global service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
+        let _provider = cx.update(|cx| {
+            let provider = cx.new(|cx| {
+                language_models::provider::ollama::OllamaLanguageModelProvider::new(
+                    fake_http_client.clone(),
+                    cx,
+                )
+            });
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
 
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+            // Authenticate the provider to enable model discovery
+            #[cfg(test)]
+            {
+                let task = provider.update(cx, |provider, cx| provider.authenticate(cx));
+                task.detach();
+            }
+
+            provider
         });
 
         cx.background_executor.run_until_parked();
 
-        // Verify model is discovered by service
+        // Verify model is discovered by provider
         let discovered = cx.update(|cx| {
-            if let Some(service) = State::global(cx) {
-                let models = service.read(cx).available_models();
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let models = provider.read(cx).available_models_for_completion(cx);
                 models.iter().any(|m| m.name == "test-model:latest")
             } else {
                 false
             }
         });
-        assert!(discovered, "Model should be discovered by service");
+        assert!(discovered, "Model should be discovered by provider");
 
         // Test that switch_ollama_model function can handle discovered models
         // This test focuses on the function's ability to find and convert discovered models
@@ -1860,11 +1917,11 @@ mod tests {
         let fs = fs::FakeFs::new(cx.background_executor.clone()) as Arc<dyn fs::Fs>;
 
         // The key test: the function should be able to process a discovered model
-        // We test this by verifying the function doesn't panic and can access the service
+        // We test this by verifying the function doesn't panic and can access the provider
         cx.update(|cx| {
-            // Verify the service is accessible within the function context
-            if let Some(service) = State::global(cx) {
-                let discovered_models = service.read(cx).available_models();
+            // Verify the provider is accessible within the function context
+            if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 let target_model = discovered_models
                     .iter()
                     .find(|m| m.name == "test-model:latest");

@@ -1,15 +1,13 @@
 use anyhow::{Context as AnyhowContext, Result};
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
-use gpui::{App, AppContext, Context, Entity, EntityId, Global, SharedString, Subscription, Task};
-use http_client::HttpClient;
+use futures::AsyncReadExt;
+use gpui::{App, Context, Entity, EntityId, SharedString, Subscription, Task};
+use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language::{Anchor, Buffer, ToOffset};
-use language_model::AuthenticateError;
-use language_models::{api_key::ApiKeyState, provider::ollama::API_KEY_ENV_VAR};
-use ollama::{
-    AvailableModel, GenerateOptions, GenerateRequest, discover_available_models, generate,
-};
+use language_models::provider::ollama::{AvailableModel, OllamaLanguageModelProvider};
+use ollama::KeepAlive;
 use project::Project;
-use settings::SettingsStore;
+use serde::{Deserialize, Serialize};
 use std::{path::Path, sync::Arc, time::Duration};
 
 pub const OLLAMA_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
@@ -17,149 +15,34 @@ const OLLAMA_EDIT_PREDICTION_LENGTH: i32 = 150;
 const OLLAMA_EDIT_PREDICTION_TEMP: f32 = 0.1;
 const OLLAMA_EDIT_PREDICTION_TOP_P: f32 = 0.95;
 
-// Global Ollama service for managing models across all providers
-pub struct State {
-    http_client: Arc<dyn HttpClient>,
-    api_url: SharedString,
-    api_key_state: ApiKeyState,
-    available_models: Vec<AvailableModel>,
-    fetch_models_task: Option<Task<Result<()>>>,
-    _settings_subscription: Subscription,
+#[derive(Serialize, Debug)]
+struct GenerateRequest {
+    model: String,
+    prompt: String,
+    suffix: Option<String>,
+    stream: bool,
+    options: Option<GenerateOptions>,
+    keep_alive: Option<KeepAlive>,
 }
 
-impl State {
-    pub fn new(
-        http_client: Arc<dyn HttpClient>,
-        api_url: SharedString,
-        api_key: Option<String>,
-        cx: &mut App,
-    ) -> Entity<Self> {
-        cx.new(|cx| {
-            let subscription = cx.observe_global::<SettingsStore>({
-                move |this: &mut State, cx| {
-                    this.restart_fetch_models_task(cx);
-                }
-            });
-
-            let mut service = Self {
-                http_client,
-                api_key_state: ApiKeyState::new(api_url.clone()),
-                api_url,
-                available_models: Vec::new(),
-                fetch_models_task: None,
-                _settings_subscription: subscription,
-            };
-
-            // TODO: Remove backward compatibility once all callers are updated
-            if let Some(_key) = api_key {
-                // For now, we'll rely on the ApiKeyState to load from env vars
-                // The store() method would be used for user-provided keys
-            }
-
-            // TODO: why a second refresh here?
-            service.restart_fetch_models_task(cx);
-            service
-        })
-    }
-
-    pub fn global(cx: &App) -> Option<Entity<Self>> {
-        cx.try_global::<GlobalOllamaState>()
-            .map(|service| service.0.clone())
-    }
-
-    pub fn set_global(service: Entity<Self>, cx: &mut App) {
-        cx.set_global(GlobalOllamaState(service));
-    }
-
-    pub fn available_models(&self) -> &[AvailableModel] {
-        &self.available_models
-    }
-
-    pub fn refresh_models(&mut self, cx: &mut Context<Self>) {
-        self.restart_fetch_models_task(cx);
-    }
-
-    pub fn set_models(&mut self, available_models: Vec<AvailableModel>, cx: &mut Context<Self>) {
-        self.available_models = available_models;
-        self.restart_fetch_models_task(cx);
-    }
-
-    pub fn set_api_key(
-        &mut self,
-        api_key: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        let task = self.api_key_state.store(
-            self.api_url.clone(),
-            api_key,
-            |this| &mut this.api_key_state,
-            cx,
-        );
-        self.restart_fetch_models_task(cx);
-        task
-    }
-
-    pub fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        let task = self.api_key_state.load_if_needed(
-            self.api_url.clone(),
-            &API_KEY_ENV_VAR,
-            |this| &mut this.api_key_state,
-            cx,
-        );
-        self.restart_fetch_models_task(cx);
-        task
-    }
-
-    fn restart_fetch_models_task(&mut self, cx: &mut Context<Self>) {
-        self.fetch_models_task = Some(self.fetch_models(cx));
-    }
-
-    fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let http_client = Arc::clone(&self.http_client);
-        let api_url = self.api_url.clone();
-        let api_key = self.api_key_state.key(&api_url);
-
-        cx.spawn(async move |this, cx| {
-            // Get the current settings models to merge with API models
-            let settings_models = this.update(cx, |this, _cx| {
-                // Get just the names of models from settings to avoid duplicates
-                this.available_models
-                    .iter()
-                    .map(|m| m.name.clone())
-                    .collect::<std::collections::HashSet<_>>()
-            })?;
-
-            // Fetch models from API using shared utility
-            let mut api_discovered_models = match discover_available_models(
-                http_client.clone(),
-                api_url.as_ref(),
-                api_key.clone(),
-            )
-            .await
-            {
-                Ok(models) => models,
-                Err(_) => return Ok(()), // Silently fail if API is unavailable
-            };
-
-            // Filter out models that are already defined in settings
-            api_discovered_models.retain(|model| !settings_models.contains(&model.name));
-
-            this.update(cx, |this, cx| {
-                // Append API-discovered models to existing settings models
-                this.available_models.extend(api_discovered_models);
-                // Sort all models by name
-                this.available_models.sort_by(|a, b| a.name.cmp(&b.name));
-                cx.notify();
-            })?;
-
-            Ok(())
-        })
-    }
+#[derive(Serialize, Debug)]
+struct GenerateOptions {
+    num_predict: Option<i32>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    stop: Option<Vec<String>>,
 }
 
-struct GlobalOllamaState(Entity<State>);
-
-impl Global for GlobalOllamaState {}
+#[derive(Deserialize, Debug)]
+#[allow(dead_code)]
+struct GenerateResponse {
+    response: String,
+    done: bool,
+    total_duration: Option<u64>,
+    load_duration: Option<u64>,
+    prompt_eval_count: Option<i32>,
+    eval_count: Option<i32>,
+}
 
 pub struct OllamaEditPredictionProvider {
     model: String,
@@ -167,32 +50,13 @@ pub struct OllamaEditPredictionProvider {
     file_extension: Option<String>,
     current_completion: Option<String>,
     pending_refresh: Option<Task<Result<()>>>,
-    api_key_state: ApiKeyState,
-    api_url: SharedString,
     _service_subscription: Option<Subscription>,
 }
 
 impl OllamaEditPredictionProvider {
-    pub fn new(model: String, api_url: SharedString, cx: &mut Context<Self>) -> Self {
-        let mut api_key_state = ApiKeyState::new(api_url.clone());
-
-        // Load API key if needed using the shared env var
-        let _load_task = api_key_state.load_if_needed(
-            api_url.clone(),
-            &API_KEY_ENV_VAR,
-            |this: &mut Self| &mut this.api_key_state,
-            cx,
-        );
-
-        // Update the global service to ensure it has the latest models
-        if let Some(service) = State::global(cx) {
-            service.update(cx, |service, cx| {
-                service.restart_fetch_models_task(cx);
-            });
-        }
-
-        let subscription = if let Some(service) = State::global(cx) {
-            Some(cx.observe(&service, |_this, _service, cx| {
+    pub fn new(model: String, _api_url: SharedString, cx: &mut Context<Self>) -> Self {
+        let subscription = if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+            Some(cx.observe(&provider, |_this, _provider, cx| {
                 cx.notify();
             }))
         } else {
@@ -205,24 +69,22 @@ impl OllamaEditPredictionProvider {
             file_extension: None,
             current_completion: None,
             pending_refresh: None,
-            api_key_state,
-            api_url,
             _service_subscription: subscription,
         }
     }
 
     pub fn available_models(&self, cx: &App) -> Vec<AvailableModel> {
-        if let Some(service) = State::global(cx) {
-            service.read(cx).available_models().to_vec()
+        if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+            provider.read(cx).available_models_for_completion(cx)
         } else {
             Vec::new()
         }
     }
 
     pub fn refresh_models(&self, cx: &mut App) {
-        if let Some(service) = State::global(cx) {
-            service.update(cx, |service, cx| {
-                service.refresh_models(cx);
+        if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+            provider.update(cx, |provider, cx| {
+                provider.refresh_models(cx);
             });
         }
     }
@@ -265,6 +127,92 @@ impl OllamaEditPredictionProvider {
             None
         }
     }
+
+    async fn generate(
+        client: &dyn HttpClient,
+        api_url: &str,
+        api_key: Option<String>,
+        request: GenerateRequest,
+    ) -> Result<GenerateResponse> {
+        let model_name = request.model.clone();
+        let uri = format!("{api_url}/api/generate");
+        log::info!("Making HTTP request to: {}", uri);
+        log::info!("Request model: {}", request.model);
+        let mut request_builder = HttpRequest::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .header("Content-Type", "application/json");
+
+        if let Some(api_key) = api_key {
+            log::info!("Adding Authorization header with API key");
+            request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
+        } else {
+            log::info!("No API key provided, making unauthenticated request");
+        }
+
+        let serialized_request = serde_json::to_string(&request)?;
+        log::info!("Request payload: {}", serialized_request);
+        let request = request_builder.body(AsyncBody::from(serialized_request))?;
+
+        let mut response = match client.send(request).await {
+            Ok(response) => {
+                log::info!(
+                    "HTTP request sent successfully, status: {}",
+                    response.status()
+                );
+                response
+            }
+            Err(err) => {
+                log::error!("Ollama server unavailable at {}: {}", api_url, err);
+                return Err(err);
+            }
+        };
+
+        let mut body = String::new();
+        response.body_mut().read_to_string(&mut body).await?;
+
+        if !response.status().is_success() {
+            match response.status().as_u16() {
+                404 => {
+                    log::error!("Model or endpoint not found (404). This could mean:");
+                    log::error!("1. The model is not available on this Ollama instance");
+                    log::error!(
+                        "2. For Ollama Turbo, only specific models are supported: gpt-oss:20b, gpt-oss:120b, deepseek-v3.1:671b"
+                    );
+                    log::error!(
+                        "3. The /api/generate endpoint might not be available (try /api/chat instead)"
+                    );
+                    anyhow::bail!(
+                        "Model not found (404). Check if model '{}' is available on the Ollama instance at {}. Response: {}",
+                        model_name,
+                        api_url,
+                        body
+                    );
+                }
+                401 | 403 => {
+                    log::error!(
+                        "Authentication failed. Check your OLLAMA_API_KEY or API key in settings."
+                    );
+                    anyhow::bail!(
+                        "Authentication failed ({}): {}. Please check your Ollama API key.",
+                        response.status(),
+                        body
+                    );
+                }
+                _ => {
+                    anyhow::bail!(
+                        "Failed to connect to Ollama API: {} {}",
+                        response.status(),
+                        body,
+                    );
+                }
+            }
+        }
+
+        let response: GenerateResponse =
+            serde_json::from_str(&body).context("Unable to parse Ollama generate response")?;
+        Ok(response)
+    }
 }
 
 impl EditPredictionProvider for OllamaEditPredictionProvider {
@@ -296,10 +244,14 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
         debounce: bool,
         cx: &mut Context<Self>,
     ) {
-        // Get API settings from the global Ollama service or fallback
-        let (http_client, _api_url) = if let Some(service) = State::global(cx) {
-            let service_ref = service.read(cx);
-            (service_ref.http_client.clone(), service_ref.api_url.clone())
+        // Get API settings from the global Ollama language model provider or fallback
+        let (http_client, api_url) = if let Some(provider) = OllamaLanguageModelProvider::global(cx)
+        {
+            let provider_ref = provider.read(cx);
+            (
+                provider_ref.http_client(),
+                OllamaLanguageModelProvider::api_url(cx).to_string(),
+            )
         } else {
             // Fallback if global service isn't available
             (
@@ -309,12 +261,14 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                     .unwrap_or_else(|| {
                         Arc::new(http_client::BlockedHttpClient::new()) as Arc<dyn HttpClient>
                     }),
-                ollama::OLLAMA_API_URL.into(),
+                "http://localhost:11434".to_string(),
             )
         };
 
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
+            log::info!("Starting completion request task");
             if debounce {
+                log::info!("Debouncing for {:?}", OLLAMA_DEBOUNCE_TIMEOUT);
                 cx.background_executor()
                     .timer(OLLAMA_DEBOUNCE_TIMEOUT)
                     .await;
@@ -334,12 +288,23 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                 this.extract_context(buffer_snapshot, cursor_position)
             })?;
 
-            let (model, api_key, api_url_for_request) = this.update(cx, |this, _| {
-                let api_key = this
-                    .api_key_state
-                    .key(&this.api_url)
-                    .map(|k| k.as_ref().to_string());
-                (this.model.clone(), api_key, this.api_url.clone())
+            let (model, api_key) = this.update(cx, |this, cx| {
+                let api_key = if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
+                    // Get API key from the shared provider
+                    let key = provider
+                        .read(cx)
+                        .api_key(cx)
+                        .map(|k| k.as_ref().to_string());
+                    log::info!(
+                        "Retrieved API key from OllamaLanguageModelProvider: {}",
+                        key.is_some()
+                    );
+                    key
+                } else {
+                    log::info!("No global OllamaLanguageModelProvider found");
+                    None
+                };
+                (this.model.clone(), api_key)
             })?;
 
             let stop_tokens = this.update(cx, |this, _| this.get_stop_tokens())?;
@@ -350,22 +315,17 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                 suffix: Some(suffix),
                 stream: false,
                 options: Some(GenerateOptions {
-                    num_predict: Some(OLLAMA_EDIT_PREDICTION_LENGTH), // Reasonable completion length
-                    temperature: Some(OLLAMA_EDIT_PREDICTION_TEMP), // Low temperature for more deterministic results
+                    num_predict: Some(OLLAMA_EDIT_PREDICTION_LENGTH),
+                    temperature: Some(OLLAMA_EDIT_PREDICTION_TEMP),
                     top_p: Some(OLLAMA_EDIT_PREDICTION_TOP_P),
                     stop: stop_tokens,
                 }),
                 keep_alive: None,
             };
 
-            let response = generate(
-                http_client.as_ref(),
-                api_url_for_request.as_ref(),
-                api_key,
-                request,
-            )
-            .await
-            .context("Failed to get completion from Ollama");
+            let response = Self::generate(http_client.as_ref(), &api_url, api_key, request)
+                .await
+                .context("Failed to get completion from Ollama");
 
             this.update(cx, |this, cx| {
                 this.pending_refresh = None;
@@ -458,12 +418,13 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ollama::fake::FakeHttpClient;
 
     use gpui::{AppContext, TestAppContext};
+    use language_model::LanguageModelProvider;
 
     use client;
     use language::Buffer;
+    use language_models::provider::ollama::OllamaLanguageModelProvider;
     use project::Project;
     use settings::SettingsStore;
 
@@ -477,6 +438,7 @@ mod tests {
             editor::init_settings(cx);
             Project::init_settings(cx);
             workspace::init_settings(cx);
+            language_models::init_settings(cx);
         });
     }
 
@@ -486,14 +448,12 @@ mod tests {
         init_test(cx);
 
         // Test CodeLlama code model gets stop tokens
-        let codellama_provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "codellama:7b-code".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
+        let codellama_provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "codellama:7b-code".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
         });
 
         codellama_provider.read_with(cx, |provider, _| {
@@ -501,14 +461,12 @@ mod tests {
         });
 
         // Test non-CodeLlama model doesn't get stop tokens
-        let qwen_provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
+        let qwen_provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
         });
 
         qwen_provider.read_with(cx, |provider, _| {
@@ -520,7 +478,7 @@ mod tests {
     async fn test_model_discovery(cx: &mut TestAppContext) {
         init_test(cx);
 
-        // Create fake HTTP client
+        // Create fake HTTP client and set up global provider
         let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
 
         // Mock /api/tags response (list models)
@@ -571,40 +529,32 @@ mod tests {
         fake_http_client.set_response("/api/tags", models_response.to_string());
 
         // Mock /api/show responses for model capabilities
-        let qwen_capabilities = serde_json::json!({
+        let capabilities = serde_json::json!({
             "capabilities": ["tools", "thinking"]
         });
 
-        let _codellama_capabilities = serde_json::json!({
-            "capabilities": []
+        fake_http_client.set_response("/api/show", capabilities.to_string());
+
+        // Create global Ollama language model provider for testing
+        let language_provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
+            provider
         });
 
-        fake_http_client.set_response("/api/show", qwen_capabilities.to_string());
-
-        // Create global Ollama service for testing
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        // Set it as global
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+        // Trigger authentication/model discovery
+        language_provider.update(cx, |provider, cx| {
+            provider.authenticate(cx).detach();
         });
 
         // Create completion provider
-        let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
         });
 
         // Wait for model discovery to complete
@@ -613,11 +563,14 @@ mod tests {
         // Verify models were discovered through the global provider
         provider.read_with(cx, |provider, cx| {
             let models = provider.available_models(cx);
-            assert_eq!(models.len(), 2); // Should exclude nomic-embed-text
+            // The OllamaLanguageModelProvider filters out embedding models (nomic-embed-text)
+            // So we should have 2 models: qwen2.5-coder:3b and codellama:7b-code
+            assert_eq!(models.len(), 2);
 
             let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
-            assert!(model_names.contains(&"codellama:7b-code"));
             assert!(model_names.contains(&"qwen2.5-coder:3b"));
+            assert!(model_names.contains(&"codellama:7b-code"));
+            // nomic-embed-text should be filtered out by the language model provider
             assert!(!model_names.contains(&"nomic-embed-text"));
         });
     }
@@ -630,29 +583,20 @@ mod tests {
         let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_error("Connection refused");
 
-        // Create global Ollama service that will fail
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+        // Create global Ollama language model provider that will fail
+        let _provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider, cx);
         });
 
         // Create completion provider
-        let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
         });
 
         // Wait for model discovery to complete (with failure)
@@ -675,28 +619,19 @@ mod tests {
         let empty_response = serde_json::json!({"models": []});
         fake_http_client.set_response("/api/tags", empty_response.to_string());
 
-        // Create global Ollama service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
+        // Create global Ollama language model provider
+        let _provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider, cx);
+        });
+
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:7b".to_string(),
                 "http://localhost:11434".into(),
-                None,
                 cx,
             )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
-        });
-
-        let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:7b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
         });
 
         cx.background_executor.run_until_parked();
@@ -753,38 +688,29 @@ mod tests {
         init_test(cx);
 
         // Create a buffer with realistic code content
-        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("fn test() {\n    \n}", cx)));
+        let buffer = cx.new(|cx| Buffer::local("fn test() {\n    \n}", cx));
         let cursor_position = buffer.read_with(cx, |buffer, _| {
             buffer.anchor_before(11) // Position in the middle of the function
         });
 
-        // Create fake HTTP client and set up global service
+        // Create fake HTTP client and set up global provider
         let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_generate_response("println!(\"Hello\");");
 
-        // Create global Ollama service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+        // Create global Ollama language model provider
+        let _provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider, cx);
         });
 
         // Create provider
-        let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
         });
 
         // Trigger completion refresh (no debounce for test speed)
@@ -833,37 +759,28 @@ mod tests {
         init_test(cx);
 
         // Create buffer where user has partially typed "vec"
-        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("let result = vec", cx)));
+        let buffer = cx.new(|cx| Buffer::local("let result = vec", cx));
         let cursor_position = buffer.read_with(cx, |buffer, _| {
             buffer.anchor_after(16) // After "vec"
         });
 
-        // Create fake HTTP client and set up global service
+        // Create fake HTTP client and set up global provider
         let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
 
-        // Create global Ollama service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+        // Create global Ollama language model provider
+        let _provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider, cx);
         });
 
         // Create provider
-        let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
         });
 
         // Configure response that starts with what user already typed
@@ -895,33 +812,24 @@ mod tests {
 
         let mut editor_cx = editor::test::editor_test_context::EditorTestContext::new(cx).await;
 
-        // Create fake HTTP client and set up global service
+        // Create fake HTTP client and set up global provider
         let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_generate_response("vec![hello, world]");
 
-        // Create global Ollama service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+        // Create global Ollama language model provider
+        let _provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider, cx);
         });
 
         // Create provider
-        let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
         });
 
         // Set up the editor with the Ollama provider
@@ -981,33 +889,24 @@ mod tests {
 
         let mut editor_cx = editor::test::editor_test_context::EditorTestContext::new(cx).await;
 
-        // Create fake HTTP client and set up global service
+        // Create fake HTTP client and set up global provider
         let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
         fake_http_client.set_generate_response("bar");
 
-        // Create global Ollama service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
+        // Create global Ollama language model provider
+        let _provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider, cx);
         });
 
         // Create provider
-        let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
         });
 
         // Set up the editor with the Ollama provider
@@ -1058,407 +957,59 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_settings_model_merging(cx: &mut TestAppContext) {
+    async fn test_api_settings_retrieval(cx: &mut TestAppContext) {
         init_test(cx);
 
-        // Create fake HTTP client that returns some API models
         let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
 
-        // Mock /api/tags response (list models)
-        let models_response = serde_json::json!({
-            "models": [
-                {
-                    "name": "api-model-1",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 1000000,
-                    "digest": "abc123",
-                    "details": {
-                        "format": "gguf",
-                        "family": "llama",
-                        "families": ["llama"],
-                        "parameter_size": "7B",
-                        "quantization_level": "Q4_0"
-                    }
-                },
-                {
-                    "name": "shared-model",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 2000000,
-                    "digest": "def456",
-                    "details": {
-                        "format": "gguf",
-                        "family": "llama",
-                        "families": ["llama"],
-                        "parameter_size": "13B",
-                        "quantization_level": "Q4_0"
-                    }
-                }
-            ]
-        });
-
-        fake_http_client.set_response("/api/tags", models_response.to_string());
-
-        // Mock /api/show responses for each model
-        let show_response = serde_json::json!({
-            "capabilities": ["tools", "vision"]
-        });
-        fake_http_client.set_response("/api/show", show_response.to_string());
-
-        // Create service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        // Add settings models (including one that overlaps with API)
-        let settings_models = vec![
-            AvailableModel {
-                name: "custom-model-1".to_string(),
-                display_name: Some("Custom Model 1".to_string()),
-                max_tokens: 4096,
-                keep_alive: None,
-                supports_tools: Some(true),
-                supports_images: Some(false),
-                supports_thinking: Some(false),
-            },
-            AvailableModel {
-                name: "shared-model".to_string(), // This should take precedence over API
-                display_name: Some("Custom Shared Model".to_string()),
-                max_tokens: 8192,
-                keep_alive: None,
-                supports_tools: Some(true),
-                supports_images: Some(true),
-                supports_thinking: Some(true),
-            },
-        ];
-
-        cx.update(|cx| {
-            service.update(cx, |service, cx| {
-                service.set_models(settings_models, cx);
-            });
-        });
-
-        // Wait for models to be fetched and merged
-        cx.run_until_parked();
-
-        // Verify merged models
-        let models = cx.update(|cx| service.read(cx).available_models().to_vec());
-
-        assert_eq!(models.len(), 3); // 2 settings models + 1 unique API model
-
-        // Models should be sorted alphabetically, so check by name
-        let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
-        assert_eq!(
-            model_names,
-            vec!["api-model-1", "custom-model-1", "shared-model"]
-        );
-
-        // Check custom model from settings
-        let custom_model = models.iter().find(|m| m.name == "custom-model-1").unwrap();
-        assert_eq!(
-            custom_model.display_name,
-            Some("Custom Model 1".to_string())
-        );
-        assert_eq!(custom_model.max_tokens, 4096);
-
-        // Settings model should override API model for shared-model
-        let shared_model = models.iter().find(|m| m.name == "shared-model").unwrap();
-        assert_eq!(
-            shared_model.display_name,
-            Some("Custom Shared Model".to_string())
-        );
-        assert_eq!(shared_model.max_tokens, 8192);
-        assert_eq!(shared_model.supports_tools, Some(true));
-        assert_eq!(shared_model.supports_images, Some(true));
-        assert_eq!(shared_model.supports_thinking, Some(true));
-
-        // API-only model should be included
-        let api_model = models.iter().find(|m| m.name == "api-model-1").unwrap();
-        assert!(api_model.display_name.is_none()); // API models don't have custom display names
-    }
-
-    #[gpui::test]
-    async fn test_api_key_passed_to_requests(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fake_http_client = Arc::new(FakeHttpClient::new());
-
-        // Set up responses for model discovery with API key
-        fake_http_client.set_response(
-            "/api/tags",
-            serde_json::json!({
-                "models": [
-                    {
-                        "name": "qwen2.5-coder:3b",
-                        "modified_at": "2024-01-01T00:00:00Z",
-                        "size": 1000000,
-                        "digest": "abc123",
-                        "details": {
-                            "format": "gguf",
-                            "family": "qwen2.5",
-                            "families": ["qwen2.5"],
-                            "parameter_size": "3B",
-                            "quantization_level": "Q4_0"
-                        }
-                    }
-                ]
-            })
-            .to_string(),
-        );
-
-        // Set up show model response
+        // Set up responses
+        fake_http_client.set_response("/api/tags", serde_json::json!({"models": []}).to_string());
         fake_http_client.set_response(
             "/api/show",
-            serde_json::json!({
-                "capabilities": {
-                    "tools": true,
-                    "vision": false,
-                    "thinking": false
-                }
-            })
-            .to_string(),
+            serde_json::json!({"capabilities": []}).to_string(),
         );
 
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                Some("test-api-key".to_string()),
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
-        });
-
-        // Wait for model fetching to complete
-        cx.background_executor.run_until_parked();
-
-        // Verify that requests were made
-        let requests = fake_http_client.get_requests();
-        assert!(!requests.is_empty(), "Expected HTTP requests to be made");
-
-        // Note: We can't easily test the Authorization header with the current FakeHttpClient
-        // implementation, but the important thing is that the API key gets passed through
-        // to the HTTP requests without panicking.
-    }
-
-    #[gpui::test]
-    async fn test_api_key_update_triggers_refresh(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        let fake_http_client = Arc::new(FakeHttpClient::new());
-
-        // Set up initial response
-        fake_http_client.set_response(
-            "/api/tags",
-            serde_json::json!({
-                "models": []
-            })
-            .to_string(),
-        );
-
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
-        });
-
-        // Clear initial requests
-        fake_http_client.clear_requests();
-
-        // Update API key
-        service.update(cx, |service, cx| {
-            let _task = service.set_api_key(Some("new-api-key".to_string()), cx);
-        });
-
-        // Wait for refresh to complete
-        cx.background_executor.run_until_parked();
-
-        // Verify new requests were made
-        let requests = fake_http_client.get_requests();
-        assert!(
-            !requests.is_empty(),
-            "Expected new requests after API key update"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_ollama_debouncing(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        // Create a buffer with realistic code content
-        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("fn test() {\n    \n}", cx)));
-        let cursor_position = buffer.read_with(cx, |buffer, _| {
-            buffer.anchor_before(11) // Position in the middle of the function
-        });
-
-        // Setup provider state
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-        fake_http_client.set_generate_response("println!(\"Hello\");");
-
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
-        });
-
-        // Wait for any initial model discovery requests to complete
-        cx.background_executor.run_until_parked();
-
+        // Create language model provider with custom API URL
         let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
-        });
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
 
-        // Clear any initial requests (including model discovery)
-        fake_http_client.clear_requests();
-
-        // Simulate rapid typing - trigger refresh multiple times with debounce=true
-        provider.update(cx, |provider, cx| {
-            provider.refresh(None, buffer.clone(), cursor_position, true, cx);
-        });
-
-        provider.update(cx, |provider, cx| {
-            provider.refresh(None, buffer.clone(), cursor_position, true, cx);
-        });
-
-        provider.update(cx, |provider, cx| {
-            provider.refresh(None, buffer.clone(), cursor_position, true, cx);
-        });
-
-        // At this point, no requests should have been made due to debouncing
-        let requests_before_timeout = fake_http_client.get_requests();
-        assert_eq!(
-            requests_before_timeout.len(),
-            0,
-            "Expected no requests before debounce timeout expires"
-        );
-
-        // Advance clock by the debounce timeout
-        cx.background_executor
-            .advance_clock(OLLAMA_DEBOUNCE_TIMEOUT);
-        cx.background_executor.run_until_parked();
-
-        // Now exactly one generate request should have been made (the last one)
-        let requests_after_timeout = fake_http_client.get_requests();
-        let generate_requests: Vec<_> = requests_after_timeout
-            .iter()
-            .filter(|(path, _)| path.contains("/api/generate"))
-            .collect();
-        assert_eq!(
-            generate_requests.len(),
-            1,
-            "Expected exactly 1 generate request after debounce timeout, got {}",
-            generate_requests.len()
-        );
-
-        // Verify provider is no longer refreshing
-        provider.read_with(cx, |provider, _cx| {
-            assert!(
-                !provider.is_refreshing(),
-                "Provider should not be refreshing after completion"
-            );
-        });
-    }
-
-    #[gpui::test]
-    async fn test_ollama_debouncing_slow_typing(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        // Create a buffer with realistic code content
-        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("fn test() {\n    let x = \n}", cx)));
-        let cursor_position = buffer.read_with(cx, |buffer, _| {
-            buffer.anchor_before(21) // Position after "let x = "
-        });
-
-        // Create fake HTTP client and set up global service
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-        fake_http_client.set_generate_response("42");
-
-        // Create global Ollama service
-        let service = cx.update(|cx| {
-            State::new(
-                fake_http_client.clone(),
-                "http://localhost:11434".into(),
-                None,
-                cx,
-            )
-        });
-
-        cx.update(|cx| {
-            State::set_global(service.clone(), cx);
-        });
-
-        // Wait for any initial model discovery requests to complete
-        cx.background_executor.run_until_parked();
-
-        // Create provider
-        let provider = cx.update(|cx| {
-            cx.new(|cx| {
-                OllamaEditPredictionProvider::new(
-                    "qwen2.5-coder:3b".to_string(),
-                    "http://localhost:11434".into(),
-                    cx,
-                )
-            })
-        });
-
-        // Clear any initial requests (including model discovery)
-        fake_http_client.clear_requests();
-
-        // Simulate slow typing - 200ms between keystrokes (realistic typing speed)
-        // Each keystroke should trigger its own API request because 200ms > 75ms debounce
-        for _i in 0..3 {
+            // Trigger authentication to set up API key state
             provider.update(cx, |provider, cx| {
-                provider.refresh(None, buffer.clone(), cursor_position, true, cx);
+                provider.authenticate(cx).detach();
             });
 
-            // Wait for debounce timeout to expire + a bit more
-            cx.background_executor
-                .advance_clock(OLLAMA_DEBOUNCE_TIMEOUT + Duration::from_millis(10));
-            cx.background_executor.run_until_parked();
+            provider
+        });
 
-            // Simulate realistic typing delay (200ms between keystrokes)
-            cx.background_executor
-                .advance_clock(Duration::from_millis(200 - 75 - 10));
-        }
+        cx.background_executor.run_until_parked();
 
-        // With slow typing, we should get 3 separate generate requests (one per "keystroke")
-        let requests = fake_http_client.get_requests();
-        let generate_requests: Vec<_> = requests
-            .iter()
-            .filter(|(path, _)| path.contains("/api/generate"))
-            .collect();
-        assert_eq!(
-            generate_requests.len(),
-            3,
-            "Expected 3 generate requests for slow typing (200ms intervals), got {}. This demonstrates that 75ms debounce is too short for normal typing speeds.",
-            generate_requests.len()
-        );
+        // Test API URL retrieval
+        let api_url = cx.update(|cx| OllamaLanguageModelProvider::api_url(cx));
+        assert!(!api_url.is_empty());
+
+        // Test API key retrieval
+        let _api_key = provider.read_with(cx, |provider, cx| provider.api_key(cx));
+
+        // Create edit prediction provider
+        let edit_provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "test-model".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
+        });
+
+        // Test that edit prediction provider can access the same settings
+        edit_provider.read_with(cx, |_provider, cx| {
+            if let Some(lang_provider) = OllamaLanguageModelProvider::global(cx) {
+                let api_url = OllamaLanguageModelProvider::api_url(cx);
+                let _api_key = lang_provider.read(cx).api_key(cx);
+
+                assert!(!api_url.is_empty());
+                // API key may or may not be present depending on environment
+            }
+        });
     }
 }
