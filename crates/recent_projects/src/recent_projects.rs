@@ -417,10 +417,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
                                     .color(Color::Muted)
                                     .into_any_element(),
-                                SerializedWorkspaceLocation::Remote(_) => {
-                                    Icon::new(IconName::Server)
-                                        .color(Color::Muted)
-                                        .into_any_element()
+                                SerializedWorkspaceLocation::Remote(options) => {
+                                    Icon::new(match options {
+                                        RemoteConnectionOptions::Ssh { .. } => IconName::Server,
+                                        RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
+                                    })
+                                    .color(Color::Muted)
+                                    .into_any_element()
                                 }
                             })
                         })

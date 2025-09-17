@@ -288,7 +288,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
                     h_flex()
                         .flex_grow()
                         .gap_3()
-                        .child(Icon::new(IconName::Server))
+                        .child(Icon::new(IconName::Linux))
                         .child(v_flex().child(HighlightedLabel::new(
                             matched.string.clone(),
                             matched.positions.clone(),
@@ -483,12 +483,14 @@ impl gpui::Render for ProjectPicker {
                     connection_string: connection_string.clone(),
                     paths: Default::default(),
                     nickname: nickname.clone(),
+                    is_wsl: false,
                 }
                 .render(window, cx),
                 ProjectPickerData::Wsl { distro_name } => SshConnectionHeader {
                     connection_string: distro_name.clone(),
                     paths: Default::default(),
                     nickname: None,
+                    is_wsl: true,
                 }
                 .render(window, cx),
             })
@@ -799,6 +801,7 @@ impl RemoteServerProjects {
             RemoteConnectionPrompt::new(
                 connection_options.connection_string(),
                 connection_options.nickname.clone(),
+                false,
                 window,
                 cx,
             )
@@ -870,7 +873,13 @@ impl RemoteServerProjects {
         };
 
         let prompt = cx.new(|cx| {
-            RemoteConnectionPrompt::new(connection_options.distro_name.clone(), None, window, cx)
+            RemoteConnectionPrompt::new(
+                connection_options.distro_name.clone(),
+                None,
+                true,
+                window,
+                cx,
+            )
         });
         let connection = connect(
             ConnectionIdentifier::setup(),
@@ -1644,6 +1653,7 @@ impl RemoteServerProjects {
                         connection_string: connection.host.clone().into(),
                         paths: Default::default(),
                         nickname: connection.nickname.clone().map(|s| s.into()),
+                        is_wsl: false,
                     }
                     .render(window, cx)
                     .into_any_element(),
@@ -1651,6 +1661,7 @@ impl RemoteServerProjects {
                         connection_string: connection.distro_name.clone().into(),
                         paths: Default::default(),
                         nickname: None,
+                        is_wsl: true,
                     }
                     .render(window, cx)
                     .into_any_element(),
@@ -1988,6 +1999,7 @@ impl RemoteServerProjects {
                     connection_string,
                     paths: Default::default(),
                     nickname,
+                    is_wsl: false,
                 }
                 .render(window, cx),
             )

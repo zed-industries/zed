@@ -192,6 +192,7 @@ impl Settings for SshSettings {
 pub struct RemoteConnectionPrompt {
     connection_string: SharedString,
     nickname: Option<SharedString>,
+    is_wsl: bool,
     status_message: Option<SharedString>,
     prompt: Option<(Entity<Markdown>, oneshot::Sender<String>)>,
     cancellation: Option<oneshot::Sender<()>>,
@@ -216,12 +217,14 @@ impl RemoteConnectionPrompt {
     pub(crate) fn new(
         connection_string: String,
         nickname: Option<String>,
+        is_wsl: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             connection_string: connection_string.into(),
             nickname: nickname.map(|nickname| nickname.into()),
+            is_wsl,
             editor: cx.new(|cx| Editor::single_line(window, cx)),
             status_message: None,
             cancellation: None,
@@ -350,15 +353,16 @@ impl RemoteConnectionModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (connection_string, nickname) = match connection_options {
+        let (connection_string, nickname, is_wsl) = match connection_options {
             RemoteConnectionOptions::Ssh(options) => {
-                (options.connection_string(), options.nickname.clone())
+                (options.connection_string(), options.nickname.clone(), false)
             }
-            RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None),
+            RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None, true),
         };
         Self {
-            prompt: cx
-                .new(|cx| RemoteConnectionPrompt::new(connection_string, nickname, window, cx)),
+            prompt: cx.new(|cx| {
+                RemoteConnectionPrompt::new(connection_string, nickname, is_wsl, window, cx)
+            }),
             finished: false,
             paths,
         }
@@ -389,6 +393,7 @@ pub(crate) struct SshConnectionHeader {
     pub(crate) connection_string: SharedString,
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) nickname: Option<SharedString>,
+    pub(crate) is_wsl: bool,
 }
 
 impl RenderOnce for SshConnectionHeader {
@@ -404,6 +409,11 @@ impl RenderOnce for SshConnectionHeader {
             (self.connection_string, None)
         };
 
+        let icon = match self.is_wsl {
+            true => IconName::Linux,
+            false => IconName::Server,
+        };
+
         h_flex()
             .px(DynamicSpacing::Base12.rems(cx))
             .pt(DynamicSpacing::Base08.rems(cx))
@@ -411,7 +421,7 @@ impl RenderOnce for SshConnectionHeader {
             .rounded_t_sm()
             .w_full()
             .gap_1p5()
-            .child(Icon::new(IconName::Server).size(IconSize::Small))
+            .child(Icon::new(icon).size(IconSize::Small))
             .child(
                 h_flex()
                     .gap_1()
@@ -443,6 +453,7 @@ impl Render for RemoteConnectionModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
+        let is_wsl = self.prompt.read(cx).is_wsl;
 
         let theme = cx.theme().clone();
         let body_color = theme.colors().editor_background;
@@ -461,6 +472,7 @@ impl Render for RemoteConnectionModal {
                     paths: self.paths.clone(),
                     connection_string,
                     nickname,
+                    is_wsl,
                 }
                 .render(window, cx),
             )
