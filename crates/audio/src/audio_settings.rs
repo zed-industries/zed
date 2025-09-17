@@ -140,9 +140,16 @@ impl LiveSettings {
                 AudioSettings::get_global(cx).auto_speaker_volume,
                 Ordering::Relaxed,
             );
-            LIVE_SETTINGS
-                .denoise
-                .store(AudioSettings::get_global(cx).denoise, Ordering::Relaxed);
+
+            let denoise_enabled = AudioSettings::get_global(cx).denoise;
+            #[cfg(debug_assertions)]
+            if denoise_enabled {
+                log::warn!("Denoise does not work on debug builds, not enabling")
+            } else {
+                LIVE_SETTINGS
+                    .denoise
+                    .store(denoise_enabled, Ordering::Relaxed);
+            }
         })
         .detach();
 
