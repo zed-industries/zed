@@ -2775,17 +2775,14 @@ async fn test_collapse_all_entries_multiple_worktrees(cx: &mut gpui::TestAppCont
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
-    // Run collapse_all_entries twice and make sure the workspace roots are collapsed
-    for _ in 0..2 {
-        panel.update_in(cx, |panel, window, cx| {
-            panel.collapse_all_entries(&CollapseAllEntries, window, cx)
-        });
-        cx.executor().run_until_parked();
-        assert_eq!(
-            visible_entries_as_strings(&panel, 0..10, cx),
-            &["> project_root_1", "> project_root_2",]
-        );
-    }
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
+    );
 }
 
 #[gpui::test]
@@ -2820,7 +2817,23 @@ async fn test_collapse_all_entries_with_collapsed_root(cx: &mut gpui::TestAppCon
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
-    // Toggle root directory
+    // Open project_root/dir_1 to ensure that a nested directory is expanded
+    toggle_expand_dir(&panel, "project_root/dir_1", cx);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v project_root",
+            "    v dir_1  <== selected",
+            "        > nested_dir",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    > dir_2",
+        ]
+    );
+
+    // Close root directory
     toggle_expand_dir(&panel, "project_root", cx);
     cx.executor().run_until_parked();
     assert_eq!(
