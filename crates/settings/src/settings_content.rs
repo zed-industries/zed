@@ -191,7 +191,7 @@ pub struct TitleBarSettingsContent {
     /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
     ///
     /// Default: "always"
-    pub show: Option<TitleBarVisibilityContent>,
+    pub show: Option<TitleBarVisibility>,
     /// Whether to show the branch icon beside branch switcher in the title bar.
     ///
     /// Default: false
@@ -224,7 +224,7 @@ pub struct TitleBarSettingsContent {
 
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Debug)]
 #[serde(rename_all = "snake_case")]
-pub enum TitleBarVisibilityContent {
+pub enum TitleBarVisibility {
     Always,
     Never,
     HideInFullScreen,

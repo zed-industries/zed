@@ -1050,7 +1050,7 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        TitleBarSettingsContent, TitleBarVisibilityContent, VsCodeSettingsSource, default_settings,
+        TitleBarSettingsContent, TitleBarVisibility, VsCodeSettingsSource, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
     };
 
@@ -1081,7 +1081,7 @@ mod tests {
 
     #[derive(Debug, PartialEq)]
     struct TitleBarSettings {
-        show: TitleBarVisibilityContent,
+        show: TitleBarVisibility,
         show_branch_name: bool,
     }
 
@@ -1105,8 +1105,8 @@ mod tests {
             let mut show = None;
 
             vscode.enum_setting("window.titleBarStyle", &mut show, |value| match value {
-                "never" => Some(TitleBarVisibilityContent::Never),
-                "always" => Some(TitleBarVisibilityContent::Always),
+                "never" => Some(TitleBarVisibility::Never),
+                "always" => Some(TitleBarVisibility::Always),
                 _ => None,
             });
             if let Some(show) = show {
@@ -1163,7 +1163,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibilityContent::Always
+            TitleBarVisibility::Always
         );
 
         store
@@ -1184,7 +1184,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibilityContent::Never
+            TitleBarVisibility::Never
         );
 
         // todo!()
@@ -1253,7 +1253,7 @@ mod tests {
                 path: Path::new("/root2/something")
             })),
             &TitleBarSettings {
-                show: TitleBarVisibilityContent::Never,
+                show: TitleBarVisibility::Never,
                 show_branch_name: true,
             }
         );
@@ -1274,7 +1274,7 @@ mod tests {
         );
         assert_eq!(
             store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibilityContent::Always,
+            TitleBarVisibility::Always,
         );
     }
 
@@ -1402,7 +1402,7 @@ mod tests {
                 }"#
             .unindent(),
             |settings| {
-                settings.title_bar.as_mut().unwrap().show = Some(TitleBarVisibilityContent::Never);
+                settings.title_bar.as_mut().unwrap().show = Some(TitleBarVisibility::Never);
             },
             r#"{
                 "title_bar":   { "show": "never", "name": "Max"  }
@@ -1594,7 +1594,7 @@ mod tests {
         assert_eq!(
             store.get::<TitleBarSettings>(None),
             &TitleBarSettings {
-                show: TitleBarVisibilityContent::Never,
+                show: TitleBarVisibility::Never,
                 show_branch_name: true,
             }
         );
@@ -1615,7 +1615,7 @@ mod tests {
         assert_eq!(
             store.get::<TitleBarSettings>(None),
             &TitleBarSettings {
-                show: TitleBarVisibilityContent::Always,
+                show: TitleBarVisibility::Always,
                 show_branch_name: true, // Staff from global settings
             }
         );

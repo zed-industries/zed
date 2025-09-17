@@ -1,15 +1,7 @@
-use db::anyhow;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent, SettingsKey, SettingsSources, SettingsUi};
-
-#[derive(Copy, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
-#[serde(rename_all = "snake_case")]
-pub enum TitleBarVisibility {
-    Always,
-    Never,
-    HideInFullScreen,
-}
+pub use settings::TitleBarVisibility;
+use settings::{Settings, SettingsContent};
+use ui::App;
+use util::MergeFrom;
 
 #[derive(Copy, Clone, Debug)]
 pub struct TitleBarSettings {
@@ -24,35 +16,37 @@ pub struct TitleBarSettings {
 }
 
 impl Settings for TitleBarSettings {
-    fn from_defaults(s: &SettingsContent) -> Option<Self> {
-        let content = s.title_bar?;
+    fn from_defaults(s: &SettingsContent, _: &mut App) -> Self {
+        let content = s.title_bar.clone().unwrap();
         TitleBarSettings {
-            show: content.show?,
-            show_branch_icon: content.show_branch_icon?,
-            show_onboarding_banner: content.show_onboarding_banner?,
-            show_user_picture: content.show_user_picture?,
-            show_branch_name: content.show_branch_name?,
-            show_project_items: content.show_project_items?,
-            show_sign_in: content.show_sign_in?,
-            show_menus: content.show_menus?,
+            show: content.show.unwrap(),
+            show_branch_icon: content.show_branch_icon.unwrap(),
+            show_onboarding_banner: content.show_onboarding_banner.unwrap(),
+            show_user_picture: content.show_user_picture.unwrap(),
+            show_branch_name: content.show_branch_name.unwrap(),
+            show_project_items: content.show_project_items.unwrap(),
+            show_sign_in: content.show_sign_in.unwrap(),
+            show_menus: content.show_menus.unwrap(),
         }
     }
 
     fn refine(&mut self, s: &SettingsContent, _: &mut App) {
-        let Some(content) = s.title_bar else {
+        let Some(content) = &s.title_bar else {
             return;
         };
 
-        self.show.refine(&content.show);
-        self.show_branch_icon.refine(content.show_branch_icon);
+        self.show.merge_from(&content.show);
+        self.show_branch_icon.merge_from(&content.show_branch_icon);
         self.show_onboarding_banner
-            .refine(content.show_onboarding_banner);
-        self.show_user_picture.refine(content.show_user_picture);
-        self.show_branch_name.refine(content.show_branch_name);
-        self.show_project_items.refine(content.show_project_items);
-        self.show_sign_in.refine(content.show_sign_in);
-        self.show_menus.refine(content.show_menus);
+            .merge_from(&content.show_onboarding_banner);
+        self.show_user_picture
+            .merge_from(&content.show_user_picture);
+        self.show_branch_name.merge_from(&content.show_branch_name);
+        self.show_project_items
+            .merge_from(&content.show_project_items);
+        self.show_sign_in.merge_from(&content.show_sign_in);
+        self.show_menus.merge_from(&content.show_menus);
     }
 
-    fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut Self::FileContent) {}
+    fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut SettingsContent) {}
 }
