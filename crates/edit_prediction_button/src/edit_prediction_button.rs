@@ -910,8 +910,10 @@ async fn open_disabled_globs_setting_in_editor(
             let settings = cx.global::<SettingsStore>();
 
             // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
-            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-                file.edit_predictions
+            let edits = settings.edits_for_update(&text, |file| {
+                file.project
+                    .all_languages
+                    .edit_predictions
                     .get_or_insert_with(Default::default)
                     .disabled_globs
                     .get_or_insert_with(Vec::new);
@@ -971,7 +973,7 @@ fn toggle_show_edit_predictions_for_language(
             .all_languages
             .languages
             .0
-            .entry(language.name())
+            .entry(language.name().0)
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);
     });
@@ -999,7 +1001,7 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
                 edit_predictions.mode = mode;
             } else {
                 settings.project.all_languages.edit_predictions =
-                    Some(language_settings::EditPredictionSettingsContent {
+                    Some(settings::EditPredictionSettingsContent {
                         mode,
                         ..Default::default()
                     });

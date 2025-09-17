@@ -2866,8 +2866,8 @@ mod tests {
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<EditorSettings>(cx, |settings| {
-                    settings.search = Some(search_settings);
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.search = Some(search_settings);
                 });
             });
         });

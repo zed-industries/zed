@@ -4,7 +4,7 @@ use crate::{
 };
 use call::ActiveCall;
 use editor::{
-    DocumentColorsRenderMode, Editor, EditorSettings, RowInfo, SelectionEffects,
+    DocumentColorsRenderMode, Editor, RowInfo, SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
         ExpandMacroRecursively, MoveToEnd, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
@@ -18,20 +18,16 @@ use fs::Fs;
 use futures::{SinkExt, StreamExt, channel::mpsc, lock::Mutex};
 use gpui::{App, Rgba, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
-use language::{
-    FakeLspAdapter,
-    language_settings::{AllLanguageSettings, InlayHintSettings},
-};
+use language::FakeLspAdapter;
 use lsp::LSP_REQUEST_TIMEOUT;
 use project::{
     ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
-    project_settings::{InlineBlameSettings, ProjectSettings},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{InlayHintSettings, InlineBlameSettings, SettingsStore};
 use std::{
     collections::BTreeSet,
     ops::{Deref as _, Range},
@@ -2422,8 +2418,8 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     cx_b.update(|_, cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::Background);
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Background);
             });
         });
     });
@@ -2450,8 +2446,8 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     cx_b.update(|_, cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
             });
         });
     });
@@ -2478,8 +2474,8 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     cx_a.update(|_, cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::Border);
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Border);
             });
         });
     });
@@ -3306,20 +3302,20 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     cx_b.update(editor::init);
     // Turn inline-blame-off by default so no state is transferred without us explicitly doing so
     let inline_blame_off_settings = Some(InlineBlameSettings {
-        enabled: false,
+        enabled: Some(false),
         ..Default::default()
     });
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                settings.git.inline_blame = inline_blame_off_settings;
+            store.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().inline_blame = inline_blame_off_settings;
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                settings.git.inline_blame = inline_blame_off_settings;
+            store.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().inline_blame = inline_blame_off_settings;
             });
         });
     });

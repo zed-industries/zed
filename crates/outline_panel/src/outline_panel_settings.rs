@@ -1,6 +1,6 @@
 use editor::EditorSettings;
 use gpui::{App, Pixels};
-pub use settings::{LeftRightDockPosition, Settings, ShowIndentGuides};
+pub use settings::{DockSide, Settings, ShowIndentGuides};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use util::MergeFrom;
 
