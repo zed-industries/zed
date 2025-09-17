@@ -135,7 +135,6 @@ impl RemoteConnection for IrohZedRemote {
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
         delegate.set_status(Some("Opening stream"), cx);
-
         let addr = self.options.ticket.node.clone();
         match handle_rpc_messages(
             &self.endpoint,

@@ -105,7 +105,7 @@ impl CreateP2pRemote {
 }
 
 #[derive(Debug)]
-enum ConnectionOptions {
+pub enum ConnectionOptions {
     Ssh(SshConnectionOptions),
     P2p(IrohConnectionOptions),
 }
@@ -369,7 +369,11 @@ struct DefaultState {
 }
 
 impl DefaultState {
-    fn new(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
+    fn new(
+        ssh_config_servers: &BTreeSet<SharedString>,
+        p2p_config_servers: &BTreeSet<SharedString>,
+        cx: &mut App,
+    ) -> Self {
         let handle = ScrollHandle::new();
         let scrollbar = ScrollbarState::new(handle.clone());
         let add_new_server = NavigableEntry::new(&handle, cx);
@@ -410,6 +414,14 @@ impl DefaultState {
                     host,
                 }
             }));
+
+            let extra_servers_from_config = p2p_config_servers.clone();
+            servers.extend(extra_servers_from_config.into_iter().map(|ticket| {
+                RemoteEntry::P2pConfig {
+                    open_folder: NavigableEntry::new(&handle, cx),
+                    ticket,
+                }
+            }));
         }
 
         Self {
@@ -437,8 +449,16 @@ enum Mode {
 }
 
 impl Mode {
-    fn default_mode(ssh_config_servers: &BTreeSet<SharedString>, cx: &mut App) -> Self {
-        Self::Default(DefaultState::new(ssh_config_servers, cx))
+    fn default_mode(
+        ssh_config_servers: &BTreeSet<SharedString>,
+        p2p_config_servers: &BTreeSet<SharedString>,
+        cx: &mut App,
+    ) -> Self {
+        Self::Default(DefaultState::new(
+            ssh_config_servers,
+            p2p_config_servers,
+            cx,
+        ))
     }
 }
 impl RemoteServerProjects {
@@ -478,7 +498,7 @@ impl RemoteServerProjects {
             });
 
         Self {
-            mode: Mode::default_mode(&BTreeSet::new(), cx),
+            mode: Mode::default_mode(&BTreeSet::new(), &BTreeSet::new(), cx),
             focus_handle,
             workspace,
             retained_connections: Vec::new(),
@@ -568,7 +588,11 @@ impl RemoteServerProjects {
                         telemetry::event!("SSH Server Created");
                         this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
-                        this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                        this.mode = Mode::default_mode(
+                            &this.ssh_config_servers,
+                            &this.p2p_config_servers,
+                            cx,
+                        );
                         this.focus_handle(cx).focus(window);
                         cx.notify()
                     })
@@ -608,6 +632,7 @@ impl RemoteServerProjects {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        log::info!("CREATE P2P server");
         let input = get_text(&editor, cx);
         if input.is_empty() {
             return;
@@ -645,14 +670,19 @@ impl RemoteServerProjects {
 
         let address_editor = editor.clone();
         let creating = cx.spawn_in(window, async move |this, cx| {
+            log::info!("P2P waiting for connection");
             match connection.await {
                 Some(Some(client)) => this
                     .update_in(cx, |this, window, cx| {
                         telemetry::event!("P2P Server Created");
+                        log::info!("P2P server created");
                         this.retained_connections.push(client);
                         this.add_p2p_server(connection_options, cx);
-
-                        this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                        this.mode = Mode::default_mode(
+                            &this.ssh_config_servers,
+                            &this.p2p_config_servers,
+                            cx,
+                        );
                         this.focus_handle(cx).focus(window);
                         cx.notify()
                     })
@@ -930,6 +960,7 @@ impl RemoteServerProjects {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        log::info!("confirm");
         match &self.mode {
             Mode::Default(_) | Mode::ViewServerOptions(_) => {}
             Mode::ProjectPicker(_) => {}
@@ -962,7 +993,8 @@ impl RemoteServerProjects {
                         connection.nickname = text;
                     }
                 });
-                self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+                self.mode =
+                    Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
                 self.focus_handle.focus(window);
             }
         }
@@ -982,7 +1014,8 @@ impl RemoteServerProjects {
                 cx.notify();
             }
             _ => {
-                self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+                self.mode =
+                    Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
                 self.focus_handle(cx).focus(window);
                 cx.notify();
             }
@@ -1720,6 +1753,7 @@ impl RemoteServerProjects {
                                             .update(cx, |this, cx| {
                                                 this.mode = Mode::default_mode(
                                                     &this.ssh_config_servers,
+                                                    &this.p2p_config_servers,
                                                     cx,
                                                 );
                                                 cx.notify();
@@ -1773,7 +1807,11 @@ impl RemoteServerProjects {
                                 .id("ssh-options-copy-server-address")
                                 .track_focus(&entries[3].focus_handle)
                                 .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                                    this.mode = Mode::default_mode(&this.ssh_config_servers, cx);
+                                    this.mode = Mode::default_mode(
+                                        &this.ssh_config_servers,
+                                        &this.p2p_config_servers,
+                                        cx,
+                                    );
                                     cx.focus_self(window);
                                     cx.notify();
                                 }))
@@ -1789,8 +1827,11 @@ impl RemoteServerProjects {
                                         )
                                         .child(Label::new("Go Back"))
                                         .on_click(cx.listener(|this, _, window, cx| {
-                                            this.mode =
-                                                Mode::default_mode(&this.ssh_config_servers, cx);
+                                            this.mode = Mode::default_mode(
+                                                &this.ssh_config_servers,
+                                                &this.p2p_config_servers,
+                                                cx,
+                                            );
                                             cx.focus_self(window);
                                             cx.notify()
                                         })),
@@ -1890,7 +1931,7 @@ impl RemoteServerProjects {
         }
 
         if should_rebuild {
-            self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+            self.mode = Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
             if let Mode::Default(new_state) = &self.mode {
                 state = new_state.clone();
             }
@@ -2108,7 +2149,7 @@ impl RemoteServerProjects {
             },
             cx,
         );
-        self.mode = Mode::default_mode(&self.ssh_config_servers, cx);
+        self.mode = Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
         new_ix.load(atomic::Ordering::Acquire)
     }
 
@@ -2138,7 +2179,7 @@ impl RemoteServerProjects {
             },
             cx,
         );
-        self.mode = Mode::default_mode(&self.p2p_config_servers, cx);
+        self.mode = Mode::default_mode(&self.ssh_config_servers, &self.p2p_config_servers, cx);
         new_ix.load(atomic::Ordering::Acquire)
     }
 }
