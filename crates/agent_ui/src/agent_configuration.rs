@@ -3,13 +3,12 @@ mod configure_context_server_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc};
 
-use agent_servers::{AgentServerCommand, AgentServerSettings, AllAgentServersSettings, Gemini};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
-use cloud_llm_client::Plan;
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
@@ -17,9 +16,8 @@ use extension::ExtensionManifest;
 use extension_host::ExtensionStore;
 use fs::Fs;
 use gpui::{
-    Action, Animation, AnimationExt as _, AnyView, App, AsyncWindowContext, Corner, Entity,
-    EventEmitter, FocusHandle, Focusable, Hsla, ScrollHandle, Subscription, Task, Transformation,
-    WeakEntity, percentage,
+    Action, AnyView, App, AsyncWindowContext, Corner, Entity, EventEmitter, FocusHandle, Focusable,
+    Hsla, ScrollHandle, Subscription, Task, WeakEntity,
 };
 use language::LanguageRegistry;
 use language_model::{
@@ -27,14 +25,17 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    Project,
+    agent_server_store::{
+        AgentServerCommand, AgentServerStore, AllAgentServersSettings, CLAUDE_CODE_NAME,
+        CustomAgentServerSettings, GEMINI_NAME,
+    },
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
     project_settings::{ContextServerSettings, ProjectSettings},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
-    Chip, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex, Indicator, PopoverMenu,
-    Scrollbar, ScrollbarState, Switch, SwitchColor, SwitchField, Tooltip, prelude::*,
+    Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
+    Indicator, PopoverMenu, Switch, SwitchColor, SwitchField, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -46,13 +47,14 @@ pub(crate) use manage_profiles_modal::ManageProfilesModal;
 use crate::{
     AddContextServer, ExternalAgent, NewExternalAgentThread,
     agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
+    placeholder_command,
 };
 
 pub struct AgentConfiguration {
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
+    agent_server_store: Entity<AgentServerStore>,
     workspace: WeakEntity<Workspace>,
-    project: WeakEntity<Project>,
     focus_handle: FocusHandle,
     configuration_views_by_provider: HashMap<LanguageModelProviderId, AnyView>,
     context_server_store: Entity<ContextServerStore>,
@@ -61,19 +63,17 @@ pub struct AgentConfiguration {
     tools: Entity<ToolWorkingSet>,
     _registry_subscription: Subscription,
     scroll_handle: ScrollHandle,
-    scrollbar_state: ScrollbarState,
-    gemini_is_installed: bool,
     _check_for_gemini: Task<()>,
 }
 
 impl AgentConfiguration {
     pub fn new(
         fs: Arc<dyn Fs>,
+        agent_server_store: Entity<AgentServerStore>,
         context_server_store: Entity<ContextServerStore>,
         tools: Entity<ToolWorkingSet>,
         language_registry: Arc<LanguageRegistry>,
         workspace: WeakEntity<Workspace>,
-        project: WeakEntity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -98,34 +98,23 @@ impl AgentConfiguration {
 
         cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
             .detach();
-        cx.observe_global_in::<SettingsStore>(window, |this, _, cx| {
-            this.check_for_gemini(cx);
-            cx.notify();
-        })
-        .detach();
-
-        let scroll_handle = ScrollHandle::new();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let mut this = Self {
             fs,
             language_registry,
             workspace,
-            project,
             focus_handle,
             configuration_views_by_provider: HashMap::default(),
+            agent_server_store,
             context_server_store,
             expanded_context_server_tools: HashMap::default(),
             expanded_provider_configurations: HashMap::default(),
             tools,
             _registry_subscription: registry_subscription,
-            scroll_handle,
-            scrollbar_state,
-            gemini_is_installed: false,
+            scroll_handle: ScrollHandle::new(),
             _check_for_gemini: Task::ready(()),
         };
         this.build_provider_configuration_views(window, cx);
-        this.check_for_gemini(cx);
         this
     }
 
@@ -154,34 +143,6 @@ impl AgentConfiguration {
         );
         self.configuration_views_by_provider
             .insert(provider.id(), configuration_view);
-    }
-
-    fn check_for_gemini(&mut self, cx: &mut Context<Self>) {
-        let project = self.project.clone();
-        let settings = AllAgentServersSettings::get_global(cx).clone();
-        self._check_for_gemini = cx.spawn({
-            async move |this, cx| {
-                let Some(project) = project.upgrade() else {
-                    return;
-                };
-                let gemini_is_installed = AgentServerCommand::resolve(
-                    Gemini::binary_name(),
-                    &[],
-                    // TODO expose fallback path from the Gemini/CC types so we don't have to hardcode it again here
-                    None,
-                    settings.gemini,
-                    &project,
-                    cx,
-                )
-                .await
-                .is_some();
-                this.update(cx, |this, cx| {
-                    this.gemini_is_installed = gemini_is_installed;
-                    cx.notify();
-                })
-                .ok();
-            }
-        });
     }
 }
 
@@ -371,6 +332,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .pr_1()
                                     .w_full()
                                     .gap_2()
                                     .justify_between()
@@ -547,9 +509,15 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::ZedFree => ("Free", Color::Default, free_chip_bg),
-                Plan::ZedProTrial => ("Pro Trial", Color::Accent, pro_chip_bg),
-                Plan::ZedPro => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree) => {
+                    ("Free", Color::Default, free_chip_bg)
+                }
+                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial) => {
+                    ("Pro Trial", Color::Accent, pro_chip_bg)
+                }
+                Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro) => {
+                    ("Pro", Color::Accent, pro_chip_bg)
+                }
             };
 
             Chip::new(plan_name.to_string())
@@ -709,10 +677,9 @@ impl AgentConfiguration {
                 Icon::new(IconName::LoadCircle)
                     .size(IconSize::XSmall)
                     .color(Color::Accent)
-                    .with_animation(
-                        SharedString::from(format!("{}-starting", context_server_id.0,)),
-                        Animation::new(Duration::from_secs(3)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    .with_keyed_rotate_animation(
+                        SharedString::from(format!("{}-starting", context_server_id.0)),
+                        3,
                     )
                     .into_any_element(),
                 "Server is starting.",
@@ -1031,19 +998,31 @@ impl AgentConfiguration {
     }
 
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let settings = AllAgentServersSettings::get_global(cx).clone();
-        let user_defined_agents = settings
+        let custom_settings = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
             .custom
-            .iter()
-            .map(|(name, settings)| {
+            .clone();
+        let user_defined_agents = self
+            .agent_server_store
+            .read(cx)
+            .external_agents()
+            .filter(|name| name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME)
+            .cloned()
+            .collect::<Vec<_>>();
+        let user_defined_agents = user_defined_agents
+            .into_iter()
+            .map(|name| {
                 self.render_agent_server(
                     IconName::Ai,
                     name.clone(),
                     ExternalAgent::Custom {
-                        name: name.clone(),
-                        settings: settings.clone(),
+                        name: name.clone().into(),
+                        command: custom_settings
+                            .get(&name.0)
+                            .map(|settings| settings.command.clone())
+                            .unwrap_or(placeholder_command()),
                     },
-                    None,
                     cx,
                 )
                 .into_any_element()
@@ -1063,6 +1042,7 @@ impl AgentConfiguration {
                             .gap_0p5()
                             .child(
                                 h_flex()
+                                    .pr_1()
                                     .w_full()
                                     .gap_2()
                                     .justify_between()
@@ -1093,7 +1073,7 @@ impl AgentConfiguration {
                             )
                             .child(
                                 Label::new(
-                                    "Use the full power of Zed's UI with your favorite agent, connected via the Agent Client Protocol.",
+                                    "All agents connected through the Agent Client Protocol.",
                                 )
                                 .color(Color::Muted),
                             ),
@@ -1102,10 +1082,14 @@ impl AgentConfiguration {
                         IconName::AiGemini,
                         "Gemini CLI",
                         ExternalAgent::Gemini,
-                        (!self.gemini_is_installed).then_some(Gemini::install_command().into()),
                         cx,
                     ))
-                    // TODO add CC
+                    .child(self.render_agent_server(
+                        IconName::AiClaude,
+                        "Claude Code",
+                        ExternalAgent::ClaudeCode,
+                        cx,
+                    ))
                     .children(user_defined_agents),
             )
     }
@@ -1115,7 +1099,6 @@ impl AgentConfiguration {
         icon: IconName,
         name: impl Into<SharedString>,
         agent: ExternalAgent,
-        install_command: Option<SharedString>,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let name = name.into();
@@ -1135,88 +1118,26 @@ impl AgentConfiguration {
                     .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
                     .child(Label::new(name.clone())),
             )
-            .map(|this| {
-                if let Some(install_command) = install_command {
-                    this.child(
-                        Button::new(
-                            SharedString::from(format!("install_external_agent-{name}")),
-                            "Install Agent",
-                        )
-                        .label_size(LabelSize::Small)
-                        .icon(IconName::Plus)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .tooltip(Tooltip::text(install_command.clone()))
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                let Some(project) = this.project.upgrade() else {
-                                    return;
-                                };
-                                let Some(workspace) = this.workspace.upgrade() else {
-                                    return;
-                                };
-                                let cwd = project.read(cx).first_project_directory(cx);
-                                let shell =
-                                    project.read(cx).terminal_settings(&cwd, cx).shell.clone();
-                                let spawn_in_terminal = task::SpawnInTerminal {
-                                    id: task::TaskId(install_command.to_string()),
-                                    full_label: install_command.to_string(),
-                                    label: install_command.to_string(),
-                                    command: Some(install_command.to_string()),
-                                    args: Vec::new(),
-                                    command_label: install_command.to_string(),
-                                    cwd,
-                                    env: Default::default(),
-                                    use_new_terminal: true,
-                                    allow_concurrent_runs: true,
-                                    reveal: Default::default(),
-                                    reveal_target: Default::default(),
-                                    hide: Default::default(),
-                                    shell,
-                                    show_summary: true,
-                                    show_command: true,
-                                    show_rerun: false,
-                                };
-                                let task = workspace.update(cx, |workspace, cx| {
-                                    workspace.spawn_in_terminal(spawn_in_terminal, window, cx)
-                                });
-                                cx.spawn(async move |this, cx| {
-                                    task.await;
-                                    this.update(cx, |this, cx| {
-                                        this.check_for_gemini(cx);
-                                    })
-                                    .ok();
-                                })
-                                .detach();
-                            },
-                        )),
-                    )
-                } else {
-                    this.child(
-                        h_flex().gap_1().child(
-                            Button::new(
-                                SharedString::from(format!("start_acp_thread-{name}")),
-                                "Start New Thread",
-                            )
-                            .label_size(LabelSize::Small)
-                            .icon(IconName::Thread)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .on_click(move |_, window, cx| {
-                                window.dispatch_action(
-                                    NewExternalAgentThread {
-                                        agent: Some(agent.clone()),
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                );
-                            }),
-                        ),
-                    )
-                }
-            })
+            .child(
+                Button::new(
+                    SharedString::from(format!("start_acp_thread-{name}")),
+                    "Start New Thread",
+                )
+                .label_size(LabelSize::Small)
+                .icon(IconName::Thread)
+                .icon_position(IconPosition::Start)
+                .icon_size(IconSize::XSmall)
+                .icon_color(Color::Muted)
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(
+                        NewExternalAgentThread {
+                            agent: Some(agent.clone()),
+                        }
+                        .boxed_clone(),
+                        cx,
+                    );
+                }),
+            )
     }
 }
 
@@ -1231,41 +1152,20 @@ impl Render for AgentConfiguration {
             .pb_8()
             .bg(cx.theme().colors().panel_background)
             .child(
-                v_flex()
-                    .id("assistant-configuration-content")
-                    .track_scroll(&self.scroll_handle)
-                    .size_full()
-                    .overflow_y_scroll()
-                    .child(self.render_general_settings_section(cx))
-                    .child(self.render_agent_servers_section(cx))
-                    .child(self.render_context_servers_section(window, cx))
-                    .child(self.render_provider_configuration_section(cx)),
-            )
-            .child(
                 div()
-                    .id("assistant-configuration-scrollbar")
-                    .occlude()
-                    .absolute()
-                    .right(px(3.))
-                    .top_0()
-                    .bottom_0()
-                    .pb_6()
-                    .w(px(12.))
-                    .cursor_default()
-                    .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                        cx.notify();
-                        cx.stop_propagation()
-                    }))
-                    .on_hover(|_, _window, cx| {
-                        cx.stop_propagation();
-                    })
-                    .on_any_mouse_down(|_, _window, cx| {
-                        cx.stop_propagation();
-                    })
-                    .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                        cx.notify();
-                    }))
-                    .children(Scrollbar::vertical(self.scrollbar_state.clone())),
+                    .size_full()
+                    .child(
+                        v_flex()
+                            .id("assistant-configuration-content")
+                            .track_scroll(&self.scroll_handle)
+                            .size_full()
+                            .overflow_y_scroll()
+                            .child(self.render_general_settings_section(cx))
+                            .child(self.render_agent_servers_section(cx))
+                            .child(self.render_context_servers_section(window, cx))
+                            .child(self.render_provider_configuration_section(cx)),
+                    )
+                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
             )
     }
 }
@@ -1393,12 +1293,13 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                     unique_server_name = Some(server_name.clone());
                     file.custom.insert(
                         server_name,
-                        AgentServerSettings {
+                        CustomAgentServerSettings {
                             command: AgentServerCommand {
                                 path: "path_to_executable".into(),
                                 args: vec![],
                                 env: Some(HashMap::default()),
                             },
+                            default_mode: None,
                         },
                     );
                 }

@@ -4,7 +4,7 @@ use context_server::ContextServerCommand;
 use dap::adapters::DebugAdapterName;
 use fs::Fs;
 use futures::StreamExt as _;
-use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Task};
+use gpui::{App, AsyncApp, BorrowAppContext, Context, Entity, EventEmitter, Subscription, Task};
 use lsp::LanguageServerName;
 use paths::{
     EDITORCONFIG_NAME, local_debug_file_relative_path, local_settings_file_relative_path,
@@ -13,13 +13,13 @@ use paths::{
 };
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, ToProto},
+    proto::{self, FromProto, REMOTE_SERVER_PROJECT_ID, ToProto},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsSources,
-    SettingsStore, parse_json_with_comments, watch_config_file,
+    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation,
+    SettingsSources, SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
 };
 use std::{
     collections::BTreeMap,
@@ -36,7 +36,8 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(None)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -281,7 +282,17 @@ impl Default for GlobalLspSettings {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    SettingsUi,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverity {
@@ -290,6 +301,7 @@ pub enum DiagnosticSeverity {
     Error,
     Warning,
     Info,
+    #[serde(alias = "all")]
     Hint,
 }
 
@@ -393,6 +405,10 @@ pub struct GitSettings {
     ///
     /// Default: on
     pub inline_blame: Option<InlineBlameSettings>,
+    /// Which information to show in the branch picker.
+    ///
+    /// Default: on
+    pub branch_picker: Option<BranchPickerSettings>,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
@@ -497,12 +513,36 @@ impl Default for InlineBlameSettings {
     }
 }
 
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct BranchPickerSettings {
+    /// Whether to show author name as part of the commit information.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub show_author_name: bool,
+}
+
+impl Default for BranchPickerSettings {
+    fn default() -> Self {
+        Self {
+            show_author_name: true,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
     pub env: Option<BTreeMap<String, String>>,
     pub ignore_system_version: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+pub struct FetchSettings {
+    // Whether to consider pre-releases for fetching
+    pub pre_release: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
@@ -516,6 +556,7 @@ pub struct LspSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub enable_lsp_tasks: bool,
+    pub fetch: Option<FetchSettings>,
 }
 
 impl Default for LspSettings {
@@ -525,6 +566,7 @@ impl Default for LspSettings {
             initialization_options: None,
             settings: None,
             enable_lsp_tasks: true,
+            fetch: None,
         }
     }
 }
@@ -549,8 +591,6 @@ impl Default for SessionSettings {
 }
 
 impl Settings for ProjectSettings {
-    const KEY: Option<&'static str> = None;
-
     type FileContent = Self;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
@@ -593,6 +633,7 @@ impl Settings for ProjectSettings {
                     path: cmd.command,
                     args: cmd.args.unwrap_or_default(),
                     env: cmd.env,
+                    timeout: None,
                 }
             }
         }
@@ -638,6 +679,7 @@ pub struct SettingsObserver {
     worktree_store: Entity<WorktreeStore>,
     project_id: u64,
     task_store: Entity<TaskStore>,
+    _user_settings_watcher: Option<Subscription>,
     _global_task_config_watcher: Task<()>,
     _global_debug_config_watcher: Task<()>,
 }
@@ -650,6 +692,7 @@ pub struct SettingsObserver {
 impl SettingsObserver {
     pub fn init(client: &AnyProtoClient) {
         client.add_entity_message_handler(Self::handle_update_worktree_settings);
+        client.add_entity_message_handler(Self::handle_update_user_settings);
     }
 
     pub fn new_local(
@@ -666,7 +709,8 @@ impl SettingsObserver {
             task_store,
             mode: SettingsObserverMode::Local(fs.clone()),
             downstream_client: None,
-            project_id: 0,
+            _user_settings_watcher: None,
+            project_id: REMOTE_SERVER_PROJECT_ID,
             _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
                 fs.clone(),
                 paths::tasks_file().clone(),
@@ -684,14 +728,38 @@ impl SettingsObserver {
         fs: Arc<dyn Fs>,
         worktree_store: Entity<WorktreeStore>,
         task_store: Entity<TaskStore>,
+        upstream_client: Option<AnyProtoClient>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let mut user_settings_watcher = None;
+        if cx.try_global::<SettingsStore>().is_some() {
+            if let Some(upstream_client) = upstream_client {
+                let mut user_settings = None;
+                user_settings_watcher = Some(cx.observe_global::<SettingsStore>(move |_, cx| {
+                    let new_settings = cx.global::<SettingsStore>().raw_user_settings();
+                    if Some(new_settings) != user_settings.as_ref() {
+                        if let Some(new_settings_string) = serde_json::to_string(new_settings).ok()
+                        {
+                            user_settings = Some(new_settings.clone());
+                            upstream_client
+                                .send(proto::UpdateUserSettings {
+                                    project_id: REMOTE_SERVER_PROJECT_ID,
+                                    contents: new_settings_string,
+                                })
+                                .log_err();
+                        }
+                    }
+                }));
+            }
+        };
+
         Self {
             worktree_store,
             task_store,
             mode: SettingsObserverMode::Remote,
             downstream_client: None,
-            project_id: 0,
+            project_id: REMOTE_SERVER_PROJECT_ID,
+            _user_settings_watcher: user_settings_watcher,
             _global_task_config_watcher: Self::subscribe_to_global_task_file_changes(
                 fs.clone(),
                 paths::tasks_file().clone(),
@@ -780,6 +848,24 @@ impl SettingsObserver {
                 cx,
             );
         })?;
+        Ok(())
+    }
+
+    async fn handle_update_user_settings(
+        _: Entity<Self>,
+        envelope: TypedEnvelope<proto::UpdateUserSettings>,
+        cx: AsyncApp,
+    ) -> anyhow::Result<()> {
+        let new_settings = serde_json::from_str::<serde_json::Value>(&envelope.payload.contents)
+            .with_context(|| {
+                format!("deserializing {} user settings", envelope.payload.contents)
+            })?;
+        cx.update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store
+                .set_raw_user_settings(new_settings, cx)
+                .context("setting new user settings")?;
+            anyhow::Ok(())
+        })??;
         Ok(())
     }
 
@@ -1069,7 +1155,7 @@ impl SettingsObserver {
                         project_id: self.project_id,
                         worktree_id: remote_worktree_id.to_proto(),
                         path: directory.to_proto(),
-                        content: file_content,
+                        content: file_content.clone(),
                         kind: Some(local_settings_kind_to_proto(kind).into()),
                     })
                     .log_err();

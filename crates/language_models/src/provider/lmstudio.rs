@@ -111,7 +111,30 @@ impl State {
         }
 
         let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
+        cx.spawn(async move |_this, _cx| {
+            match fetch_models_task.await {
+                Ok(()) => Ok(()),
+                Err(err) => {
+                    // If any cause in the error chain is an std::io::Error with
+                    // ErrorKind::ConnectionRefused, treat this as "credentials not found"
+                    // (i.e. LM Studio not running).
+                    let mut connection_refused = false;
+                    for cause in err.chain() {
+                        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                            if io_err.kind() == std::io::ErrorKind::ConnectionRefused {
+                                connection_refused = true;
+                                break;
+                            }
+                        }
+                    }
+                    if connection_refused {
+                        Err(AuthenticateError::ConnectionRefused)
+                    } else {
+                        Err(AuthenticateError::Other(err))
+                    }
+                }
+            }
+        })
     }
 }
 

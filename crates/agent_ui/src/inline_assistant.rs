@@ -144,7 +144,8 @@ impl InlineAssistant {
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
-            let enabled = AgentSettings::get_global(cx).enabled;
+            let enabled = !DisableAiSettings::get_global(cx).disable_ai
+                && AgentSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
@@ -1812,16 +1813,13 @@ impl CodeActionProvider for AssistantCodeActionProvider {
             has_diagnostics = true;
         }
         if has_diagnostics {
-            if let Some(symbols_containing_start) = snapshot.symbols_containing(range.start, None)
-                && let Some(symbol) = symbols_containing_start.last()
-            {
+            let symbols_containing_start = snapshot.symbols_containing(range.start, None);
+            if let Some(symbol) = symbols_containing_start.last() {
                 range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
                 range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
             }
-
-            if let Some(symbols_containing_end) = snapshot.symbols_containing(range.end, None)
-                && let Some(symbol) = symbols_containing_end.last()
-            {
+            let symbols_containing_end = snapshot.symbols_containing(range.end, None);
+            if let Some(symbol) = symbols_containing_end.last() {
                 range.start = cmp::min(range.start, symbol.range.start.to_point(&snapshot));
                 range.end = cmp::max(range.end, symbol.range.end.to_point(&snapshot));
             }

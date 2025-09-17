@@ -1381,7 +1381,7 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || ((project.is_local() || project.is_via_ssh())
+                            || ((project.is_local() || project.is_via_remote_server())
                                 && history_item.absolute.is_some())
                     }),
                     self.currently_opened_path.as_ref(),
@@ -1599,10 +1599,7 @@ impl PickerDelegate for FileFinderDelegate {
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
 
-        let path_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let path_match = self.matches.get(ix)?;
 
         let history_icon = match &path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)

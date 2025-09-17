@@ -36,6 +36,8 @@ actions!(
         OpenDefaultKeymap,
         /// Opens account settings.
         OpenAccountSettings,
+        /// Opens the keymap editor.
+        OpenKeymapEditor,
         /// Opens server settings.
         OpenServerSettings,
         /// Quits the application.
@@ -178,7 +180,9 @@ pub mod git {
             SelectRepo,
             /// Opens the git branch selector.
             #[action(deprecated_aliases = ["branches::OpenRecent"])]
-            Branch
+            Branch,
+            /// Opens the git stash selector.
+            ViewStash
         ]
     );
 }
@@ -284,6 +288,10 @@ pub mod agent {
             OpenSettings,
             /// Opens the agent onboarding modal.
             OpenOnboardingModal,
+            /// Opens the ACP onboarding modal.
+            OpenAcpOnboardingModal,
+            /// Opens the Claude Code onboarding modal.
+            OpenClaudeCodeOnboardingModal,
             /// Resets the agent onboarding state.
             ResetOnboarding,
             /// Starts a chat conversation with the agent.

@@ -19,8 +19,10 @@ pub struct SupermavenCompletionProvider {
     supermaven: Entity<Supermaven>,
     buffer_id: Option<EntityId>,
     completion_id: Option<SupermavenCompletionStateId>,
+    completion_text: Option<String>,
     file_extension: Option<String>,
     pending_refresh: Option<Task<Result<()>>>,
+    completion_position: Option<language::Anchor>,
 }
 
 impl SupermavenCompletionProvider {
@@ -29,16 +31,19 @@ impl SupermavenCompletionProvider {
             supermaven,
             buffer_id: None,
             completion_id: None,
+            completion_text: None,
             file_extension: None,
             pending_refresh: None,
+            completion_position: None,
         }
     }
 }
 
 // Computes the edit prediction from the difference between the completion text.
-// this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
-// for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
-// the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
+// This is defined by greedily matching the buffer text against the completion text.
+// Inlays are inserted for parts of the completion text that are not present in the buffer text.
+// For example, given the completion text "axbyc" and the buffer text "xy", the rendered output in the editor would be "[a]x[b]y[c]".
+// The parts in brackets are the inlays.
 fn completion_from_diff(
     snapshot: BufferSnapshot,
     completion_text: &str,
@@ -133,6 +138,14 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
         debounce: bool,
         cx: &mut Context<Self>,
     ) {
+        // Only make new completion requests when debounce is true (i.e., when text is typed)
+        // When debounce is false (i.e., cursor movement), we should not make new requests
+        if !debounce {
+            return;
+        }
+
+        reset_completion_cache(self, cx);
+
         let Some(mut completion) = self.supermaven.update(cx, |supermaven, cx| {
             supermaven.complete(&buffer_handle, cursor_position, cx)
         }) else {
@@ -146,6 +159,17 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
 
             while let Some(()) = completion.updates.next().await {
                 this.update(cx, |this, cx| {
+                    // Get the completion text and cache it
+                    if let Some(text) =
+                        this.supermaven
+                            .read(cx)
+                            .completion(&buffer_handle, cursor_position, cx)
+                    {
+                        this.completion_text = Some(text.to_string());
+
+                        this.completion_position = Some(cursor_position);
+                    }
+
                     this.completion_id = Some(completion.id);
                     this.buffer_id = Some(buffer_handle.entity_id());
                     this.file_extension = buffer_handle.read(cx).file().and_then(|file| {
@@ -156,7 +180,6 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
                                 .to_string(),
                         )
                     });
-                    this.pending_refresh = None;
                     cx.notify();
                 })?;
             }
@@ -174,13 +197,11 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
     }
 
     fn accept(&mut self, _cx: &mut Context<Self>) {
-        self.pending_refresh = None;
-        self.completion_id = None;
+        reset_completion_cache(self, _cx);
     }
 
     fn discard(&mut self, _cx: &mut Context<Self>) {
-        self.pending_refresh = None;
-        self.completion_id = None;
+        reset_completion_cache(self, _cx);
     }
 
     fn suggest(
@@ -189,10 +210,34 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
         cursor_position: Anchor,
         cx: &mut Context<Self>,
     ) -> Option<EditPrediction> {
-        let completion_text = self
-            .supermaven
-            .read(cx)
-            .completion(buffer, cursor_position, cx)?;
+        if self.buffer_id != Some(buffer.entity_id()) {
+            return None;
+        }
+
+        if self.completion_id.is_none() {
+            return None;
+        }
+
+        let completion_text = if let Some(cached_text) = &self.completion_text {
+            cached_text.as_str()
+        } else {
+            let text = self
+                .supermaven
+                .read(cx)
+                .completion(buffer, cursor_position, cx)?;
+            self.completion_text = Some(text.to_string());
+            text
+        };
+
+        // Check if the cursor is still at the same position as the completion request
+        // If we don't have a completion position stored, don't show the completion
+        if let Some(completion_position) = self.completion_position {
+            if cursor_position != completion_position {
+                return None;
+            }
+        } else {
+            return None;
+        }
 
         let completion_text = trim_to_end_of_line_unless_leading_newline(completion_text);
 
@@ -200,20 +245,36 @@ impl EditPredictionProvider for SupermavenCompletionProvider {
 
         if !completion_text.trim().is_empty() {
             let snapshot = buffer.read(cx).snapshot();
-            let mut point = cursor_position.to_point(&snapshot);
-            point.column = snapshot.line_len(point.row);
-            let range = cursor_position..snapshot.anchor_after(point);
+
+            // Calculate the range from cursor to end of line correctly
+            let cursor_point = cursor_position.to_point(&snapshot);
+            let end_of_line = snapshot.anchor_after(language::Point::new(
+                cursor_point.row,
+                snapshot.line_len(cursor_point.row),
+            ));
+            let delete_range = cursor_position..end_of_line;
 
             Some(completion_from_diff(
                 snapshot,
                 completion_text,
                 cursor_position,
-                range,
+                delete_range,
             ))
         } else {
             None
         }
     }
+}
+
+fn reset_completion_cache(
+    provider: &mut SupermavenCompletionProvider,
+    _cx: &mut Context<SupermavenCompletionProvider>,
+) {
+    provider.pending_refresh = None;
+    provider.completion_id = None;
+    provider.completion_text = None;
+    provider.completion_position = None;
+    provider.buffer_id = None;
 }
 
 fn trim_to_end_of_line_unless_leading_newline(text: &str) -> &str {

@@ -206,14 +206,22 @@ actions!(
         JoinAll,
         /// Reopens the most recently closed item.
         ReopenClosedItem,
-        /// Splits the pane to the left.
+        /// Splits the pane to the left, cloning the current item.
         SplitLeft,
-        /// Splits the pane upward.
+        /// Splits the pane upward, cloning the current item.
         SplitUp,
-        /// Splits the pane to the right.
+        /// Splits the pane to the right, cloning the current item.
         SplitRight,
-        /// Splits the pane downward.
+        /// Splits the pane downward, cloning the current item.
         SplitDown,
+        /// Splits the pane to the left, moving the current item.
+        SplitAndMoveLeft,
+        /// Splits the pane upward, moving the current item.
+        SplitAndMoveUp,
+        /// Splits the pane to the right, moving the current item.
+        SplitAndMoveRight,
+        /// Splits the pane downward, moving the current item.
+        SplitAndMoveDown,
         /// Splits the pane horizontally.
         SplitHorizontal,
         /// Splits the pane vertically.
@@ -254,13 +262,13 @@ pub enum Event {
     Remove {
         focus_on_pane: Option<Entity<Pane>>,
     },
-    RemoveItem {
-        idx: usize,
-    },
     RemovedItem {
         item: Box<dyn ItemHandle>,
     },
-    Split(SplitDirection),
+    Split {
+        direction: SplitDirection,
+        clone_active_item: bool,
+    },
     ItemPinned,
     ItemUnpinned,
     JoinAll,
@@ -287,14 +295,17 @@ impl fmt::Debug for Event {
                 .field("local", local)
                 .finish(),
             Event::Remove { .. } => f.write_str("Remove"),
-            Event::RemoveItem { idx } => f.debug_struct("RemoveItem").field("idx", idx).finish(),
             Event::RemovedItem { item } => f
                 .debug_struct("RemovedItem")
                 .field("item", &item.item_id())
                 .finish(),
-            Event::Split(direction) => f
+            Event::Split {
+                direction,
+                clone_active_item,
+            } => f
                 .debug_struct("Split")
                 .field("direction", direction)
+                .field("clone_active_item", clone_active_item)
                 .finish(),
             Event::JoinAll => f.write_str("JoinAll"),
             Event::JoinIntoNext => f.write_str("JoinIntoNext"),
@@ -1780,6 +1791,16 @@ impl Pane {
         })
     }
 
+    pub fn take_active_item(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let item = self.active_item()?;
+        self.remove_item(item.item_id(), false, false, window, cx);
+        Some(item)
+    }
+
     pub fn remove_item(
         &mut self,
         item_id: EntityId,
@@ -2094,11 +2115,10 @@ impl Pane {
                             Ok(0) => {}
                             Ok(1) => {
                                 // Don't save this file
-                                pane.update_in(cx, |pane, window, cx| {
+                                pane.update_in(cx, |pane, _, cx| {
                                     if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
                                         pane.pinned_tab_count -= 1;
                                     }
-                                    item.discarded(project, window, cx)
                                 })
                                 .log_err();
                                 return Ok(true);
@@ -2225,7 +2245,19 @@ impl Pane {
     }
 
     pub fn split(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
-        cx.emit(Event::Split(direction));
+        cx.emit(Event::Split {
+            direction,
+            clone_active_item: true,
+        });
+    }
+
+    pub fn split_and_move(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        if self.items.len() > 1 {
+            cx.emit(Event::Split {
+                direction,
+                clone_active_item: false,
+            });
+        }
     }
 
     pub fn toolbar(&self) -> &Entity<Toolbar> {
@@ -3000,7 +3032,8 @@ impl Pane {
                             // HACK: This empty child is currently necessary to force the drop target to appear
                             // despite us setting a min width above.
                             .child("")
-                            .h_full()
+                            // HACK: h_full doesn't occupy the complete height, using fixed height instead
+                            .h(Tab::container_height(cx))
                             .flex_grow()
                             .drag_over::<DraggedTab>(|bar, _, _, cx| {
                                 bar.bg(cx.theme().colors().drop_target_background)
@@ -3568,6 +3601,18 @@ impl Render for Pane {
             .on_action(
                 cx.listener(|pane, _: &SplitDown, _, cx| pane.split(SplitDirection::Down, cx)),
             )
+            .on_action(cx.listener(|pane, _: &SplitAndMoveUp, _, cx| {
+                pane.split_and_move(SplitDirection::Up, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveDown, _, cx| {
+                pane.split_and_move(SplitDirection::Down, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveLeft, _, cx| {
+                pane.split_and_move(SplitDirection::Left, cx)
+            }))
+            .on_action(cx.listener(|pane, _: &SplitAndMoveRight, _, cx| {
+                pane.split_and_move(SplitDirection::Right, cx)
+            }))
             .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
                 cx.emit(Event::JoinIntoNext);
             }))

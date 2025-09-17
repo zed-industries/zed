@@ -21,6 +21,8 @@ pub struct IconThemeContent {
     #[serde(default)]
     pub directory_icons: DirectoryIconsContent,
     #[serde(default)]
+    pub named_directory_icons: HashMap<String, DirectoryIconsContent>,
+    #[serde(default)]
     pub chevron_icons: ChevronIconsContent,
     #[serde(default)]
     pub file_stems: HashMap<String, String>,

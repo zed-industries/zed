@@ -20,7 +20,7 @@ use futures::{
     stream::FuturesOrdered,
 };
 use git::{
-    BuildPermalinkParams, GitHostingProviderRegistry, WORK_DIRECTORY_REPO_PATH,
+    BuildPermalinkParams, GitHostingProviderRegistry, Oid, WORK_DIRECTORY_REPO_PATH,
     blame::Blame,
     parse_git_remote_url,
     repository::{
@@ -28,6 +28,7 @@ use git::{
         GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
         ResetMode, UpstreamTrackingStatus,
     },
+    stash::{GitStash, StashEntry},
     status::{
         FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
     },
@@ -44,7 +45,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, FromProto, SSH_PROJECT_ID, ToProto, git_reset, split_repository_update},
+    proto::{self, FromProto, ToProto, git_reset, split_repository_update},
 };
 use serde::Deserialize;
 use std::{
@@ -62,7 +63,7 @@ use std::{
 };
 use sum_tree::{Edit, SumTree, TreeSet};
 use text::{Bias, BufferId};
-use util::{ResultExt, debug_panic, post_inc};
+use util::{ResultExt, debug_panic, paths::SanitizedPath, post_inc};
 use worktree::{
     File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
     UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
@@ -141,14 +142,10 @@ enum GitStoreState {
         project_environment: Entity<ProjectEnvironment>,
         fs: Arc<dyn Fs>,
     },
-    Ssh {
-        upstream_client: AnyProtoClient,
-        upstream_project_id: ProjectId,
-        downstream: Option<(AnyProtoClient, ProjectId)>,
-    },
     Remote {
         upstream_client: AnyProtoClient,
-        upstream_project_id: ProjectId,
+        upstream_project_id: u64,
+        downstream: Option<(AnyProtoClient, ProjectId)>,
     },
 }
 
@@ -248,6 +245,7 @@ pub struct RepositorySnapshot {
     pub merge: MergeDetails,
     pub remote_origin_url: Option<String>,
     pub remote_upstream_url: Option<String>,
+    pub stash_entries: GitStash,
 }
 
 type JobId = u64;
@@ -355,7 +353,7 @@ impl GitStore {
         worktree_store: &Entity<WorktreeStore>,
         buffer_store: Entity<BufferStore>,
         upstream_client: AnyProtoClient,
-        project_id: ProjectId,
+        project_id: u64,
         cx: &mut Context<Self>,
     ) -> Self {
         Self::new(
@@ -364,23 +362,6 @@ impl GitStore {
             GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
-            },
-            cx,
-        )
-    }
-
-    pub fn ssh(
-        worktree_store: &Entity<WorktreeStore>,
-        buffer_store: Entity<BufferStore>,
-        upstream_client: AnyProtoClient,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        Self::new(
-            worktree_store.clone(),
-            buffer_store,
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: ProjectId(SSH_PROJECT_ID),
                 downstream: None,
             },
             cx,
@@ -425,6 +406,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_unstage);
         client.add_entity_request_handler(Self::handle_stash);
         client.add_entity_request_handler(Self::handle_stash_pop);
+        client.add_entity_request_handler(Self::handle_stash_apply);
+        client.add_entity_request_handler(Self::handle_stash_drop);
         client.add_entity_request_handler(Self::handle_commit);
         client.add_entity_request_handler(Self::handle_reset);
         client.add_entity_request_handler(Self::handle_show);
@@ -451,7 +434,7 @@ impl GitStore {
 
     pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => {
@@ -527,9 +510,6 @@ impl GitStore {
                     }),
                 });
             }
-            GitStoreState::Remote { .. } => {
-                debug_panic!("shared called on remote store");
-            }
         }
     }
 
@@ -541,14 +521,11 @@ impl GitStore {
             } => {
                 downstream_client.take();
             }
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => {
                 downstream_client.take();
-            }
-            GitStoreState::Remote { .. } => {
-                debug_panic!("unshared called on remote store");
             }
         }
         self.shared_diffs.clear();
@@ -1047,21 +1024,17 @@ impl GitStore {
             } => downstream_client
                 .as_ref()
                 .map(|state| (state.client.clone(), state.project_id)),
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 downstream: downstream_client,
                 ..
             } => downstream_client.clone(),
-            GitStoreState::Remote { .. } => None,
         }
     }
 
     fn upstream_client(&self) -> Option<AnyProtoClient> {
         match &self.state {
             GitStoreState::Local { .. } => None,
-            GitStoreState::Ssh {
-                upstream_client, ..
-            }
-            | GitStoreState::Remote {
+            GitStoreState::Remote {
                 upstream_client, ..
             } => Some(upstream_client.clone()),
         }
@@ -1432,12 +1405,7 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_init(&path, fallback_branch_name) })
             }
-            GitStoreState::Ssh {
-                upstream_client,
-                upstream_project_id: project_id,
-                ..
-            }
-            | GitStoreState::Remote {
+            GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id: project_id,
                 ..
@@ -1447,7 +1415,7 @@ impl GitStore {
                 cx.background_executor().spawn(async move {
                     client
                         .request(proto::GitInit {
-                            project_id: project_id.0,
+                            project_id: project_id,
                             abs_path: path.to_string_lossy().to_string(),
                             fallback_branch_name,
                         })
@@ -1471,13 +1439,18 @@ impl GitStore {
                 cx.background_executor()
                     .spawn(async move { fs.git_clone(&repo, &path).await })
             }
-            GitStoreState::Ssh {
+            GitStoreState::Remote {
                 upstream_client,
                 upstream_project_id,
                 ..
             } => {
+                if upstream_client.is_via_collab() {
+                    return Task::ready(Err(anyhow!(
+                        "Git Clone isn't supported for project guests"
+                    )));
+                }
                 let request = upstream_client.request(proto::GitClone {
-                    project_id: upstream_project_id.0,
+                    project_id: *upstream_project_id,
                     abs_path: path.to_string_lossy().to_string(),
                     remote_repo: repo,
                 });
@@ -1490,9 +1463,6 @@ impl GitStore {
                         false => Err(anyhow!("Git Clone failed")),
                     }
                 })
-            }
-            GitStoreState::Remote { .. } => {
-                Task::ready(Err(anyhow!("Git Clone isn't supported for remote users")))
             }
         }
     }
@@ -1778,12 +1748,49 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let stash_index = envelope.payload.stash_index.map(|i| i as usize);
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
-                repository_handle.stash_pop(cx)
+                repository_handle.stash_pop(stash_index, cx)
             })?
             .await?;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_stash_apply(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::StashApply>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let stash_index = envelope.payload.stash_index.map(|i| i as usize);
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stash_apply(stash_index, cx)
+            })?
+            .await?;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_stash_drop(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::StashDrop>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let stash_index = envelope.payload.stash_index.map(|i| i as usize);
+
+        repository_handle
+            .update(&mut cx, |repository_handle, cx| {
+                repository_handle.stash_drop(stash_index, cx)
+            })?
+            .await??;
 
         Ok(proto::Ack {})
     }
@@ -2744,6 +2751,7 @@ impl RepositorySnapshot {
             merge: Default::default(),
             remote_origin_url: None,
             remote_upstream_url: None,
+            stash_entries: Default::default(),
         }
     }
 
@@ -2770,6 +2778,12 @@ impl RepositorySnapshot {
             entry_ids: vec![self.id.to_proto()],
             scan_id: self.scan_id,
             is_last_update: true,
+            stash_entries: self
+                .stash_entries
+                .entries
+                .iter()
+                .map(stash_to_proto)
+                .collect(),
         }
     }
 
@@ -2833,6 +2847,12 @@ impl RepositorySnapshot {
             entry_ids: vec![],
             scan_id: self.scan_id,
             is_last_update: true,
+            stash_entries: self
+                .stash_entries
+                .entries
+                .iter()
+                .map(stash_to_proto)
+                .collect(),
         }
     }
 
@@ -2887,6 +2907,26 @@ impl RepositorySnapshot {
             .to_string()
             .into()
     }
+}
+
+pub fn stash_to_proto(entry: &StashEntry) -> proto::StashEntry {
+    proto::StashEntry {
+        oid: entry.oid.as_bytes().to_vec(),
+        message: entry.message.clone(),
+        branch: entry.branch.clone(),
+        index: entry.index as u64,
+        timestamp: entry.timestamp,
+    }
+}
+
+pub fn proto_to_stash(entry: &proto::StashEntry) -> Result<StashEntry> {
+    Ok(StashEntry {
+        oid: Oid::from_bytes(&entry.oid)?,
+        message: entry.message.clone(),
+        index: entry.index as usize,
+        branch: entry.branch.clone(),
+        timestamp: entry.timestamp,
+    })
 }
 
 impl MergeDetails {
@@ -3264,10 +3304,15 @@ impl Repository {
         self.snapshot.status()
     }
 
+    pub fn cached_stash(&self) -> GitStash {
+        self.snapshot.stash_entries.clone()
+    }
+
     pub fn repo_path_to_project_path(&self, path: &RepoPath, cx: &App) -> Option<ProjectPath> {
         let git_store = self.git_store.upgrade()?;
         let worktree_store = git_store.read(cx).worktree_store.read(cx);
         let abs_path = self.snapshot.work_directory_abs_path.join(&path.0);
+        let abs_path = SanitizedPath::new(&abs_path);
         let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
         Some(ProjectPath {
             worktree_id: worktree.read(cx).id(),
@@ -3350,7 +3395,7 @@ impl Repository {
     ) -> Task<Result<Entity<Buffer>>> {
         cx.spawn(async move |repository, cx| {
             let buffer = buffer_store
-                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx))?
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(false, cx))?
                 .await?;
 
             if let Some(language_registry) = language_registry {
@@ -3698,7 +3743,11 @@ impl Repository {
         })
     }
 
-    pub fn stash_pop(&mut self, cx: &mut Context<Self>) -> Task<anyhow::Result<()>> {
+    pub fn stash_pop(
+        &mut self,
+        index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
         let id = self.id;
         cx.spawn(async move |this, cx| {
             this.update(cx, |this, _| {
@@ -3708,12 +3757,13 @@ impl Repository {
                             backend,
                             environment,
                             ..
-                        } => backend.stash_pop(environment).await,
+                        } => backend.stash_pop(index, environment).await,
                         RepositoryState::Remote { project_id, client } => {
                             client
                                 .request(proto::StashPop {
                                     project_id: project_id.0,
                                     repository_id: id.to_proto(),
+                                    stash_index: index.map(|i| i as u64),
                                 })
                                 .await
                                 .context("sending stash pop request")?;
@@ -3724,6 +3774,99 @@ impl Repository {
             })?
             .await??;
             Ok(())
+        })
+    }
+
+    pub fn stash_apply(
+        &mut self,
+        index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = self.id;
+        cx.spawn(async move |this, cx| {
+            this.update(cx, |this, _| {
+                this.send_job(None, move |git_repo, _cx| async move {
+                    match git_repo {
+                        RepositoryState::Local {
+                            backend,
+                            environment,
+                            ..
+                        } => backend.stash_apply(index, environment).await,
+                        RepositoryState::Remote { project_id, client } => {
+                            client
+                                .request(proto::StashApply {
+                                    project_id: project_id.0,
+                                    repository_id: id.to_proto(),
+                                    stash_index: index.map(|i| i as u64),
+                                })
+                                .await
+                                .context("sending stash apply request")?;
+                            Ok(())
+                        }
+                    }
+                })
+            })?
+            .await??;
+            Ok(())
+        })
+    }
+
+    pub fn stash_drop(
+        &mut self,
+        index: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> oneshot::Receiver<anyhow::Result<()>> {
+        let id = self.id;
+        let updates_tx = self
+            .git_store()
+            .and_then(|git_store| match &git_store.read(cx).state {
+                GitStoreState::Local { downstream, .. } => downstream
+                    .as_ref()
+                    .map(|downstream| downstream.updates_tx.clone()),
+                _ => None,
+            });
+        let this = cx.weak_entity();
+        self.send_job(None, move |git_repo, mut cx| async move {
+            match git_repo {
+                RepositoryState::Local {
+                    backend,
+                    environment,
+                    ..
+                } => {
+                    let result = backend.stash_drop(index, environment).await;
+                    if result.is_ok()
+                        && let Ok(stash_entries) = backend.stash_entries().await
+                    {
+                        let snapshot = this.update(&mut cx, |this, cx| {
+                            this.snapshot.stash_entries = stash_entries;
+                            let snapshot = this.snapshot.clone();
+                            cx.emit(RepositoryEvent::Updated {
+                                full_scan: false,
+                                new_instance: false,
+                            });
+                            snapshot
+                        })?;
+                        if let Some(updates_tx) = updates_tx {
+                            updates_tx
+                                .unbounded_send(DownstreamUpdate::UpdateRepository(snapshot))
+                                .ok();
+                        }
+                    }
+
+                    result
+                }
+                RepositoryState::Remote { project_id, client } => {
+                    client
+                        .request(proto::StashDrop {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                            stash_index: index.map(|i| i as u64),
+                        })
+                        .await
+                        .context("sending stash pop request")?;
+                    Ok(())
+                }
+            }
         })
     }
 
@@ -4252,6 +4395,13 @@ impl Repository {
 
         self.snapshot.merge.conflicted_paths = conflicted_paths;
         self.snapshot.merge.message = update.merge_message.map(SharedString::from);
+        self.snapshot.stash_entries = GitStash {
+            entries: update
+                .stash_entries
+                .iter()
+                .filter_map(|entry| proto_to_stash(entry).ok())
+                .collect(),
+        };
 
         let edits = update
             .removed_statuses
@@ -4561,6 +4711,7 @@ impl Repository {
                     return Ok(());
                 }
                 let statuses = backend.status(&paths).await?;
+                let stash_entries = backend.stash_entries().await?;
 
                 let changed_path_statuses = cx
                     .background_spawn(async move {
@@ -4592,18 +4743,22 @@ impl Repository {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
+                    let needs_update = !changed_path_statuses.is_empty()
+                        || this.snapshot.stash_entries != stash_entries;
+                    this.snapshot.stash_entries = stash_entries;
                     if !changed_path_statuses.is_empty() {
                         this.snapshot
                             .statuses_by_path
                             .edit(changed_path_statuses, &());
                         this.snapshot.scan_id += 1;
-                        if let Some(updates_tx) = updates_tx {
-                            updates_tx
-                                .unbounded_send(DownstreamUpdate::UpdateRepository(
-                                    this.snapshot.clone(),
-                                ))
-                                .ok();
-                        }
+                    }
+
+                    if needs_update && let Some(updates_tx) = updates_tx {
+                        updates_tx
+                            .unbounded_send(DownstreamUpdate::UpdateRepository(
+                                this.snapshot.clone(),
+                            ))
+                            .ok();
                     }
                     cx.emit(RepositoryEvent::Updated {
                         full_scan: false,
@@ -4785,6 +4940,7 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
                 sha: commit.sha.to_string(),
                 subject: commit.subject.to_string(),
                 commit_timestamp: commit.commit_timestamp,
+                author_name: commit.author_name.to_string(),
             }),
     }
 }
@@ -4814,6 +4970,7 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                 sha: commit.sha.to_string().into(),
                 subject: commit.subject.to_string().into(),
                 commit_timestamp: commit.commit_timestamp,
+                author_name: commit.author_name.to_string().into(),
                 has_parent: true,
             }
         }),
@@ -4852,6 +5009,7 @@ async fn compute_snapshot(
     let statuses = backend
         .status(std::slice::from_ref(&WORK_DIRECTORY_REPO_PATH))
         .await?;
+    let stash_entries = backend.stash_entries().await?;
     let statuses_by_path = SumTree::from_iter(
         statuses
             .entries
@@ -4902,6 +5060,7 @@ async fn compute_snapshot(
         merge: merge_details,
         remote_origin_url,
         remote_upstream_url,
+        stash_entries,
     };
 
     Ok((snapshot, events))

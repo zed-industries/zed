@@ -15,7 +15,7 @@ use gpui::{
 use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
-    Completion, CompletionResponse,
+    Completion, CompletionDisplayOptions, CompletionResponse,
     debugger::session::{CompletionsQuery, OutputToken, Session},
     lsp_store::CompletionDocumentation,
     search_history::{SearchHistory, SearchHistoryCursor},
@@ -83,7 +83,7 @@ impl Console {
         let this = cx.weak_entity();
         let query_bar = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Evaluate an expression", cx);
+            editor.set_placeholder_text("Evaluate an expression", window, cx);
             editor.set_use_autoclose(false);
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
@@ -685,6 +685,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 is_incomplete: completions.len() >= LIMIT,
+                display_options: CompletionDisplayOptions::default(),
                 completions,
             }])
         })
@@ -797,6 +798,7 @@ impl ConsoleQueryBarCompletionProvider {
 
             Ok(vec![project::CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 is_incomplete: false,
             }])
         })

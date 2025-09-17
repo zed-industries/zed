@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use gpui::{BackgroundExecutor, SharedString, TestAppContext};
 use rand::prelude::*;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::{
     ops::{Deref, DerefMut, Range},
     rc::Rc,
@@ -84,7 +84,7 @@ impl RandomizedTest for RandomChannelBufferTest {
         }
 
         loop {
-            match rng.gen_range(0..100_u32) {
+            match rng.random_range(0..100_u32) {
                 0..=29 => {
                     let channel_name = client.channel_store().read_with(cx, |store, cx| {
                         store.ordered_channels().find_map(|(_, channel)| {

@@ -8,7 +8,7 @@ See [Configuring Zed](./configuring-zed.md) for additional information and other
 
 Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::Extensions} from the command palette or menu.
 
-You can preview/choose amongsts your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
+You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
 
 ```json
 {
@@ -94,7 +94,6 @@ To disable this behavior use:
   // "project_panel": {"button": false },
   // "outline_panel": {"button": false },
   // "collaboration_panel": {"button": false },
-  // "chat_panel": {"button": "never" },
   // "git_panel": {"button": false },
   // "notification_panel": {"button": false },
   // "agent": {"button": false },
@@ -109,6 +108,7 @@ To disable this behavior use:
 ```json
   // Control which items are shown/hidden in the title bar
   "title_bar": {
+    "show": "always",               // When to show: always | never | hide_in_full_screen
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
@@ -334,7 +334,9 @@ TBD: Centered layout related settings
 ```json
 {
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 5
+  "expand_excerpt_lines": 5,
+  // The default number of lines of context provided for excerpts in the multibuffer by.
+  "excerpt_context_lines": 2
 }
 ```
 
@@ -431,6 +433,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "auto_reveal_entries": true,    // Show file in panel when activating its buffer
     "auto_fold_dirs": true,         // Fold dirs with single subdir
     "sticky_scroll": true,          // Stick parent directories at top of the project panel.
+    "drag_and_drop": true,          // Whether drag and drop is enabled
     "scrollbar": {                  // Project panel scrollbar settings
       "show": null                  // Show/hide: (auto, system, always, never)
     },
@@ -454,7 +457,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "button": true,         // Show/hide the icon in the status bar
     "dock": "right",        // Where to dock: left, right, bottom
     "default_width": 640,   // Default width (left/right docked)
-    "default_height": 320,  // Default height (bottom dockeed)
+    "default_height": 320,  // Default height (bottom docked)
   },
   "agent_font_size": 16
 ```
@@ -469,7 +472,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
     "dock": "bottom",                   // Where to dock: left, right, bottom
     "button": true,                     // Show/hide status bar icon
     "default_width": 640,               // Default width (left/right docked)
-    "default_height": 320,              // Default height (bottom dockeed)
+    "default_height": 320,              // Default height (bottom docked)
 
     // Set the cursor blinking behavior in the terminal (on, off, terminal_controlled)
     "blinking": "terminal_controlled",
@@ -550,13 +553,6 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
     "default_width": 240          // Default width of the collaboration panel.
   },
   "show_call_status_icon": true,  // Shown call status in the OS status bar.
-
-  // Chat Panel
-  "chat_panel": {
-    "button": "when_in_call",     // status bar icon (true, false, when_in_call)
-    "dock": "right",              // Where to dock: left, right
-    "default_width": 240          // Default width of the chat panel
-  },
 
   // Notification Panel
   "notification_panel": {

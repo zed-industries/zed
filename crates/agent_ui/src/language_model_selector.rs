@@ -1,18 +1,15 @@
 use std::{cmp::Reverse, sync::Arc};
 
-use cloud_llm_client::Plan;
 use collections::{HashSet, IndexMap};
-use feature_flags::ZedProFeatureFlag;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{Action, AnyElement, App, BackgroundExecutor, DismissEvent, Subscription, Task};
 use language_model::{
-    ConfiguredModel, LanguageModel, LanguageModelProviderId, LanguageModelRegistry,
+    AuthenticateError, ConfiguredModel, LanguageModel, LanguageModelProviderId,
+    LanguageModelRegistry,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use ui::{ListItem, ListItemSpacing, prelude::*};
-
-const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &mut App) + 'static>;
 type GetActiveModel = Arc<dyn Fn(&App) -> Option<ConfiguredModel> + 'static>;
@@ -76,6 +73,7 @@ pub struct LanguageModelPickerDelegate {
     all_models: Arc<GroupedModels>,
     filtered_entries: Vec<LanguageModelPickerEntry>,
     selected_index: usize,
+    _authenticate_all_providers_task: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -96,6 +94,7 @@ impl LanguageModelPickerDelegate {
             selected_index: Self::get_active_model_index(&entries, get_active_model(cx)),
             filtered_entries: entries,
             get_active_model: Arc::new(get_active_model),
+            _authenticate_all_providers_task: Self::authenticate_all_providers(cx),
             _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
                 window,
@@ -137,6 +136,56 @@ impl LanguageModelPickerDelegate {
                 }
             })
             .unwrap_or(0)
+    }
+
+    /// Authenticates all providers in the [`LanguageModelRegistry`].
+    ///
+    /// We do this so that we can populate the language selector with all of the
+    /// models from the configured providers.
+    fn authenticate_all_providers(cx: &mut App) -> Task<()> {
+        let authenticate_all_providers = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .map(|provider| (provider.id(), provider.name(), provider.authenticate(cx)))
+            .collect::<Vec<_>>();
+
+        cx.spawn(async move |_cx| {
+            for (provider_id, provider_name, authenticate_task) in authenticate_all_providers {
+                if let Err(err) = authenticate_task.await {
+                    if matches!(err, AuthenticateError::CredentialsNotFound) {
+                        // Since we're authenticating these providers in the
+                        // background for the purposes of populating the
+                        // language selector, we don't care about providers
+                        // where the credentials are not found.
+                    } else {
+                        // Some providers have noisy failure states that we
+                        // don't want to spam the logs with every time the
+                        // language model selector is initialized.
+                        //
+                        // Ideally these should have more clear failure modes
+                        // that we know are safe to ignore here, like what we do
+                        // with `CredentialsNotFound` above.
+                        match provider_id.0.as_ref() {
+                            "lmstudio" | "ollama" => {
+                                // LM Studio and Ollama both make fetch requests to the local APIs to determine if they are "authenticated".
+                                //
+                                // These fail noisily, so we don't log them.
+                            }
+                            "copilot_chat" => {
+                                // Copilot Chat returns an error if Copilot is not enabled, so we don't log those errors.
+                            }
+                            _ => {
+                                log::error!(
+                                    "Failed to authenticate provider: {}: {err}",
+                                    provider_name.0
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        })
     }
 
     pub fn active_model(&self, cx: &App) -> Option<ConfiguredModel> {
@@ -478,13 +527,9 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
     fn render_footer(
         &self,
-        _: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
-        use feature_flags::FeatureFlagAppExt;
-
-        let plan = Plan::ZedPro;
-
         Some(
             h_flex()
                 .w_full()
@@ -493,28 +538,6 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 .p_1()
                 .gap_4()
                 .justify_between()
-                .when(cx.has_flag::<ZedProFeatureFlag>(), |this| {
-                    this.child(match plan {
-                        Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
-                            .icon(IconName::ZedAssistant)
-                            .icon_size(IconSize::Small)
-                            .icon_color(Color::Muted)
-                            .icon_position(IconPosition::Start)
-                            .on_click(|_, window, cx| {
-                                window
-                                    .dispatch_action(Box::new(zed_actions::OpenAccountSettings), cx)
-                            }),
-                        Plan::ZedFree | Plan::ZedProTrial => Button::new(
-                            "try-pro",
-                            if plan == Plan::ZedProTrial {
-                                "Upgrade to Pro"
-                            } else {
-                                "Try Pro"
-                            },
-                        )
-                        .on_click(|_, _, cx| cx.open_url(TRY_ZED_PRO_URL)),
-                    })
-                })
                 .child(
                     Button::new("configure", "Configure")
                         .icon(IconName::Settings)

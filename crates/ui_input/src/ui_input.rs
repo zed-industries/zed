@@ -9,6 +9,7 @@ use component::{example_group, single_example};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, TextStyle};
 use settings::Settings;
+use std::sync::Arc;
 use theme::ThemeSettings;
 use ui::prelude::*;
 
@@ -55,7 +56,7 @@ impl SingleLineInput {
 
         let editor = cx.new(|cx| {
             let mut input = Editor::single_line(window, cx);
-            input.set_placeholder_text(placeholder_text.clone(), cx);
+            input.set_placeholder_text(&placeholder_text, window, cx);
             input
         });
 
@@ -100,6 +101,11 @@ impl SingleLineInput {
 
     pub fn text(&self, cx: &App) -> String {
         self.editor().read(cx).text(cx)
+    }
+
+    pub fn set_text(&self, text: impl Into<Arc<str>>, window: &mut Window, cx: &mut App) {
+        self.editor()
+            .update(cx, |editor, cx| editor.set_text(text, window, cx))
     }
 }
 
@@ -168,7 +174,7 @@ impl Render for SingleLineInput {
                     .py_1p5()
                     .flex_grow()
                     .text_color(style.text_color)
-                    .rounded_sm()
+                    .rounded_md()
                     .bg(style.background_color)
                     .border_1()
                     .border_color(style.border_color)

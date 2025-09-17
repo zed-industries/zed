@@ -18,6 +18,7 @@ use sqlez::{
 };
 use std::sync::Arc;
 use ui::{App, SharedString};
+use zed_env_vars::ZED_STATELESS;
 
 pub type DbMessage = crate::Message;
 pub type DbSummary = DetailedSummaryState;
@@ -200,9 +201,6 @@ impl DbThread {
         })
     }
 }
-
-pub static ZED_STATELESS: std::sync::LazyLock<bool> =
-    std::sync::LazyLock::new(|| std::env::var("ZED_STATELESS").is_ok_and(|v| !v.is_empty()));
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataType {
@@ -430,7 +428,9 @@ mod tests {
     use http_client::FakeHttpClient;
     use language_model::Role;
     use project::Project;
+    use serde_json::json;
     use settings::SettingsStore;
+    use util::test::TempTree;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
@@ -451,6 +451,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_retrieving_old_thread(cx: &mut TestAppContext) {
+        let tree = TempTree::new(json!({}));
+        util::paths::set_home_dir(tree.path().into());
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;

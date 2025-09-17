@@ -5,15 +5,15 @@ use chrono::{Datelike as _, Local, NaiveDate, TimeDelta};
 use editor::{Editor, EditorEvent};
 use fuzzy::StringMatchCandidate;
 use gpui::{
-    App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Stateful, Task,
+    App, Entity, EventEmitter, FocusHandle, Focusable, ScrollStrategy, Task,
     UniformListScrollHandle, WeakEntity, Window, uniform_list,
 };
 use std::{fmt::Display, ops::Range};
 use text::Bias;
 use time::{OffsetDateTime, UtcOffset};
 use ui::{
-    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Scrollbar, ScrollbarState,
-    Tooltip, prelude::*,
+    HighlightedLabel, IconButtonShape, ListItem, ListItemSpacing, Tooltip, WithScrollbar,
+    prelude::*,
 };
 
 pub struct AcpThreadHistory {
@@ -26,8 +26,6 @@ pub struct AcpThreadHistory {
 
     visible_items: Vec<ListItemType>,
 
-    scrollbar_visibility: bool,
-    scrollbar_state: ScrollbarState,
     local_timezone: UtcOffset,
 
     _update_task: Task<()>,
@@ -70,7 +68,7 @@ impl AcpThreadHistory {
     ) -> Self {
         let search_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search threads...", cx);
+            editor.set_placeholder_text("Search threads...", window, cx);
             editor
         });
 
@@ -90,7 +88,6 @@ impl AcpThreadHistory {
         });
 
         let scroll_handle = UniformListScrollHandle::default();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
 
         let mut this = Self {
             history_store,
@@ -99,8 +96,6 @@ impl AcpThreadHistory {
             hovered_index: None,
             visible_items: Default::default(),
             search_editor,
-            scrollbar_visibility: true,
-            scrollbar_state,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
             )
@@ -339,43 +334,6 @@ impl AcpThreadHistory {
         task.detach_and_log_err(cx);
     }
 
-    fn render_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !(self.scrollbar_visibility || self.scrollbar_state.is_dragging()) {
-            return None;
-        }
-
-        Some(
-            div()
-                .occlude()
-                .id("thread-history-scroll")
-                .h_full()
-                .bg(cx.theme().colors().panel_background.opacity(0.8))
-                .border_l_1()
-                .border_color(cx.theme().colors().border_variant)
-                .absolute()
-                .right_1()
-                .top_0()
-                .bottom_0()
-                .w_4()
-                .pl_1()
-                .cursor_default()
-                .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _window, cx| {
-                    cx.stop_propagation();
-                })
-                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                    cx.notify();
-                }))
-                .children(Scrollbar::vertical(self.scrollbar_state.clone())),
-        )
-    }
-
     fn render_list_items(
         &mut self,
         range: Range<usize>,
@@ -491,7 +449,7 @@ impl Focusable for AcpThreadHistory {
 }
 
 impl Render for AcpThreadHistory {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("ThreadHistory")
             .size_full()
@@ -555,9 +513,7 @@ impl Render for AcpThreadHistory {
                             .track_scroll(self.scroll_handle.clone())
                             .flex_grow(),
                         )
-                        .when_some(self.render_scrollbar(cx), |div, scrollbar| {
-                            div.child(scrollbar)
-                        })
+                        .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx)
                 }
             })
     }

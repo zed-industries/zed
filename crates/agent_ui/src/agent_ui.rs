@@ -1,5 +1,4 @@
 mod acp;
-mod active_thread;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
@@ -8,7 +7,6 @@ mod buffer_codegen;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
-mod debug;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -20,15 +18,12 @@ mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
-mod thread_history;
-mod tool_compatibility;
 mod ui;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::{Thread, ThreadId};
-use agent_servers::AgentServerSettings;
+use agent::ThreadId;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -41,20 +36,19 @@ use language_model::{
     ConfiguredModel, LanguageModel, LanguageModelId, LanguageModelProviderId, LanguageModelRegistry,
 };
 use project::DisableAiSettings;
+use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::any::TypeId;
 
-pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
-pub use ui::preview::{all_agent_previews, get_agent_preview};
 use zed_actions;
 
 actions!(
@@ -72,8 +66,10 @@ actions!(
         ToggleOptionsMenu,
         /// Deletes the recently opened thread from history.
         DeleteRecentlyOpenThread,
-        /// Toggles the profile selector for switching between agent profiles.
+        /// Toggles the profile or mode selector for switching between agent profiles.
         ToggleProfileSelector,
+        /// Cycles through available session modes.
+        CycleModeSelector,
         /// Removes all added context from the current conversation.
         RemoveAllContext,
         /// Expands the message editor to full size.
@@ -114,6 +110,12 @@ actions!(
         RejectAll,
         /// Keeps all suggestions or changes.
         KeepAll,
+        /// Allow this operation only this time.
+        AllowOnce,
+        /// Allow this operation and remember the choice.
+        AllowAlways,
+        /// Reject this operation only this time.
+        RejectOnce,
         /// Follows the agent's suggestions.
         Follow,
         /// Resets the trial upsell notification.
@@ -170,8 +172,16 @@ enum ExternalAgent {
     NativeAgent,
     Custom {
         name: SharedString,
-        settings: AgentServerSettings,
+        command: AgentServerCommand,
     },
+}
+
+fn placeholder_command() -> AgentServerCommand {
+    AgentServerCommand {
+        path: "/placeholder".into(),
+        args: vec![],
+        env: None,
+    }
 }
 
 impl ExternalAgent {
@@ -193,10 +203,9 @@ impl ExternalAgent {
             Self::Gemini => Rc::new(agent_servers::Gemini),
             Self::ClaudeCode => Rc::new(agent_servers::ClaudeCode),
             Self::NativeAgent => Rc::new(agent2::NativeAgentServer::new(fs, history)),
-            Self::Custom { name, settings } => Rc::new(agent_servers::CustomAgentServer::new(
-                name.clone(),
-                settings,
-            )),
+            Self::Custom { name, command: _ } => {
+                Rc::new(agent_servers::CustomAgentServer::new(name.clone()))
+            }
         }
     }
 }
@@ -220,14 +229,12 @@ impl ManageProfiles {
 
 #[derive(Clone)]
 pub(crate) enum ModelUsageContext {
-    Thread(Entity<Thread>),
     InlineAssistant,
 }
 
 impl ModelUsageContext {
     pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
         match self {
-            Self::Thread(thread) => thread.read(cx).configured_model(),
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }
@@ -337,8 +344,7 @@ fn update_command_palette_filter(cx: &mut App) {
             ];
             filter.show_action_types(edit_prediction_actions.iter());
 
-            filter
-                .show_action_types([TypeId::of::<zed_actions::OpenZedPredictOnboarding>()].iter());
+            filter.show_action_types(&[TypeId::of::<zed_actions::OpenZedPredictOnboarding>()]);
         }
     });
 }
