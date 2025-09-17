@@ -8,8 +8,8 @@ use language_model::LanguageModel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
-    AgentDockPosition, DefaultAgentView, LanguageModelParameters, LanguageModelSelection,
-    NotifyWhenAgentWaiting, Settings, SettingsContent,
+    DefaultAgentView, LanguageModelParameters, LanguageModelSelection, NotifyWhenAgentWaiting,
+    Settings, SettingsContent,
 };
 use util::MergeFrom;
 
@@ -28,7 +28,7 @@ pub fn init(cx: &mut App) {
 pub struct AgentSettings {
     pub enabled: bool,
     pub button: bool,
-    pub dock: AgentDockPosition,
+    pub dock: DockPosition,
     pub default_width: Pixels,
     pub default_height: Pixels,
     pub default_model: Option<LanguageModelSelection>,

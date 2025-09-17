@@ -4,6 +4,8 @@ use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
+use crate::DockPosition;
+
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, Debug, Default)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
@@ -17,7 +19,7 @@ pub struct AgentSettingsContent {
     /// Where to dock the agent panel.
     ///
     /// Default: right
-    pub dock: Option<AgentDockPosition>,
+    pub dock: Option<DockPosition>,
     /// Default width in pixels when the agent panel is docked to the left or right.
     ///
     /// Default: 640
@@ -103,7 +105,7 @@ pub struct AgentSettingsContent {
 }
 
 impl AgentSettingsContent {
-    pub fn set_dock(&mut self, dock: AgentDockPosition) {
+    pub fn set_dock(&mut self, dock: DockPosition) {
         self.dock = Some(dock);
     }
 
@@ -172,15 +174,6 @@ pub struct AgentProfileContent {
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
-}
-
-#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentDockPosition {
-    Left,
-    #[default]
-    Right,
-    Bottom,
 }
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

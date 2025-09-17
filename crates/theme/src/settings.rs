@@ -416,26 +416,32 @@ impl IconThemeSelection {
 }
 
 // impl ThemeSettingsContent {
-//     /// Sets the theme for the given appearance to the theme with the specified name.
-//     pub fn set_theme(&mut self, theme_name: impl Into<Arc<str>>, appearance: Appearance) {
-//         if let Some(selection) = self.theme.as_mut() {
-//             let theme_to_update = match selection {
-//                 ThemeSelection::Static(theme) => theme,
-//                 ThemeSelection::Dynamic { mode, light, dark } => match mode {
-//                     ThemeMode::Light => light,
-//                     ThemeMode::Dark => dark,
-//                     ThemeMode::System => match appearance {
-//                         Appearance::Light => light,
-//                         Appearance::Dark => dark,
-//                     },
-//                 },
-//             };
+/// Sets the theme for the given appearance to the theme with the specified name.
+pub fn set_theme(
+    current: &mut SettingsContent,
+    theme_name: impl Into<Arc<str>>,
+    appearance: Appearance,
+) {
+    if let Some(selection) = current.theme.theme.as_mut() {
+        let theme_to_update = match selection {
+            settings::ThemeSelection::Static(theme) => theme,
+            settings::ThemeSelection::Dynamic { mode, light, dark } => match mode {
+                ThemeMode::Light => light,
+                ThemeMode::Dark => dark,
+                ThemeMode::System => match appearance {
+                    Appearance::Light => light,
+                    Appearance::Dark => dark,
+                },
+            },
+        };
 
-//             *theme_to_update = ThemeName(theme_name.into());
-//         } else {
-//             self.theme = Some(ThemeSelection::Static(ThemeName(theme_name.into())));
-//         }
-//     }
+        *theme_to_update = ThemeName(theme_name.into());
+    } else {
+        current.theme.theme = Some(settings::ThemeSelection::Static(ThemeName(
+            theme_name.into(),
+        )));
+    }
+}
 
 //     /// Sets the icon theme for the given appearance to the icon theme with the specified name.
 //     pub fn set_icon_theme(&mut self, icon_theme_name: String, appearance: Appearance) {
@@ -460,56 +466,58 @@ impl IconThemeSelection {
 //         }
 //     }
 
-//     /// Sets the mode for the theme.
-//     pub fn set_mode(&mut self, mode: ThemeMode) {
-//         if let Some(selection) = self.theme.as_mut() {
-//             match selection {
-//                 ThemeSelection::Static(theme) => {
-//                     // If the theme was previously set to a single static theme,
-//                     // we don't know whether it was a light or dark theme, so we
-//                     // just use it for both.
-//                     self.theme = Some(ThemeSelection::Dynamic {
-//                         mode,
-//                         light: theme.clone(),
-//                         dark: theme.clone(),
-//                     });
-//                 }
-//                 ThemeSelection::Dynamic {
-//                     mode: mode_to_update,
-//                     ..
-//                 } => *mode_to_update = mode,
-//             }
-//         } else {
-//             self.theme = Some(ThemeSelection::Dynamic {
-//                 mode,
-//                 light: ThemeName(ThemeSettings::DEFAULT_LIGHT_THEME.into()),
-//                 dark: ThemeName(ThemeSettings::DEFAULT_DARK_THEME.into()),
-//             });
-//         }
+/// Sets the mode for the theme.
+pub fn set_mode(content: &mut SettingsContent, mode: ThemeMode) {
+    let theme = content.theme.as_mut();
 
-//         if let Some(selection) = self.icon_theme.as_mut() {
-//             match selection {
-//                 IconThemeSelection::Static(icon_theme) => {
-//                     // If the icon theme was previously set to a single static
-//                     // theme, we don't know whether it was a light or dark
-//                     // theme, so we just use it for both.
-//                     self.icon_theme = Some(IconThemeSelection::Dynamic {
-//                         mode,
-//                         light: icon_theme.clone(),
-//                         dark: icon_theme.clone(),
-//                     });
-//                 }
-//                 IconThemeSelection::Dynamic {
-//                     mode: mode_to_update,
-//                     ..
-//                 } => *mode_to_update = mode,
-//             }
-//         } else {
-//             self.icon_theme = Some(IconThemeSelection::Static(IconThemeName(
-//                 DEFAULT_ICON_THEME_NAME.into(),
-//             )));
-//         }
-//     }
+    if let Some(selection) = theme.theme.as_mut() {
+        match selection {
+            settings::ThemeSelection::Static(theme) => {
+                // If the theme was previously set to a single static theme,
+                // we don't know whether it was a light or dark theme, so we
+                // just use it for both.
+                *selection = settings::ThemeSelection::Dynamic {
+                    mode,
+                    light: theme.clone(),
+                    dark: theme.clone(),
+                };
+            }
+            settings::ThemeSelection::Dynamic {
+                mode: mode_to_update,
+                ..
+            } => *mode_to_update = mode,
+        }
+    } else {
+        theme.theme = Some(settings::ThemeSelection::Dynamic {
+            mode,
+            light: ThemeName(ThemeSettings::DEFAULT_LIGHT_THEME.into()),
+            dark: ThemeName(ThemeSettings::DEFAULT_DARK_THEME.into()),
+        });
+    }
+
+    if let Some(selection) = theme.icon_theme.as_mut() {
+        match selection {
+            settings::IconThemeSelection::Static(icon_theme) => {
+                // If the icon theme was previously set to a single static
+                // theme, we don't know whether it was a light or dark
+                // theme, so we just use it for both.
+                *selection = settings::IconThemeSelection::Dynamic {
+                    mode,
+                    light: icon_theme.clone(),
+                    dark: icon_theme.clone(),
+                };
+            }
+            settings::IconThemeSelection::Dynamic {
+                mode: mode_to_update,
+                ..
+            } => *mode_to_update = mode,
+        }
+    } else {
+        theme.icon_theme = Some(settings::IconThemeSelection::Static(IconThemeName(
+            DEFAULT_ICON_THEME_NAME.into(),
+        )));
+    }
+}
 // }
 
 /// The buffer's line height.

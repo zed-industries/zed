@@ -150,6 +150,18 @@ impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
         }
     }
 }
+impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
+    fn into(self) -> settings::ContextServerSettingsContent {
+        match self {
+            ContextServerSettings::Custom { enabled, command } => {
+                settings::ContextServerSettingsContent::Custom { enabled, command }
+            }
+            ContextServerSettings::Extension { enabled, settings } => {
+                settings::ContextServerSettingsContent::Extension { enabled, settings }
+            }
+        }
+    }
+}
 
 impl ContextServerSettings {
     pub fn default_extension() -> Self {

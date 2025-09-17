@@ -42,6 +42,20 @@ impl From<BaseKeymapContent> for BaseKeymap {
         }
     }
 }
+impl Into<BaseKeymapContent> for BaseKeymap {
+    fn into(self) -> BaseKeymapContent {
+        match self {
+            BaseKeymap::VSCode => BaseKeymapContent::VSCode,
+            BaseKeymap::JetBrains => BaseKeymapContent::JetBrains,
+            BaseKeymap::SublimeText => BaseKeymapContent::SublimeText,
+            BaseKeymap::Atom => BaseKeymapContent::Atom,
+            BaseKeymap::TextMate => BaseKeymapContent::TextMate,
+            BaseKeymap::Emacs => BaseKeymapContent::Emacs,
+            BaseKeymap::Cursor => BaseKeymapContent::Cursor,
+            BaseKeymap::None => BaseKeymapContent::None,
+        }
+    }
+}
 
 impl Display for BaseKeymap {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

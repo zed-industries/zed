@@ -69,8 +69,9 @@ fn remove_context_server_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
-    update_settings_file::<ProjectSettings>(fs, cx, move |settings, _| {
+    update_settings_file(fs, cx, move |settings, _| {
         settings
+            .project
             .context_servers
             .retain(|server_id, _| !context_server_ids.contains(server_id));
     });

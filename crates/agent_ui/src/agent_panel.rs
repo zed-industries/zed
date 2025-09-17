@@ -10,6 +10,7 @@ use project::agent_server_store::{
     AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, GEMINI_NAME,
 };
 use serde::{Deserialize, Serialize};
+use settings::DefaultAgentView as DefaultView;
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
@@ -33,7 +34,7 @@ use agent::{
     history_store::{HistoryEntryId, HistoryStore},
     thread_store::{TextThreadStore, ThreadStore},
 };
-use agent_settings::{AgentDockPosition, AgentSettings, DefaultAgentView};
+use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
@@ -1424,11 +1425,7 @@ impl Focusable for AgentPanel {
 }
 
 fn agent_panel_dock_position(cx: &App) -> DockPosition {
-    match AgentSettings::get_global(cx).dock {
-        AgentDockPosition::Left => DockPosition::Left,
-        AgentDockPosition::Bottom => DockPosition::Bottom,
-        AgentDockPosition::Right => DockPosition::Right,
-    }
+    AgentSettings::get_global(cx).dock
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}
