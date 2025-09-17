@@ -234,7 +234,7 @@ impl AgentServerStore {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
             this.agent_servers_settings_changed(cx);
         });
-        let this = Self {
+        let mut this = Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
                 fs,
@@ -245,14 +245,7 @@ impl AgentServerStore {
             },
             external_agents: Default::default(),
         };
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(1)).await;
-            this.update(cx, |this, cx| {
-                this.agent_servers_settings_changed(cx);
-            })
-            .ok();
-        })
-        .detach();
+        this.agent_servers_settings_changed(cx);
         this
     }
 
@@ -305,22 +298,29 @@ impl AgentServerStore {
         }
     }
 
-    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient) {
+    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
             AgentServerStoreState::Local {
                 downstream_client, ..
             } => {
-                client
-                    .send(proto::ExternalAgentsUpdated {
-                        project_id,
-                        names: self
-                            .external_agents
+                *downstream_client = Some((project_id, client.clone()));
+                // Send the current list of external agents downstream, but only after a delay,
+                // to avoid having the message arrive before the downstream project's agent server store
+                // sets up its handlers.
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                    let names = this.update(cx, |this, _| {
+                        this.external_agents
                             .keys()
                             .map(|name| name.to_string())
-                            .collect(),
-                    })
-                    .log_err();
-                *downstream_client = Some((project_id, client));
+                            .collect()
+                    })?;
+                    client
+                        .send(proto::ExternalAgentsUpdated { project_id, names })
+                        .log_err();
+                    anyhow::Ok(())
+                })
+                .detach();
             }
             AgentServerStoreState::Remote { .. } => {
                 debug_panic!(
@@ -720,11 +720,6 @@ struct RemoteExternalAgentServer {
     status_tx: Option<watch::Sender<SharedString>>,
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
-
-// new method: status_updated
-// does nothing in the all-local case
-// for RemoteExternalAgentServer, sends on the stored tx
-// etc.
 
 impl ExternalAgentServer for RemoteExternalAgentServer {
     fn get_command(
