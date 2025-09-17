@@ -1057,8 +1057,6 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
-        use workspace::AutosaveSetting;
-
         let project = self.entity.read(cx).project.clone();
 
         let can_autosave = self.results_editor.can_autosave(cx);
