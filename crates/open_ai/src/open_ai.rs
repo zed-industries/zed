@@ -269,11 +269,12 @@ pub struct Request {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
     Required,
     None,
+    #[serde(untagged)]
     Other(ToolDefinition),
 }
 
@@ -472,7 +473,7 @@ pub async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        let line = line.strip_prefix("data: ")?;
+                        let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
                         if line == "[DONE]" {
                             None
                         } else {

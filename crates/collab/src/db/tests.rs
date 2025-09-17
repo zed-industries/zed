@@ -7,7 +7,6 @@ mod db_tests;
 mod embedding_tests;
 mod extension_tests;
 mod feature_flag_tests;
-mod message_tests;
 mod user_tests;
 
 use crate::migrations::run_database_migrations;
@@ -21,7 +20,7 @@ use sqlx::migrate::MigrateDatabase;
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicI32, AtomicU32, Ordering::SeqCst},
+        atomic::{AtomicI32, Ordering::SeqCst},
     },
     time::Duration,
 };
@@ -75,10 +74,10 @@ impl TestDb {
         static LOCK: Mutex<()> = Mutex::new(());
 
         let _guard = LOCK.lock();
-        let mut rng = StdRng::from_entropy();
+        let mut rng = StdRng::from_os_rng();
         let url = format!(
             "postgres://postgres@localhost/zed-test-{}",
-            rng.r#gen::<u128>()
+            rng.random::<u128>()
         );
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -223,12 +222,4 @@ async fn new_test_user(db: &Arc<Database>, email: &str) -> UserId {
     .await
     .unwrap()
     .user_id
-}
-
-static TEST_CONNECTION_ID: AtomicU32 = AtomicU32::new(1);
-fn new_test_connection(server: ServerId) -> ConnectionId {
-    ConnectionId {
-        id: TEST_CONNECTION_ID.fetch_add(1, SeqCst),
-        owner_id: server.0 as u32,
-    }
 }

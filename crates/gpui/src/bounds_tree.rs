@@ -309,12 +309,12 @@ mod tests {
             let mut expected_quads: Vec<(Bounds<f32>, u32)> = Vec::new();
 
             // Insert a random number of random AABBs into the tree.
-            let num_bounds = rng.gen_range(1..=max_bounds);
+            let num_bounds = rng.random_range(1..=max_bounds);
             for _ in 0..num_bounds {
-                let min_x: f32 = rng.gen_range(-100.0..100.0);
-                let min_y: f32 = rng.gen_range(-100.0..100.0);
-                let width: f32 = rng.gen_range(0.0..50.0);
-                let height: f32 = rng.gen_range(0.0..50.0);
+                let min_x: f32 = rng.random_range(-100.0..100.0);
+                let min_y: f32 = rng.random_range(-100.0..100.0);
+                let width: f32 = rng.random_range(0.0..50.0);
+                let height: f32 = rng.random_range(0.0..50.0);
                 let bounds = Bounds {
                     origin: Point { x: min_x, y: min_y },
                     size: Size { width, height },

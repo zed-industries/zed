@@ -5,6 +5,7 @@
 (primitive_type) @type.builtin
 (self) @variable.special
 (field_identifier) @property
+(shorthand_field_identifier) @property
 
 (trait_item name: (type_identifier) @type.interface)
 (impl_item trait: (type_identifier) @type.interface)
@@ -196,12 +197,12 @@ operator: "/" @operator
   (identifier) @attribute
   (scoped_identifier name: (identifier) @attribute)
   (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
-  (token_tree (identifier) @variable "::" (identifier) @type (#match? @type "^[A-Z]"))
+  (token_tree (identifier) @none "::" (#match? @none "^[a-z\\d_]*$"))
 ]))
 
 (inner_attribute_item (attribute [
   (identifier) @attribute
   (scoped_identifier name: (identifier) @attribute)
   (token_tree (identifier) @attribute (#match? @attribute "^[a-z\\d_]*$"))
-  (token_tree (identifier) @variable "::" (identifier) @type (#match? @type "^[A-Z]"))
+  (token_tree (identifier) @none "::" (#match? @none "^[a-z\\d_]*$"))
 ]))

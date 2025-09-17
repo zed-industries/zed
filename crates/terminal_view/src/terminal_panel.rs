@@ -41,7 +41,7 @@ use workspace::{
     ui::IconName,
 };
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use zed_actions::assistant::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
@@ -49,6 +49,8 @@ const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 actions!(
     terminal_panel,
     [
+        /// Toggles the terminal panel.
+        Toggle,
         /// Toggles focus on the terminal panel.
         ToggleFocus
     ]
@@ -62,6 +64,13 @@ pub fn init(cx: &mut App) {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(window, cx);
+                }
+            });
+            workspace.register_action(|workspace, _: &Toggle, window, cx| {
+                if is_enabled_in_workspace(workspace, cx) {
+                    if !workspace.toggle_panel_focus::<TerminalPanel>(window, cx) {
+                        workspace.close_panel::<TerminalPanel>(window, cx);
+                    }
                 }
             });
         },
@@ -905,11 +914,16 @@ impl TerminalPanel {
                 RevealStrategy::Always => match reveal_target {
                     RevealTarget::Center => {
                         task_workspace.update_in(cx, |workspace, window, cx| {
-                            workspace
-                                .active_item(cx)
-                                .context("retrieving active terminal item in the workspace")?
-                                .item_focus_handle(cx)
-                                .focus(window);
+                            let did_activate = workspace.activate_item(
+                                &terminal_to_replace,
+                                true,
+                                true,
+                                window,
+                                cx,
+                            );
+
+                            anyhow::ensure!(did_activate, "Failed to retrieve terminal pane");
+
                             anyhow::Ok(())
                         })??;
                     }

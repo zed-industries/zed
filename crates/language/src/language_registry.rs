@@ -374,14 +374,23 @@ impl LanguageRegistry {
     pub fn register_available_lsp_adapter(
         &self,
         name: LanguageServerName,
-        load: impl Fn() -> Arc<dyn LspAdapter> + 'static + Send + Sync,
+        adapter: Arc<dyn LspAdapter>,
     ) {
-        self.state.write().available_lsp_adapters.insert(
+        let mut state = self.state.write();
+
+        if adapter.is_extension()
+            && let Some(existing_adapter) = state.all_lsp_adapters.get(&name)
+            && !existing_adapter.adapter.is_extension()
+        {
+            log::warn!(
+                "not registering extension-provided language server {name:?}, since a builtin language server exists with that name",
+            );
+            return;
+        }
+
+        state.available_lsp_adapters.insert(
             name,
-            Arc::new(move || {
-                let lsp_adapter = load();
-                CachedLspAdapter::new(lsp_adapter)
-            }),
+            Arc::new(move || CachedLspAdapter::new(adapter.clone())),
         );
     }
 
@@ -396,13 +405,21 @@ impl LanguageRegistry {
         Some(load_lsp_adapter())
     }
 
-    pub fn register_lsp_adapter(
-        &self,
-        language_name: LanguageName,
-        adapter: Arc<dyn LspAdapter>,
-    ) -> Arc<CachedLspAdapter> {
-        let cached = CachedLspAdapter::new(adapter);
+    pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
         let mut state = self.state.write();
+
+        if adapter.is_extension()
+            && let Some(existing_adapter) = state.all_lsp_adapters.get(&adapter.name())
+            && !existing_adapter.adapter.is_extension()
+        {
+            log::warn!(
+                "not registering extension-provided language server {:?} for language {language_name:?}, since a builtin language server exists with that name",
+                adapter.name(),
+            );
+            return;
+        }
+
+        let cached = CachedLspAdapter::new(adapter);
         state
             .lsp_adapters
             .entry(language_name)
@@ -411,8 +428,6 @@ impl LanguageRegistry {
         state
             .all_lsp_adapters
             .insert(cached.name.clone(), cached.clone());
-
-        cached
     }
 
     /// Register a fake language server and adapter

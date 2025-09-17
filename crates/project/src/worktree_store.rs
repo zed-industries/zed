@@ -203,11 +203,10 @@ impl WorktreeStore {
         })
     }
 
-    pub fn entry_for_path(&self, path: &ProjectPath, cx: &App) -> Option<Entry> {
+    pub fn entry_for_path<'a>(&'a self, path: &ProjectPath, cx: &'a App) -> Option<&'a Entry> {
         self.worktree_for_id(path.worktree_id, cx)?
             .read(cx)
             .entry_for_path(&path.path)
-            .cloned()
     }
 
     pub fn create_worktree(
@@ -228,7 +227,7 @@ impl WorktreeStore {
                         Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
                     } else {
                         let abs_path = RemotePathBuf::new(abs_path.to_path_buf(), *path_style);
-                        self.create_ssh_worktree(upstream_client.clone(), abs_path, visible, cx)
+                        self.create_remote_worktree(upstream_client.clone(), abs_path, visible, cx)
                     }
                 }
                 WorktreeStoreState::Local { fs } => {
@@ -251,7 +250,7 @@ impl WorktreeStore {
         })
     }
 
-    fn create_ssh_worktree(
+    fn create_remote_worktree(
         &mut self,
         client: AnyProtoClient,
         abs_path: RemotePathBuf,

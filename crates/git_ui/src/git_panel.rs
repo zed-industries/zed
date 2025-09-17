@@ -31,11 +31,11 @@ use git::{
     UnstageAll,
 };
 use gpui::{
-    Action, Animation, AnimationExt as _, AsyncApp, AsyncWindowContext, Axis, ClickEvent, Corner,
-    DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, MouseDownEvent, Point,
-    PromptLevel, ScrollStrategy, Subscription, Task, Transformation, UniformListScrollHandle,
-    WeakEntity, actions, anchored, deferred, percentage, uniform_list,
+    Action, AsyncApp, AsyncWindowContext, Axis, ClickEvent, Corner, DismissEvent, Entity,
+    EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, MouseButton, MouseDownEvent, Point, PromptLevel, ScrollStrategy,
+    Subscription, Task, UniformListScrollHandle, WeakEntity, actions, anchored, deferred,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::{Buffer, File};
@@ -63,8 +63,8 @@ use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
 use ui::{
-    Checkbox, ContextMenu, ElevationIndex, IconPosition, Label, LabelSize, PopoverMenu, Scrollbar,
-    ScrollbarState, SplitButton, Tooltip, prelude::*,
+    Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IconPosition, Label, LabelSize,
+    PopoverMenu, Scrollbar, ScrollbarState, SplitButton, Tooltip, prelude::*,
 };
 use util::{ResultExt, TryFutureExt, maybe};
 use workspace::SERIALIZATION_THROTTLE_TIME;
@@ -388,9 +388,6 @@ pub(crate) fn commit_message_editor(
     window: &mut Window,
     cx: &mut Context<Editor>,
 ) -> Editor {
-    project.update(cx, |this, cx| {
-        this.mark_buffer_as_non_searchable(commit_message_buffer.read(cx).remote_id(), cx);
-    });
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
     let mut commit_editor = Editor::new(
@@ -3088,13 +3085,7 @@ impl GitPanel {
                         Icon::new(IconName::ArrowCircle)
                             .size(IconSize::XSmall)
                             .color(Color::Info)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            ),
+                            .with_rotate_animation(2),
                     )
                     .child(
                         Label::new("Generating Commit...")

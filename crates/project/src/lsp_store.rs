@@ -16,10 +16,10 @@ pub mod lsp_ext_command;
 pub mod rust_analyzer_ext;
 
 use crate::{
-    CodeAction, ColorPresentation, Completion, CompletionResponse, CompletionSource,
-    CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction, LspPullDiagnostics,
-    ManifestProvidersStore, Project, ProjectItem, ProjectPath, ProjectTransaction,
-    PulledDiagnostics, ResolveState, Symbol,
+    CodeAction, ColorPresentation, Completion, CompletionDisplayOptions, CompletionResponse,
+    CompletionSource, CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction,
+    LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
+    ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -86,7 +86,6 @@ use node_runtime::read_package_installed_version;
 use parking_lot::Mutex;
 use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
-
 use rpc::{
     AnyProtoClient,
     proto::{FromProto, LspRequestId, LspRequestMessage as _, ToProto},
@@ -2566,10 +2565,7 @@ impl LocalLspStore {
         };
 
         let Ok(file_url) = lsp::Uri::from_file_path(old_path.as_path()) else {
-            debug_panic!(
-                "`{}` is not parseable as an URI",
-                old_path.to_string_lossy()
-            );
+            debug_panic!("{old_path:?} is not parseable as an URI");
             return;
         };
         self.unregister_buffer_from_language_servers(buffer, &file_url, cx);
@@ -3764,7 +3760,7 @@ impl LspStore {
             worktree_store,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().r#gen(),
+            nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
@@ -3826,7 +3822,7 @@ impl LspStore {
             worktree_store,
             languages: languages.clone(),
             language_server_statuses: Default::default(),
-            nonce: StdRng::from_entropy().r#gen(),
+            nonce: StdRng::from_os_rng().random(),
             diagnostic_summaries: HashMap::default(),
             lsp_server_capabilities: HashMap::default(),
             lsp_document_colors: HashMap::default(),
@@ -3936,8 +3932,8 @@ impl LspStore {
         event: &ToolchainStoreEvent,
         _: &mut Context<Self>,
     ) {
-        match event {
-            ToolchainStoreEvent::ToolchainActivated => self.request_workspace_config_refresh(),
+        if let ToolchainStoreEvent::ToolchainActivated = event {
+            self.request_workspace_config_refresh()
         }
     }
 
@@ -5828,6 +5824,7 @@ impl LspStore {
                 .await;
                 Ok(vec![CompletionResponse {
                     completions,
+                    display_options: CompletionDisplayOptions::default(),
                     is_incomplete: completion_response.is_incomplete,
                 }])
             })
@@ -5920,6 +5917,7 @@ impl LspStore {
                         .await;
                     Some(CompletionResponse {
                         completions,
+                        display_options: CompletionDisplayOptions::default(),
                         is_incomplete: completion_response.is_incomplete,
                     })
                 });
@@ -7123,6 +7121,36 @@ impl LspStore {
             summary.warning_count += path_summary.warning_count;
         }
         summary
+    }
+
+    /// Returns the diagnostic summary for a specific project path.
+    pub fn diagnostic_summary_for_path(
+        &self,
+        project_path: &ProjectPath,
+        _: &App,
+    ) -> DiagnosticSummary {
+        if let Some(summaries) = self
+            .diagnostic_summaries
+            .get(&project_path.worktree_id)
+            .and_then(|map| map.get(&project_path.path))
+        {
+            let (error_count, warning_count) = summaries.iter().fold(
+                (0, 0),
+                |(error_count, warning_count), (_language_server_id, summary)| {
+                    (
+                        error_count + summary.error_count,
+                        warning_count + summary.warning_count,
+                    )
+                },
+            );
+
+            DiagnosticSummary {
+                error_count,
+                warning_count,
+            }
+        } else {
+            DiagnosticSummary::default()
+        }
     }
 
     pub fn diagnostic_summaries<'a>(
@@ -12952,6 +12980,21 @@ pub enum CompletionDocumentation {
     },
 }
 
+impl CompletionDocumentation {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn text(&self) -> SharedString {
+        match self {
+            CompletionDocumentation::Undocumented => "".into(),
+            CompletionDocumentation::SingleLine(s) => s.clone(),
+            CompletionDocumentation::MultiLinePlainText(s) => s.clone(),
+            CompletionDocumentation::MultiLineMarkdown(s) => s.clone(),
+            CompletionDocumentation::SingleLineAndMultiLinePlainText { single_line, .. } => {
+                single_line.clone()
+            }
+        }
+    }
+}
+
 impl From<lsp::Documentation> for CompletionDocumentation {
     fn from(docs: lsp::Documentation) -> Self {
         match docs {
@@ -13056,6 +13099,7 @@ impl LspAdapter for SshLspAdapter {
     async fn fetch_latest_server_version(
         &self,
         _: &dyn LspAdapterDelegate,
+        _: &AsyncApp,
     ) -> Result<Box<dyn 'static + Send + Any>> {
         anyhow::bail!("SshLspAdapter does not support fetch_latest_server_version")
     }

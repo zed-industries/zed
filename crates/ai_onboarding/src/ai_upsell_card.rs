@@ -1,12 +1,10 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::Plan;
-use gpui::{
-    Animation, AnimationExt, AnyElement, App, Entity, IntoElement, RenderOnce, Transformation,
-    Window, percentage,
-};
-use ui::{Divider, Vector, VectorName, prelude::*};
+use feature_flags::{BillingV2FeatureFlag, FeatureFlagAppExt};
+use gpui::{AnyElement, App, Entity, IntoElement, RenderOnce, Window};
+use ui::{CommonAnimationExt, Divider, Vector, VectorName, prelude::*};
 
 use crate::{SignInStatus, YoungAccountBanner, plan_definitions::PlanDefinitions};
 
@@ -52,9 +50,6 @@ impl AiUpsellCard {
 
 impl RenderOnce for AiUpsellCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let plan_definitions = PlanDefinitions;
-        let young_account_banner = YoungAccountBanner;
-
         let pro_section = v_flex()
             .flex_grow()
             .w_full()
@@ -70,7 +65,7 @@ impl RenderOnce for AiUpsellCard {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(plan_definitions.pro_plan(false));
+            .child(PlanDefinitions.pro_plan(cx.has_flag::<BillingV2FeatureFlag>(), false));
 
         let free_section = v_flex()
             .flex_grow()
@@ -87,12 +82,18 @@ impl RenderOnce for AiUpsellCard {
                     )
                     .child(Divider::horizontal()),
             )
-            .child(plan_definitions.free_plan());
+            .child(PlanDefinitions.free_plan(cx.has_flag::<BillingV2FeatureFlag>()));
 
-        let grid_bg = h_flex().absolute().inset_0().w_full().h(px(240.)).child(
-            Vector::new(VectorName::Grid, rems_from_px(500.), rems_from_px(240.))
-                .color(Color::Custom(cx.theme().colors().border.opacity(0.05))),
-        );
+        let grid_bg = h_flex()
+            .absolute()
+            .inset_0()
+            .w_full()
+            .h(px(240.))
+            .bg(gpui::pattern_slash(
+                cx.theme().colors().border.opacity(0.1),
+                2.,
+                25.,
+            ));
 
         let gradient_bg = div()
             .absolute()
@@ -147,11 +148,7 @@ impl RenderOnce for AiUpsellCard {
                     rems_from_px(72.),
                 )
                 .color(Color::Custom(cx.theme().colors().text_accent.alpha(0.3)))
-                .with_animation(
-                    "loading_stamp",
-                    Animation::new(Duration::from_secs(10)).repeat(),
-                    |this, delta| this.transform(Transformation::rotate(percentage(delta))),
-                ),
+                .with_rotate_animation(10),
             );
 
         let pro_trial_stamp = div()
@@ -174,7 +171,7 @@ impl RenderOnce for AiUpsellCard {
                     .child(Label::new("Try Zed AI").size(LabelSize::Large))
                     .map(|this| {
                         if self.account_too_young {
-                            this.child(young_account_banner).child(
+                            this.child(YoungAccountBanner).child(
                                 v_flex()
                                     .mt_2()
                                     .gap_1()
@@ -189,7 +186,10 @@ impl RenderOnce for AiUpsellCard {
                                             )
                                             .child(Divider::horizontal()),
                                     )
-                                    .child(plan_definitions.pro_plan(true))
+                                    .child(
+                                        PlanDefinitions
+                                            .pro_plan(cx.has_flag::<BillingV2FeatureFlag>(), true),
+                                    )
                                     .child(
                                         Button::new("pro", "Get Started")
                                             .full_width()
@@ -236,7 +236,7 @@ impl RenderOnce for AiUpsellCard {
                             )
                         }
                     }),
-                Some(Plan::ZedProTrial) => card
+                Some(plan @ Plan::ZedProTrial | plan @ Plan::ZedProTrialV2) => card
                     .child(pro_trial_stamp)
                     .child(Label::new("You're in the Zed Pro Trial").size(LabelSize::Large))
                     .child(
@@ -244,8 +244,8 @@ impl RenderOnce for AiUpsellCard {
                             .color(Color::Muted)
                             .mb_2(),
                     )
-                    .child(plan_definitions.pro_trial(false)),
-                Some(Plan::ZedPro) => card
+                    .child(PlanDefinitions.pro_trial(plan == Plan::ZedProTrialV2, false)),
+                Some(plan @ Plan::ZedPro | plan @ Plan::ZedProV2) => card
                     .child(certified_user_stamp)
                     .child(Label::new("You're in the Zed Pro plan").size(LabelSize::Large))
                     .child(
@@ -253,7 +253,7 @@ impl RenderOnce for AiUpsellCard {
                             .color(Color::Muted)
                             .mb_2(),
                     )
-                    .child(plan_definitions.pro_plan(false)),
+                    .child(PlanDefinitions.pro_plan(plan == Plan::ZedProV2, false)),
             },
             // Signed Out State
             _ => card

@@ -4,10 +4,9 @@ use crate::{
     ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
     PlatformInput, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
-    ScaledPixels, SharedString, Size, SystemWindowTab, Timer, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowKind, WindowParams,
-    dispatch_get_main_queue, dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point,
-    px, size,
+    SharedString, Size, SystemWindowTab, Timer, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowControlArea, WindowKind, WindowParams, dispatch_get_main_queue,
+    dispatch_sys::dispatch_async_f, platform::PlatformInputHandler, point, px, size,
 };
 use block::ConcreteBlock;
 use cocoa::{
@@ -781,6 +780,8 @@ impl MacWindow {
                     if let Some(tabbing_identifier) = tabbing_identifier {
                         let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
                         let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
+                    } else {
+                        let _: () = msg_send![native_window, setTabbingIdentifier:nil];
                     }
                 }
                 WindowKind::PopUp => {
@@ -1015,6 +1016,25 @@ impl PlatformWindow for MacWindow {
         let native_window = self.0.lock().native_window;
         unsafe {
             let _: () = msg_send![native_window, toggleTabOverview:nil];
+        }
+    }
+
+    fn set_tabbing_identifier(&self, tabbing_identifier: Option<String>) {
+        let native_window = self.0.lock().native_window;
+        unsafe {
+            let allows_automatic_window_tabbing = tabbing_identifier.is_some();
+            if allows_automatic_window_tabbing {
+                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: YES];
+            } else {
+                let () = msg_send![class!(NSWindow), setAllowsAutomaticWindowTabbing: NO];
+            }
+
+            if let Some(tabbing_identifier) = tabbing_identifier {
+                let tabbing_id = NSString::alloc(nil).init_str(tabbing_identifier.as_str());
+                let _: () = msg_send![native_window, setTabbingIdentifier: tabbing_id];
+            } else {
+                let _: () = msg_send![native_window, setTabbingIdentifier:nil];
+            }
         }
     }
 
@@ -1459,7 +1479,7 @@ impl PlatformWindow for MacWindow {
         None
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         let executor = self.0.lock().executor.clone();
         executor
             .spawn(async move {

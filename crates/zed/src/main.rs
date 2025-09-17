@@ -23,13 +23,14 @@ use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
 use prompt_store::PromptBuilder;
+use remote::RemoteConnectionOptions;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
-use recent_projects::{SshSettings, open_ssh_project};
+use recent_projects::{SshSettings, open_remote_project};
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{BaseKeymap, Settings, SettingsStore, watch_config_file};
@@ -287,7 +288,7 @@ pub fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    let failed_single_instance_check = if *db::ZED_STATELESS
+    let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
         || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
     {
         false
@@ -360,6 +361,7 @@ pub fn main() {
             open_listener.open(RawOpenRequest {
                 urls,
                 diff_paths: Vec::new(),
+                ..Default::default()
             })
         }
     });
@@ -565,7 +567,6 @@ pub fn main() {
         language_model::init(app_state.client.clone(), cx);
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         agent_settings::init(cx);
-        agent_servers::init(cx);
         acp_tools::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
@@ -618,6 +619,7 @@ pub fn main() {
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
         language_selector::init(cx);
+        line_ending_selector::init(cx);
         toolchain_selector::init(cx);
         theme_selector::init(cx);
         settings_profile_selector::init(cx);
@@ -632,6 +634,7 @@ pub fn main() {
         svg_preview::init(cx);
         onboarding::init(cx);
         settings_ui::init(cx);
+        keymap_editor::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
         inspector_ui::init(app_state.clone(), cx);
@@ -695,7 +698,7 @@ pub fn main() {
         let urls: Vec<_> = args
             .paths_or_urls
             .iter()
-            .filter_map(|arg| parse_url_arg(arg, cx).log_err())
+            .map(|arg| parse_url_arg(arg, cx))
             .collect();
 
         let diff_paths: Vec<[String; 2]> = args
@@ -704,8 +707,17 @@ pub fn main() {
             .map(|chunk| [chunk[0].clone(), chunk[1].clone()])
             .collect();
 
+        #[cfg(target_os = "windows")]
+        let wsl = args.wsl;
+        #[cfg(not(target_os = "windows"))]
+        let wsl = None;
+
         if !urls.is_empty() || !diff_paths.is_empty() {
-            open_listener.open(RawOpenRequest { urls, diff_paths })
+            open_listener.open(RawOpenRequest {
+                urls,
+                diff_paths,
+                wsl,
+            })
         }
 
         match open_rx
@@ -791,10 +803,10 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     }
 
-    if let Some(connection_options) = request.ssh_connection {
+    if let Some(connection_options) = request.remote_connection {
         cx.spawn(async move |cx| {
             let paths: Vec<PathBuf> = request.open_paths.into_iter().map(PathBuf::from).collect();
-            open_ssh_project(
+            open_remote_project(
                 connection_options,
                 paths,
                 app_state,
@@ -948,7 +960,7 @@ async fn installation_id() -> Result<IdType> {
 async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
         let use_system_window_tabs = cx
-            .update(|cx| WorkspaceSettings::get(None, cx).use_system_window_tabs)
+            .update(|cx| WorkspaceSettings::get_global(cx).use_system_window_tabs)
             .unwrap_or(false);
         let mut results: Vec<Result<(), Error>> = Vec::new();
         let mut tasks = Vec::new();
@@ -977,31 +989,24 @@ async fn restore_or_create_workspace(app_state: Arc<AppState>, cx: &mut AsyncApp
                         tasks.push(task);
                     }
                 }
-                SerializedWorkspaceLocation::Ssh(ssh) => {
+                SerializedWorkspaceLocation::Remote(mut connection_options) => {
                     let app_state = app_state.clone();
-                    let ssh_host = ssh.host.clone();
-                    let task = cx.spawn(async move |cx| {
-                        let connection_options = cx.update(|cx| {
+                    if let RemoteConnectionOptions::Ssh(options) = &mut connection_options {
+                        cx.update(|cx| {
                             SshSettings::get_global(cx)
-                                .connection_options_for(ssh.host, ssh.port, ssh.user)
-                        });
-
-                        match connection_options {
-                            Ok(connection_options) => recent_projects::open_ssh_project(
-                                connection_options,
-                                paths.paths().into_iter().map(PathBuf::from).collect(),
-                                app_state,
-                                workspace::OpenOptions::default(),
-                                cx,
-                            )
-                            .await
-                            .map_err(|e| anyhow::anyhow!(e)),
-                            Err(e) => Err(anyhow::anyhow!(
-                                "Failed to get SSH connection options for {}: {}",
-                                ssh_host,
-                                e
-                            )),
-                        }
+                                .fill_connection_options_from_settings(options)
+                        })?;
+                    }
+                    let task = cx.spawn(async move |cx| {
+                        recent_projects::open_remote_project(
+                            connection_options,
+                            paths.paths().into_iter().map(PathBuf::from).collect(),
+                            app_state,
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                        .await
+                        .map_err(|e| anyhow::anyhow!(e))
                     });
                     tasks.push(task);
                 }
@@ -1183,6 +1188,19 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     user_data_dir: Option<String>,
 
+    /// The username and WSL distribution to use when opening paths. If not specified,
+    /// Zed will attempt to open the paths directly.
+    ///
+    /// The username is optional, and if not specified, the default user for the distribution
+    /// will be used.
+    ///
+    /// Example: `me@Ubuntu` or `Ubuntu`.
+    ///
+    /// WARN: You should not fill in this field by hand.
+    #[cfg(target_os = "windows")]
+    #[arg(long, value_name = "USER@DISTRO")]
+    wsl: Option<String>,
+
     /// Instructs zed to run as a dev server on this machine. (not implemented)
     #[arg(long)]
     dev_server_token: Option<String>,
@@ -1241,18 +1259,18 @@ impl ToString for IdType {
     }
 }
 
-fn parse_url_arg(arg: &str, cx: &App) -> Result<String> {
+fn parse_url_arg(arg: &str, cx: &App) -> String {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!("file://{}", path.display())),
-        Err(error) => {
+        Ok(path) => format!("file://{}", path.display()),
+        Err(_) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
                 || arg.starts_with("ssh://")
                 || parse_zed_link(arg, cx).is_some()
             {
-                Ok(arg.into())
+                arg.into()
             } else {
-                anyhow::bail!("error parsing path argument: {error}")
+                format!("file://{arg}")
             }
         }
     }
@@ -1401,30 +1419,35 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut App) {
 fn watch_languages(fs: Arc<dyn fs::Fs>, languages: Arc<LanguageRegistry>, cx: &mut App) {
     use std::time::Duration;
 
-    let path = {
-        let p = Path::new("crates/languages/src");
-        let Ok(full_path) = p.canonicalize() else {
+    cx.background_spawn(async move {
+        let languages_src = Path::new("crates/languages/src");
+        let Some(languages_src) = fs.canonicalize(languages_src).await.log_err() else {
             return;
         };
-        full_path
-    };
 
-    cx.spawn(async move |_| {
-        let (mut events, _) = fs.watch(path.as_path(), Duration::from_millis(100)).await;
+        let (mut events, watcher) = fs.watch(&languages_src, Duration::from_millis(100)).await;
+
+        // add subdirectories since fs.watch is not recursive on Linux
+        if let Some(mut paths) = fs.read_dir(&languages_src).await.log_err() {
+            while let Some(path) = paths.next().await {
+                if let Some(path) = path.log_err()
+                    && fs.is_dir(&path).await
+                {
+                    watcher.add(&path).log_err();
+                }
+            }
+        }
+
         while let Some(event) = events.next().await {
-            let has_language_file = event.iter().any(|event| {
-                event
-                    .path
-                    .extension()
-                    .map(|ext| ext.to_string_lossy().as_ref() == "scm")
-                    .unwrap_or(false)
-            });
+            let has_language_file = event
+                .iter()
+                .any(|event| event.path.extension().is_some_and(|ext| ext == "scm"));
             if has_language_file {
                 languages.reload();
             }
         }
     })
-    .detach()
+    .detach();
 }
 
 #[cfg(not(debug_assertions))]

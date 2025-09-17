@@ -54,6 +54,8 @@ members = [
     "crates/deepseek",
     "crates/diagnostics",
     "crates/docs_preprocessor",
+    "crates/edit_prediction",
+    "crates/edit_prediction_button",
     "crates/editor",
     "crates/eval",
     "crates/explorer_command_injector",
@@ -82,20 +84,21 @@ members = [
     "crates/http_client_tls",
     "crates/icons",
     "crates/image_viewer",
-    "crates/edit_prediction",
-    "crates/edit_prediction_button",
     "crates/inspector_ui",
     "crates/install_cli",
     "crates/jj",
     "crates/jj_ui",
     "crates/journal",
+    "crates/keymap_editor",
     "crates/language",
     "crates/language_extension",
     "crates/language_model",
     "crates/language_models",
+    "crates/language_onboarding",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
+    "crates/line_ending_selector",
     "crates/livekit_api",
     "crates/livekit_client",
     "crates/lmstudio",
@@ -130,6 +133,7 @@ members = [
     "crates/refineable",
     "crates/refineable/derive_refineable",
     "crates/release_channel",
+    "crates/scheduler",
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
@@ -140,12 +144,12 @@ members = [
     "crates/rules_library",
     "crates/schema_generator",
     "crates/search",
-    "crates/semantic_index",
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
     "crates/settings_profile_selector",
     "crates/settings_ui",
+    "crates/settings_ui_macros",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -156,9 +160,9 @@ members = [
     "crates/streaming_diff",
     "crates/sum_tree",
     "crates/supermaven",
-    "crates/system_specs",
     "crates/supermaven_api",
     "crates/svg_preview",
+    "crates/system_specs",
     "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
@@ -191,6 +195,7 @@ members = [
     "crates/x_ai",
     "crates/zed",
     "crates/zed_actions",
+    "crates/zed_env_vars",
     "crates/zeta",
     "crates/zeta_cli",
     "crates/zlog",
@@ -207,7 +212,6 @@ members = [
     "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/test-extension",
-    "extensions/toml",
 
     #
     # Tooling
@@ -297,9 +301,7 @@ git_hosting_providers = { path = "crates/git_hosting_providers" }
 git_ui = { path = "crates/git_ui" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
-gpui = { path = "crates/gpui", default-features = false, features = [
-    "http_client",
-] }
+gpui = { path = "crates/gpui", default-features = false }
 gpui_macros = { path = "crates/gpui_macros" }
 gpui_tokio = { path = "crates/gpui_tokio" }
 html_to_markdown = { path = "crates/html_to_markdown" }
@@ -314,13 +316,16 @@ install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
 jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
+keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_models = { path = "crates/language_models" }
+language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
+line_ending_selector = { path = "crates/line_ending_selector" }
 livekit_api = { path = "crates/livekit_api" }
 livekit_client = { path = "crates/livekit_client" }
 lmstudio = { path = "crates/lmstudio" }
@@ -358,6 +363,7 @@ proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
 release_channel = { path = "crates/release_channel" }
+scheduler = { path = "crates/scheduler" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
@@ -368,11 +374,11 @@ rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
-semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_ui = { path = "crates/settings_ui" }
+settings_ui_macros = { path = "crates/settings_ui_macros" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
@@ -418,6 +424,7 @@ worktree = { path = "crates/worktree" }
 x_ai = { path = "crates/x_ai" }
 zed = { path = "crates/zed" }
 zed_actions = { path = "crates/zed_actions" }
+zed_env_vars = { path = "crates/zed_env_vars" }
 zeta = { path = "crates/zeta" }
 zlog = { path = "crates/zlog" }
 zlog_settings = { path = "crates/zlog_settings" }
@@ -426,7 +433,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol =  "0.1"
+agent-client-protocol = { version = "0.2.0-alpha.6", features = ["unstable"]}
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -440,6 +447,7 @@ async-fs = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
+async-task = "4.7"
 async-trait = "0.1"
 async-tungstenite = "0.29.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
@@ -455,9 +463,9 @@ aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "e0ec4e720957edd51b945b64dd85605ea54bcfe5" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "bfa594ea697d4b6326ea29f747525c85ecf933b9" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -531,9 +539,35 @@ nbformat = {  git = "https://github.com/ConradIrwin/runtimed", rev = "7130c80421
 nix = "0.29"
 num-format = "0.4.4"
 objc = "0.2"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "NSArray",
+    "NSAttributedString",
+    "NSBundle",
+    "NSCoder",
+    "NSData",
+    "NSDate",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+    "NSGeometry",
+    "NSNotification",
+    "NSNull",
+    "NSObjCRuntime",
+    "NSObject",
+    "NSProcessInfo",
+    "NSRange",
+    "NSRunLoop",
+    "NSString",
+    "NSURL",
+    "NSUndoManager",
+    "NSValue",
+    "objc2-core-foundation",
+    "std"
+] }
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
+parking = "2.0"
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
@@ -556,7 +590,7 @@ prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
 quote = "1.0.9"
-rand = "0.8.5"
+rand = "0.9"
 rayon = "1.8"
 ref-cast = "1.0.24"
 regex = "1.5"
@@ -588,6 +622,7 @@ serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
 ] }
+serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
 sha2 = "0.10"
@@ -691,6 +726,7 @@ features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Imaging",
+    "Win32_Graphics_Hlsl",
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
@@ -841,6 +877,9 @@ too_many_arguments = "allow"
 
 # We often have large enum variants yet we rarely actually bother with splitting them up.
 large_enum_variant = "allow"
+
+# Boolean expressions can be hard to read, requiring only the minimal form gets in the way
+nonminimal_bool = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = [

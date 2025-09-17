@@ -39,7 +39,9 @@ use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
-use settings::{Settings, SettingsSources, SettingsStore, update_settings_file};
+use settings::{
+    Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi, update_settings_file,
+};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
@@ -82,6 +84,22 @@ struct PushFindForward {
 struct PushFindBackward {
     after: bool,
     multiline: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+/// Selects the next object.
+struct PushHelixNext {
+    around: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+/// Selects the previous object.
+struct PushHelixPrevious {
+    around: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -222,6 +240,8 @@ actions!(
         PushReplaceWithRegister,
         /// Toggles comments.
         PushToggleComments,
+        /// Starts a match operation.
+        PushHelixMatch,
     ]
 );
 
@@ -247,7 +267,7 @@ pub fn init(cx: &mut App) {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
-                *setting = Some(!currently_enabled)
+                setting.vim_mode = Some(!currently_enabled)
             })
         });
 
@@ -758,6 +778,27 @@ impl Vim {
             );
             Vim::action(editor, cx, |vim, _: &Enter, window, cx| {
                 vim.input_ignored("\n".into(), window, cx)
+            });
+            Vim::action(editor, cx, |vim, _: &PushHelixMatch, window, cx| {
+                vim.push_operator(Operator::HelixMatch, window, cx)
+            });
+            Vim::action(editor, cx, |vim, action: &PushHelixNext, window, cx| {
+                vim.push_operator(
+                    Operator::HelixNext {
+                        around: action.around,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            Vim::action(editor, cx, |vim, action: &PushHelixPrevious, window, cx| {
+                vim.push_operator(
+                    Operator::HelixPrevious {
+                        around: action.around,
+                    },
+                    window,
+                    cx,
+                );
             });
 
             normal::register(editor, cx);
@@ -1785,7 +1826,8 @@ struct VimSettings {
     pub cursor_shape: CursorShapeSettings,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
+#[settings_key(key = "vim")]
 struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
@@ -1824,8 +1866,6 @@ impl From<ModeContent> for Mode {
 }
 
 impl Settings for VimSettings {
-    const KEY: Option<&'static str> = Some("vim");
-
     type FileContent = VimSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {

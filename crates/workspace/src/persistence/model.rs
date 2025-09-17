@@ -5,14 +5,16 @@ use crate::{
 };
 use anyhow::Result;
 use async_recursion::async_recursion;
+use collections::IndexSet;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use gpui::{AsyncWindowContext, Entity, WeakEntity};
 
+use language::{Toolchain, ToolchainScope};
 use project::{Project, debugger::breakpoint_store::SourceBreakpoint};
-use serde::{Deserialize, Serialize};
+use remote::RemoteConnectionOptions;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -24,19 +26,18 @@ use uuid::Uuid;
 #[derive(
     Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, serde::Serialize, serde::Deserialize,
 )]
-pub(crate) struct SshConnectionId(pub u64);
+pub(crate) struct RemoteConnectionId(pub u64);
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct SerializedSshConnection {
-    pub host: String,
-    pub port: Option<u16>,
-    pub user: Option<String>,
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) enum RemoteConnectionKind {
+    Ssh,
+    Wsl,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
     Local,
-    Ssh(SerializedSshConnection),
+    Remote(RemoteConnectionOptions),
 }
 
 impl SerializedWorkspaceLocation {
@@ -58,6 +59,7 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
     pub(crate) breakpoints: BTreeMap<Arc<Path>, Vec<SourceBreakpoint>>,
+    pub(crate) user_toolchains: BTreeMap<ToolchainScope, IndexSet<Toolchain>>,
     pub(crate) window_id: Option<u64>,
 }
 
@@ -66,6 +68,23 @@ pub struct DockStructure {
     pub(crate) left: DockData,
     pub(crate) right: DockData,
     pub(crate) bottom: DockData,
+}
+
+impl RemoteConnectionKind {
+    pub(crate) fn serialize(&self) -> &'static str {
+        match self {
+            RemoteConnectionKind::Ssh => "ssh",
+            RemoteConnectionKind::Wsl => "wsl",
+        }
+    }
+
+    pub(crate) fn deserialize(text: &str) -> Option<Self> {
+        match text {
+            "ssh" => Some(Self::Ssh),
+            "wsl" => Some(Self::Wsl),
+            _ => None,
+        }
+    }
 }
 
 impl Column for DockStructure {

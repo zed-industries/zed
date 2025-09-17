@@ -1,7 +1,9 @@
+use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollStrategy, SharedString,
-    Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px, uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollHandle, ScrollStrategy,
+    SharedString, Size, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, div, px,
+    uniform_list,
 };
 use itertools::Itertools;
 use language::CodeLabel;
@@ -9,9 +11,9 @@ use language::{Buffer, LanguageName, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
-use project::CompletionSource;
 use project::lsp_store::CompletionDocumentation;
 use project::{CodeAction, Completion, TaskSourceKind};
+use project::{CompletionDisplayOptions, CompletionSource};
 use task::DebugScenario;
 use task::TaskContext;
 
@@ -184,6 +186,20 @@ impl CodeContextMenu {
             CodeContextMenu::CodeActions(_) => false,
         }
     }
+
+    pub fn scroll_aside(
+        &mut self,
+        scroll_amount: ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        match self {
+            CodeContextMenu::Completions(completions_menu) => {
+                completions_menu.scroll_aside(scroll_amount, window, cx)
+            }
+            CodeContextMenu::CodeActions(_) => (),
+        }
+    }
 }
 
 pub enum ContextMenuOrigin {
@@ -207,12 +223,16 @@ pub struct CompletionsMenu {
     filter_task: Task<()>,
     cancel_filter: Arc<AtomicBool>,
     scroll_handle: UniformListScrollHandle,
+    // The `ScrollHandle` used on the Markdown documentation rendered on the
+    // side of the completions menu.
+    pub scroll_handle_aside: ScrollHandle,
     resolve_completions: bool,
     show_completion_documentation: bool,
     last_rendered_range: Rc<RefCell<Option<Range<usize>>>>,
     markdown_cache: Rc<RefCell<VecDeque<(MarkdownCacheKey, Entity<Markdown>)>>>,
     language_registry: Option<Arc<LanguageRegistry>>,
     language: Option<LanguageName>,
+    display_options: CompletionDisplayOptions,
     snippet_sort_order: SnippetSortOrder,
 }
 
@@ -231,7 +251,7 @@ enum MarkdownCacheKey {
 pub enum CompletionsMenuSource {
     Normal,
     SnippetChoices,
-    Words,
+    Words { ignore_threshold: bool },
 }
 
 // TODO: There should really be a wrapper around fuzzy match tasks that does this.
@@ -252,6 +272,7 @@ impl CompletionsMenu {
         is_incomplete: bool,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
+        display_options: CompletionDisplayOptions,
         snippet_sort_order: SnippetSortOrder,
         language_registry: Option<Arc<LanguageRegistry>>,
         language: Option<LanguageName>,
@@ -279,11 +300,13 @@ impl CompletionsMenu {
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
             scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle_aside: ScrollHandle::new(),
             resolve_completions: true,
             last_rendered_range: RefCell::new(None).into(),
             markdown_cache: RefCell::new(VecDeque::new()).into(),
             language_registry,
             language,
+            display_options,
             snippet_sort_order,
         };
 
@@ -348,12 +371,14 @@ impl CompletionsMenu {
             filter_task: Task::ready(()),
             cancel_filter: Arc::new(AtomicBool::new(false)),
             scroll_handle: UniformListScrollHandle::new(),
+            scroll_handle_aside: ScrollHandle::new(),
             resolve_completions: false,
             show_completion_documentation: false,
             last_rendered_range: RefCell::new(None).into(),
             markdown_cache: RefCell::new(VecDeque::new()).into(),
             language_registry: None,
             language: None,
+            display_options: CompletionDisplayOptions::default(),
             snippet_sort_order,
         }
     }
@@ -716,6 +741,33 @@ impl CompletionsMenu {
         cx: &mut Context<Editor>,
     ) -> AnyElement {
         let show_completion_documentation = self.show_completion_documentation;
+        let widest_completion_ix = if self.display_options.dynamic_width {
+            let completions = self.completions.borrow();
+            let widest_completion_ix = self
+                .entries
+                .borrow()
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, mat)| {
+                    let completion = &completions[mat.candidate_id];
+                    let documentation = &completion.documentation;
+
+                    let mut len = completion.label.text.chars().count();
+                    if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
+                        if show_completion_documentation {
+                            len += text.chars().count();
+                        }
+                    }
+
+                    len
+                })
+                .map(|(ix, _)| ix);
+            drop(completions);
+            widest_completion_ix
+        } else {
+            None
+        };
+
         let selected_item = self.selected_item;
         let completions = self.completions.clone();
         let entries = self.entries.clone();
@@ -842,7 +894,13 @@ impl CompletionsMenu {
         .max_h(max_height_in_lines as f32 * window.line_height())
         .track_scroll(self.scroll_handle.clone())
         .with_sizing_behavior(ListSizingBehavior::Infer)
-        .w(rems(34.));
+        .map(|this| {
+            if self.display_options.dynamic_width {
+                this.with_width_from_item(widest_completion_ix)
+            } else {
+                this.w(rems(34.))
+            }
+        });
 
         Popover::new().child(list).into_any_element()
     }
@@ -911,6 +969,7 @@ impl CompletionsMenu {
                         .max_w(max_size.width)
                         .max_h(max_size.height)
                         .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle_aside)
                         .occlude(),
                 )
                 .into_any_element(),
@@ -1175,6 +1234,23 @@ impl CompletionsMenu {
                 }
             });
     }
+
+    pub fn scroll_aside(
+        &mut self,
+        amount: ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        let mut offset = self.scroll_handle_aside.offset();
+
+        offset.y -= amount.pixels(
+            window.line_height(),
+            self.scroll_handle_aside.bounds().size.height - px(16.),
+        ) / 2.0;
+
+        cx.notify();
+        self.scroll_handle_aside.set_offset(offset);
+    }
 }
 
 #[derive(Clone)]
@@ -1426,6 +1502,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .text_sm()
                                             .child(
                                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                                                 action.lsp_action.title().replace("\n", ""),

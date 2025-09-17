@@ -8,7 +8,7 @@ See [Configuring Zed](./configuring-zed.md) for additional information and other
 
 Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::Extensions} from the command palette or menu.
 
-You can preview/choose amongsts your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
+You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
 
 ```json
 {
@@ -94,7 +94,6 @@ To disable this behavior use:
   // "project_panel": {"button": false },
   // "outline_panel": {"button": false },
   // "collaboration_panel": {"button": false },
-  // "chat_panel": {"button": "never" },
   // "git_panel": {"button": false },
   // "notification_panel": {"button": false },
   // "agent": {"button": false },
@@ -553,13 +552,6 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
     "default_width": 240          // Default width of the collaboration panel.
   },
   "show_call_status_icon": true,  // Shown call status in the OS status bar.
-
-  // Chat Panel
-  "chat_panel": {
-    "button": "when_in_call",     // status bar icon (true, false, when_in_call)
-    "dock": "right",              // Where to dock: left, right
-    "default_width": 240          // Default width of the chat panel
-  },
 
   // Notification Panel
   "notification_panel": {
