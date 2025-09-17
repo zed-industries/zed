@@ -187,7 +187,7 @@ impl FollowableItem for Editor {
         } else if self.focus_handle.is_focused(window) {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
-                    &self.selections.disjoint_anchors(),
+                    &self.selections.disjoint_anchors_arc(),
                     self.selections.line_mode,
                     self.cursor_shape,
                     cx,
@@ -231,7 +231,7 @@ impl FollowableItem for Editor {
             scroll_y: scroll_anchor.offset.y,
             selections: self
                 .selections
-                .disjoint_anchors()
+                .disjoint_anchors_arc()
                 .iter()
                 .map(|s| serialize_selection(s, &snapshot))
                 .collect(),
@@ -310,7 +310,7 @@ impl FollowableItem for Editor {
                     let snapshot = self.buffer.read(cx).snapshot(cx);
                     update.selections = self
                         .selections
-                        .disjoint_anchors()
+                        .disjoint_anchors_arc()
                         .iter()
                         .map(|s| serialize_selection(s, &snapshot))
                         .collect();
@@ -1675,7 +1675,7 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) -> usize {
         let buffer = self.buffer().read(cx).snapshot(cx);
-        let current_index_position = if self.selections.disjoint_anchors().len() == 1 {
+        let current_index_position = if self.selections.disjoint_anchors_arc().len() == 1 {
             self.selections.newest_anchor().head()
         } else {
             matches[current_index].start

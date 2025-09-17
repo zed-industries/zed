@@ -396,7 +396,7 @@ impl EditorTestContext {
         let (multibuffer_snapshot, selections, excerpts) = self.update_editor(|editor, _, cx| {
             let multibuffer_snapshot = editor.buffer.read(cx).snapshot(cx);
 
-            let selections = editor.selections.disjoint_anchors();
+            let selections = editor.selections.disjoint_anchors_arc();
             let excerpts = multibuffer_snapshot
                 .excerpts()
                 .map(|(e_id, snapshot, range)| (e_id, snapshot.clone(), range))

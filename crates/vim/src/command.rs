@@ -463,7 +463,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             .collect();
         vim.switch_mode(Mode::Normal, true, window, cx);
         let initial_selections =
-            vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors());
+            vim.update_editor(cx, |_, editor, _| editor.selections.disjoint_anchors_arc());
         if let Some(range) = &action.range {
             let result = vim.update_editor(cx, |vim, editor, cx| {
                 let range = range.buffer_range(vim, editor, window, cx)?;
@@ -515,7 +515,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                             .buffer()
                             .update(cx, |multi, cx| multi.last_transaction_id(cx))
                     {
-                        let last_sel = editor.selections.disjoint_anchors();
+                        let last_sel = editor.selections.disjoint_anchors_arc();
                         editor.modify_transaction_selection_history(tx_id, |old| {
                             old.0 = first_sel;
                             old.1 = Some(last_sel);
