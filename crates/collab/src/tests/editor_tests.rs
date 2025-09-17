@@ -1788,14 +1788,14 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings(cx, |settings| {
                 settings.project.all_languages.defaults.inlay_hints =
                     Some(InlayHintSettingsContent {
-                        enabled: true,
-                        show_value_hints: true,
-                        edit_debounce_ms: 0,
-                        scroll_debounce_ms: 0,
-                        show_type_hints: true,
-                        show_parameter_hints: false,
-                        show_other_hints: true,
-                        show_background: false,
+                        enabled: Some(true),
+                        show_value_hints: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
                         toggle_on_modifiers_press: None,
                     })
             });
@@ -1806,14 +1806,14 @@ async fn test_mutual_editor_inlay_hint_cache_update(
             store.update_user_settings(cx, |settings| {
                 settings.project.all_languages.defaults.inlay_hints =
                     Some(InlayHintSettingsContent {
-                        show_value_hints: true,
-                        enabled: true,
-                        edit_debounce_ms: 0,
-                        scroll_debounce_ms: 0,
-                        show_type_hints: true,
-                        show_parameter_hints: false,
-                        show_other_hints: true,
-                        show_background: false,
+                        show_value_hints: Some(true),
+                        enabled: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
                         toggle_on_modifiers_press: None,
                     })
             });
@@ -2040,14 +2040,14 @@ async fn test_inlay_hint_refresh_is_forwarded(
             store.update_user_settings(cx, |settings| {
                 settings.project.all_languages.defaults.inlay_hints =
                     Some(InlayHintSettingsContent {
-                        show_value_hints: true,
-                        enabled: false,
-                        edit_debounce_ms: 0,
-                        scroll_debounce_ms: 0,
-                        show_type_hints: false,
-                        show_parameter_hints: false,
-                        show_other_hints: false,
-                        show_background: false,
+                        show_value_hints: Some(true),
+                        enabled: Some(false),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(false),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(false),
+                        show_background: Some(false),
                         toggle_on_modifiers_press: None,
                     })
             });
@@ -2058,14 +2058,14 @@ async fn test_inlay_hint_refresh_is_forwarded(
             store.update_user_settings(cx, |settings| {
                 settings.project.all_languages.defaults.inlay_hints =
                     Some(InlayHintSettingsContent {
-                        show_value_hints: true,
-                        enabled: true,
-                        edit_debounce_ms: 0,
-                        scroll_debounce_ms: 0,
-                        show_type_hints: true,
-                        show_parameter_hints: true,
-                        show_other_hints: true,
-                        show_background: false,
+                        show_value_hints: Some(true),
+                        enabled: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(true),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
                         toggle_on_modifiers_press: None,
                     })
             });
