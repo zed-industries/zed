@@ -1060,7 +1060,7 @@ impl EditorElement {
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
-                            id: post_inc(&mut editor.selections.next_selection_id),
+                            id: post_inc(&mut editor.selections.next_selection_id()),
                             start: drop_anchor,
                             end: drop_anchor,
                             reversed: false,
@@ -1547,9 +1547,13 @@ impl EditorElement {
         // Local cursors
         if !skip_local {
             let color = cx.theme().players().local().cursor;
-            editor.selections.disjoint.iter().for_each(|selection| {
-                add_cursor(selection.head(), color);
-            });
+            editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .for_each(|selection| {
+                    add_cursor(selection.head(), color);
+                });
             if let Some(ref selection) = editor.selections.pending_anchor() {
                 add_cursor(selection.head(), color);
             }
