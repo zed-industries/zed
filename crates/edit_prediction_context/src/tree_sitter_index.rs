@@ -90,19 +90,19 @@ impl Declaration {
 
 #[derive(Debug, Clone)]
 pub struct FileDeclaration {
-    parent: Option<DeclarationId>,
-    identifier: Identifier,
-    item_range: Range<usize>,
-    signature_range: Range<usize>,
-    signature_text: Arc<str>,
+    pub parent: Option<DeclarationId>,
+    pub identifier: Identifier,
+    pub item_range: Range<usize>,
+    pub signature_range: Range<usize>,
+    pub signature_text: Arc<str>,
 }
 
 #[derive(Debug, Clone)]
 pub struct BufferDeclaration {
-    parent: Option<DeclarationId>,
-    identifier: Identifier,
-    item_range: Range<Anchor>,
-    signature_range: Range<Anchor>,
+    pub parent: Option<DeclarationId>,
+    pub identifier: Identifier,
+    pub item_range: Range<Anchor>,
+    pub signature_range: Range<Anchor>,
 }
 
 impl TreeSitterIndex {
