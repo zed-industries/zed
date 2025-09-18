@@ -88,7 +88,6 @@ pub struct LanguageSettings {
     /// Character counts at which to show wrap guides (vertical rulers) in the editor.
     pub wrap_guides: Vec<usize>,
     /// Indent guide related settings.
-    /// todo!() shouldthis be not the content type?
     pub indent_guides: IndentGuideSettings,
     /// Whether or not to perform a buffer format before saving.
     pub format_on_save: FormatOnSave,
