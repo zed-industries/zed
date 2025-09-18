@@ -1558,17 +1558,6 @@ impl LspInstaller for PyLspAdapter {
         ensure!(
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
-                .arg("python-lsp-server")
-                .arg("--upgrade")
-                .output()
-                .await?
-                .status
-                .success(),
-            "python-lsp-server installation failed"
-        );
-        ensure!(
-            util::command::new_smol_command(pip_path.as_path())
-                .arg("install")
                 .arg("python-lsp-server[all]")
                 .arg("--upgrade")
                 .output()
