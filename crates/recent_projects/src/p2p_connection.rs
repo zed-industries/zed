@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use remote::IrohConnectionOptions;
+use remote::{IrohConnectionOptions, ZedIrohTicket};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::SharedString;
@@ -15,6 +15,14 @@ pub struct P2pConnection {
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
+}
+
+impl P2pConnection {
+    pub fn connection_string(&self) -> String {
+        // TODO: store ticket properly
+        let ticket: ZedIrohTicket = self.ticket.parse().expect("invalid ticket");
+        ticket.node_addr().node_id.fmt_short()
+    }
 }
 
 impl From<P2pConnection> for IrohConnectionOptions {

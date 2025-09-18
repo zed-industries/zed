@@ -1,5 +1,6 @@
 use crate::{
     RemoteClientDelegate,
+    json_log::LogRecord,
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
 
@@ -7,7 +8,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
-    SinkExt, StreamExt as _, TryStreamExt,
+    FutureExt, SinkExt, StreamExt as _, TryStreamExt,
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
     lock::Mutex,
 };
@@ -21,6 +22,7 @@ use iroh_base::ticket::{self, ParseError, Ticket};
 use rpc::proto::Envelope;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use smol::channel::Receiver;
 use std::{
     collections::BTreeSet,
     fmt::{self, Display},
@@ -29,10 +31,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use tokio_util::{
-    bytes::Bytes,
-    codec::{FramedRead, FramedWrite, LengthDelimitedCodec},
-};
+use tokio_util::{bytes::Bytes, codec::LengthDelimitedCodec};
 use util::paths::{PathStyle, RemotePathBuf};
 
 /// The ALPN, or application-layer protocol negotiation, is exchanged in the
@@ -65,6 +64,10 @@ impl IrohConnectionOptions {
             port_forwards: None,
             nickname: None,
         })
+    }
+
+    pub fn connection_string(&self) -> String {
+        self.ticket.node_addr().node_id.fmt_short()
     }
 }
 
@@ -201,54 +204,65 @@ fn handle_rpc_messages(
         // Open a connection to the accepting node
         let conn = ep.connect(addr, ZED_ALPN).await?;
         // Open a bidirectional QUIC stream
-        let bi_stream = conn.open_bi().await?;
+        let (send, recv) = conn.open_bi().await?;
         // Wrap the stream with length-prefixed framing
-        let mut stream = FramedBiStream::new(bi_stream);
+        let mut codec = LengthDelimitedCodec::builder();
+        codec.max_frame_length(MAX_MESSAGE_SIZE);
+        let mut write = codec.new_write(send);
+        let mut read = codec.new_read(recv);
 
         log::info!("opened iroh connection");
 
-        tokio::task::spawn({
+        let writer_task = tokio::task::spawn({
             let mut connection_activity_tx = connection_activity_tx.clone();
             async move {
                 while let Some(outgoing) = outgoing_rx.next().await {
                     log::debug!("sending {:?}", outgoing);
-                    let encoded = postcard::to_stdvec(&outgoing).expect("invalid encoding");
+                    let encoded = postcard::to_stdvec(&Message::Envelope(outgoing))
+                        .expect("invalid encoding");
+
                     connection_activity_tx.try_send(()).ok();
-                    if let Err(error) = stream.write.send(Bytes::from(encoded)).await {
-                        log::error!("failed to send rpc message: {:?}", error);
-                    }
+                    write.send(Bytes::from(encoded)).await?;
                 }
+                anyhow::Ok(())
             }
         });
 
-        tokio::task::spawn(async move {
-            while let Some(env_data) = stream.read.next().await {
-                connection_activity_tx.try_send(()).ok();
-                match env_data {
-                    Ok(data) => match postcard::from_bytes(&data) {
-                        Ok(envelope) => {
-                            log::debug!("receiving {:?}", envelope);
-                            if let Err(error) = incoming_tx.unbounded_send(envelope) {
-                                log::error!("failed to propagate rpc message: {:?}", error);
-                            }
-                        }
-                        Err(error) => {
-                            log::error!("invalid rpc message: {:?}", error);
-                        }
-                    },
-                    Err(error) => {
-                        log::error!("invalid incoming message: {:?}", error);
+        let reader_task = tokio::task::spawn(async move {
+            while let Some(env_data) = read.next().await {
+                let data = env_data?;
+                let message: Message = postcard::from_bytes(&data)?;
+
+                match message {
+                    Message::Envelope(envelope) => {
+                        log::debug!("receiving {:?}", envelope);
+                        incoming_tx.unbounded_send(envelope).ok();
+                        connection_activity_tx.try_send(()).ok();
+                    }
+                    Message::Log(record) => {
+                        record.log(log::logger());
                     }
                 }
             }
+            anyhow::Ok(())
         });
 
-        anyhow::Ok(0)
+        anyhow::Ok((writer_task, reader_task))
     })?;
 
     let task = cx.background_spawn(async move {
-        let result = task.await??;
-        anyhow::Ok(result)
+        match task.await {
+            Ok(Ok((writer_task, reader_task))) => {
+                let res = tokio::join!(writer_task, reader_task);
+                match res {
+                    (Ok(_), Ok(_)) => Ok(0),
+                    (Err(error), _) => Err(anyhow!("writer failed: {error:?}")),
+                    (_, Err(error)) => Err(anyhow!("reader failed: {error:?}")),
+                }
+            }
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(anyhow!(error)),
+        }
     });
 
     Ok(task)
@@ -270,6 +284,7 @@ impl IrohZedListener {
     pub async fn accept(
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
+        log_rx: Receiver<Vec<u8>>,
     ) -> Result<Self> {
         let endpoint = Endpoint::builder()
             .discovery_n0()
@@ -280,7 +295,7 @@ impl IrohZedListener {
         let router = Router::builder(endpoint.clone())
             .accept(
                 ZED_ALPN,
-                IrohZedProtocolHandler::new(incoming_tx, outgoing_rx),
+                IrohZedProtocolHandler::new(incoming_tx, outgoing_rx, log_rx),
             )
             .spawn();
 
@@ -301,16 +316,19 @@ impl IrohZedListener {
 pub struct IrohZedProtocolHandler {
     incoming_tx: UnboundedSender<Envelope>,
     outgoing_rx: Arc<Mutex<UnboundedReceiver<Envelope>>>,
+    log_rx: Receiver<Vec<u8>>,
 }
 
 impl IrohZedProtocolHandler {
     fn new(
         incoming_tx: UnboundedSender<Envelope>,
         outgoing_rx: UnboundedReceiver<Envelope>,
+        log_rx: Receiver<Vec<u8>>,
     ) -> Self {
         Self {
             incoming_tx,
             outgoing_rx: Arc::new(Mutex::new(outgoing_rx)),
+            log_rx,
         }
     }
 }
@@ -330,23 +348,55 @@ impl ProtocolHandler for IrohZedProtocolHandler {
         let mut read = codec.new_read(recv);
 
         let outgoing_rx = self.outgoing_rx.clone();
-        tokio::task::spawn(async move {
-            while let Some(outgoing_message) = outgoing_rx.lock().await.next().await {
-                let encoded = postcard::to_stdvec(&outgoing_message).expect("invalid encoding");
+        let log_rx = self.log_rx.clone();
 
-                if let Err(error) = write.send(Bytes::from(encoded)).await {
-                    log::error!("failed to write outgoing message: {:?}", error);
+        tokio::task::spawn(async move {
+            let mut out = outgoing_rx.lock().await;
+            tokio::pin!(log_rx);
+
+            loop {
+                tokio::select! {
+                    outgoing_message = out.next() => {
+                        if let Some(outgoing_message) = outgoing_message {
+                            let encoded = postcard::to_stdvec(&Message::Envelope(outgoing_message)).expect("invalid encoding");
+
+                            if let Err(error) = write.send(Bytes::from(encoded)).await {
+                                log::error!("failed to write outgoing message: {:?}", error);
+                                break;
+                            }
+                        }
+                    }
+                    log_message = log_rx.recv() => {
+                        if let Ok(log_message) = log_message {
+                            if let Ok(record) = serde_json::from_slice::<LogRecord>(&log_message) {
+                                let encoded = postcard::to_stdvec(&Message::Log(record)).expect("invalid encoding");
+                                if let Err(error) = write.send(Bytes::from(encoded)).await {
+                                    log::error!("failed to write outgoing message: {:?}", error);
+                                    break;
+                                }
+                            } else {
+                                eprintln!("(remote) {}", String::from_utf8_lossy(&log_message));
+                            }
+                        }
+                    }
                 }
             }
         });
 
         while let Some(encoded_env) = read.try_next().await? {
-            match postcard::from_bytes(&encoded_env) {
-                Ok(envelope) => {
-                    log::info!("received message {:?}", envelope);
-                    if let Err(error) = self.incoming_tx.unbounded_send(envelope) {
-                        log::error!("failed to send message to application: {error:?}. exiting.");
-                        break;
+            match postcard::from_bytes::<Message>(&encoded_env) {
+                Ok(message) => {
+                    log::info!("received message {:?}", message);
+                    match message {
+                        Message::Envelope(envelope) => {
+                            if let Err(error) = self.incoming_tx.unbounded_send(envelope) {
+                                log::error!(
+                                    "failed to send message to application: {error:?}. exiting."
+                                );
+                                break;
+                            }
+                        }
+                        Message::Log(record) => record.log(log::logger()),
                     }
                 }
                 Err(error) => {
@@ -360,22 +410,6 @@ impl ProtocolHandler for IrohZedProtocolHandler {
         connection.closed().await;
 
         Ok(())
-    }
-}
-
-pub struct FramedBiStream {
-    pub write: FramedWrite<SendStream, LengthDelimitedCodec>,
-    pub read: FramedRead<RecvStream, LengthDelimitedCodec>,
-}
-
-impl FramedBiStream {
-    pub fn new((send, recv): (SendStream, RecvStream)) -> Self {
-        let mut codec = LengthDelimitedCodec::builder();
-        codec.max_frame_length(MAX_MESSAGE_SIZE);
-        Self {
-            write: codec.new_write(send),
-            read: codec.new_read(recv),
-        }
     }
 }
 
@@ -418,6 +452,12 @@ impl Display for ZedIrohTicket {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", Ticket::serialize(self))
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Message<'a> {
+    Log(#[serde(borrow)] LogRecord<'a>),
+    Envelope(Envelope),
 }
 
 /// Wire format for [`NodeTicket`].

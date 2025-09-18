@@ -114,7 +114,7 @@ impl ConnectionOptions {
     fn connection_string(&self) -> String {
         match self {
             Self::Ssh(opts) => opts.connection_string(),
-            Self::P2p(opts) => opts.ticket.node_addr().node_id.to_string(),
+            Self::P2p(opts) => opts.connection_string(),
         }
     }
 
@@ -692,7 +692,7 @@ impl RemoteServerProjects {
         };
         let p2p_prompt = cx.new(|cx| {
             RemoteConnectionPrompt::new(
-                connection_options.ticket.node_addr().node_id.fmt_short(),
+                connection_options.connection_string(),
                 connection_options.nickname.clone(),
                 window,
                 cx,
@@ -1083,10 +1083,7 @@ impl RemoteServerProjects {
                 if let Some(nickname) = conn.nickname.clone() {
                     (nickname.into(), None)
                 } else {
-                    (
-                        conn.ticket.chars().take(32).collect::<String>().into(),
-                        None,
-                    )
+                    (conn.connection_string().into(), None)
                 }
             }
         };

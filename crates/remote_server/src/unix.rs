@@ -305,8 +305,8 @@ fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
     .detach();
 
     gpui_tokio::Tokio::spawn(cx, async move {
-        let iroh = remote::IrohZedListener::accept(incoming_tx, outgoing_rx).await?;
-        log::info!("ADDR: iroh started");
+        let iroh = remote::IrohZedListener::accept(incoming_tx, outgoing_rx, log_rx).await?;
+        log::info!("ADDR: iroh started {}", iroh.endpoint().node_id());
 
         let home_relay = iroh.endpoint().home_relay().initialized().await;
         log::info!("ADDR: home relay: {}", home_relay);
