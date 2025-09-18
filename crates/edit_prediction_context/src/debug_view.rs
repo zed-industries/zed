@@ -1,6 +1,7 @@
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
@@ -14,7 +15,7 @@ use gpui::{
 use language::{Buffer, DiskState};
 use project::{Project, WorktreeId};
 use text::ToPoint;
-use ui::{NumericStepper, prelude::*};
+use ui::prelude::*;
 use ui_input::SingleLineInput;
 use workspace::{Item, SplitDirection, Workspace};
 
@@ -64,6 +65,7 @@ pub struct EditPredictionContextDebugView {
     project: Entity<Project>,
     max_bytes_input: Entity<SingleLineInput>,
     min_bytes_input: Entity<SingleLineInput>,
+    cursor_context_ratio_input: Entity<SingleLineInput>,
     // TODO move to project or provider?
     syntax_index: Entity<SyntaxIndex>,
     last_editor: WeakEntity<Editor>,
@@ -131,6 +133,7 @@ impl EditPredictionContextDebugView {
             project: project.clone(),
             max_bytes_input: number_input("Max Bytes", "512", window, cx),
             min_bytes_input: number_input("Min Bytes", "128", window, cx),
+            cursor_context_ratio_input: number_input("Cursor Context Ratio", "0.5", window, cx),
             syntax_index,
             last_editor: WeakEntity::new_invalid(),
             _active_editor_subscription: None,
@@ -186,20 +189,27 @@ impl EditPredictionContextDebugView {
                     .await;
 
                 let Ok(task) = this.update(cx, |this, cx| {
-                    let number_input_value = |input: &Entity<SingleLineInput>| -> usize {
+                    fn number_input_value<T: FromStr + Default>(
+                        input: &Entity<SingleLineInput>,
+                        cx: &App,
+                    ) -> T {
                         input
                             .read(cx)
                             .editor()
                             .read(cx)
                             .text(cx)
-                            .parse()
+                            .parse::<T>()
                             .unwrap_or_default()
-                    };
+                    }
 
                     let options = EditPredictionExcerptOptions {
-                        max_bytes: number_input_value(&this.max_bytes_input),
-                        min_bytes: number_input_value(&this.min_bytes_input),
-                        target_before_cursor_over_total_bytes: 0.5,
+                        max_bytes: number_input_value(&this.max_bytes_input, cx),
+                        min_bytes: number_input_value(&this.min_bytes_input, cx),
+                        target_before_cursor_over_total_bytes: number_input_value(
+                            &this.cursor_context_ratio_input,
+                            cx,
+                        ),
+                        // TODO Display and add to options
                         include_parent_signatures: true,
                     };
 
@@ -218,7 +228,14 @@ impl EditPredictionContextDebugView {
                     return;
                 };
 
-                let context = task.await;
+                let Some(context) = task.await else {
+                    // TODO: Display message
+                    this.update(cx, |this, _cx| {
+                        this.context_editor.take();
+                    })
+                    .ok();
+                    return;
+                };
 
                 let mut languages = HashMap::default();
                 for snippet in context.snippets.iter() {
@@ -338,7 +355,8 @@ impl Render for EditPredictionContextDebugView {
                         h_flex()
                             .gap_2()
                             .child(self.max_bytes_input.clone())
-                            .child(self.min_bytes_input.clone()),
+                            .child(self.min_bytes_input.clone())
+                            .child(self.cursor_context_ratio_input.clone()),
                     ),
             )
             .children(self.context_editor.clone())
