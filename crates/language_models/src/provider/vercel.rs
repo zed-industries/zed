@@ -25,7 +25,6 @@ use crate::{api_key::ApiKeyState, ui::InstructionListItem};
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("vercel");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Vercel");
 
-// todo!() -> Remove default implementation
 const API_KEY_ENV_VAR_NAME: &str = "VERCEL_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 

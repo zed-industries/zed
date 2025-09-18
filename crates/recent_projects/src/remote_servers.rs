@@ -1360,7 +1360,7 @@ impl RemoteServerProjects {
             setting
                 .wsl_connections
                 .get_or_insert(Default::default())
-                .push(crate::remote_connections::WslConnection {
+                .push(settings::WslConnection {
                     distro_name: SharedString::from(connection_options.distro_name),
                     user: connection_options.user,
                     projects: BTreeSet::new(),
