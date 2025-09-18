@@ -1641,9 +1641,11 @@ impl BasedPyrightLspAdapter {
                 .arg("venv")
                 .arg("basedpyright-venv")
                 .current_dir(work_dir)
-                .spawn()?
+                .spawn()
+                .context("spawning child")?
                 .output()
-                .await?;
+                .await
+                .context("getting child output")?;
         }
 
         Ok(path.into())
@@ -1885,11 +1887,14 @@ impl LspInstaller for BasedPyrightLspAdapter {
             let path = Path::new(toolchain?.path.as_ref())
                 .parent()?
                 .join(Self::BINARY_NAME);
-            path.exists().then(|| LanguageServerBinary {
-                path,
-                arguments: vec!["--stdio".into()],
-                env: None,
-            })
+            delegate
+                .which(path.as_os_str())
+                .await
+                .map(|_| LanguageServerBinary {
+                    path,
+                    arguments: vec!["--stdio".into()],
+                    env: None,
+                })
         }
     }
 
@@ -1899,22 +1904,30 @@ impl LspInstaller for BasedPyrightLspAdapter {
         _container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
+        dbg!();
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
         let pip_path = venv.join(BINARY_DIR).join("pip3");
         ensure!(
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("basedpyright")
-                .arg("-U")
+                .arg("--upgrade")
+                .arg("--force-reinstall")
                 .output()
-                .await?
+                .await
+                .context("getting pip install output")?
                 .status
                 .success(),
             "basedpyright installation failed"
         );
-        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        let path = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        ensure!(
+            delegate.which(path.as_os_str()).await.is_some(),
+            "basedpyright installation was incomplete"
+        );
+        dbg!();
         Ok(LanguageServerBinary {
-            path: pylsp,
+            path: dbg!(path),
             env: None,
             arguments: vec!["--stdio".into()],
         })
@@ -1926,9 +1939,10 @@ impl LspInstaller for BasedPyrightLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        let path = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        delegate.which(path.as_os_str()).await?;
         Some(LanguageServerBinary {
-            path: pylsp,
+            path,
             env: None,
             arguments: vec!["--stdio".into()],
         })

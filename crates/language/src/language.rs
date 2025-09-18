@@ -614,22 +614,26 @@ where
                 );
                 return Ok(binary);
             }
+            dbg!();
 
             anyhow::ensure!(
                 binary_options.allow_binary_download,
                 "downloading language servers disabled"
             );
+            dbg!();
 
             if let Some((pre_release, cached_binary)) = cached_binary
                 && *pre_release == binary_options.pre_release
             {
                 return Ok(cached_binary.clone());
             }
+            dbg!();
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await
             else {
                 anyhow::bail!("no language server download dir defined")
             };
+            dbg!();
 
             let mut binary = self
                 .try_fetch_server_binary(
@@ -639,12 +643,14 @@ where
                     cx,
                 )
                 .await;
+            dbg!();
 
             if let Err(error) = binary.as_ref() {
                 if let Some(prev_downloaded_binary) = self
                     .cached_server_binary(container_dir.to_path_buf(), delegate.as_ref())
                     .await
                 {
+                    dbg!();
                     log::info!(
                         "failed to fetch newest version of language server {:?}. \
                         error: {:?}, falling back to using {:?}",
@@ -654,6 +660,7 @@ where
                     );
                     binary = Ok(prev_downloaded_binary);
                 } else {
+                    dbg!();
                     delegate.update_status(
                         self.name(),
                         BinaryStatus::Failed {
@@ -663,7 +670,10 @@ where
                 }
             }
 
+            dbg!();
+
             if let Ok(binary) = &binary {
+                dbg!();
                 *cached_binary = Some((binary_options.pre_release, binary.clone()));
             }
 
