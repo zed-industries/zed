@@ -816,16 +816,21 @@ mod tests {
     #[gpui::test]
     async fn test_reuse_flag_functionality(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+
+        let root_dir = if cfg!(windows) { "C:\\root" } else { "/root" };
+        let file1_path = if cfg!(windows) { "C:\\root\\file1.txt" } else { "/root/file1.txt" };
+        let file2_path = if cfg!(windows) { "C:\\root\\file2.txt" } else { "/root/file2.txt" };
+
+        app_state.fs.create_dir(Path::new(root_dir)).await.unwrap();
         app_state
             .fs
-            .create_file(Path::new("/root/file1.txt"), Default::default())
+            .create_file(Path::new(file1_path), Default::default())
             .await
             .unwrap();
         app_state
             .fs
             .save(
-                Path::new("/root/file1.txt"),
+                Path::new(file1_path),
                 &Rope::from("content1"),
                 LineEnding::Unix,
             )
@@ -833,13 +838,13 @@ mod tests {
             .unwrap();
         app_state
             .fs
-            .create_file(Path::new("/root/file2.txt"), Default::default())
+            .create_file(Path::new(file2_path), Default::default())
             .await
             .unwrap();
         app_state
             .fs
             .save(
-                Path::new("/root/file2.txt"),
+                Path::new(file2_path),
                 &Rope::from("content2"),
                 LineEnding::Unix,
             )
@@ -848,7 +853,7 @@ mod tests {
 
         // First, open a workspace normally
         let (response_tx, _response_rx) = ipc::channel::<CliResponse>().unwrap();
-        let workspace_paths = vec!["/root/file1.txt".to_string()];
+        let workspace_paths = vec![file1_path.to_string()];
 
         let _errored = cx
             .spawn({
@@ -872,7 +877,7 @@ mod tests {
             .await;
 
         // Now test the reuse functionality - should replace the existing workspace
-        let workspace_paths_reuse = vec!["/root/file2.txt".to_string()];
+        let workspace_paths_reuse = vec![file1_path.to_string()];
 
         let errored_reuse = cx
             .spawn({
