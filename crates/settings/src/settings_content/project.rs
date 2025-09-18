@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use util::{MergeFrom, serde::default_true};
 
-use crate::{AllLanguageSettingsContent, SlashCommandSettings};
+use crate::{AllLanguageSettingsContent, SlashCommandSettings, merge_from::MergeFrom};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]

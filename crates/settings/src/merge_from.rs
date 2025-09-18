@@ -1,3 +1,6 @@
+use gpui::SharedString;
+use std::sync::Arc;
+
 /// Trait for recursively merging settings structures.
 ///
 /// This trait allows settings objects to be merged from optional sources,
@@ -10,6 +13,22 @@ pub trait MergeFrom {
 }
 // Implementations for basic types that simply overwrite if Some value is provided
 impl MergeFrom for String {
+    fn merge_from(&mut self, other: Option<&Self>) {
+        if let Some(value) = other {
+            *self = value.clone();
+        }
+    }
+}
+
+impl MergeFrom for SharedString {
+    fn merge_from(&mut self, other: Option<&Self>) {
+        if let Some(value) = other {
+            *self = value.clone();
+        }
+    }
+}
+
+impl MergeFrom for Arc<str> {
     fn merge_from(&mut self, other: Option<&Self>) {
         if let Some(value) = other {
             *self = value.clone();
@@ -76,23 +95,46 @@ impl MergeFrom for f32 {
 impl<K, V> MergeFrom for collections::HashMap<K, V>
 where
     K: Clone + std::hash::Hash + Eq,
-    V: Clone,
+    V: Clone + MergeFrom,
 {
     fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(other_map) = other {
-            self.extend(other_map.clone());
+        let Some(other) = other else { return };
+        for (k, v) in other {
+            if let Some(existing) = self.get_mut(&k) {
+                existing.merge_from(Some(v));
+            } else {
+                self.insert(k.clone(), v.clone());
+            }
         }
     }
 }
 
-impl<K, V> MergeFrom for collections::IndexMap<K, V>
+impl<K, Q, V> MergeFrom for collections::IndexMap<K, V>
 where
-    K: Clone + std::hash::Hash + Eq,
-    V: Clone,
+    K: std::hash::Hash + Eq + Clone,
+    Q: ?Sized + std::hash::Hash + collections::Equivalent<K> + Eq,
+    V: Clone + MergeFrom,
 {
     fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(other_map) = other {
-            self.extend(other_map.clone());
+        let Some(other) = other else { return };
+        for (k, v) in other {
+            if let Some(existing) = self.get_mut(k) {
+                existing.merge_from(Some(v));
+            } else {
+                self.insert(k.clone(), v.clone());
+            }
+        }
+    }
+}
+
+impl<T> MergeFrom for collections::BTreeSet<T>
+where
+    T: Clone + Ord,
+{
+    fn merge_from(&mut self, other: Option<&Self>) {
+        let Some(other) = other else { return };
+        for item in other {
+            self.insert(item.clone());
         }
     }
 }

@@ -1,6 +1,5 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use settings_macro::MergeFrom;
 use syn::{Data, DeriveInput, Fields, Type, parse_macro_input};
 
 /// Derives the `MergeFrom` trait for a struct.

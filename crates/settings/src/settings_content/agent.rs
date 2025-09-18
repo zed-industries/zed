@@ -169,7 +169,7 @@ impl AgentSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
     #[serde(default)]
