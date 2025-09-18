@@ -1911,7 +1911,6 @@ impl LspInstaller for BasedPyrightLspAdapter {
                 .arg("install")
                 .arg("basedpyright")
                 .arg("--upgrade")
-                .arg("--force-reinstall")
                 .output()
                 .await
                 .context("getting pip install output")?
