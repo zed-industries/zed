@@ -1,4 +1,3 @@
-pub mod debug_view;
 mod declaration;
 mod declaration_scoring;
 mod excerpt;
@@ -8,7 +7,9 @@ mod syntax_index;
 mod text_similarity;
 
 pub use declaration::{BufferDeclaration, Declaration, FileDeclaration, Identifier};
+pub use declaration_scoring::SnippetStyle;
 pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
+
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
 pub use reference::references_in_excerpt;

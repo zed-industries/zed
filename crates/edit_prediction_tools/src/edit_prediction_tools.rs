@@ -19,9 +19,8 @@ use ui::prelude::*;
 use ui_input::SingleLineInput;
 use workspace::{Item, SplitDirection, Workspace};
 
-use crate::{
-    EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
-    declaration_scoring::SnippetStyle,
+use edit_prediction_context::{
+    EditPredictionContext, EditPredictionExcerptOptions, SnippetStyle, SyntaxIndex,
 };
 
 actions!(
@@ -42,7 +41,7 @@ pub fn init(cx: &mut App) {
                 workspace.split_item(
                     SplitDirection::Right,
                     Box::new(cx.new(|cx| {
-                        EditPredictionContextDebugView::new(
+                        EditPredictionTools::new(
                             &workspace_entity,
                             &project,
                             active_editor,
@@ -59,7 +58,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-pub struct EditPredictionContextDebugView {
+pub struct EditPredictionTools {
     focus_handle: FocusHandle,
     project: Entity<Project>,
     last_context: Option<ContextState>,
@@ -78,7 +77,7 @@ struct ContextState {
     duration: Duration,
 }
 
-impl EditPredictionContextDebugView {
+impl EditPredictionTools {
     pub fn new(
         workspace: &Entity<Workspace>,
         project: &Entity<Project>,
@@ -338,13 +337,13 @@ impl EditPredictionContextDebugView {
     }
 }
 
-impl Focusable for EditPredictionContextDebugView {
+impl Focusable for EditPredictionTools {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl Item for EditPredictionContextDebugView {
+impl Item for EditPredictionTools {
     type Event = ();
 
     fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
@@ -356,9 +355,9 @@ impl Item for EditPredictionContextDebugView {
     }
 }
 
-impl EventEmitter<()> for EditPredictionContextDebugView {}
+impl EventEmitter<()> for EditPredictionTools {}
 
-impl Render for EditPredictionContextDebugView {
+impl Render for EditPredictionTools {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()

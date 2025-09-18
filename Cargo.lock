@@ -5169,6 +5169,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "clap",
+ "collections",
+ "edit_prediction_context",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "itertools 0.14.0",
+ "language",
+ "log",
+ "ordered-float 2.10.1",
+ "pretty_assertions",
+ "project",
+ "regex",
+ "serde",
+ "serde_json",
+ "settings",
+ "slotmap",
+ "strum 0.27.1",
+ "text",
+ "tree-sitter",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zlog",
+]
+
+[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -21155,7 +21190,7 @@ dependencies = [
  "debugger_ui",
  "diagnostics",
  "edit_prediction_button",
- "edit_prediction_context",
+ "edit_prediction_tools",
  "editor",
  "env_logger 0.11.8",
  "extension",
