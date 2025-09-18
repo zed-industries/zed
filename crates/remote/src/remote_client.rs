@@ -1,5 +1,5 @@
 use crate::{
-    SshConnectionOptions,
+    EncryptedPassword, SshConnectionOptions,
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
@@ -60,7 +60,12 @@ pub struct CommandTemplate {
 }
 
 pub trait RemoteClientDelegate: Send + Sync {
-    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp);
+    fn ask_password(
+        &self,
+        prompt: String,
+        tx: oneshot::Sender<EncryptedPassword>,
+        cx: &mut AsyncApp,
+    );
     fn get_download_params(
         &self,
         platform: RemotePlatform,
@@ -1371,7 +1376,10 @@ impl ProtoClient for ChannelClient {
 #[cfg(any(test, feature = "test-support"))]
 mod fake {
     use super::{ChannelClient, RemoteClientDelegate, RemoteConnection, RemotePlatform};
-    use crate::remote_client::{CommandTemplate, RemoteConnectionOptions};
+    use crate::{
+        EncryptedPassword,
+        remote_client::{CommandTemplate, RemoteConnectionOptions},
+    };
     use anyhow::Result;
     use async_trait::async_trait;
     use collections::HashMap;
@@ -1517,7 +1525,7 @@ mod fake {
     pub(super) struct Delegate;
 
     impl RemoteClientDelegate for Delegate {
-        fn ask_password(&self, _: String, _: oneshot::Sender<String>, _: &mut AsyncApp) {
+        fn ask_password(&self, _: String, _: oneshot::Sender<EncryptedPassword>, _: &mut AsyncApp) {
             unreachable!()
         }
 

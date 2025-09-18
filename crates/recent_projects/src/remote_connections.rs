@@ -160,7 +160,7 @@ impl RemoteConnectionPrompt {
         self.cancellation = Some(tx);
     }
 
-    pub fn set_prompt(
+    fn set_prompt(
         &mut self,
         prompt: String,
         tx: oneshot::Sender<String>,

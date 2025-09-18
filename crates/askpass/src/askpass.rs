@@ -1,3 +1,7 @@
+mod pass_store;
+
+pub use pass_store::{EncryptedPassword, PassStore};
+
 use std::{ffi::OsStr, time::Duration};
 
 use anyhow::{Context as _, Result};
@@ -17,16 +21,19 @@ pub enum AskPassResult {
 }
 
 pub struct AskPassDelegate {
-    tx: mpsc::UnboundedSender<(String, oneshot::Sender<String>)>,
+    tx: mpsc::UnboundedSender<(String, oneshot::Sender<EncryptedPassword>)>,
     _task: Task<()>,
 }
 
 impl AskPassDelegate {
     pub fn new(
         cx: &mut AsyncApp,
-        password_prompt: impl Fn(String, oneshot::Sender<String>, &mut AsyncApp) + Send + Sync + 'static,
+        password_prompt: impl Fn(String, oneshot::Sender<EncryptedPassword>, &mut AsyncApp)
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<String>)>();
+        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<_>)>();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
             while let Some((prompt, channel)) = rx.next().await {
                 password_prompt(prompt, channel, cx);
