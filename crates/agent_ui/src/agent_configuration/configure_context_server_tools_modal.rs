@@ -107,8 +107,6 @@ impl ConfigureContextServerToolsModal {
                                                 .color(Color::Muted),
                                         )
                                         .on_click(cx.listener({
-                                            let tool_name = tool_name.clone();
-
                                             move |this, _event, _window, _cx| {
                                                 let current = this
                                                     .expanded_tools

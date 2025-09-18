@@ -950,7 +950,6 @@ impl AgentConfiguration {
                                         let context_server_manager =
                                             self.context_server_store.clone();
                                         let fs = self.fs.clone();
-                                        let context_server_id = context_server_id.clone();
 
                                         move |state, _window, cx| {
                                             let is_enabled = match state {
@@ -1057,7 +1056,7 @@ impl AgentConfiguration {
         let user_defined_agents = user_defined_agents
             .into_iter()
             .map(|name| {
-                self.render_agent_server(IconName::Ai, name.clone())
+                self.render_agent_server(IconName::Ai, name)
                     .into_any_element()
             })
             .collect::<Vec<_>>();
