@@ -15472,6 +15472,7 @@ dependencies = [
  "serde_path_to_error",
  "serde_repr",
  "serde_with",
+ "settings_macros",
  "settings_ui_macros",
  "smallvec",
  "tree-sitter",
@@ -15480,6 +15481,17 @@ dependencies = [
  "util",
  "workspace-hack",
  "zlog",
+]
+
+[[package]]
+name = "settings_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "settings",
+ "syn 2.0.101",
+ "workspace-hack",
 ]
 
 [[package]]

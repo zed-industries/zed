@@ -4,7 +4,7 @@ use collections::{BTreeMap, HashMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
-use util::serde::default_true;
+use util::{MergeFrom, serde::default_true};
 
 use crate::{AllLanguageSettingsContent, SlashCommandSettings};
 
@@ -85,7 +85,7 @@ pub struct WorktreeSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
@@ -112,7 +112,9 @@ impl Default for LspSettings {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
@@ -121,7 +123,9 @@ pub struct BinarySettings {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
 pub struct FetchSettings {
     // Whether to consider pre-releases for fetching
     pub pre_release: Option<bool>,
@@ -158,7 +162,7 @@ pub struct SessionSettingsContent {
     pub restore_unsaved_buffers: Option<bool>,
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum ContextServerSettingsContent {
     Custom {
@@ -335,7 +339,7 @@ pub struct DiagnosticsSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct LspPullDiagnosticsSettingsContent {
     /// Whether to pull for diagnostics or not.
     ///
@@ -349,7 +353,7 @@ pub struct LspPullDiagnosticsSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Eq)]
 pub struct InlineDiagnosticsSettingsContent {
     /// Whether or not to show inline diagnostics
     ///

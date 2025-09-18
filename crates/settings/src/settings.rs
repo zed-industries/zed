@@ -1,6 +1,7 @@
 mod base_keymap_setting;
 mod editable_setting_control;
 mod keymap_file;
+mod merge_from;
 mod settings_content;
 mod settings_file;
 mod settings_json;
@@ -29,6 +30,7 @@ pub use settings_store::{
 pub use settings_ui_core::*;
 // Re-export the derive macro
 pub use settings_ui_macros::{SettingsKey, SettingsUi};
+
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
 #[derive(Clone, Debug, PartialEq)]

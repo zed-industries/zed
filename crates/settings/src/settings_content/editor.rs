@@ -4,6 +4,7 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 
 use crate::{DiagnosticSeverityContent, ShowScrollbar};
 
@@ -194,7 +195,7 @@ pub struct EditorSettingsContent {
 
 // Status bar related settings
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct StatusBarContent {
     /// Whether to display the active language button in the status bar.
     ///
@@ -208,7 +209,7 @@ pub struct StatusBarContent {
 
 // Toolbar related settings
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ToolbarContent {
     /// Whether to display breadcrumbs in the editor toolbar.
     ///
@@ -235,7 +236,7 @@ pub struct ToolbarContent {
 
 /// Scrollbar related settings
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
     ///
@@ -271,7 +272,7 @@ pub struct ScrollbarContent {
 
 /// Minimap related settings
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
     ///
@@ -306,7 +307,7 @@ pub struct MinimapContent {
 
 /// Forcefully enable or disable the scrollbar for each axis
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 pub struct ScrollbarAxesContent {
     /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
     ///
@@ -321,7 +322,7 @@ pub struct ScrollbarAxesContent {
 
 /// Gutter related settings
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -400,7 +401,9 @@ pub enum DoubleClickInMultibuffer {
 /// When to show the minimap thumb.
 ///
 /// Default: always
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumb {
     /// Show the minimap thumb only when the mouse is hovering over the minimap.
@@ -413,7 +416,9 @@ pub enum MinimapThumb {
 /// Defines the border style for the minimap's scrollbar thumb.
 ///
 /// Default: left_open
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumbBorder {
     /// Displays a border on all sides of the thumb.
@@ -432,7 +437,7 @@ pub enum MinimapThumbBorder {
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScrollbarDiagnostics {
     /// Show all diagnostic levels: hint, information, warnings, error.
@@ -450,7 +455,7 @@ pub enum ScrollbarDiagnostics {
 /// The key to use for adding multiple cursors
 ///
 /// Default: alt
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MultiCursorModifier {
     Alt,
@@ -461,7 +466,7 @@ pub enum MultiCursorModifier {
 /// Whether the editor will scroll beyond the last line.
 ///
 /// Default: one_page
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollBeyondLastLine {
     /// The editor will not scroll beyond the last line.
@@ -534,7 +539,7 @@ pub enum SnippetSortOrder {
 
 /// Default options for buffer and project search items.
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct SearchSettingsContent {
     /// Whether to show the project search button in the status bar.
     pub button: Option<bool>,
@@ -561,7 +566,7 @@ pub struct JupyterContent {
 
 /// Whether to allow drag and drop text selection in buffer.
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct DragAndDropSelectionContent {
     /// When true, enables drag and drop text selection in buffer.
     ///
@@ -577,7 +582,9 @@ pub struct DragAndDropSelectionContent {
 /// When to show the minimap in the editor.
 ///
 /// Default: never
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowMinimap {
     /// Follow the visibility of the scrollbar.
@@ -592,7 +599,9 @@ pub enum ShowMinimap {
 /// Where to show the minimap in the editor.
 ///
 /// Default: all_editors
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayIn {
     /// Show on all open editors.

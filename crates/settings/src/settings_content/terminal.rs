@@ -163,7 +163,7 @@ pub enum WorkingDirectory {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the terminal.
     ///
@@ -171,7 +171,7 @@ pub struct ScrollbarSettingsContent {
     pub show: Option<Option<ShowScrollbar>>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalLineHeight {
     /// Use a line height that's comfortable for reading, 1.618
@@ -198,7 +198,7 @@ impl TerminalLineHeight {
 /// When to show the scrollbar.
 ///
 /// Default: auto
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowScrollbar {
     /// Show the scrollbar if there's important information or
@@ -247,7 +247,7 @@ pub enum AlternateScroll {
 
 // Toolbar related settings
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct TerminalToolbarContent {
     /// Whether to display the terminal title in breadcrumbs inside the terminal pane.
     /// Only shown if the terminal title is not empty.
@@ -297,7 +297,7 @@ impl VenvSettings {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalDockPosition {
     Left,

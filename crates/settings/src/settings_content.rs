@@ -22,6 +22,7 @@ use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 use std::collections::BTreeSet;
 use std::env;
 use std::sync::Arc;
@@ -225,7 +226,9 @@ impl UserSettingsContent {
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
 /// Default: VSCode
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default,
+)]
 pub enum BaseKeymapContent {
     #[default]
     VSCode,
@@ -239,7 +242,7 @@ pub enum BaseKeymapContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
     /// Controls when the title bar is visible: "always" | "never" | "hide_in_full_screen".
     ///
@@ -275,7 +278,7 @@ pub struct TitleBarSettingsContent {
     pub show_menus: Option<bool>,
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum TitleBarVisibility {
     Always,
@@ -285,7 +288,9 @@ pub enum TitleBarVisibility {
 
 /// Configuration of audio in Zed.
 #[skip_serializing_none]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(
+    Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, MergeFrom,
+)]
 pub struct AudioSettingsContent {
     /// Opt into the new audio system.
     #[serde(rename = "experimental.rodio_audio", default)]
@@ -307,7 +312,9 @@ pub struct AudioSettingsContent {
 
 /// Control what info is collected by Zed.
 #[skip_serializing_none]
-#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(
+    Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, MergeFrom,
+)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -320,7 +327,9 @@ pub struct TelemetrySettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone)]
+#[derive(
+    Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom, Clone, MergeFrom,
+)]
 pub struct DebuggerSettingsContent {
     /// Determines the stepping granularity.
     ///
@@ -353,7 +362,9 @@ pub struct DebuggerSettingsContent {
 }
 
 /// The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.
-#[derive(PartialEq, Eq, Debug, Hash, Clone, Copy, Deserialize, Serialize, JsonSchema)]
+#[derive(
+    PartialEq, Eq, Debug, Hash, Clone, Copy, Deserialize, Serialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SteppingGranularity {
     /// The step should allow the program to run until the current statement has finished executing.
@@ -366,7 +377,7 @@ pub enum SteppingGranularity {
     Instruction,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DockPosition {
     Left,
@@ -376,7 +387,7 @@ pub enum DockPosition {
 
 /// Settings for slash commands.
 #[skip_serializing_none]
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct SlashCommandSettings {
     /// Settings for the `/cargo-workspace` slash command.
     pub cargo_workspace: Option<CargoWorkspaceCommandSettings>,
@@ -384,7 +395,7 @@ pub struct SlashCommandSettings {
 
 /// Settings for the `/cargo-workspace` slash command.
 #[skip_serializing_none]
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, PartialEq, Eq)]
+#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct CargoWorkspaceCommandSettings {
     /// Whether `/cargo-workspace` is enabled.
     pub enabled: Option<bool>,
@@ -392,7 +403,7 @@ pub struct CargoWorkspaceCommandSettings {
 
 /// Configuration of voice calls in Zed.
 #[skip_serializing_none]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct CallSettingsContent {
     /// Whether the microphone should be muted when joining a channel or a call.
     ///
@@ -421,7 +432,7 @@ pub struct ExtensionSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct GitPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -462,7 +473,9 @@ pub struct GitPanelSettingsContent {
     pub collapse_untracked_diff: Option<bool>,
 }
 
-#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Default, Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum StatusStyle {
     #[default]
@@ -471,13 +484,13 @@ pub enum StatusStyle {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct NotificationPanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -494,7 +507,7 @@ pub struct NotificationPanelSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct PanelSettingsContent {
     /// Whether to show the panel button in the status bar.
     ///
@@ -511,7 +524,7 @@ pub struct PanelSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct MessageEditorSettings {
     /// Whether to automatically replace emoji shortcodes with emoji characters.
     /// For example: typing `:wave:` gets replaced with `👋`.
@@ -521,7 +534,7 @@ pub struct MessageEditorSettings {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct FileFinderSettingsContent {
     /// Whether to show file icons in the file finder.
     ///
@@ -575,7 +588,7 @@ pub struct VimSettingsContent {
     pub cursor_shape: Option<CursorShapeSettings>,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Debug)]
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum ModeContent {
     #[default]
@@ -620,7 +633,7 @@ pub struct CursorShapeSettings {
 
 /// Settings specific to journaling
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct JournalSettingsContent {
     /// The path of the directory where journal entries are stored.
     ///
@@ -632,7 +645,7 @@ pub struct JournalSettingsContent {
     pub hour_format: Option<HourFormat>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum HourFormat {
     #[default]
@@ -641,7 +654,7 @@ pub enum HourFormat {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct OutlinePanelSettingsContent {
     /// Whether to show the outline panel button in the status bar.
     ///
@@ -695,7 +708,7 @@ pub struct OutlinePanelSettingsContent {
     pub expand_outlines_with_depth: Option<usize>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Copy, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Copy, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum DockSide {
     Left,
@@ -710,13 +723,13 @@ pub enum ShowIndentGuides {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct IndentGuidesSettingsContent {
     /// When to show the scrollbar in the outline panel.
     pub show: Option<ShowIndentGuides>,
 }
 
-#[derive(Clone, Copy, Default, PartialEq, Debug, JsonSchema, Deserialize, Serialize)]
+#[derive(Clone, Copy, Default, PartialEq, Debug, JsonSchema, MergeFrom, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LineIndicatorFormat {
     Short,
@@ -726,7 +739,7 @@ pub enum LineIndicatorFormat {
 
 /// The settings for the image viewer.
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
 pub struct ImageViewerSettingsContent {
     /// The unit to use for displaying image file sizes.
     ///
@@ -735,7 +748,7 @@ pub struct ImageViewerSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFileSizeUnit {
     /// Displays file size in binary units (e.g., KiB, MiB).
@@ -746,7 +759,7 @@ pub enum ImageFileSizeUnit {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
     pub wsl_connections: Option<Vec<WslConnection>>,
@@ -774,7 +787,7 @@ pub struct SshConnection {
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, Debug)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Debug)]
 pub struct WslConnection {
     pub distro_name: SharedString,
     pub user: Option<String>,

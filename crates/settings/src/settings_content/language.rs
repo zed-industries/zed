@@ -8,6 +8,7 @@ use serde::{
     de::{self, IntoDeserializer, MapAccess, SeqAccess, Visitor},
 };
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 use std::sync::Arc;
 use util::schemars::replace_subschema;
 
@@ -56,7 +57,7 @@ pub enum EditPredictionProvider {
 
 /// The contents of the edit prediction settings.
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct EditPredictionSettingsContent {
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
@@ -73,7 +74,7 @@ pub struct EditPredictionSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct CopilotSettingsContent {
     /// HTTP/HTTPS proxy to use for Copilot.
     ///
@@ -310,7 +311,7 @@ pub enum ShowWhitespaceSetting {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct WhitespaceMap {
     pub space: Option<String>,
     pub tab: Option<String>,
@@ -352,7 +353,7 @@ pub struct JsxTagAutoCloseSettingsContent {
 
 /// The settings for inlay hints.
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct InlayHintSettingsContent {
     /// Global switch to toggle hints on and off.
     ///
@@ -434,7 +435,7 @@ impl InlayHintKind {
 
 /// Controls how completions are processed for this language.
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub struct CompletionSettingsContent {
     /// Controls how words are completed.
