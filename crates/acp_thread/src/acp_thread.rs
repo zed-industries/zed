@@ -1781,6 +1781,9 @@ impl AcpThread {
         reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<String>> {
+        // Args are 1-based, move to 0-based
+        let line = line.unwrap_or_default().saturating_sub(1);
+        let limit = limit.unwrap_or(u32::MAX) as usize;
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
@@ -1812,7 +1815,7 @@ impl AcpThread {
                     let position = buffer
                         .read(cx)
                         .snapshot()
-                        .anchor_before(Point::new(line.unwrap_or_default(), 0));
+                        .anchor_before(Point::new(line, 0));
                     project.set_agent_location(
                         Some(AgentLocation {
                             buffer: buffer.downgrade(),
@@ -1828,23 +1831,15 @@ impl AcpThread {
             this.update(cx, |this, _| {
                 let text = snapshot.text();
                 this.shared_buffers.insert(buffer.clone(), snapshot);
-                if line.is_none() && limit.is_none() {
+                if line == 0 && limit == u32::MAX as usize {
                     return Ok(text);
                 }
-                let limit = limit.unwrap_or(u32::MAX) as usize;
-                let Some(line) = line else {
-                    return Ok(text.lines().take(limit).collect::<String>());
-                };
 
                 let count = text.lines().count();
                 if count < line as usize {
                     anyhow::bail!("There are only {} lines", count);
                 }
-                Ok(text
-                    .lines()
-                    .skip(line as usize + 1)
-                    .take(limit)
-                    .collect::<String>())
+                Ok(text.lines().skip(line as usize).take(limit).join("\n"))
             })?
         })
     }
@@ -2389,6 +2384,102 @@ mod tests {
             "zero\none\ntwo\nthree\nfour\nfive\n"
         );
         request.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_reading_line_limit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\nthree\nfour\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .await
+            .unwrap();
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, Some(2), false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "one\ntwo");
+    }
+
+    #[gpui::test]
+    async fn test_reading_from_line(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\nthree\nfour\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .await
+            .unwrap();
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(3), None, false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "three\nfour");
+    }
+
+    #[gpui::test]
+    async fn test_reading_line_range(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\nthree\nfour\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .await
+            .unwrap();
+
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(2), Some(2), false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "two\nthree");
     }
 
     #[gpui::test]
@@ -3244,5 +3335,16 @@ mod tests {
                 panic!("Expected ToolCall entry, got: {:?}", thread.entries[0]);
             }
         });
+    }
+
+    #[test]
+    fn grab_lines_from_file() {
+        fn grab_lines_from_file(text: &str) -> String {
+            text.lines().collect::<String>()
+        }
+
+        let text = "Hello\nWorld\nHow\nAre\nYou";
+        let lines = grab_lines_from_file(text);
+        assert_eq!(lines, text);
     }
 }
