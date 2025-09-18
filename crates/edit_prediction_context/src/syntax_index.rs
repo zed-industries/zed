@@ -175,10 +175,10 @@ impl SyntaxIndex {
         let state = Arc::downgrade(&self.state);
         cx.background_spawn(async move {
             let Some(state) = state.upgrade() else {
-                return None;
+                return;
             };
             let mut state = state.lock().await;
-            Some(f(&mut state))
+            f(&mut state)
         })
         .detach();
     }

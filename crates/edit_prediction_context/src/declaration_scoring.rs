@@ -113,8 +113,8 @@ pub fn scored_snippets(
                                     .row;
                                 (
                                     true,
-                                    (cursor_point.row as i32 - declaration_line as i32).abs()
-                                        as u32,
+                                    (cursor_point.row as i32 - declaration_line as i32)
+                                        .unsigned_abs(),
                                     declaration,
                                 )
                             })
@@ -204,7 +204,7 @@ fn score_snippet(
         .iter()
         .map(|r| {
             let reference_line = r.range.start.to_point(current_buffer).row as i32;
-            (cursor.row as i32 - reference_line).abs() as u32
+            (cursor.row as i32 - reference_line).unsigned_abs()
         })
         .min()
         .unwrap();

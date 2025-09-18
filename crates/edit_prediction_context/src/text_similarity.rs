@@ -56,7 +56,7 @@ impl IdentifierOccurrences {
 // Splits camelcase / snakecase / kebabcase / pascalcase
 //
 // TODO: Make this more efficient / elegant.
-fn split_identifier<'a>(identifier: &'a str) -> Vec<&'a str> {
+fn split_identifier(identifier: &str) -> Vec<&str> {
     let mut parts = Vec::new();
     let mut start = 0;
     let chars: Vec<char> = identifier.chars().collect();
