@@ -3,8 +3,8 @@ use std::fmt::Display;
 
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    App, AppContext as _, Context, Div, IntoElement, ReadGlobal as _, Render, Window, actions, div,
-    px, size,
+    App, AppContext as _, Context, Div, IntoElement, ReadGlobal as _, Render, UpdateGlobal as _,
+    Window, actions, div, px, size,
 };
 use settings::{SettingsContent, SettingsStore};
 use ui::{
@@ -164,14 +164,32 @@ fn render_toggle_button(
     get_value: fn(&SettingsContent) -> &mut bool,
     cx: &mut App,
 ) -> impl IntoElement {
-    let defaults = SettingsStore::global(cx).raw_default_settings()
+    // todo! in settings window state
+    let store = SettingsStore::global(cx);
+    let mut defaults = store
+        .raw_user_settings()
+        .map(|settings| &*settings.content)
+        .unwrap_or_else(|| store.raw_default_settings())
+        .clone();
     // todo! id?
-    let toggle_state = if *get_value(settings) {
+    let toggle_state = if *get_value(&mut defaults) {
         ui::ToggleState::Selected
     } else {
         ui::ToggleState::Unselected
     };
-    SwitchField::new(title, title, Some(description), Togglesta)
+    SwitchField::new(
+        title,
+        title,
+        Some(description.into()),
+        toggle_state,
+        move |state, _, cx| {
+            let store = SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    *get_value(settings) = *state == ui::ToggleState::Selected;
+                });
+            });
+        },
+    )
 }
 
 impl Render for SettingsWindow {
