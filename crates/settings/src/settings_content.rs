@@ -165,7 +165,6 @@ impl SettingsContent {
     }
 }
 
-// todo!() what should this be?
 #[skip_serializing_none]
 #[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ServerSettingsContent {
