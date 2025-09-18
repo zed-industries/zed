@@ -10,8 +10,8 @@ use futures::{
 use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
-use schemars::{JsonSchema, schema_for};
-use serde_json::Value;
+use schemars::{JsonSchema, json_schema};
+use serde_json::{Value, json};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
@@ -22,13 +22,17 @@ use std::{
     str::{self, FromStr},
     sync::Arc,
 };
-use util::{ResultExt as _, schemars::DefaultDenyUnknownFields};
+use util::{
+    ResultExt as _,
+    schemars::{DefaultDenyUnknownFields, replace_subschema},
+};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
-    ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiEntry,
-    VsCodeSettings, WorktreeId,
+    ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
+    LanguageToSettingsMap, SettingsJsonSchemaParams, SettingsUiEntry, ThemeName, VsCodeSettings,
+    WorktreeId,
     merge_from::MergeFrom,
     parse_json_with_comments, replace_value_in_json_text,
     settings_content::{
@@ -803,17 +807,52 @@ impl SettingsStore {
             })
     }
 
-    pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams, cx: &App) -> Value {
+    pub fn json_schema(&self, params: &SettingsJsonSchemaParams) -> Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
             .into_generator();
 
         UserSettingsContent::json_schema(&mut generator);
 
-        // add schemas which are determined at runtime
-        for parameterized_json_schema in inventory::iter::<ParameterizedJsonSchema>() {
-            (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params, cx);
-        }
+        let language_settings_content_ref = generator
+            .subschema_for::<LanguageSettingsContent>()
+            .to_value();
+        replace_subschema::<LanguageToSettingsMap>(&mut generator, || {
+            json_schema!({
+                "type": "object",
+                "properties": params
+                    .language_names
+                    .iter()
+                    .map(|name| {
+                        (
+                            name.clone(),
+                            language_settings_content_ref.clone(),
+                        )
+                    })
+                    .collect::<serde_json::Map<_, _>>()
+            })
+        });
+
+        replace_subschema::<FontFamilyName>(&mut generator, || {
+            json_schema!({
+                "type": "string",
+                "enum": params.font_names,
+            })
+        });
+
+        replace_subschema::<ThemeName>(&mut generator, || {
+            json_schema!({
+                "type": "string",
+                "enum": params.theme_names,
+            })
+        });
+
+        replace_subschema::<IconThemeName>(&mut generator, || {
+            json_schema!({
+                "type": "string",
+                "enum": params.icon_theme_names,
+            })
+        });
 
         generator
             .root_schema_for::<UserSettingsContent>()
@@ -1204,6 +1243,20 @@ mod tests {
                 show_branch_name: true,
             }
         );
+    }
+
+    #[gpui::test]
+    fn test_schema(cx: &mut App) {
+        let store = SettingsStore::new(cx, &test_settings());
+        let value = store.json_schema(&SettingsJsonSchemaParams {
+            language_names: &["WOW WOWO".into()],
+            font_names: &["XOX XOXO".into()],
+            theme_names: &["YOY YOYO".into()],
+            icon_theme_names: &["ZOZ ZOZO".into()],
+        });
+
+        eprintln!("{}", serde_json::to_string_pretty(&value).unwrap());
+        assert!(false);
     }
 
     #[gpui::test]

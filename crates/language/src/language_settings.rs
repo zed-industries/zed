@@ -9,20 +9,15 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
-use schemars::json_schema;
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, SelectedFormatter, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
-use settings::{
-    ExtendingVec, ParameterizedJsonSchema, Settings, SettingsContent, SettingsLocation,
-    SettingsStore,
-};
+use settings::{ExtendingVec, Settings, SettingsContent, SettingsLocation, SettingsStore};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
-use util::schemars::replace_subschema;
 
 /// Initializes the language settings.
 pub fn init(cx: &mut App) {
@@ -409,29 +404,6 @@ pub struct CopilotSettings {
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
     pub enterprise_uri: Option<String>,
-}
-
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
-            let language_settings_content_ref = generator
-                .subschema_for::<LanguageSettingsContent>()
-                .to_value();
-            replace_subschema::<settings::LanguageToSettingsMap>(generator, || json_schema!({
-                "type": "object",
-                "properties": params
-                    .language_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            name.clone(),
-                            language_settings_content_ref.clone(),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>()
-            }))
-        }
-    }
 }
 
 impl AllLanguageSettings {

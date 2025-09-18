@@ -194,8 +194,7 @@ impl UiDensity {
     }
 }
 
-/// Newtype for font family name. Its `ParameterizedJsonSchema` lists the font families known at
-/// runtime.
+/// Font family name.
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
@@ -263,14 +262,13 @@ pub struct PlayerColorContent {
     pub selection: Option<String>,
 }
 
-/// Newtype for a theme name. Its `ParameterizedJsonSchema` lists the theme names known at runtime.
+/// Theme name.
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct ThemeName(pub Arc<str>);
 
-/// Newtype for a icon theme name. Its `ParameterizedJsonSchema` lists the icon theme names known at
-/// runtime.
+/// Icon Theme Name
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]

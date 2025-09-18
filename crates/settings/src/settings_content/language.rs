@@ -10,9 +10,8 @@ use serde::{
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use std::sync::Arc;
-use util::schemars::replace_subschema;
 
-use crate::{ExtendingVec, ParameterizedJsonSchema, merge_from};
+use crate::{ExtendingVec, merge_from};
 
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -839,34 +838,10 @@ pub struct LanguageTaskSettingsContent {
     pub prefer_lsp: Option<bool>,
 }
 
-/// Map from language name to settings. Its `ParameterizedJsonSchema` allows only known language
-/// names in the keys.
+/// Map from language name to settings.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageToSettingsMap(pub HashMap<SharedString, LanguageSettingsContent>);
-
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
-            let language_settings_content_ref = generator
-                .subschema_for::<LanguageSettingsContent>()
-                .to_value();
-            replace_subschema::<LanguageToSettingsMap>(generator, || json_schema!({
-                "type": "object",
-                "properties": params
-                    .language_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            name.clone(),
-                            language_settings_content_ref.clone(),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>()
-            }))
-        }
-    }
-}
 
 /// Determines how indent guides are colored.
 #[derive(

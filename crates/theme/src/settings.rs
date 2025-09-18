@@ -14,10 +14,9 @@ use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeMode, ThemeName};
-use settings::{ParameterizedJsonSchema, Settings, SettingsContent};
+use settings::{Settings, SettingsContent};
 use std::sync::Arc;
 use util::ResultExt as _;
-use util::schemars::replace_subschema;
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MAX_FONT_SIZE: Pixels = px(100.0);
@@ -269,45 +268,6 @@ impl Global for UiFontSize {}
 pub struct AgentFontSize(Pixels);
 
 impl Global for AgentFontSize {}
-
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |generator, _params, cx| {
-            replace_subschema::<settings::ThemeName>(generator, || json_schema!({
-                "type": "string",
-                "enum": ThemeRegistry::global(cx).list_names(),
-            }))
-        }
-    }
-}
-
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |generator, _params, cx| {
-            replace_subschema::<settings::IconThemeName>(generator, || json_schema!({
-                "type": "string",
-                "enum": ThemeRegistry::global(cx)
-                    .list_icon_themes()
-                    .into_iter()
-                    .map(|icon_theme| icon_theme.name)
-                    .collect::<Vec<SharedString>>(),
-            }))
-        }
-    }
-}
-
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
-            replace_subschema::<settings::FontFamilyName>(generator, || {
-                json_schema!({
-                    "type": "string",
-                    "enum": params.font_names,
-                })
-            })
-        }
-    }
-}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
