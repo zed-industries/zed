@@ -1006,6 +1006,59 @@ impl DebugDelegate {
         }
     }
 
+    fn get_task_subtitle(
+        &self,
+        task_kind: &Option<TaskSourceKind>,
+        context: &Option<DebugScenarioContext>,
+        cx: &mut App,
+    ) -> Option<String> {
+        match task_kind {
+            Some(TaskSourceKind::Worktree {
+                id: worktree_id,
+                directory_in_worktree,
+                ..
+            }) => self
+                .debug_panel
+                .update(cx, |debug_panel, cx| {
+                    let project = debug_panel.project().read(cx);
+                    let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+
+                    let mut path = if worktrees.len() > 1
+                        && let Some(worktree) = project.worktree_for_id(*worktree_id, cx)
+                    {
+                        let worktree_path = worktree.read(cx).abs_path();
+                        let full_path = worktree_path.join(directory_in_worktree);
+                        full_path
+                    } else {
+                        directory_in_worktree.clone()
+                    };
+
+                    path.push("debug.json");
+                    Some(path.display().to_string())
+                })
+                .unwrap_or_else(|_| Some(directory_in_worktree.display().to_string())),
+            Some(TaskSourceKind::AbsPath { abs_path, .. }) => {
+                Some(abs_path.to_string_lossy().into_owned())
+            }
+            Some(TaskSourceKind::Lsp { language_name, .. }) => {
+                Some(format!("LSP: {language_name}"))
+            }
+            Some(TaskSourceKind::Language { .. }) => None,
+            _ => context.clone().and_then(|ctx| {
+                ctx.task_context
+                    .task_variables
+                    .get(&VariableName::RelativeFile)
+                    .map(|f| format!("in {f}"))
+                    .or_else(|| {
+                        ctx.task_context
+                            .task_variables
+                            .get(&VariableName::Dirname)
+                            .map(|d| format!("in {d}/"))
+                    })
+            }),
+        }
+    }
+
     fn get_scenario_language(
         languages: &Arc<LanguageRegistry>,
         dap_registry: &DapRegistry,
@@ -1453,50 +1506,7 @@ impl PickerDelegate for DebugDelegate {
             color: Color::Default,
         };
 
-        let subtitle = match task_kind {
-            Some(TaskSourceKind::Worktree {
-                id: worktree_id,
-                directory_in_worktree,
-                ..
-            }) => self
-                .debug_panel
-                .update(cx, |debug_panel, cx| {
-                    let project = debug_panel.project().read(cx);
-                    let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
-
-                    if worktrees.len() > 1 {
-                        if let Some(worktree) = project.worktree_for_id(*worktree_id, cx) {
-                            let worktree_path = worktree.read(cx).abs_path();
-                            let full_path = worktree_path.join(directory_in_worktree);
-                            Some(full_path.display().to_string())
-                        } else {
-                            Some(directory_in_worktree.display().to_string())
-                        }
-                    } else {
-                        Some(directory_in_worktree.display().to_string())
-                    }
-                })
-                .unwrap_or_else(|_| Some(directory_in_worktree.display().to_string())),
-            Some(TaskSourceKind::AbsPath { abs_path, .. }) => {
-                Some(abs_path.to_string_lossy().into_owned())
-            }
-            Some(TaskSourceKind::Lsp { language_name, .. }) => {
-                Some(format!("LSP: {language_name}"))
-            }
-            Some(TaskSourceKind::Language { .. }) => None,
-            _ => context.clone().and_then(|ctx| {
-                ctx.task_context
-                    .task_variables
-                    .get(&VariableName::RelativeFile)
-                    .map(|f| format!("in {f}"))
-                    .or_else(|| {
-                        ctx.task_context
-                            .task_variables
-                            .get(&VariableName::Dirname)
-                            .map(|d| format!("in {d}/"))
-                    })
-            }),
-        };
+        let subtitle = self.get_task_subtitle(task_kind, context, cx);
 
         let language_icon = language_name.as_ref().and_then(|lang| {
             file_icons::FileIcons::get(cx)
@@ -1596,6 +1606,19 @@ impl NewProcessModal {
                 true => ToggleState::Selected,
                 _ => ToggleState::Unselected,
             }
+        })
+    }
+
+    pub(crate) fn debug_picker_candidate_subtitles(&self, cx: &mut App) -> Vec<String> {
+        self.debug_picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .candidates
+                .iter()
+                .filter_map(|(task_kind, _, _, context)| {
+                    picker.delegate.get_task_subtitle(task_kind, context, cx)
+                })
+                .collect()
         })
     }
 }
