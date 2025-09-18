@@ -3313,15 +3313,4 @@ mod tests {
             }
         });
     }
-
-    #[test]
-    fn grab_lines_from_file() {
-        fn grab_lines_from_file(text: &str) -> String {
-            text.lines().collect::<String>()
-        }
-
-        let text = "Hello\nWorld\nHow\nAre\nYou";
-        let lines = grab_lines_from_file(text);
-        assert_eq!(lines, text);
-    }
 }
