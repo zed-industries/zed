@@ -316,7 +316,7 @@ impl ScoreInputs {
 
         Scores {
             signature: combined_score * self.containing_range_vs_signature_weighted_overlap,
-            // declaration score gets boosted both by being multipled by 2 and by there being more
+            // declaration score gets boosted both by being multiplied by 2 and by there being more
             // weighted overlap.
             declaration: 2.0 * combined_score * self.containing_range_vs_item_weighted_overlap,
         }
