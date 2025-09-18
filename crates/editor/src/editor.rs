@@ -23481,8 +23481,6 @@ impl EntityInputHandler for Editor {
             .text_highlights::<InputComposition>(cx)
             .is_some_and(|(_, ranges)| ranges.iter().any(|r| r.start != r.end));
 
-        log::debug!("IME active? {}", ime_active);
-
         if ime_active && text != " " {
             self.replace_and_mark_text_in_range(None, text, None, window, cx);
             return;
@@ -23547,13 +23545,6 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        log::debug!(
-            "replace_and_mark_text_in_range called with range_utf16: {:?}, text: {:?}, new_selected_range_utf16: {:?}",
-            range_utf16,
-            text,
-            new_selected_range_utf16
-        );
-
         if !self.input_enabled {
             return;
         }
