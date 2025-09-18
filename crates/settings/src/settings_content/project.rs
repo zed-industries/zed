@@ -80,7 +80,7 @@ pub struct WorktreeSettingsContent {
     pub file_scan_inclusions: Option<Vec<String>>,
 
     /// Treat the files matching these globs as `.env` files.
-    /// Default: [ "**/.env*" ]
+    /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
     pub private_files: Option<Vec<String>>,
 }
 

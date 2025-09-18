@@ -66,11 +66,11 @@ impl Settings for WorktreeSettings {
             self.project_name = Some(project_name);
         }
 
-        // todo!() test this. Did it used to extend the arrays, or overwrite them?
-
-        if let Some(private_files) = worktree.private_files.clone() {
+        if let Some(mut private_files) = worktree.private_files.clone() {
+            let sources = self.private_files.sources();
+            private_files.extend_from_slice(sources);
             if let Some(matchers) = path_matchers(private_files, "private_files").log_err() {
-                self.private_files = matchers
+                self.private_files = matchers;
             }
         }
 
