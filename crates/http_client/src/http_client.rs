@@ -48,12 +48,12 @@ pub trait HttpClient: 'static + Send + Sync {
         req: http::Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>>;
 
-    fn get<'a>(
-        &'a self,
+    fn get(
+        &self,
         uri: &str,
         body: AsyncBody,
         follow_redirects: bool,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let request = Builder::new()
             .uri(uri)
             .follow_redirects(if follow_redirects {
@@ -64,16 +64,16 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await }),
+            Ok(request) => self.send(request),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
 
-    fn post_json<'a>(
-        &'a self,
+    fn post_json(
+        &self,
         uri: &str,
         body: AsyncBody,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let request = Builder::new()
             .uri(uri)
             .method(Method::POST)
@@ -81,7 +81,7 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await }),
+            Ok(request) => self.send(request),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
