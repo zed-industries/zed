@@ -1033,7 +1033,19 @@ impl DebugDelegate {
                         directory_in_worktree.clone()
                     };
 
-                    path.push("debug.json");
+                    match path
+                        .components()
+                        .last()
+                        .and_then(|component| component.as_os_str().to_str())
+                    {
+                        Some(".zed") => {
+                            path.push("debug.json");
+                        }
+                        Some(".vscode") => {
+                            path.push("launch.json");
+                        }
+                        _ => {}
+                    }
                     Some(path.display().to_string())
                 })
                 .unwrap_or_else(|_| Some(directory_in_worktree.display().to_string())),
