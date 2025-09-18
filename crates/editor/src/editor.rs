@@ -23466,12 +23466,6 @@ impl EntityInputHandler for Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        log::debug!(
-            "replace_text_in_range called with range_utf16: {:?}, text: {:?}",
-            range_utf16,
-            text
-        );
-
         if !self.input_enabled {
             cx.emit(EditorEvent::InputIgnored { text: text.into() });
             return;
