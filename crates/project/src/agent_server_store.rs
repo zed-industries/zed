@@ -22,7 +22,7 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsContent, SettingsKey, SettingsStore, SettingsUi};
+use settings::{SettingsContent, SettingsStore};
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -989,8 +989,7 @@ impl ExternalAgentServer for LocalCustomAgent {
 pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 
-#[derive(Default, Clone, JsonSchema, Debug, SettingsUi, SettingsKey, PartialEq)]
-#[settings_key(key = "agent_servers")]
+#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,

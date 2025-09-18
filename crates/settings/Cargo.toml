@@ -31,7 +31,6 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings_macros = { path = "../settings_macros" }
-settings_ui_macros.workspace = true
 serde_json_lenient.workspace = true
 serde_repr.workspace = true
 serde_path_to_error.workspace = true

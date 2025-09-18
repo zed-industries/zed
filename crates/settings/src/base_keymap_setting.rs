@@ -7,16 +7,12 @@ use crate::{
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
 use settings::{Settings, VsCodeSettings};
-use settings_ui_macros::{SettingsKey, SettingsUi};
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
 /// Default: VSCode
-#[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, SettingsUi,
-)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub enum BaseKeymap {
     #[default]
     VSCode,
@@ -132,26 +128,6 @@ impl BaseKeymap {
             .find_map(|(name, value)| (name == option).then_some(value))
             .unwrap_or_default()
     }
-}
-
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    PartialEq,
-    Eq,
-    Default,
-    SettingsUi,
-    SettingsKey,
-)]
-// extracted so that it can be an option, and still work with derive(SettingsUi)
-#[settings_key(None)]
-#[skip_serializing_none]
-pub struct BaseKeymapSetting {
-    pub base_keymap: Option<BaseKeymap>,
 }
 
 impl Settings for BaseKeymap {

@@ -18,7 +18,7 @@ pub use settings::{
 };
 use settings::{
     ExtendingVec, ParameterizedJsonSchema, Settings, SettingsContent, SettingsLocation,
-    SettingsStore, SettingsUi,
+    SettingsStore,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
@@ -364,14 +364,13 @@ impl InlayHintSettings {
 
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
-#[derive(Clone, Debug, Default, SettingsUi)]
+#[derive(Clone, Debug, Default)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: settings::EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
-    #[settings_ui(skip)]
     pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: settings::EditPredictionsMode,
@@ -402,15 +401,13 @@ pub struct DisabledGlob {
     is_absolute: bool,
 }
 
-#[derive(Clone, Debug, Default, SettingsUi)]
+#[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
-    #[settings_ui(skip)]
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
-    #[settings_ui(skip)]
     pub enterprise_uri: Option<String>,
 }
 
@@ -808,7 +805,7 @@ impl settings::Settings for AllLanguageSettings {
     }
 }
 
-#[derive(Default, Debug, Clone, PartialEq, Eq, SettingsUi)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct JsxTagAutoCloseSettings {
     /// Enables or disables auto-closing of JSX tags.
     pub enabled: bool,

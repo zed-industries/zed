@@ -21,7 +21,7 @@ pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
     DapSettingsContent, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
-    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
+    SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{
     path::{Path, PathBuf},
@@ -189,20 +189,7 @@ impl ContextServerSettings {
     }
 }
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DiagnosticSeverity {
     // No diagnostics are shown.
     Off,

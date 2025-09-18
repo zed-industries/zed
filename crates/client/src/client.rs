@@ -29,9 +29,8 @@ use proxy::connect_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent, SettingsKey, SettingsUi};
+use settings::{Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -112,12 +111,6 @@ impl Settings for ClientSettings {
             server_url: content.server_url.clone().unwrap(),
         }
     }
-}
-
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-pub struct ProxySettingsContent {
-    proxy: Option<String>,
 }
 
 #[derive(Deserialize, Default)]

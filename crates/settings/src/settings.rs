@@ -28,8 +28,6 @@ pub use settings_store::{
     InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation, SettingsStore,
 };
 pub use settings_ui_core::*;
-// Re-export the derive macro
-pub use settings_ui_macros::{SettingsKey, SettingsUi};
 
 pub use vscode_import::{VsCodeSettings, VsCodeSettingsSource};
 
