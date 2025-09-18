@@ -1051,7 +1051,6 @@ impl GitPanel {
             let project = self.project.clone();
             let repo_path = entry.repo_path;
             let abs_path = entry.abs_path;
-            let repository = self.active_repository.clone();
 
             cx.spawn(async move |_, cx| {
                 let file_path_str = repo_path.0.to_string_lossy();
@@ -1060,38 +1059,41 @@ impl GitPanel {
                     project.find_worktree(&abs_path, cx)
                 })?.ok_or_else(|| anyhow::anyhow!("No worktree found for file: {}", abs_path.display()))?;
 
-                let repository_root = repository
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("No active repository"))?
-                    .read_with(cx, |repository, _| {
-                        repository.snapshot().work_directory_abs_path.clone()
-                    })?;
+                let gitignore_project_path = ProjectPath {
+                    worktree_id: worktree.read_with(cx, |worktree, _| worktree.id())?,
+                    path: Arc::from(Path::new(".gitignore")),
+                };
 
-                let abs_gitignore_path = repository_root.join(".gitignore");
-                let fs = worktree.read_with(cx, |worktree, _| {
-                    worktree.as_local().map(|local| local.fs().clone())
+                let buffer = project.update(cx, |project, cx| {
+                    project.open_buffer(gitignore_project_path.clone(), cx)
+                })?.await?;
+
+                let mut should_save = false;
+                buffer.update(cx, |buffer, cx| {
+                    let existing_content = buffer.text();
+
+                    if existing_content.lines().any(|line| line.trim() == file_path_str) {
+                        return;
+                    }
+
+                    let insert_position = existing_content.len();
+                    let new_entry = if existing_content.is_empty() {
+                        format!("{}\n", file_path_str)
+                    } else if existing_content.ends_with('\n') {
+                        format!("{}\n", file_path_str)
+                    } else {
+                        format!("\n{}\n", file_path_str)
+                    };
+
+                    buffer.edit([(insert_position..insert_position, new_entry)], None, cx);
+                    should_save = true;
                 })?;
 
-                let Some(fs) = fs else {
-                    return Err(anyhow::anyhow!("Cannot access filesystem for remote worktree"));
-                };
-
-                let existing_content = fs.load(&abs_gitignore_path).await.unwrap_or_else(|_| String::new());
-
-                if existing_content.lines().any(|line| line.trim() == file_path_str) {
-                    return Ok(());
+                if should_save {
+                    project.update(cx, |project, cx| {
+                        project.save_buffer(buffer, cx)
+                    })?.await?;
                 }
-
-                let new_content = if existing_content.is_empty() {
-                    format!("{}\n", file_path_str)
-                } else if existing_content.ends_with('\n') {
-                    format!("{}{}\n", existing_content, file_path_str)
-                } else {
-                    format!("{}\n{}\n", existing_content, file_path_str)
-                };
-
-                let rope = language::Rope::from(new_content.as_str());
-                fs.save(&abs_gitignore_path, &rope, language::LineEnding::Unix).await?;
 
                 anyhow::Ok(())
             })
