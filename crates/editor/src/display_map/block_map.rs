@@ -1264,36 +1264,30 @@ impl BlockMapWriter<'_> {
         range: Range<usize>,
         inclusive: bool,
     ) -> &[Arc<CustomBlock>] {
+        if range.is_empty() && !inclusive {
+            return &[];
+        }
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
         let start_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
             let block_end = block.end().to_offset(buffer);
-            block_end.cmp(&range.start).then_with(|| {
-                if inclusive || (range.is_empty() && block.start().to_offset(buffer) == block_end) {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
+            block_end.cmp(&range.start).then(Ordering::Greater)
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_block_ix = match self.0.custom_blocks[start_block_ix..].binary_search_by(|block| {
+            let block_start = block.start().to_offset(buffer);
+            block_start.cmp(&range.end).then(if inclusive {
+                Ordering::Less
+            } else {
+                Ordering::Greater
             })
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
-            block
-                .start()
-                .to_offset(buffer)
-                .cmp(&range.end)
-                .then(if inclusive {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                })
-        }) {
-            Ok(ix) | Err(ix) => ix,
-        };
 
-        &self.0.custom_blocks[start_block_ix..end_block_ix]
+        &self.0.custom_blocks[start_block_ix..][..end_block_ix]
     }
 }
 

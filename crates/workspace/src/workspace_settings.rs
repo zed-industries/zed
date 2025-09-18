@@ -254,6 +254,17 @@ pub enum AutosaveSetting {
     OnWindowChange,
 }
 
+impl AutosaveSetting {
+    pub fn should_save_on_close(&self) -> bool {
+        matches!(
+            &self,
+            AutosaveSetting::OnFocusChange
+                | AutosaveSetting::OnWindowChange
+                | AutosaveSetting::AfterDelay { .. }
+        )
+    }
+}
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionHorizontal {

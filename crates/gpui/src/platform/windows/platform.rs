@@ -243,29 +243,32 @@ impl WindowsPlatform {
         let validation_number = self.inner.validation_number;
         let all_windows = Arc::downgrade(&self.raw_window_handles);
         let text_system = Arc::downgrade(&self.text_system);
-        std::thread::spawn(move || {
-            let vsync_provider = VSyncProvider::new();
-            loop {
-                vsync_provider.wait_for_vsync();
-                if check_device_lost(&directx_device.device) {
-                    handle_gpu_device_lost(
-                        &mut directx_device,
-                        platform_window.as_raw(),
-                        validation_number,
-                        &all_windows,
-                        &text_system,
-                    );
-                }
-                let Some(all_windows) = all_windows.upgrade() else {
-                    break;
-                };
-                for hwnd in all_windows.read().iter() {
-                    unsafe {
-                        let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+        std::thread::Builder::new()
+            .name("VSyncProvider".to_owned())
+            .spawn(move || {
+                let vsync_provider = VSyncProvider::new();
+                loop {
+                    vsync_provider.wait_for_vsync();
+                    if check_device_lost(&directx_device.device) {
+                        handle_gpu_device_lost(
+                            &mut directx_device,
+                            platform_window.as_raw(),
+                            validation_number,
+                            &all_windows,
+                            &text_system,
+                        );
+                    }
+                    let Some(all_windows) = all_windows.upgrade() else {
+                        break;
+                    };
+                    for hwnd in all_windows.read().iter() {
+                        unsafe {
+                            let _ = RedrawWindow(Some(hwnd.as_raw()), None, None, RDW_INVALIDATE);
+                        }
                     }
                 }
-            }
-        });
+            })
+            .unwrap();
     }
 }
 
