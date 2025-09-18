@@ -130,6 +130,12 @@ impl BaseKeymap {
     }
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[skip_serializing_none]
+pub struct BaseKeymapSetting {
+    pub base_keymap: Option<BaseKeymap>,
+}
+
 impl Settings for BaseKeymap {
     fn from_settings(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Self {
         s.base_keymap.unwrap().into()
