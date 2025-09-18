@@ -1897,13 +1897,13 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let closure_edits_made = Arc::clone(&edits_made);
     fake_language_server
         .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_edits_made = Arc::clone(&closure_edits_made);
+            let edits_made_2 = Arc::clone(&closure_edits_made);
             async move {
                 assert_eq!(
                     params.text_document.uri,
                     lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
-                let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
+                let edits_made = AtomicUsize::load(&edits_made_2, atomic::Ordering::Acquire);
                 Ok(Some(vec![lsp::InlayHint {
                     position: lsp::Position::new(0, edits_made as u32),
                     label: lsp::InlayHintLabel::String(edits_made.to_string()),
