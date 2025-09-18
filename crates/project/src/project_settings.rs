@@ -824,6 +824,7 @@ impl SettingsObserver {
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
             for (path, content) in store.local_settings(worktree.read(cx).id()) {
+                let content = serde_json::to_string(&content).unwrap();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,

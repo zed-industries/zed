@@ -89,7 +89,8 @@ pub fn identifiers_in_range(
                     }
 
                     let identifier_text =
-                        &range_text[node_range.start - range.start..node_range.end - range.start];
+                        // TODO we changed this to saturating_sub for now, but we should fix the actually issue
+                        &range_text[node_range.start.saturating_sub(range.start)..node_range.end.saturating_sub(range.start)];
                     references.push(Reference {
                         identifier: Identifier {
                             name: identifier_text.into(),

@@ -41,14 +41,14 @@ impl Declaration {
         }
     }
 
-    pub fn project_entry_id(&self) -> Option<ProjectEntryId> {
+    pub fn project_entry_id(&self) -> ProjectEntryId {
         match self {
             Declaration::File {
                 project_entry_id, ..
-            } => Some(*project_entry_id),
+            } => *project_entry_id,
             Declaration::Buffer {
                 project_entry_id, ..
-            } => Some(*project_entry_id),
+            } => *project_entry_id,
         }
     }
 
