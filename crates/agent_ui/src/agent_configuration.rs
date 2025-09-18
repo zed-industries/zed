@@ -45,7 +45,7 @@ pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
 use crate::{
-    AddContextServer, ExternalAgent, NewExternalAgentThread,
+    AddLocalContextServer, AddRemoteContextServer, ExternalAgent, NewExternalAgentThread,
     agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
     placeholder_command,
 };
@@ -593,16 +593,22 @@ impl AgentConfiguration {
                     .gap_1p5()
                     .child(
                         h_flex().w_full().child(
-                            Button::new("add-context-server", "Add Custom Server")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .full_width()
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
-                                .on_click(|_event, window, cx| {
-                                    window.dispatch_action(AddContextServer.boxed_clone(), cx)
-                                }),
+                            PopoverMenu::new("add-context-server-menu")
+                                .trigger(
+                                    Button::new("add-context-server", "Add Custom Server")
+                                        .style(ButtonStyle::Filled)
+                                        .layer(ElevationIndex::ModalSurface)
+                                        .full_width()
+                                        .icon(IconName::Plus)
+                                        .icon_size(IconSize::Small)
+                                        .icon_position(IconPosition::Start)
+                                )
+                                .menu(move |window, cx| {
+                                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                                        menu.action("Local Server", Box::new(AddLocalContextServer))
+                                            .action("Remote Server", Box::new(AddRemoteContextServer))
+                                    }))
+                                })
                         ),
                     )
                     .child(

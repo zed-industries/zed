@@ -1,7 +1,4 @@
-use std::{
-    path::PathBuf,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context as _, Result};
 use context_server::{ContextServerCommand, ContextServerId};
@@ -28,10 +25,10 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
-use crate::AddContextServer;
+use crate::{AddContextServer, AddLocalContextServer, AddRemoteContextServer};
 
 enum ConfigurationTarget {
-    New,
+    New { server_type: ServerType },
     Existing {
         id: ContextServerId,
         command: ContextServerCommand,
@@ -46,6 +43,7 @@ enum ConfigurationTarget {
 enum ConfigurationSource {
     New {
         editor: Entity<Editor>,
+        current_template_type: ServerType,
     },
     Existing {
         editor: Entity<Editor>,
@@ -94,8 +92,9 @@ impl ConfigurationSource {
         }
 
         match target {
-            ConfigurationTarget::New => ConfigurationSource::New {
-                editor: create_editor(context_server_input(None), jsonc_language, window, cx),
+            ConfigurationTarget::New { server_type } => ConfigurationSource::New {
+                editor: create_editor(context_server_input_template(server_type), jsonc_language, window, cx),
+                current_template_type: server_type,
             },
             ConfigurationTarget::Existing { id, command } => ConfigurationSource::Existing {
                 editor: create_editor(
@@ -140,7 +139,7 @@ impl ConfigurationSource {
 
     fn output(&self, cx: &mut App) -> Result<(ContextServerId, ContextServerSettings)> {
         match self {
-            ConfigurationSource::New { editor } | ConfigurationSource::Existing { editor } => {
+            ConfigurationSource::New { editor, .. } | ConfigurationSource::Existing { editor } => {
                 parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
                     (
                         id,
@@ -181,34 +180,111 @@ impl ConfigurationSource {
 }
 
 fn context_server_input(existing: Option<(ContextServerId, ContextServerCommand)>) -> String {
-    let (name, command, args, env) = match existing {
-        Some((id, cmd)) => {
-            let args = serde_json::to_string(&cmd.args).unwrap();
-            let env = serde_json::to_string(&cmd.env.unwrap_or_default()).unwrap();
-            (id.0.to_string(), cmd.path, args, env)
-        }
-        None => (
-            "some-mcp-server".to_string(),
-            PathBuf::new(),
-            "[]".to_string(),
-            "{}".to_string(),
-        ),
-    };
-
-    format!(
-        r#"{{
+    match existing {
+        Some((id, cmd)) => match cmd {
+            ContextServerCommand::Local { path, args, env, timeout } => {
+                let args_json = serde_json::to_string(&args).unwrap();
+                let env_json = serde_json::to_string(&env.unwrap_or_default()).unwrap();
+                let timeout_json = match timeout {
+                    Some(t) => format!(",\n    /// Timeout for tool calls in milliseconds\n    \"timeout\": {}", t),
+                    None => String::new(),
+                };
+                
+                format!(
+                    r#"{{
   /// The name of your MCP server
-  "{name}": {{
+  "{}": {{
+    /// Type of MCP server: "local" for command-based, "http" for remote
+    "type": "local",
     /// The command which runs the MCP server
     "command": "{}",
     /// The arguments to pass to the MCP server
-    "args": {args},
+    "args": {},
     /// The environment variables to set
-    "env": {env}
+    "env": {}{}
   }}
 }}"#,
-        command.display()
-    )
+                    id.0,
+                    path.display(),
+                    args_json,
+                    env_json,
+                    timeout_json
+                )
+            }
+            ContextServerCommand::Http { url, headers, timeout } => {
+                let headers_json = serde_json::to_string(&headers.unwrap_or_default()).unwrap();
+                let timeout_json = match timeout {
+                    Some(t) => format!(",\n    /// Timeout for tool calls in milliseconds\n    \"timeout\": {}", t),
+                    None => String::new(),
+                };
+                
+                format!(
+                    r#"{{
+  /// The name of your MCP server
+  "{}": {{
+    /// Type of MCP server: "local" for command-based, "http" for remote
+    "type": "http",
+    /// The URL of the remote MCP server
+    "url": "{}",
+    /// Optional headers to send with requests
+    "headers": {}{}
+  }}
+}}"#,
+                    id.0,
+                    url,
+                    headers_json,
+                    timeout_json
+                )
+            }
+        },
+        None => {
+            // Default to local server template
+            context_server_input_template(ServerType::Local)
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ServerType {
+    Local,
+    Remote,
+}
+
+fn context_server_input_template(server_type: ServerType) -> String {
+    match server_type {
+        ServerType::Local => {
+            format!(
+                r#"{{
+  /// The name of your MCP server
+  "some-mcp-server": {{
+    /// Type of MCP server: "local" for command-based, "http" for remote
+    "type": "local",
+    /// The command which runs the MCP server
+    "command": "",
+    /// The arguments to pass to the MCP server
+    "args": [],
+    /// The environment variables to set
+    "env": {{}}
+  }}
+}}"#
+            )
+        }
+        ServerType::Remote => {
+            format!(
+                r#"{{
+  /// The name of your MCP server
+  "remote-mcp-server": {{
+    /// Type of MCP server: "local" for command-based, "http" for remote
+    "type": "http",
+    /// The URL of the remote MCP server
+    "url": "https://mcp.example.com/v1/sse",
+    /// Optional headers to send with requests
+    "headers": {{}}
+  }}
+}}"#
+            )
+        }
+    }
 }
 
 fn resolve_context_server_extension(
@@ -261,14 +337,56 @@ impl ConfigureContextServerModal {
         _window: Option<&mut Window>,
         _cx: &mut Context<Workspace>,
     ) {
+        // Register handler for legacy AddContextServer action (defaults to local)
         workspace.register_action({
+            let language_registry = language_registry.clone();
             move |_workspace, _: &AddContextServer, window, cx| {
                 let workspace_handle = cx.weak_entity();
                 let language_registry = language_registry.clone();
                 window
                     .spawn(cx, async move |cx| {
                         Self::show_modal(
-                            ConfigurationTarget::New,
+                            ConfigurationTarget::New { server_type: ServerType::Local },
+                            language_registry,
+                            workspace_handle,
+                            cx,
+                        )
+                        .await
+                    })
+                    .detach_and_log_err(cx);
+            }
+        });
+
+        // Register handler for AddLocalContextServer action
+        workspace.register_action({
+            let language_registry = language_registry.clone();
+            move |_workspace, _: &AddLocalContextServer, window, cx| {
+                let workspace_handle = cx.weak_entity();
+                let language_registry = language_registry.clone();
+                window
+                    .spawn(cx, async move |cx| {
+                        Self::show_modal(
+                            ConfigurationTarget::New { server_type: ServerType::Local },
+                            language_registry,
+                            workspace_handle,
+                            cx,
+                        )
+                        .await
+                    })
+                    .detach_and_log_err(cx);
+            }
+        });
+
+        // Register handler for AddRemoteContextServer action
+        workspace.register_action({
+            move |_workspace, _: &AddRemoteContextServer, window, cx| {
+                log::info!("AddRemoteContextServer action triggered");
+                let workspace_handle = cx.weak_entity();
+                let language_registry = language_registry.clone();
+                window
+                    .spawn(cx, async move |cx| {
+                        Self::show_modal(
+                            ConfigurationTarget::New { server_type: ServerType::Remote },
                             language_registry,
                             workspace_handle,
                             cx,
@@ -352,7 +470,7 @@ impl ConfigureContextServerModal {
                     original_server_id: match &target {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
                         ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
-                        ConfigurationTarget::New => None,
+                        ConfigurationTarget::New { .. } => None,
                     },
                     source: ConfigurationSource::from_target(
                         target,
@@ -418,7 +536,9 @@ impl ConfigureContextServerModal {
             ProjectSettings::get_global(cx).context_servers.get(&id.0) != Some(&settings);
 
         if settings_changed {
-            // When we write the settings to the file, the context server will be restarted.
+            // When we write the settings to the file, the context server will be restarted automatically.
+            // No need to manually start the server as the settings system will handle it.
+            log::info!("Settings changed, updating settings file for server: {}", id.0);
             workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
                 let original_server_id = self.original_server_id.clone();
@@ -443,6 +563,26 @@ impl ConfigureContextServerModal {
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut Context<Self>) {
         cx.emit(DismissEvent);
+    }
+
+    fn switch_template(&mut self, new_type: ServerType, cx: &mut Context<Self>) {
+        if let ConfigurationSource::New { editor, current_template_type } = &mut self.source {
+            if *current_template_type != new_type {
+                *current_template_type = new_type;
+                
+                // Update the editor content with the new template
+                let new_template = context_server_input_template(new_type);
+                editor.update(cx, |editor, cx| {
+                    editor.buffer().update(cx, |buffer, cx| {
+                        let snapshot = buffer.snapshot(cx);
+                        let range = 0..snapshot.len();
+                        buffer.edit([(range, new_template)], None, cx);
+                    });
+                });
+                
+                cx.notify();
+            }
+        }
     }
 
     fn show_configured_context_server_toast(&self, id: ContextServerId, cx: &mut App) {
@@ -479,7 +619,7 @@ impl ModalView for ConfigureContextServerModal {}
 impl Focusable for ConfigureContextServerModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.source {
-            ConfigurationSource::New { editor } => editor.focus_handle(cx),
+            ConfigurationSource::New { editor, .. } => editor.focus_handle(cx),
             ConfigurationSource::Existing { editor, .. } => editor.focus_handle(cx),
             ConfigurationSource::Extension { editor, .. } => editor
                 .as_ref()
@@ -524,9 +664,9 @@ impl ConfigureContextServerModal {
         }
     }
 
-    fn render_modal_content(&self, cx: &App) -> AnyElement {
+    fn render_modal_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let editor = match &self.source {
-            ConfigurationSource::New { editor } => editor,
+            ConfigurationSource::New { editor, .. } => editor,
             ConfigurationSource::Existing { editor } => editor,
             ConfigurationSource::Extension { editor, .. } => {
                 let Some(editor) = editor else {
@@ -536,35 +676,83 @@ impl ConfigureContextServerModal {
             }
         };
 
-        div()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(cx.theme().colors().border_variant)
-            .bg(cx.theme().colors().editor_background)
-            .child({
-                let settings = ThemeSettings::get_global(cx);
-                let text_style = TextStyle {
-                    color: cx.theme().colors().text,
-                    font_family: settings.buffer_font.family.clone(),
-                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                    font_size: settings.buffer_font_size(cx).into(),
-                    font_weight: settings.buffer_font.weight,
-                    line_height: relative(settings.buffer_line_height.value()),
-                    ..Default::default()
-                };
-                EditorElement::new(
-                    editor,
-                    EditorStyle {
-                        background: cx.theme().colors().editor_background,
-                        local_player: cx.theme().players().local(),
-                        text: text_style,
-                        syntax: cx.theme().syntax().clone(),
-                        ..Default::default()
-                    },
-                )
-            })
+        v_flex()
+            .gap_2()
+            .when(
+                matches!(&self.source, ConfigurationSource::New { .. }),
+                |content| content.child(self.render_template_switcher(cx))
+            )
+            .child(
+                div()
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .bg(cx.theme().colors().editor_background)
+                    .child({
+                        let settings = ThemeSettings::get_global(cx);
+                        let text_style = TextStyle {
+                            color: cx.theme().colors().text,
+                            font_family: settings.buffer_font.family.clone(),
+                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                            font_size: settings.buffer_font_size(cx).into(),
+                            font_weight: settings.buffer_font.weight,
+                            line_height: relative(settings.buffer_line_height.value()),
+                            ..Default::default()
+                        };
+                        EditorElement::new(
+                            editor,
+                            EditorStyle {
+                                background: cx.theme().colors().editor_background,
+                                local_player: cx.theme().players().local(),
+                                text: text_style,
+                                syntax: cx.theme().syntax().clone(),
+                                ..Default::default()
+                            },
+                        )
+                    })
+            )
             .into_any_element()
+    }
+
+    fn render_template_switcher(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let current_type = if let ConfigurationSource::New { current_template_type, .. } = &self.source {
+            *current_template_type
+        } else {
+            ServerType::Local // fallback, shouldn't happen
+        };
+
+        h_flex()
+            .gap_2()
+            .child(
+                Label::new("Template:")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+            )
+            .child(
+                Button::new("template-local", "Local Server")
+                    .style(if current_type == ServerType::Local { 
+                        ButtonStyle::Filled 
+                    } else { 
+                        ButtonStyle::Subtle 
+                    })
+                    .size(ButtonSize::Compact)
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.switch_template(ServerType::Local, cx);
+                    }))
+            )
+            .child(
+                Button::new("template-remote", "Remote Server")
+                    .style(if current_type == ServerType::Remote { 
+                        ButtonStyle::Filled 
+                    } else { 
+                        ButtonStyle::Subtle 
+                    })
+                    .size(ButtonSize::Compact)
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.switch_template(ServerType::Remote, cx);
+                    }))
+            )
     }
 
     fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
