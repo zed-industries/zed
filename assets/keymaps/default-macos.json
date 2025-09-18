@@ -1375,9 +1375,9 @@
     "context": "StashDiff > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "ctrl-space": "git::StashApplyCurrent",
-      "ctrl-shift-space": "git::StashPopCurrent",
-      "ctrl-shift-backspace": "git::StashDropCurrent"
+      "ctrl-space": "git::ApplyCurrentStash",
+      "ctrl-shift-space": "git::PopCurrentStash",
+      "ctrl-shift-backspace": "git::DropCurrentStash"
     }
   },
   {

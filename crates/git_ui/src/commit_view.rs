@@ -34,17 +34,17 @@ use workspace::{
 
 use crate::git_panel::GitPanel;
 
-actions!(git, [StashApplyCurrent, StashPopCurrent, StashDropCurrent,]);
+actions!(git, [ApplyCurrentStash, PopCurrentStash, DropCurrentStash,]);
 
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
-        register_workspace_action(workspace, |toolbar, _: &StashApplyCurrent, window, cx| {
+        register_workspace_action(workspace, |toolbar, _: &ApplyCurrentStash, window, cx| {
             toolbar.apply_stash(window, cx);
         });
-        register_workspace_action(workspace, |toolbar, _: &StashDropCurrent, window, cx| {
+        register_workspace_action(workspace, |toolbar, _: &DropCurrentStash, window, cx| {
             toolbar.remove_stash(window, cx);
         });
-        register_workspace_action(workspace, |toolbar, _: &StashPopCurrent, window, cx| {
+        register_workspace_action(workspace, |toolbar, _: &PopCurrentStash, window, cx| {
             toolbar.pop_stash(window, cx);
         });
     })
@@ -800,7 +800,7 @@ impl Render for CommitViewToolbar {
                         .icon(IconName::ArrowDown)
                         .tooltip(Tooltip::for_action_title_in(
                             "Apply current stash",
-                            &StashApplyCurrent,
+                            &ApplyCurrentStash,
                             &focus_handle,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| this.apply_stash(window, cx))),
@@ -810,7 +810,7 @@ impl Render for CommitViewToolbar {
                         .icon(IconName::ArrowUp)
                         .tooltip(Tooltip::for_action_title_in(
                             "Pop current stash",
-                            &StashPopCurrent,
+                            &PopCurrentStash,
                             &focus_handle,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| this.pop_stash(window, cx))),
@@ -820,7 +820,7 @@ impl Render for CommitViewToolbar {
                         .icon(IconName::Trash)
                         .tooltip(Tooltip::for_action_title_in(
                             "Remove current stash",
-                            &StashDropCurrent,
+                            &DropCurrentStash,
                             &focus_handle,
                         ))
                         .on_click(cx.listener(|this, _, window, cx| this.remove_stash(window, cx))),
