@@ -1181,6 +1181,10 @@ impl LspAdapter for PyLspAdapter {
             "pylsp-mypy installation failed"
         );
         let pylsp = venv.join(BINARY_DIR).join("pylsp");
+        delegate
+            .which(pylsp.as_os_str())
+            .await
+            .context("pylsp installation was incomplete")?;
         Ok(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -1195,6 +1199,7 @@ impl LspAdapter for PyLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
         let pylsp = venv.join(BINARY_DIR).join("pylsp");
+        delegate.which(pylsp.as_os_str()).await?;
         Some(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -1364,9 +1369,11 @@ impl BasedPyrightLspAdapter {
                 .arg("venv")
                 .arg("basedpyright-venv")
                 .current_dir(work_dir)
-                .spawn()?
+                .spawn()
+                .context("spawning child")?
                 .output()
-                .await?;
+                .await
+                .context("getting child output")?;
         }
 
         Ok(path.into())
@@ -1470,9 +1477,13 @@ impl LspAdapter for BasedPyrightLspAdapter {
                 .success(),
             "basedpyright installation failed"
         );
-        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        let path = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        delegate
+            .which(path.as_os_str())
+            .await
+            .context("basedpyright installation was incomplete")?;
         Ok(LanguageServerBinary {
-            path: pylsp,
+            path,
             env: None,
             arguments: vec!["--stdio".into()],
         })
@@ -1484,9 +1495,10 @@ impl LspAdapter for BasedPyrightLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        let path = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        delegate.which(path.as_os_str()).await?;
         Some(LanguageServerBinary {
-            path: pylsp,
+            path,
             env: None,
             arguments: vec!["--stdio".into()],
         })
