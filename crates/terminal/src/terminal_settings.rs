@@ -250,7 +250,6 @@ impl settings::Settings for TerminalSettings {
                 }
             }
         }
-        // todo!() test that this works.
         if content.terminal.is_none() && default != TerminalSettingsContent::default() {
             content.terminal = Some(default)
         }

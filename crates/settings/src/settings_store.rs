@@ -1203,7 +1203,6 @@ mod tests {
             TitleBarVisibility::Never
         );
 
-        // todo!()
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),

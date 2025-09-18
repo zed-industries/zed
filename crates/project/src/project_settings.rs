@@ -47,7 +47,10 @@ pub struct ProjectSettings {
     /// To override settings for a language, add an entry for that language server's
     /// name to the lsp value.
     /// Default: null
-    // todo! should these hash map types be Map<key, SettingsContent> or Map<Key, Settings>
+    // todo(settings-follow-up)
+    // We should change to use a non content type (settings::LspSettings is a content type)
+    // Note: Will either require merging with defaults, which also requires deciding where the defaults come from,
+    //       or case by case deciding which fields are optional and which are actually required.
     pub lsp: HashMap<LanguageServerName, settings::LspSettings>,
 
     /// Common language server settings.
