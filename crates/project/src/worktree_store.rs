@@ -318,8 +318,9 @@ impl WorktreeStore {
                     .root_entry()
                     .is_some_and(|e| e.id == entry_id);
                 let abs_new_path = if is_root_entry {
-                    let Some(root_parent_path) = new_worktree_ref.abs_path().parent() else {
-                        return Task::ready(Err(anyhow!("no parent for path {:?}", self.abs_path)));
+                    let abs_path = new_worktree_ref.abs_path();
+                    let Some(root_parent_path) = abs_path.parent() else {
+                        return Task::ready(Err(anyhow!("no parent for path {:?}", abs_path)));
                     };
                     root_parent_path.join(new_project_path.path.as_std_path())
                 } else {

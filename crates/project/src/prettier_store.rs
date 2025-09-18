@@ -23,7 +23,7 @@ use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
 use smol::stream::StreamExt;
-use util::{ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt, rel_path::RelPath};
 
 use crate::{
     File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
@@ -442,7 +442,7 @@ impl PrettierStore {
     pub fn update_prettier_settings(
         &self,
         worktree: &Entity<Worktree>,
-        changes: &[(Arc<Path>, ProjectEntryId, PathChange)],
+        changes: &[(Arc<RelPath>, ProjectEntryId, PathChange)],
         cx: &mut Context<Self>,
     ) {
         let prettier_config_files = Prettier::CONFIG_FILE_NAMES

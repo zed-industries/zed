@@ -33,7 +33,6 @@ use crate::{
     },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
-    resolve_path,
     toolchain_store::{LocalToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
@@ -116,7 +115,9 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
-    paths::SanitizedPath, post_inc, rel_path::RelPath,
+    paths::{PathStyle, SanitizedPath},
+    post_inc,
+    rel_path::RelPath,
 };
 
 pub use fs::*;
@@ -3587,6 +3588,15 @@ pub enum SymbolLocation {
         abs_path: Arc<Path>,
         signature: [u8; 32],
     },
+}
+
+impl SymbolLocation {
+    fn file_name(&self) -> Option<&RelPath> {
+        match self {
+            Self::InProject(path) => RelPath::new(path.path.file_name()?),
+            Self::OutsideProject { abs_path, .. } => RelPath::new(abs_path.file_name()?.to_str()?),
+        }
+    }
 }
 
 impl LspStore {
@@ -7834,18 +7844,21 @@ impl LspStore {
                 )));
             };
 
-            let worktree_abs_path = if let Some(worktree_abs_path) = self
-                .worktree_store
-                .read(cx)
-                .worktree_for_id(symbol.path.worktree_id, cx)
-                .map(|worktree| worktree.read(cx).abs_path())
-            {
-                worktree_abs_path
-            } else {
-                return Task::ready(Err(anyhow!("worktree not found for symbol")));
+            let symbol_abs_path = match &symbol.path {
+                SymbolLocation::InProject(project_path) => self
+                    .worktree_store
+                    .read(cx)
+                    .absolutize(&project_path, cx)
+                    .context("no such worktree"),
+                SymbolLocation::OutsideProject {
+                    abs_path,
+                    signature: _,
+                } => Ok(abs_path.to_path_buf()),
             };
-
-            let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
+            let symbol_abs_path = match symbol_abs_path {
+                Ok(abs_path) => abs_path,
+                Err(err) => return Task::ready(Err(err)),
+            };
             let symbol_uri = if let Ok(uri) = lsp::Uri::from_file_path(symbol_abs_path) {
                 uri
             } else {
@@ -7898,8 +7911,7 @@ impl LspStore {
                         worktree_store.find_worktree(&worktree_root_target, cx)
                     })
                 })? {
-                let relative_path =
-                    known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
+                let relative_path = known_relative_path.unwrap_or_else(|| result.1.clone());
                 (result.0, relative_path)
             } else {
                 let worktree = lsp_store
@@ -7926,7 +7938,11 @@ impl LspStore {
                 let relative_path = if let Some(known_path) = known_relative_path {
                     known_path
                 } else {
-                    abs_path.strip_prefix(worktree_root)?.into()
+                    RelPath::from_std_path(
+                        abs_path.strip_prefix(worktree_root)?,
+                        PathStyle::current(),
+                    )
+                    .context("failed to create relative path")?
                 };
                 (worktree, relative_path)
             };
@@ -9461,7 +9477,7 @@ impl LspStore {
     ) -> Result<proto::OpenBufferForSymbolResponse> {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
         let symbol = envelope.payload.symbol.context("invalid symbol")?;
-        let mut symbol = Self::deserialize_symbol(symbol)?;
+        let symbol = Self::deserialize_symbol(symbol)?;
         this.read_with(&cx, |this, _| {
             if let SymbolLocation::OutsideProject {
                 abs_path,
@@ -9469,7 +9485,7 @@ impl LspStore {
             } = &symbol.path
             {
                 let new_signature = this.symbol_signature(&abs_path);
-                anyhow::ensure!(new_signature == signature, "invalid symbol signature");
+                anyhow::ensure!(&new_signature == signature, "invalid symbol signature");
             }
             Ok(())
         })?;
@@ -10851,7 +10867,7 @@ impl LspStore {
         language_server_ids.sort();
         language_server_ids.dedup();
 
-        let abs_path = worktree_handle.read(cx).abs_path();
+        // let abs_path = worktree_handle.read(cx).abs_path();
         for server_id in &language_server_ids {
             if let Some(LanguageServerState::Running { server, .. }) =
                 local.language_servers.get(server_id)
@@ -10864,7 +10880,7 @@ impl LspStore {
                     changes: changes
                         .iter()
                         .filter_map(|(path, _, change)| {
-                            if !watched_paths.is_match(path) {
+                            if !watched_paths.is_match(path.as_std_path()) {
                                 return None;
                             }
                             let typ = match change {
@@ -10874,10 +10890,11 @@ impl LspStore {
                                 PathChange::Updated => lsp::FileChangeType::CHANGED,
                                 PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                             };
-                            Some(lsp::FileEvent {
-                                uri: lsp::Uri::from_file_path(abs_path.join(path)).unwrap(),
-                                typ,
-                            })
+                            let uri = lsp::Uri::from_file_path(
+                                worktree_handle.read(cx).absolutize(&path),
+                            )
+                            .ok()?;
+                            Some(lsp::FileEvent { uri, typ })
                         })
                         .collect(),
                 };
@@ -10889,7 +10906,7 @@ impl LspStore {
             }
         }
         for (path, _, _) in changes {
-            if let Some(file_name) = path.file_name().and_then(|file_name| file_name.to_str())
+            if let Some(file_name) = path.file_name()
                 && local.watched_manifest_filenames.contains(file_name)
             {
                 self.request_workspace_config_refresh();
@@ -10956,7 +10973,7 @@ impl LspStore {
             })
         } else {
             SymbolLocation::OutsideProject {
-                abs_path: PathBuf::from_proto(serialized_symbol.path),
+                abs_path: <Arc<Path>>::from_proto(serialized_symbol.path),
                 signature: serialized_symbol
                     .signature
                     .try_into()
@@ -12709,7 +12726,7 @@ pub fn language_server_settings<'a>(
     language_server_settings_for(
         SettingsLocation {
             worktree_id: delegate.worktree_id(),
-            path: delegate.worktree_root_path(),
+            path: RelPath::empty(),
         },
         language,
         cx,
@@ -12899,16 +12916,12 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         Some(dir)
     }
 
-    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+    async fn read_text_file(&self, path: &RelPath) -> Result<String> {
         let entry = self
             .worktree
-            .entry_for_path(&path)
+            .entry_for_path(path)
             .with_context(|| format!("no worktree entry for path {path:?}"))?;
-        let abs_path = self
-            .worktree
-            .absolutize(&entry.path)
-            .with_context(|| format!("cannot absolutize path {path:?}"))?;
-
+        let abs_path = self.worktree.absolutize(&entry.path);
         self.fs.load(&abs_path).await
     }
 }
@@ -12922,14 +12935,17 @@ async fn populate_labels_for_symbols(
     #[allow(clippy::mutable_key_type)]
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
-    let mut unknown_paths = BTreeSet::new();
+    let mut unknown_paths = BTreeSet::<Arc<RelPath>>::new();
     for symbol in symbols {
+        let Some(file_name) = symbol.path.file_name() else {
+            continue;
+        };
         let language = language_registry
-            .language_for_file_path(&symbol.path.path)
+            .language_for_file_path(file_name)
             .await
             .ok()
             .or_else(|| {
-                unknown_paths.insert(symbol.path.path.clone());
+                unknown_paths.insert(file_name.into());
                 None
             });
         symbols_by_language
@@ -12939,10 +12955,7 @@ async fn populate_labels_for_symbols(
     }
 
     for unknown_path in unknown_paths {
-        log::info!(
-            "no language found for symbol path {}",
-            unknown_path.display()
-        );
+        log::info!("no language found for symbol in file {unknown_path:?}");
     }
 
     let mut label_params = Vec::new();
@@ -12985,7 +12998,6 @@ async fn populate_labels_for_symbols(
                 name,
                 kind: symbol.kind,
                 range: symbol.range,
-                signature: symbol.signature,
             });
         }
     }

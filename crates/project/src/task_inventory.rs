@@ -25,9 +25,7 @@ use task::{
     VariableName,
 };
 use text::{BufferId, Point, ToPoint};
-use util::{
-    NumericPrefixWithSuffix, ResultExt as _, paths::PathExt as _, post_inc, rel_path::RelPath,
-};
+use util::{NumericPrefixWithSuffix, ResultExt as _, paths::PathExt, post_inc, rel_path::RelPath};
 use worktree::WorktreeId;
 
 use crate::{task_store::TaskSettingsLocation, worktree_store::WorktreeStore};
@@ -97,7 +95,7 @@ impl<T: InventoryContents> InventoryFor<T> {
                 (
                     TaskSourceKind::Worktree {
                         id: worktree,
-                        directory_in_worktree: directory.to_path_buf(),
+                        directory_in_worktree: directory.clone(),
                         id_base: Cow::Owned(format!(
                             "local worktree {} from directory {directory:?}",
                             T::LABEL
@@ -140,7 +138,7 @@ pub enum TaskSourceKind {
     /// Tasks from the worktree's .zed/task.json
     Worktree {
         id: WorktreeId,
-        directory_in_worktree: PathBuf,
+        directory_in_worktree: Arc<RelPath>,
         id_base: Cow<'static, str>,
     },
     /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
@@ -230,7 +228,10 @@ impl TaskSourceKind {
                 id_base,
                 directory_in_worktree,
             } => {
-                format!("{id_base}_{id}_{}", directory_in_worktree.display())
+                format!(
+                    "{id_base}_{id}_{}",
+                    directory_in_worktree.to_sanitized_string()
+                )
             }
             Self::Language { name } => format!("language_{name}"),
             Self::Lsp {

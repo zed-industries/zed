@@ -8,7 +8,6 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::Path,
     sync::{Arc, Weak},
 };
 
@@ -339,7 +338,7 @@ impl LanguageServerTree {
             .entry(worktree_id)
             .or_default()
             .roots
-            .entry(Arc::from(Path::new("")))
+            .entry(RelPath::empty().into())
             .or_default()
             .entry(node.disposition.server_name.clone())
             .or_insert_with(|| (node, BTreeSet::new()))

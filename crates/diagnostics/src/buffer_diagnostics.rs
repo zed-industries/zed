@@ -784,14 +784,14 @@ impl Item for BufferDiagnosticsEditor {
 
     // Builds the content to be displayed in the tab.
     fn tab_content(&self, params: TabContentParams, _window: &Window, _cx: &App) -> AnyElement {
+        let path_style = self.project.read(cx).path_style();
         let error_count = self.summary.error_count;
         let warning_count = self.summary.warning_count;
         let label = Label::new(
             self.project_path
                 .path
                 .file_name()
-                .map(|f| f.to_sanitized_string())
-                .unwrap_or_else(|| self.project_path.path.to_sanitized_string()),
+                .unwrap_or_else(|| self.project_path.path.display(path_style)),
         );
 
         h_flex()

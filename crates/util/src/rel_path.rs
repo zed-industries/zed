@@ -250,17 +250,18 @@ impl RelPath {
     }
 
     pub fn from_proto(path: &str) -> Option<Arc<Self>> {
-        let this = Self::new(path);
-        debug_assert!(
-            this.is_some(),
-            "invalid relative path from proto: {:?}",
-            path
-        );
-        Some(Arc::from(this?))
+        Some(Arc::from(Self::new(path)?))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn display(&self, style: PathStyle) -> Cow<'_, str> {
+        match style {
+            PathStyle::Posix => Cow::Borrowed(&self.0),
+            PathStyle::Windows => Cow::Owned(self.0.replace('/', "\\")),
+        }
     }
 
     pub fn as_bytes(&self) -> &[u8] {

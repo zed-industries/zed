@@ -1586,19 +1586,6 @@ impl Project {
         let agent_server_store = cx.new(|cx| AgentServerStore::collab(cx))?;
         let replica_id = response.payload.replica_id as ReplicaId;
 
-        let mut worktrees = Vec::new();
-        for worktree in response.payload.worktrees {
-            let worktree = Worktree::remote(
-                remote_id,
-                replica_id,
-                worktree,
-                client.clone(),
-                path_style,
-                cx,
-            );
-            worktrees.push(worktree);
-        }
-
         let project = cx.new(|cx| {
             let snippets = SnippetProvider::new(fs.clone(), BTreeSet::from_iter([]), cx);
 
