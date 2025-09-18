@@ -102,7 +102,7 @@ pub struct ClientSettings {
 }
 
 impl Settings for ClientSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         if let Some(server_url) = &*ZED_SERVER_URL {
             return Self {
                 server_url: server_url.clone(),
@@ -151,7 +151,7 @@ impl ProxySettings {
 }
 
 impl Settings for ProxySettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
             proxy: content.proxy.clone(),
         }
@@ -543,7 +543,7 @@ pub struct TelemetrySettings {
 }
 
 impl settings::Settings for TelemetrySettings {
-    fn from_defaults(content: &SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
         Self {
             diagnostics: content.telemetry.as_ref().unwrap().diagnostics.unwrap(),
             metrics: content.telemetry.as_ref().unwrap().metrics.unwrap(),

@@ -37,7 +37,7 @@ pub struct AllLanguageModelSettings {
 impl settings::Settings for AllLanguageModelSettings {
     const PRESERVED_KEYS: Option<&'static [&'static str]> = Some(&["version"]);
 
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let language_models = content.language_models.clone().unwrap();
         let anthropic = language_models.anthropic.unwrap();
         let bedrock = language_models.bedrock.unwrap();

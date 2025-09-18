@@ -574,7 +574,7 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
 }
 
 impl settings::Settings for AllLanguageSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let all_languages = &content.project.all_languages;
         let defaults = all_languages.defaults.clone();
         let inlay_hints = defaults.inlay_hints.unwrap();

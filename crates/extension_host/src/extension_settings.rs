@@ -33,7 +33,7 @@ impl ExtensionSettings {
 }
 
 impl Settings for ExtensionSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
             auto_install_extensions: content.extension.auto_install_extensions.clone(),
             auto_update_extensions: content.extension.auto_update_extensions.clone(),

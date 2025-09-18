@@ -16,7 +16,7 @@ pub fn init(cx: &mut App) {
 pub struct VimModeSetting(pub bool);
 
 impl Settings for VimModeSetting {
-    fn from_defaults(content: &SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
         Self(content.vim_mode.unwrap())
     }
 
@@ -34,7 +34,7 @@ impl Settings for VimModeSetting {
 pub struct HelixModeSetting(pub bool);
 
 impl Settings for HelixModeSetting {
-    fn from_defaults(content: &SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
         Self(content.helix_mode.unwrap())
     }
 

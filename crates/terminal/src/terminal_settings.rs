@@ -73,7 +73,7 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
 }
 
 impl settings::Settings for TerminalSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let content = content.terminal.clone().unwrap();
         TerminalSettings {
             shell: settings_shell_to_task_shell(content.shell.unwrap()),

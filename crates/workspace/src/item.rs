@@ -65,7 +65,7 @@ pub struct PreviewTabsSettings {
 }
 
 impl Settings for ItemSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let tabs = content.tabs.as_ref().unwrap();
         Self {
             git_status: tabs.git_status.unwrap(),
@@ -125,7 +125,7 @@ impl Settings for ItemSettings {
 }
 
 impl Settings for PreviewTabsSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let preview_tabs = content.preview_tabs.as_ref().unwrap();
         Self {
             enabled: preview_tabs.enabled.unwrap(),

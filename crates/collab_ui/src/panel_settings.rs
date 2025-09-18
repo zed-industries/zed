@@ -19,7 +19,7 @@ pub struct NotificationPanelSettings {
 }
 
 impl Settings for CollaborationPanelSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
         let panel = content.collaboration_panel.as_ref().unwrap();
 
         Self {
@@ -46,7 +46,7 @@ impl Settings for CollaborationPanelSettings {
 }
 
 impl Settings for NotificationPanelSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
         let panel = content.notification_panel.as_ref().unwrap();
         return Self {
             button: panel.button.unwrap(),

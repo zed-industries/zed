@@ -56,7 +56,7 @@ impl ScrollbarVisibility for ProjectPanelSettings {
 }
 
 impl Settings for ProjectPanelSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
         let project_panel = content.project_panel.clone().unwrap();
         Self {
             button: project_panel.button.unwrap(),

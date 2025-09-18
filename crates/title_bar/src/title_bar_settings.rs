@@ -16,7 +16,7 @@ pub struct TitleBarSettings {
 }
 
 impl Settings for TitleBarSettings {
-    fn from_defaults(s: &SettingsContent, _: &mut App) -> Self {
+    fn from_settings(s: &SettingsContent, _: &mut App) -> Self {
         let content = s.title_bar.clone().unwrap();
         TitleBarSettings {
             show: content.show.unwrap(),

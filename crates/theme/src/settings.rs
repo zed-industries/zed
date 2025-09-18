@@ -807,7 +807,7 @@ pub fn font_fallbacks_from_settings(
 }
 
 impl settings::Settings for ThemeSettings {
-    fn from_defaults(content: &settings::SettingsContent, cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, cx: &mut App) -> Self {
         let content = &content.theme;
         // todo(settings_refactor). This should *not* require cx...
         let themes = ThemeRegistry::default_global(cx);

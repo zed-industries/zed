@@ -42,7 +42,7 @@ impl ScrollbarVisibility for OutlinePanelSettings {
 }
 
 impl Settings for OutlinePanelSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let panel = content.outline_panel.as_ref().unwrap();
         Self {
             button: panel.button.unwrap(),

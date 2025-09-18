@@ -35,7 +35,7 @@ pub struct DebuggerSettings {
 }
 
 impl Settings for DebuggerSettings {
-    fn from_defaults(content: &SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
         let content = content.debugger.clone().unwrap();
         Self {
             stepping_granularity: dap_granularity_from_settings(

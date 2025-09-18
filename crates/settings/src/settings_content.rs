@@ -25,6 +25,7 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use std::collections::BTreeSet;
 use std::env;
+use std::rc::Rc;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
@@ -37,7 +38,7 @@ pub struct SettingsContent {
     pub project: ProjectSettingsContent,
 
     #[serde(flatten)]
-    pub theme: Box<ThemeSettingsContent>,
+    pub theme: Rc<ThemeSettingsContent>,
 
     #[serde(flatten)]
     pub extension: ExtensionSettingsContent,

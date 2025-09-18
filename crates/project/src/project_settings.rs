@@ -444,7 +444,7 @@ pub struct LspPullDiagnosticsSettings {
 }
 
 impl Settings for ProjectSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let project = &content.project.clone();
         let diagnostics = content.diagnostics.as_ref().unwrap();
         let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();

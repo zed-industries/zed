@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 /// Trait for recursively merging settings structures.
 ///
 /// This trait allows settings objects to be merged from optional sources,
@@ -145,5 +147,14 @@ impl MergeFrom for serde_json::Value {
             }
             (this, other) => *this = other.clone(),
         }
+    }
+}
+
+impl<T: MergeFrom + Clone> MergeFrom for Rc<T> {
+    fn merge_from(&mut self, other: Option<&Self>) {
+        let Some(other) = other else { return };
+        let mut this: T = self.as_ref().clone();
+        this.merge_from(Some(other.as_ref()));
+        *self = Rc::new(this)
     }
 }

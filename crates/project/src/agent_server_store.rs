@@ -1063,7 +1063,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
 }
 
 impl settings::Settings for AllAgentServersSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let agent_settings = content.agent_servers.clone().unwrap();
         Self {
             gemini: agent_settings.gemini.map(Into::into),

@@ -13,7 +13,7 @@ pub struct ImageViewerSettings {
 }
 
 impl Settings for ImageViewerSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
             unit: content.image_viewer.clone().unwrap().unit.unwrap(),
         }

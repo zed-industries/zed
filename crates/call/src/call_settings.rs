@@ -9,7 +9,7 @@ pub struct CallSettings {
 }
 
 impl Settings for CallSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let call = content.calls.clone().unwrap();
         CallSettings {
             mute_on_join: call.mute_on_join.unwrap(),

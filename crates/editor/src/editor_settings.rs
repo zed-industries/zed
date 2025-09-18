@@ -190,7 +190,7 @@ impl ScrollbarVisibility for EditorSettings {
 }
 
 impl Settings for EditorSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let editor = content.editor.clone();
         let scrollbar = editor.scrollbar.unwrap();
         let minimap = editor.minimap.unwrap();

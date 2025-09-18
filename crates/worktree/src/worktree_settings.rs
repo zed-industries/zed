@@ -31,7 +31,7 @@ impl WorktreeSettings {
 }
 
 impl Settings for WorktreeSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let worktree = content.project.worktree.clone();
         let file_scan_exclusions = worktree.file_scan_exclusions.unwrap();
         let file_scan_inclusions = worktree.file_scan_inclusions.unwrap();

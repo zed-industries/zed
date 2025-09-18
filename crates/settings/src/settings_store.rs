@@ -18,6 +18,7 @@ use std::{
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
     str::{self, FromStr},
     sync::Arc,
 };
@@ -27,7 +28,9 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, ParameterizedJsonSchema, SettingsJsonSchemaParams, SettingsUiEntry,
-    VsCodeSettings, WorktreeId, parse_json_with_comments, replace_value_in_json_text,
+    VsCodeSettings, WorktreeId,
+    merge_from::MergeFrom,
+    parse_json_with_comments, replace_value_in_json_text,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, ServerSettingsContent, SettingsContent,
         UserSettingsContent,
@@ -58,15 +61,10 @@ pub trait Settings: 'static + Send + Sync + Sized {
     const PRESERVED_KEYS: Option<&'static [&'static str]> = None;
 
     /// Read the value from default.json.
+    ///
     /// This function *should* panic if default values are missing,
     /// and you should add a default to default.json for documentation.
-    fn from_defaults(content: &SettingsContent, cx: &mut App) -> Self;
-
-    /// Update the value based on the content from the current file.
-    ///
-    /// This function *should not* panic if there are problems, as the
-    /// content of user-provided settings files may be incomplete or invalid.
-    fn refine(&mut self, content: &SettingsContent, cx: &mut App);
+    fn from_settings(content: &SettingsContent, cx: &mut App) -> Self;
 
     fn missing_default() -> anyhow::Error {
         anyhow::anyhow!("missing default for: {}", std::any::type_name::<Self>())
@@ -140,12 +138,15 @@ pub struct SettingsLocation<'a> {
 /// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
-    default_settings: Box<SettingsContent>,
+    default_settings: Rc<SettingsContent>,
     user_settings: Option<UserSettingsContent>,
     global_settings: Option<Box<SettingsContent>>,
 
     extension_settings: Option<Box<SettingsContent>>,
     server_settings: Option<Box<SettingsContent>>,
+
+    merged_settings: Rc<SettingsContent>,
+
     local_settings: BTreeMap<(WorktreeId, Arc<Path>), SettingsContent>,
     raw_editorconfig_settings: BTreeMap<(WorktreeId, Arc<Path>), (String, Option<Editorconfig>)>,
 
@@ -193,8 +194,7 @@ struct SettingValue<T> {
 trait AnySettingValue: 'static + Send + Sync {
     fn setting_type_name(&self) -> &'static str;
 
-    fn from_default(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any>;
-    fn refine(&self, value: &mut dyn Any, s: &[&SettingsContent], cx: &mut App);
+    fn from_settings(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any>;
 
     fn value_for_path(&self, path: Option<SettingsLocation>) -> &dyn Any;
     fn all_local_values(&self) -> Vec<(WorktreeId, Arc<Path>, &dyn Any)>;
@@ -210,14 +210,17 @@ trait AnySettingValue: 'static + Send + Sync {
 impl SettingsStore {
     pub fn new(cx: &App, default_settings: &str) -> Self {
         let (setting_file_updates_tx, mut setting_file_updates_rx) = mpsc::unbounded();
-        let default_settings = parse_json_with_comments(default_settings).unwrap();
+        let default_settings: Rc<SettingsContent> =
+            parse_json_with_comments(default_settings).unwrap();
         Self {
             setting_values: Default::default(),
-            default_settings,
+            default_settings: default_settings.clone(),
             global_settings: None,
             server_settings: None,
             user_settings: None,
             extension_settings: None,
+
+            merged_settings: default_settings,
             local_settings: BTreeMap::default(),
             raw_editorconfig_settings: BTreeMap::default(),
             setting_file_updates_tx,
@@ -257,38 +260,7 @@ impl SettingsStore {
             global_value: None,
             local_values: Vec::new(),
         }));
-
-        let mut refinements = Vec::default();
-
-        if let Some(extension_settings) = self.extension_settings.as_deref() {
-            refinements.push(extension_settings)
-        }
-
-        if let Some(global_settings) = self.global_settings.as_deref() {
-            refinements.push(global_settings)
-        }
-
-        if let Some(user_settings) = self.user_settings.as_ref() {
-            refinements.push(&user_settings.content);
-            if let Some(release_channel) = user_settings.for_release_channel() {
-                refinements.push(release_channel)
-            }
-            if let Some(os) = user_settings.for_os() {
-                refinements.push(os)
-            }
-            if let Some(profile) = user_settings.for_profile(cx) {
-                refinements.push(profile)
-            }
-        }
-
-        if let Some(server_settings) = self.server_settings.as_ref() {
-            refinements.push(server_settings)
-        }
-        let mut value = T::from_defaults(&self.default_settings, cx);
-        for refinement in refinements {
-            value.refine(refinement, cx)
-        }
-
+        let value = T::from_settings(&self.merged_settings, cx);
         setting_value.set_global_value(Box::new(value));
     }
 
@@ -852,74 +824,70 @@ impl SettingsStore {
         cx: &mut App,
     ) -> std::result::Result<(), InvalidSettingsError> {
         // Reload the global and local values for every setting.
-        let mut project_settings_stack = Vec::<&SettingsContent>::new();
+        let mut project_settings_stack = Vec::<SettingsContent>::new();
         let mut paths_stack = Vec::<Option<(WorktreeId, &Path)>>::new();
 
-        let mut refinements = Vec::default();
+        dbg!(self.default_settings.auto_update);
 
-        if let Some(extension_settings) = self.extension_settings.as_deref() {
-            refinements.push(extension_settings)
-        }
-
-        if let Some(global_settings) = self.global_settings.as_deref() {
-            refinements.push(global_settings)
-        }
-
-        if let Some(user_settings) = self.user_settings.as_ref() {
-            refinements.push(&user_settings.content);
-            if let Some(release_channel) = user_settings.for_release_channel() {
-                refinements.push(release_channel)
+        if changed_local_path.is_none() {
+            let mut merged = self.default_settings.as_ref().clone();
+            dbg!(merged.auto_update);
+            merged.merge_from(self.extension_settings.as_deref());
+            merged.merge_from(self.global_settings.as_deref());
+            if let Some(user_settings) = self.user_settings.as_ref() {
+                merged.merge_from(Some(&user_settings.content));
+                merged.merge_from(user_settings.for_release_channel());
+                merged.merge_from(user_settings.for_os());
+                merged.merge_from(user_settings.for_profile(cx));
             }
-            if let Some(os) = user_settings.for_os() {
-                refinements.push(os)
-            }
-            if let Some(profile) = user_settings.for_profile(cx) {
-                refinements.push(profile)
-            }
-        }
+            merged.merge_from(self.server_settings.as_deref());
+            dbg!(merged.auto_update);
+            self.merged_settings = Rc::new(merged);
 
-        if let Some(server_settings) = self.server_settings.as_ref() {
-            refinements.push(server_settings)
-        }
-
-        for setting_value in self.setting_values.values_mut() {
-            // If the global settings file changed, reload the global value for the field.
-            if changed_local_path.is_none() {
-                let mut value = setting_value.from_default(&self.default_settings, cx);
-                setting_value.refine(value.as_mut(), &refinements, cx);
+            for setting_value in self.setting_values.values_mut() {
+                let value = setting_value.from_settings(&self.merged_settings, cx);
                 setting_value.set_global_value(value);
             }
+        }
 
-            // Reload the local values for the setting.
-            paths_stack.clear();
-            project_settings_stack.clear();
-            for ((root_id, directory_path), local_settings) in &self.local_settings {
-                // Build a stack of all of the local values for that setting.
-                while let Some(prev_entry) = paths_stack.last() {
-                    if let Some((prev_root_id, prev_path)) = prev_entry
-                        && (root_id != prev_root_id || !directory_path.starts_with(prev_path))
-                    {
-                        paths_stack.pop();
-                        project_settings_stack.pop();
-                        continue;
-                    }
-                    break;
-                }
-
-                paths_stack.push(Some((*root_id, directory_path.as_ref())));
-                project_settings_stack.push(local_settings);
-
-                // If a local settings file changed, then avoid recomputing local
-                // settings for any path outside of that directory.
-                if changed_local_path.is_some_and(|(changed_root_id, changed_local_path)| {
-                    *root_id != changed_root_id || !directory_path.starts_with(changed_local_path)
-                }) {
+        for ((root_id, directory_path), local_settings) in &self.local_settings {
+            // Build a stack of all of the local values for that setting.
+            while let Some(prev_entry) = paths_stack.last() {
+                if let Some((prev_root_id, prev_path)) = prev_entry
+                    && (root_id != prev_root_id || !directory_path.starts_with(prev_path))
+                {
+                    paths_stack.pop();
+                    project_settings_stack.pop();
                     continue;
                 }
+                break;
+            }
 
-                let mut value = setting_value.from_default(&self.default_settings, cx);
-                setting_value.refine(value.as_mut(), &refinements, cx);
-                setting_value.refine(value.as_mut(), &project_settings_stack, cx);
+            paths_stack.push(Some((*root_id, directory_path.as_ref())));
+            let mut merged_local_settings = if let Some(deepest) = project_settings_stack.last() {
+                dbg!(deepest.auto_update);
+                (*deepest).clone()
+            } else {
+                dbg!(self.merged_settings.auto_update);
+                self.merged_settings.as_ref().clone()
+            };
+            dbg!(merged_local_settings.auto_update);
+            merged_local_settings.merge_from(Some(local_settings));
+            dbg!(merged_local_settings.auto_update);
+
+            project_settings_stack.push(merged_local_settings);
+
+            // If a local settings file changed, then avoid recomputing local
+            // settings for any path outside of that directory.
+            if changed_local_path.is_some_and(|(changed_root_id, changed_local_path)| {
+                *root_id != changed_root_id || !directory_path.starts_with(changed_local_path)
+            }) {
+                continue;
+            }
+
+            for setting_value in self.setting_values.values_mut() {
+                let value =
+                    setting_value.from_settings(&project_settings_stack.last().unwrap(), cx);
                 setting_value.set_local_value(*root_id, directory_path.clone(), value);
             }
         }
@@ -1001,15 +969,8 @@ impl Debug for SettingsStore {
 }
 
 impl<T: Settings> AnySettingValue for SettingValue<T> {
-    fn from_default(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any> {
-        Box::new(T::from_defaults(s, cx)) as _
-    }
-
-    fn refine(&self, value: &mut dyn Any, refinements: &[&SettingsContent], cx: &mut App) {
-        let value = value.downcast_mut::<T>().unwrap();
-        for refinement in refinements {
-            value.refine(refinement, cx)
-        }
+    fn from_settings(&self, s: &SettingsContent, cx: &mut App) -> Box<dyn Any> {
+        Box::new(T::from_settings(s, cx)) as _
     }
 
     fn setting_type_name(&self) -> &'static str {
@@ -1072,7 +1033,6 @@ mod tests {
 
     use super::*;
     use unindent::Unindent;
-    use util::MergeFrom;
 
     #[derive(Debug, PartialEq)]
     struct AutoUpdateSetting {
@@ -1080,19 +1040,11 @@ mod tests {
     }
 
     impl Settings for AutoUpdateSetting {
-        fn from_defaults(content: &SettingsContent, _: &mut App) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             AutoUpdateSetting {
                 auto_update: content.auto_update.unwrap(),
             }
         }
-
-        fn refine(&mut self, content: &SettingsContent, _: &mut App) {
-            if let Some(auto_update) = content.auto_update {
-                self.auto_update = auto_update;
-            }
-        }
-
-        fn import_from_vscode(_: &VsCodeSettings, _: &mut SettingsContent) {}
     }
 
     #[derive(Debug, PartialEq)]
@@ -1102,19 +1054,12 @@ mod tests {
     }
 
     impl Settings for TitleBarSettings {
-        fn from_defaults(content: &SettingsContent, _: &mut App) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             let content = content.title_bar.clone().unwrap();
             TitleBarSettings {
                 show: content.show.unwrap(),
                 show_branch_name: content.show_branch_name.unwrap(),
             }
-        }
-
-        fn refine(&mut self, content: &SettingsContent, _: &mut App) {
-            let Some(content) = content.title_bar.as_ref() else {
-                return;
-            };
-            self.show.merge_from(&content.show)
         }
 
         fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
@@ -1138,19 +1083,12 @@ mod tests {
     }
 
     impl Settings for DefaultLanguageSettings {
-        fn from_defaults(content: &SettingsContent, _: &mut App) -> Self {
+        fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             let content = &content.project.all_languages.defaults;
             DefaultLanguageSettings {
                 tab_size: content.tab_size.unwrap(),
                 preferred_line_length: content.preferred_line_length.unwrap(),
             }
-        }
-
-        fn refine(&mut self, content: &SettingsContent, _: &mut App) {
-            let content = &content.project.all_languages.defaults;
-            self.tab_size.merge_from(&content.tab_size);
-            self.preferred_line_length
-                .merge_from(&content.preferred_line_length);
         }
 
         fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {

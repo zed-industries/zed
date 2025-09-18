@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 
 use crate::{
     self as settings,
-    settings_content::{self, BaseKeymapContent, SettingsContent},
+    settings_content::{BaseKeymapContent, SettingsContent},
 };
 use gpui::App;
 use schemars::JsonSchema;
@@ -155,14 +155,8 @@ pub struct BaseKeymapSetting {
 }
 
 impl Settings for BaseKeymap {
-    fn from_defaults(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Self {
         s.base_keymap.unwrap().into()
-    }
-
-    fn refine(&mut self, s: &settings_content::SettingsContent, _cx: &mut App) {
-        if let Some(base_keymap) = s.base_keymap {
-            *self = base_keymap.into();
-        };
     }
 
     fn import_from_vscode(_vscode: &VsCodeSettings, current: &mut SettingsContent) {

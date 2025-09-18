@@ -63,7 +63,7 @@ pub struct TabBarSettings {
 }
 
 impl Settings for WorkspaceSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let workspace = &content.workspace;
         Self {
             active_pane_modifiers: ActivePanelModifiers {
@@ -257,7 +257,7 @@ impl Settings for WorkspaceSettings {
 }
 
 impl Settings for TabBarSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let tab_bar = content.tab_bar.clone().unwrap();
         TabBarSettings {
             show: tab_bar.show.unwrap(),

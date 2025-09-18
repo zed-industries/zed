@@ -104,7 +104,7 @@ impl From<WslConnection> for Connection {
 }
 
 impl Settings for SshSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let remote = &content.remote;
         Self {
             ssh_connections: remote.ssh_connections.clone().unwrap_or_default(),

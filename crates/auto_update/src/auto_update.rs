@@ -119,7 +119,7 @@ struct AutoUpdateSetting(bool);
 ///
 /// Default: true
 impl Settings for AutoUpdateSetting {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         debug_assert_eq!(content.auto_update.unwrap(), true);
         Self(content.auto_update.unwrap())
     }

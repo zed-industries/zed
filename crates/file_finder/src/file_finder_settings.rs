@@ -12,7 +12,7 @@ pub struct FileFinderSettings {
 }
 
 impl Settings for FileFinderSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
         let file_finder = content.file_finder.as_ref().unwrap();
 
         Self {

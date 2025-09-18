@@ -34,7 +34,7 @@ pub struct JournalSettings {
 }
 
 impl settings::Settings for JournalSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let journal = content.journal.clone().unwrap();
 
         Self {

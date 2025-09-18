@@ -307,7 +307,7 @@ impl From<settings::LineIndicatorFormat> for LineIndicatorFormat {
 }
 
 impl Settings for LineIndicatorFormat {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         content.line_indicator_format.unwrap().into()
     }
 
