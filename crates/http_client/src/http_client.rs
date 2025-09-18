@@ -28,6 +28,17 @@ pub enum RedirectPolicy {
 pub struct FollowRedirects(pub bool);
 
 pub trait HttpRequestExt {
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        match option {
+            Some(value) => then(self, value),
+            None => self,
+        }
+    }
+
     /// Whether or not to follow redirects
     fn follow_redirects(self, follow: RedirectPolicy) -> Self;
 }
