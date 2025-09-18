@@ -1,3 +1,9 @@
+mod pass_store;
+
+pub use pass_store::{EncryptedPassword, PassStore};
+
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
 use std::{ffi::OsStr, time::Duration};
 
 use anyhow::{Context as _, Result};
@@ -17,16 +23,19 @@ pub enum AskPassResult {
 }
 
 pub struct AskPassDelegate {
-    tx: mpsc::UnboundedSender<(String, oneshot::Sender<String>)>,
+    tx: mpsc::UnboundedSender<(String, oneshot::Sender<EncryptedPassword>)>,
     _task: Task<()>,
 }
 
 impl AskPassDelegate {
     pub fn new(
         cx: &mut AsyncApp,
-        password_prompt: impl Fn(String, oneshot::Sender<String>, &mut AsyncApp) + Send + Sync + 'static,
+        password_prompt: impl Fn(String, oneshot::Sender<EncryptedPassword>, &mut AsyncApp)
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
-        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<String>)>();
+        let (tx, mut rx) = mpsc::unbounded::<(String, oneshot::Sender<_>)>();
         let task = cx.spawn(async move |cx: &mut AsyncApp| {
             while let Some((prompt, channel)) = rx.next().await {
                 password_prompt(prompt, channel, cx);
@@ -35,7 +44,7 @@ impl AskPassDelegate {
         Self { tx, _task: task }
     }
 
-    pub async fn ask_password(&mut self, prompt: String) -> Result<String> {
+    pub async fn ask_password(&mut self, prompt: String) -> Result<EncryptedPassword> {
         let (tx, rx) = oneshot::channel();
         self.tx.send((prompt, tx)).await?;
         Ok(rx.await?)
@@ -48,7 +57,7 @@ pub struct AskPassSession {
     #[cfg(target_os = "windows")]
     askpass_helper: String,
     #[cfg(target_os = "windows")]
-    secret: std::sync::Arc<parking_lot::Mutex<String>>,
+    secret: std::sync::Arc<OnceLock<EncryptedPassword>>,
     _askpass_task: Task<()>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
@@ -68,7 +77,7 @@ impl AskPassSession {
         use util::fs::make_file_executable;
 
         #[cfg(target_os = "windows")]
-        let secret = std::sync::Arc::new(parking_lot::Mutex::new(String::new()));
+        let secret = std::sync::Arc::new(OnceLock::new());
         let temp_dir = tempfile::Builder::new().prefix("zed-askpass").tempdir()?;
         let askpass_socket = temp_dir.path().join("askpass.sock");
         let askpass_script_path = temp_dir.path().join(ASKPASS_SCRIPT_NAME);
