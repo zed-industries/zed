@@ -52,12 +52,12 @@ pub(crate) static KEY_BINDING_VALIDATORS: LazyLock<BTreeMap<TypeId, Box<dyn KeyB
 
 /// Keymap configuration consisting of sections. Each section may have a context predicate which
 /// determines whether its bindings are used.
-#[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Default, Clone, JsonSchema, MergeFrom)]
 #[serde(transparent)]
 pub struct KeymapFile(Vec<KeymapSection>);
 
 /// Keymap section which binds keystrokes to actions.
-#[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
+#[derive(Debug, Deserialize, Default, Clone, JsonSchema, MergeFrom)]
 pub struct KeymapSection {
     /// Determines when these bindings are active. When just a name is provided, like `Editor` or
     /// `Workspace`, the bindings will be active in that context. Boolean expressions like `X && Y`,

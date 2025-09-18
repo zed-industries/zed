@@ -181,12 +181,12 @@ pub struct AgentProfileContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
 }
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum DefaultAgentView {
     #[default]
@@ -227,7 +227,7 @@ pub struct LanguageModelParameters {
     pub temperature: Option<f32>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, MergeFrom)]
 pub struct LanguageModelProviderSetting(pub String);
 
 impl JsonSchema for LanguageModelProviderSetting {

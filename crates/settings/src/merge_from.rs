@@ -11,86 +11,56 @@ pub trait MergeFrom {
     /// If `other` is `Some(value)`, fields from `value` are merged into `self`.
     fn merge_from(&mut self, other: Option<&Self>);
 }
-// Implementations for basic types that simply overwrite if Some value is provided
-impl MergeFrom for String {
+
+macro_rules! merge_from_overwrites {
+    ($($type:ty),+) => {
+        $(
+            impl MergeFrom for $type {
+                fn merge_from(&mut self, other: Option<&Self>) {
+                    if let Some(value) = other {
+                        *self = value.clone();
+                    }
+                }
+            }
+        )+
+    }
+}
+
+merge_from_overwrites!(
+    u16,
+    u32,
+    u64,
+    usize,
+    i16,
+    i32,
+    i64,
+    bool,
+    f64,
+    f32,
+    String,
+    Arc<str>,
+    SharedString,
+    gpui::Modifiers,
+);
+
+/// Merge for Vec takes all the settings from other
+impl<T: Clone> MergeFrom for Vec<T> {
     fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = value.clone();
+        if let Some(other) = other {
+            *self = other.clone()
         }
     }
 }
 
-impl MergeFrom for SharedString {
+pub type ExtendedVec<T>(pub Vec<T>);
+/// The default merge
+impl<T: Clone> MergeFrom for Vec<T> {
     fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = value.clone();
-        }
+        let Some(other) = other else {return};
+        self.extend(other.clone());
     }
 }
 
-impl MergeFrom for Arc<str> {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = value.clone();
-        }
-    }
-}
-
-impl MergeFrom for i32 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = *value;
-        }
-    }
-}
-
-impl MergeFrom for i64 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = *value;
-        }
-    }
-}
-
-impl MergeFrom for u32 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = *value;
-        }
-    }
-}
-
-impl MergeFrom for u64 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = *value;
-        }
-    }
-}
-
-impl MergeFrom for bool {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = *value;
-        }
-    }
-}
-
-impl MergeFrom for f64 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = *value;
-        }
-    }
-}
-
-impl MergeFrom for f32 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(value) = other {
-            *self = *value;
-        }
-    }
-}
 // Implementations for collections that extend/merge their contents
 impl<K, V> MergeFrom for collections::HashMap<K, V>
 where

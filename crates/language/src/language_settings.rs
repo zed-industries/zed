@@ -1008,6 +1008,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     settings
         .enable_language_server
         .merge_from(&src.enable_language_server);
+    // overwrite merge.
     settings
         .language_servers
         .merge_from(&src.language_servers.clone());

@@ -4,6 +4,7 @@ use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
+use settings_macros::MergeFrom;
 use std::sync::Arc;
 
 use serde_with::skip_serializing_none;
@@ -11,7 +12,7 @@ use serde_with::skip_serializing_none;
 /// Settings for rendering text in UI and text buffers.
 
 #[skip_serializing_none]
-#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]
@@ -134,7 +135,9 @@ pub enum IconThemeSelection {
 /// `Light` and `Dark` will select their respective themes.
 ///
 /// `System` will select the theme based on the system's appearance.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
     /// Use the specified `light` theme.
@@ -958,7 +961,7 @@ pub struct StatusColorsContent {
 }
 
 /// The background appearance of the window.
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowBackgroundContent {
     Opaque,

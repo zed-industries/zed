@@ -9,7 +9,7 @@ use serde_with::skip_serializing_none;
 use crate::FontFamilyName;
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
     /// What shell to use when opening a terminal.
     ///
@@ -127,7 +127,7 @@ pub struct TerminalSettingsContent {
 }
 
 /// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
@@ -146,7 +146,7 @@ pub enum Shell {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
     /// Use the current file's project directory.  Will Fallback to the
@@ -212,7 +212,9 @@ pub enum ShowScrollbar {
     Never,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShapeContent {
     /// Cursor is a block like `█`.
@@ -226,7 +228,7 @@ pub enum CursorShapeContent {
     Hollow,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
     /// Never blink the cursor, ignoring the terminal mode.
@@ -238,7 +240,7 @@ pub enum TerminalBlink {
     On,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
     On,
@@ -259,7 +261,7 @@ pub struct TerminalToolbarContent {
     pub breadcrumbs: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum VenvSettings {
     #[default]
@@ -305,7 +307,7 @@ pub enum TerminalDockPosition {
     Right,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateScript {
     #[default]

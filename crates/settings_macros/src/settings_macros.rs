@@ -57,8 +57,35 @@ pub fn derive_merge_from(input: TokenStream) -> TokenStream {
                     }
                 }
             }
-            Fields::Unnamed(_) => {
-                panic!("MergeFrom can only be derived for structs with named fields");
+            Fields::Unnamed(fields) => {
+                let field_merges = fields.unnamed.iter().enumerate().map(|(i, field)| {
+                    let field_index = syn::Index::from(i);
+                    let field_type = &field.ty;
+
+                    if is_option_type(field_type) {
+                        // For Option<T> fields, merge by taking the other value if self is None
+                        quote! {
+                            if let Some(other_value) = other.#field_index.as_ref() {
+                                if self.#field_index.is_none() {
+                                    self.#field_index = Some(other_value.clone());
+                                } else if let Some(self_value) = self.#field_index.as_mut() {
+                                    self_value.merge_from(Some(other_value));
+                                }
+                            }
+                        }
+                    } else {
+                        // For non-Option fields, recursively call merge_from
+                        quote! {
+                            self.#field_index.merge_from(Some(&other.#field_index));
+                        }
+                    }
+                });
+
+                quote! {
+                    if let Some(other) = other {
+                        #(#field_merges)*
+                    }
+                }
             }
             Fields::Unit => {
                 quote! {

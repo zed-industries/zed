@@ -6,7 +6,7 @@ use serde_with::skip_serializing_none;
 use std::sync::Arc;
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
@@ -25,14 +25,14 @@ pub struct AllLanguageModelSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AnthropicSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<AnthropicAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct AnthropicAvailableModel {
     /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
     pub name: String,
@@ -53,7 +53,7 @@ pub struct AnthropicAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AmazonBedrockSettingsContent {
     pub available_models: Option<Vec<BedrockAvailableModel>>,
     pub endpoint_url: Option<String>,
@@ -63,7 +63,7 @@ pub struct AmazonBedrockSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct BedrockAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -74,7 +74,7 @@ pub struct BedrockAvailableModel {
     pub mode: Option<ModelMode>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub enum BedrockAuthMethodContent {
     #[serde(rename = "named_profile")]
     NamedProfile,
@@ -86,14 +86,14 @@ pub enum BedrockAuthMethodContent {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct OllamaAvailableModel {
     /// The model name in the Ollama API (e.g. "llama3.2:latest")
     pub name: String,
@@ -111,7 +111,7 @@ pub struct OllamaAvailableModel {
     pub supports_thinking: Option<bool>,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq, JsonSchema)]
+#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
 pub enum KeepAlive {
     /// Keep model alive for N seconds
@@ -134,14 +134,14 @@ impl Default for KeepAlive {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<LmStudioAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LmStudioAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -151,14 +151,14 @@ pub struct LmStudioAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct DeepseekSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<DeepseekAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct DeepseekAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -167,14 +167,14 @@ pub struct DeepseekAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct MistralSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<MistralAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct MistralAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -187,14 +187,14 @@ pub struct MistralAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OpenAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenAiAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct OpenAiAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -204,7 +204,7 @@ pub struct OpenAiAvailableModel {
     pub reasoning_effort: Option<OpenAiReasoningEffort>,
 }
 
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Clone, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum OpenAiReasoningEffort {
     Minimal,
@@ -214,14 +214,14 @@ pub enum OpenAiReasoningEffort {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct OpenAiCompatibleAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -233,7 +233,7 @@ pub struct OpenAiCompatibleAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct OpenAiCompatibleModelCapabilities {
     pub tools: bool,
     pub images: bool,
@@ -253,14 +253,14 @@ impl Default for OpenAiCompatibleModelCapabilities {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct VercelSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<VercelAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct VercelAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -270,14 +270,14 @@ pub struct VercelAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<GoogleAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GoogleAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -286,14 +286,14 @@ pub struct GoogleAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct XAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<XaiAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct XaiAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -303,13 +303,13 @@ pub struct XaiAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct ZedDotDevSettingsContent {
     pub available_models: Option<Vec<ZedDotDevAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ZedDotDevAvailableModel {
     /// The provider of the language model.
     pub provider: ZedDotDevAvailableProvider,
@@ -336,7 +336,7 @@ pub struct ZedDotDevAvailableModel {
     pub mode: Option<ModelMode>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum ZedDotDevAvailableProvider {
     Anthropic,
@@ -345,14 +345,14 @@ pub enum ZedDotDevAvailableProvider {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct OpenRouterSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenRouterAvailableModel>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct OpenRouterAvailableModel {
     pub name: String,
     pub display_name: Option<String>,
@@ -366,7 +366,7 @@ pub struct OpenRouterAvailableModel {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct OpenRouterProvider {
     order: Option<Vec<String>>,
     #[serde(default = "default_true")]
@@ -381,7 +381,7 @@ pub struct OpenRouterProvider {
     sort: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum DataCollection {
     Allow,
@@ -400,14 +400,16 @@ fn default_true() -> bool {
 
 /// Configuration for caching language model messages.
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageModelCacheConfiguration {
     pub max_cache_anchors: usize,
     pub should_speculate: bool,
     pub min_total_token: u64,
 }
 
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ModelMode {
     #[default]

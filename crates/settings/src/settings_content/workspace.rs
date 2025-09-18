@@ -8,7 +8,7 @@ use serde_with::skip_serializing_none;
 use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
@@ -108,7 +108,7 @@ pub struct WorkspaceSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
     ///
@@ -138,7 +138,7 @@ pub struct ItemSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct PreviewTabsSettingsContent {
     /// Whether to show opened editors as preview tabs.
     /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
@@ -155,7 +155,7 @@ pub struct PreviewTabsSettingsContent {
     pub enable_preview_from_code_navigation: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum ClosePosition {
     Left,
@@ -163,7 +163,7 @@ pub enum ClosePosition {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum ShowCloseButton {
     Always,
@@ -183,7 +183,7 @@ pub enum ShowDiagnostics {
     All,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateOnClose {
     #[default]
@@ -193,7 +193,7 @@ pub enum ActivateOnClose {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivePanelModifiers {
     /// Size of the border surrounding the active pane.
@@ -211,7 +211,7 @@ pub struct ActivePanelModifiers {
     pub inactive_opacity: Option<f32>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum BottomDockLayout {
     /// Contained between the left and right docks
@@ -278,7 +278,7 @@ pub struct TabBarSettingsContent {
     pub show_tab_bar_buttons: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum AutosaveSetting {
     /// Disable autosave.
@@ -302,14 +302,14 @@ impl AutosaveSetting {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionHorizontal {
     Up,
     Down,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionVertical {
     Left,

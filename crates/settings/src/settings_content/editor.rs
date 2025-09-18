@@ -9,7 +9,7 @@ use settings_macros::MergeFrom;
 use crate::{DiagnosticSeverityContent, ShowScrollbar};
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -347,7 +347,9 @@ pub struct GutterContent {
 }
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentColorsRenderMode {
     /// Do not query and render document colors.
@@ -361,7 +363,7 @@ pub enum DocumentColorsRenderMode {
     Background,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum CurrentLineHighlight {
     // Don't highlight the current line.
@@ -375,7 +377,7 @@ pub enum CurrentLineHighlight {
 }
 
 /// When to populate a new search's query based on the text under the cursor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum SeedQuerySetting {
     /// Always populate the search query with the word under the cursor.
@@ -387,7 +389,9 @@ pub enum SeedQuerySetting {
 }
 
 /// What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers).
-#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DoubleClickInMultibuffer {
     /// Behave as a regular buffer and select the whole word.
@@ -480,7 +484,9 @@ pub enum ScrollBeyondLastLine {
 }
 
 /// The shape of a selection cursor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
     /// A vertical bar
@@ -495,7 +501,9 @@ pub enum CursorShape {
 }
 
 /// What to do when go to definition yields no results.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GoToDefinitionFallback {
     /// Disables the fallback.
@@ -508,7 +516,9 @@ pub enum GoToDefinitionFallback {
 /// Determines when the mouse cursor should be hidden in an editor or input box.
 ///
 /// Default: on_typing_and_movement
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HideMouseMode {
     /// Never hide the mouse cursor
@@ -523,7 +533,9 @@ pub enum HideMouseMode {
 /// Determines how snippets are sorted relative to other completion items.
 ///
 /// Default: inline
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SnippetSortOrder {
     /// Place snippets at the top of the completion list
@@ -550,7 +562,7 @@ pub struct SearchSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct JupyterContent {
     /// Whether the Jupyter feature is enabled.

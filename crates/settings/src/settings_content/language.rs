@@ -15,7 +15,7 @@ use util::schemars::replace_subschema;
 use crate::ParameterizedJsonSchema;
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct AllLanguageSettingsContent {
     /// The settings for enabling/disabling features.
     #[serde(default)]
@@ -37,7 +37,7 @@ pub struct AllLanguageSettingsContent {
 
 /// The settings for enabling/disabling features.
 #[skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct FeaturesContent {
     /// Determines which edit prediction provider to use.
@@ -45,7 +45,9 @@ pub struct FeaturesContent {
 }
 
 /// The provider that supplies edit predictions.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionProvider {
     None,
@@ -91,7 +93,9 @@ pub struct CopilotSettingsContent {
 }
 
 /// The mode in which edit predictions should be displayed.
-#[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EditPredictionsMode {
     /// If provider supports it, display inline when holding modifier key (e.g., alt).
@@ -105,7 +109,7 @@ pub enum EditPredictionsMode {
 }
 
 /// Controls the soft-wrapping behavior in the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
     /// Prefer a single line generally, unless an overly long line is encountered.
@@ -123,7 +127,7 @@ pub enum SoftWrap {
 
 /// The settings for a particular language.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageSettingsContent {
     /// How many columns a tab should occupy.
     ///
@@ -290,7 +294,7 @@ pub struct LanguageSettingsContent {
 }
 
 /// Controls how whitespace should be displayedin the editor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowWhitespaceSetting {
     /// Draw whitespace only for the selected text.
@@ -332,7 +336,7 @@ impl WhitespaceMap {
 }
 
 /// The behavior of `editor::Rewrap`.
-#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum RewrapBehavior {
     /// Only rewrap within comments.
@@ -345,7 +349,7 @@ pub enum RewrapBehavior {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct JsxTagAutoCloseSettingsContent {
     /// Enables or disables auto-closing of JSX tags.
     pub enabled: Option<bool>,
@@ -463,7 +467,9 @@ pub struct CompletionSettingsContent {
     pub lsp_insert_mode: Option<LspInsertMode>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, MergeFrom, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum LspInsertMode {
     /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
@@ -479,7 +485,7 @@ pub enum LspInsertMode {
 }
 
 /// Controls how document's words are completed.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum WordsCompletionMode {
     /// Always fetch document's words for completions along with LSP completions.
@@ -496,7 +502,7 @@ pub enum WordsCompletionMode {
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
 #[skip_serializing_none]
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct PrettierSettingsContent {
     /// Enables or disables formatting with Prettier for a given language.
     pub allowed: Option<bool>,
@@ -711,7 +717,7 @@ impl<'de> Deserialize<'de> for SelectedFormatter {
 }
 
 /// Controls which formatters should be used when formatting code.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(untagged)]
 pub enum FormatterList {
     Single(Formatter),
@@ -734,7 +740,7 @@ impl AsRef<[Formatter]> for FormatterList {
 }
 
 /// Controls which formatter should be used when formatting code. If there are multiple formatters, they are executed in the order of declaration.
-#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum Formatter {
     /// Format code using the current language server.
@@ -755,7 +761,7 @@ pub enum Formatter {
 
 /// The settings for indent guides.
 #[skip_serializing_none]
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct IndentGuideSettingsContent {
     /// Whether to display indent guides in the editor.
     ///
@@ -781,7 +787,7 @@ pub struct IndentGuideSettingsContent {
 
 /// The task settings for a particular language.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema, MergeFrom)]
 pub struct LanguageTaskSettingsContent {
     /// Extra task variables to set for a particular language.
     #[serde(default)]
@@ -800,7 +806,7 @@ pub struct LanguageTaskSettingsContent {
 /// Map from language name to settings. Its `ParameterizedJsonSchema` allows only known language
 /// names in the keys.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct LanguageToSettingsMap(pub HashMap<SharedString, LanguageSettingsContent>);
 
 inventory::submit! {
@@ -827,7 +833,9 @@ inventory::submit! {
 }
 
 /// Determines how indent guides are colored.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum IndentGuideColoring {
     /// Do not render any lines for indent guides.
@@ -840,7 +848,9 @@ pub enum IndentGuideColoring {
 }
 
 /// Determines how indent guide backgrounds are colored.
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Default, Debug, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum IndentGuideBackgroundColoring {
     /// Do not render any background for indent guides.

@@ -31,7 +31,7 @@ pub use util::serde::default_true;
 use crate::ActiveSettingsProfileName;
 
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct SettingsContent {
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
@@ -167,14 +167,14 @@ impl SettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ServerSettingsContent {
     #[serde(flatten)]
     pub project: ProjectSettingsContent,
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
     pub content: Box<SettingsContent>,
@@ -417,7 +417,7 @@ pub struct CallSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Deserialize, Serialize, PartialEq, Debug, Default, Clone, JsonSchema)]
+#[derive(Deserialize, Serialize, PartialEq, Debug, Default, Clone, JsonSchema, MergeFrom)]
 pub struct ExtensionSettingsContent {
     /// The extensions that should be automatically installed by Zed.
     ///
@@ -565,7 +565,9 @@ pub struct FileFinderSettingsContent {
     pub include_ignored: Option<Option<bool>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum FileFinderWidthContent {
     #[default]
@@ -577,7 +579,7 @@ pub enum FileFinderWidthContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Debug, JsonSchema, MergeFrom)]
 pub struct VimSettingsContent {
     pub default_mode: Option<ModeContent>,
     pub toggle_relative_line_numbers: Option<bool>,
@@ -598,7 +600,7 @@ pub enum ModeContent {
 }
 
 /// Controls when to use system clipboard.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum UseSystemClipboard {
     /// Don't use system clipboard.
@@ -611,7 +613,7 @@ pub enum UseSystemClipboard {
 
 /// The settings for cursor shape.
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
     ///
@@ -715,7 +717,7 @@ pub enum DockSide {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowIndentGuides {
     Always,
@@ -767,7 +769,7 @@ pub struct RemoteSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct SshConnection {
     pub host: SharedString,
     pub username: Option<String>,
@@ -804,7 +806,7 @@ pub struct SshProject {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize, Serialize, JsonSchema, MergeFrom)]
 pub struct SshPortForwardOption {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_host: Option<String>,
@@ -816,7 +818,7 @@ pub struct SshPortForwardOption {
 
 /// Settings for configuring REPL display and behavior.
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ReplSettingsContent {
     /// Maximum number of lines to keep in REPL's scrollback buffer.
     /// Clamped with [4, 256] range.
