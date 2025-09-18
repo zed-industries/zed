@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::{App, SharedString};
+use gpui::SharedString;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{ops::Range, sync::LazyLock};
@@ -17,7 +17,7 @@ pub struct SettingsJsonSchemaParams<'a> {
 /// Value registered which specifies JSON schemas that are generated at runtime.
 pub struct ParameterizedJsonSchema {
     pub add_and_get_ref:
-        fn(&mut schemars::SchemaGenerator, &SettingsJsonSchemaParams, &App) -> schemars::Schema,
+        fn(&mut schemars::SchemaGenerator, &SettingsJsonSchemaParams) -> schemars::Schema,
 }
 
 inventory::collect!(ParameterizedJsonSchema);

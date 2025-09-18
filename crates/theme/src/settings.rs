@@ -8,7 +8,7 @@ use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     App, Context, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    SharedString, Subscription, Window, px,
+    Subscription, Window, px,
 };
 use refineable::Refineable;
 use schemars::{JsonSchema, json_schema};
@@ -1004,7 +1004,7 @@ pub struct ThemeName(pub Arc<str>);
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
+        add_and_get_ref: |generator, params| {
             replace_subschema::<ThemeName>(generator, || json_schema!({
                 "type": "string",
                 "enum": params.theme_names,
@@ -1021,7 +1021,7 @@ pub struct IconThemeName(pub Arc<str>);
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
+        add_and_get_ref: |generator, params| {
             replace_subschema::<IconThemeName>(generator, || json_schema!({
                 "type": "string",
                 "enum": params.icon_theme_names,
@@ -1038,7 +1038,7 @@ pub struct FontFamilyName(pub Arc<str>);
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
+        add_and_get_ref: |generator, params| {
             replace_subschema::<FontFamilyName>(generator, || {
                 json_schema!({
                     "type": "string",

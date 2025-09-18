@@ -365,7 +365,7 @@ impl SettingsUi for LanguageToSettingsMap {
 
 inventory::submit! {
     ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
+        add_and_get_ref: |generator, params| {
             let language_settings_content_ref = generator
                 .subschema_for::<LanguageSettingsContent>()
                 .to_value();

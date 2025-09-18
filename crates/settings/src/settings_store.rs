@@ -990,7 +990,7 @@ impl SettingsStore {
             })
     }
 
-    pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams, cx: &App) -> Value {
+    pub fn json_schema(&self, schema_params: &SettingsJsonSchemaParams) -> Value {
         let mut generator = schemars::generate::SchemaSettings::draft2019_09()
             .with_transform(DefaultDenyUnknownFields)
             .into_generator();
@@ -1118,7 +1118,7 @@ impl SettingsStore {
 
         // add schemas which are determined at runtime
         for parameterized_json_schema in inventory::iter::<ParameterizedJsonSchema>() {
-            (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params, cx);
+            (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params);
         }
 
         // add merged settings schema to the definitions

@@ -107,7 +107,6 @@ fn resolve_schema_request(
                     theme_names,
                     icon_theme_names,
                 },
-                cx,
             )
         })?,
         "keymap" => cx.update(settings::KeymapFile::generate_json_schema_for_registered_actions)?,
