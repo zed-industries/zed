@@ -1559,7 +1559,7 @@ impl LspInstaller for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server")
-                .arg("-U")
+                .arg("--upgrade")
                 .output()
                 .await?
                 .status
@@ -1570,7 +1570,7 @@ impl LspInstaller for PyLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("python-lsp-server[all]")
-                .arg("-U")
+                .arg("--upgrade")
                 .output()
                 .await?
                 .status
@@ -1581,7 +1581,7 @@ impl LspInstaller for PyLspAdapter {
             util::command::new_smol_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
-                .arg("-U")
+                .arg("--upgrade")
                 .output()
                 .await?
                 .status
@@ -1589,6 +1589,10 @@ impl LspInstaller for PyLspAdapter {
             "pylsp-mypy installation failed"
         );
         let pylsp = venv.join(BINARY_DIR).join("pylsp");
+        ensure!(
+            delegate.which(pylsp.as_os_str()).await.is_some(),
+            "pylsp installation was incomplete"
+        );
         Ok(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -1603,6 +1607,7 @@ impl LspInstaller for PyLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
         let pylsp = venv.join(BINARY_DIR).join("pylsp");
+        delegate.which(pylsp.as_os_str()).await?;
         Some(LanguageServerBinary {
             path: pylsp,
             env: None,
