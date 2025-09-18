@@ -806,7 +806,6 @@ impl MessageEditor {
                         }
                     }
                 });
-                dbg!(&chunks);
                 Ok((chunks, all_tracked_buffers))
             })?;
             result
