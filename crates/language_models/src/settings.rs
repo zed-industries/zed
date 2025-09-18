@@ -18,7 +18,6 @@ pub fn init_settings(cx: &mut App) {
     AllLanguageModelSettings::register(cx);
 }
 
-#[derive(Default)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
     pub bedrock: AmazonBedrockSettings,

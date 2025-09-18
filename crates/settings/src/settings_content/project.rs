@@ -30,7 +30,7 @@ pub struct ProjectSettingsContent {
 
     /// Configuration for Debugger-related features
     #[serde(default)]
-    pub dap: HashMap<Arc<str>, DapSettings>,
+    pub dap: HashMap<Arc<str>, DapSettingsContent>,
 
     /// Settings for context servers used for AI-related features.
     #[serde(default)]
@@ -141,10 +141,10 @@ pub struct GlobalLspSettingsContent {
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub struct DapSettings {
+pub struct DapSettingsContent {
     pub binary: Option<String>,
     #[serde(default)]
-    pub args: Vec<String>,
+    pub args: Option<Vec<String>>,
 }
 
 #[skip_serializing_none]

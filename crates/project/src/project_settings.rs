@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation, SettingsStore, SettingsUi,
-    parse_json_with_comments, watch_config_file,
+    DapSettingsContent, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
+    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
 };
 use std::{
     path::{Path, PathBuf},
@@ -54,7 +54,7 @@ pub struct ProjectSettings {
     pub global_lsp_settings: GlobalLspSettings,
 
     /// Configuration for Debugger-related features
-    pub dap: HashMap<DebugAdapterName, settings::DapSettings>,
+    pub dap: HashMap<DebugAdapterName, DapSettings>,
 
     /// Settings for context servers used for AI-related features.
     pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
@@ -494,7 +494,7 @@ impl Settings for ProjectSettings {
                 .dap
                 .clone()
                 .into_iter()
-                .map(|(key, value)| (DebugAdapterName(key.into()), value))
+                .map(|(key, value)| (DebugAdapterName(key.into()), DapSettings::from(value)))
                 .collect(),
             diagnostics: DiagnosticsSettings {
                 button: diagnostics.button.unwrap(),
@@ -534,7 +534,7 @@ impl Settings for ProjectSettings {
                 .dap
                 .clone()
                 .into_iter()
-                .map(|(key, value)| (DebugAdapterName(key.into()), value)),
+                .map(|(key, value)| (DebugAdapterName(key.into()), DapSettings::from(value))),
         );
         if let Some(diagnostics) = content.diagnostics.as_ref() {
             if let Some(inline) = &diagnostics.inline {
@@ -1325,4 +1325,27 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
         LocalSettingsKind::Editorconfig => proto::LocalSettingsKind::Editorconfig,
         LocalSettingsKind::Debug => proto::LocalSettingsKind::Debug,
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct DapSettings {
+    pub binary: DapBinary,
+    pub args: Vec<String>,
+}
+
+impl From<DapSettingsContent> for DapSettings {
+    fn from(content: DapSettingsContent) -> Self {
+        DapSettings {
+            binary: content
+                .binary
+                .map_or_else(|| DapBinary::Default, |binary| DapBinary::Custom(binary)),
+            args: content.args.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DapBinary {
+    Default,
+    Custom(String),
 }
