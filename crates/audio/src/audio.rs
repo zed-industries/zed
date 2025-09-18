@@ -108,6 +108,11 @@ impl Global for Audio {}
 
 impl Audio {
     fn ensure_output_exists(&mut self) -> Result<&Mixer> {
+        #[cfg(debug_assertions)]
+        log::warn!(
+            "Audio does not sound correct without optimizations. Use a release build to debug audio issues"
+        );
+
         if self.output_handle.is_none() {
             self.output_handle = Some(
                 OutputStreamBuilder::open_default_stream()
@@ -169,7 +174,6 @@ impl Audio {
                 SAMPLE_RATE.saturating_mul(nz!(4)),
             ])
             .prefer_channel_counts([nz!(2)])
-            // .prefer_channel_counts([CHANNEL_COUNT, CHANNEL_COUNT.saturating_mul(nz!(2))])
             .prefer_buffer_sizes(512..)
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
@@ -177,7 +181,6 @@ impl Audio {
         let (replay, stream) = stream
             .possibly_disconnected_channels_to_mono()
             .constant_samplerate(SAMPLE_RATE)
-            // .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
             .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
                 let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
