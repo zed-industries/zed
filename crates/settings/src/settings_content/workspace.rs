@@ -4,11 +4,12 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 
 use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePanelModifiers>,
@@ -108,7 +109,7 @@ pub struct WorkspaceSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ItemSettingsContent {
     /// Whether to show the Git file status on a tab item.
     ///
@@ -138,7 +139,7 @@ pub struct ItemSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct PreviewTabsSettingsContent {
     /// Whether to show opened editors as preview tabs.
     /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
@@ -155,7 +156,7 @@ pub struct PreviewTabsSettingsContent {
     pub enable_preview_from_code_navigation: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum ClosePosition {
     Left,
@@ -163,7 +164,7 @@ pub enum ClosePosition {
     Right,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "lowercase")]
 pub enum ShowCloseButton {
     Always,
@@ -172,7 +173,9 @@ pub enum ShowCloseButton {
     Hidden,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowDiagnostics {
     #[default]
@@ -181,7 +184,7 @@ pub enum ShowDiagnostics {
     All,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateOnClose {
     #[default]
@@ -191,7 +194,7 @@ pub enum ActivateOnClose {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct ActivePanelModifiers {
     /// Size of the border surrounding the active pane.
@@ -209,7 +212,7 @@ pub struct ActivePanelModifiers {
     pub inactive_opacity: Option<f32>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum BottomDockLayout {
     /// Contained between the left and right docks
@@ -223,7 +226,7 @@ pub enum BottomDockLayout {
     RightAligned,
 }
 
-#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Copy, Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum CloseWindowWhenNoItems {
     /// Match platform conventions by default, so "on" on macOS and "off" everywhere else
@@ -245,7 +248,9 @@ impl CloseWindowWhenNoItems {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(
+    Copy, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RestoreOnStartupBehavior {
     /// Always start with an empty editor
@@ -258,7 +263,7 @@ pub enum RestoreOnStartupBehavior {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, PartialEq)]
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct TabBarSettingsContent {
     /// Whether or not to show the tab bar in the editor.
     ///
@@ -274,7 +279,7 @@ pub struct TabBarSettingsContent {
     pub show_tab_bar_buttons: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum AutosaveSetting {
     /// Disable autosave.
@@ -298,14 +303,14 @@ impl AutosaveSetting {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionHorizontal {
     Up,
     Down,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum PaneSplitDirectionVertical {
     Left,
@@ -313,7 +318,7 @@ pub enum PaneSplitDirectionVertical {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub struct CenteredLayoutSettings {
     /// The relative width of the left padding of the central pane from the
@@ -328,7 +333,7 @@ pub struct CenteredLayoutSettings {
     pub right_padding: Option<f32>,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Debug)]
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum OnLastWindowClosed {
     /// Match platform conventions by default, so don't quit on macOS, and quit on other platforms
@@ -348,7 +353,7 @@ impl OnLastWindowClosed {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, Debug)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct ProjectPanelSettingsContent {
     /// Whether to show the project panel button in the status bar.
     ///
@@ -423,7 +428,9 @@ pub struct ProjectPanelSettingsContent {
     pub drag_and_drop: Option<bool>,
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectPanelEntrySpacing {
     /// Comfortable spacing of entries.
@@ -434,7 +441,7 @@ pub enum ProjectPanelEntrySpacing {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ProjectPanelIndentGuidesSettings {
     pub show: Option<ShowIndentGuides>,
 }

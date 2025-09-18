@@ -1067,7 +1067,7 @@ impl AgentPanel {
                         let _ = settings
                             .theme
                             .agent_font_size
-                            .insert(Some(theme::clamp_font_size(agent_font_size).into()));
+                            .insert(theme::clamp_font_size(agent_font_size).into());
                     });
                 } else {
                     theme::adjust_agent_font_size(cx, |size| size + delta);

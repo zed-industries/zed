@@ -3144,7 +3144,6 @@ dependencies = [
  "release_channel",
  "rpc",
  "rustls-pki-types",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -9302,7 +9301,6 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand 2.1.2",
- "util",
  "workspace",
  "workspace-hack",
 ]
@@ -9523,7 +9521,6 @@ dependencies = [
  "http_client",
  "imara-diff",
  "indoc",
- "inventory",
  "itertools 0.14.0",
  "log",
  "lsp",
@@ -15499,7 +15496,7 @@ dependencies = [
  "serde_path_to_error",
  "serde_repr",
  "serde_with",
- "settings_ui_macros",
+ "settings_macros",
  "smallvec",
  "tree-sitter",
  "tree-sitter-json",
@@ -15507,6 +15504,16 @@ dependencies = [
  "util",
  "workspace-hack",
  "zlog",
+]
+
+[[package]]
+name = "settings_macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "settings",
+ "syn 2.0.101",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -15528,18 +15535,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "settings_ui_macros"
-version = "0.1.0"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "settings",
- "syn 2.0.101",
- "workspace-hack",
 ]
 
 [[package]]
@@ -17190,7 +17185,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indexmap 2.9.0",
- "inventory",
  "log",
  "palette",
  "parking_lot",

@@ -3,12 +3,13 @@ use gpui::SharedString;
 use schemars::{JsonSchema, json_schema};
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 use std::{borrow::Cow, path::PathBuf, sync::Arc};
 
 use crate::DockPosition;
 
 #[skip_serializing_none]
-#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, Debug, Default)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, Default)]
 pub struct AgentSettingsContent {
     /// Whether the Agent is enabled.
     ///
@@ -168,7 +169,7 @@ impl AgentSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct AgentProfileContent {
     pub name: Arc<str>,
     #[serde(default)]
@@ -180,12 +181,12 @@ pub struct AgentProfileContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ContextServerPresetContent {
     pub tools: IndexMap<Arc<str>, bool>,
 }
 
-#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Default, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum DefaultAgentView {
     #[default]
@@ -193,7 +194,7 @@ pub enum DefaultAgentView {
     TextThread,
 }
 
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum NotifyWhenAgentWaiting {
     #[default]
@@ -203,13 +204,13 @@ pub enum NotifyWhenAgentWaiting {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelSelection {
     pub provider: LanguageModelProviderSetting,
     pub model: String,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CompletionMode {
     #[default]
@@ -219,14 +220,14 @@ pub enum CompletionMode {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct LanguageModelParameters {
     pub provider: Option<LanguageModelProviderSetting>,
     pub model: Option<SharedString>,
     pub temperature: Option<f32>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, MergeFrom)]
 pub struct LanguageModelProviderSetting(pub String);
 
 impl JsonSchema for LanguageModelProviderSetting {
@@ -277,7 +278,7 @@ impl From<&str> for LanguageModelProviderSetting {
 }
 
 #[skip_serializing_none]
-#[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, Debug)]
+#[derive(Default, PartialEq, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
@@ -288,7 +289,7 @@ pub struct AllAgentServersSettings {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
     /// Absolute path to a binary to be used when launching this agent.
     ///
@@ -320,7 +321,7 @@ pub struct BuiltinAgentServerSettings {
 }
 
 #[skip_serializing_none]
-#[derive(Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 pub struct CustomAgentServerSettings {
     #[serde(rename = "command")]
     pub path: PathBuf,

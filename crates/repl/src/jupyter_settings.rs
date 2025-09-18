@@ -19,19 +19,10 @@ impl JupyterSettings {
 }
 
 impl Settings for JupyterSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let jupyter = content.editor.jupyter.clone().unwrap();
         Self {
             kernel_selections: jupyter.kernel_selections.unwrap_or_default(),
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(jupyter) = content.editor.jupyter.as_ref() else {
-            return;
-        };
-        if let Some(kernel_selections) = jupyter.kernel_selections.clone() {
-            self.kernel_selections.extend(kernel_selections)
         }
     }
 }

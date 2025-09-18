@@ -265,7 +265,7 @@ pub(crate) fn render_ai_setup_page(
 
                     let fs = <dyn Fs>::global(cx);
                     update_settings_file(fs, cx, move |settings, _| {
-                        settings.disable_ai = Some(enabled);
+                        settings.disable_ai = Some(enabled.into());
                     });
                 },
             )

@@ -4,12 +4,13 @@ use collections::{BTreeMap, HashMap};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 use util::serde::default_true;
 
-use crate::{AllLanguageSettingsContent, SlashCommandSettings};
+use crate::{AllLanguageSettingsContent, ExtendingVec, SlashCommandSettings};
 
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ProjectSettingsContent {
     #[serde(flatten)]
     pub all_languages: AllLanguageSettingsContent,
@@ -43,11 +44,11 @@ pub struct ProjectSettingsContent {
     pub slash_commands: Option<SlashCommandSettings>,
 
     /// The list of custom Git hosting providers.
-    pub git_hosting_providers: Option<Vec<GitHostingProviderConfig>>,
+    pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct WorktreeSettingsContent {
     /// The displayed name of this project. If not set, the root directory name
     /// will be displayed.
@@ -81,11 +82,11 @@ pub struct WorktreeSettingsContent {
 
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
-    pub private_files: Option<Vec<String>>,
+    pub private_files: Option<ExtendingVec<String>>,
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash)]
 #[serde(rename_all = "snake_case")]
 pub struct LspSettings {
     pub binary: Option<BinarySettings>,
@@ -112,7 +113,9 @@ impl Default for LspSettings {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
 pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
@@ -121,7 +124,9 @@ pub struct BinarySettings {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
+#[derive(
+    Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom, Hash,
+)]
 pub struct FetchSettings {
     // Whether to consider pre-releases for fetching
     pub pre_release: Option<bool>,
@@ -129,7 +134,7 @@ pub struct FetchSettings {
 
 /// Common language server settings.
 #[skip_serializing_none]
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GlobalLspSettingsContent {
     /// Whether to show the LSP servers button in the status bar.
     ///
@@ -138,7 +143,7 @@ pub struct GlobalLspSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct DapSettingsContent {
     pub binary: Option<String>,
@@ -147,7 +152,9 @@ pub struct DapSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Default, Copy, Clone, PartialEq, Eq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 pub struct SessionSettingsContent {
     /// Whether or not to restore unsaved buffers on restart.
     ///
@@ -158,7 +165,7 @@ pub struct SessionSettingsContent {
     pub restore_unsaved_buffers: Option<bool>,
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom, Debug)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum ContextServerSettingsContent {
     Custom {
@@ -198,7 +205,7 @@ impl ContextServerSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, MergeFrom)]
 pub struct ContextServerCommand {
     #[serde(rename = "command")]
     pub path: PathBuf,
@@ -234,7 +241,7 @@ impl std::fmt::Debug for ContextServerCommand {
 }
 
 #[skip_serializing_none]
-#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
     ///
@@ -259,7 +266,7 @@ pub struct GitSettings {
     pub hunk_style: Option<GitHunkStyleSetting>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum GitGutterSetting {
     /// Show git gutter in tracked files.
@@ -270,7 +277,7 @@ pub enum GitGutterSetting {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
@@ -299,7 +306,7 @@ pub struct InlineBlameSettings {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct BranchPickerSettingsContent {
     /// Whether to show author name as part of the commit information.
@@ -308,7 +315,7 @@ pub struct BranchPickerSettingsContent {
     pub show_author_name: Option<bool>,
 }
 
-#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum GitHunkStyleSetting {
     /// Show unstaged hunks with a filled background and staged hunks hollow.
@@ -319,7 +326,7 @@ pub enum GitHunkStyleSetting {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct DiagnosticsSettingsContent {
     /// Whether to show the project diagnostics button in the status bar.
     pub button: Option<bool>,
@@ -335,7 +342,7 @@ pub struct DiagnosticsSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct LspPullDiagnosticsSettingsContent {
     /// Whether to pull for diagnostics or not.
     ///
@@ -349,7 +356,7 @@ pub struct LspPullDiagnosticsSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom, Eq)]
 pub struct InlineDiagnosticsSettingsContent {
     /// Whether or not to show inline diagnostics
     ///
@@ -376,7 +383,7 @@ pub struct InlineDiagnosticsSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct NodeBinarySettings {
     /// The path to the Node binary.
     pub path: Option<String>,
@@ -386,7 +393,7 @@ pub struct NodeBinarySettings {
     pub ignore_system_version: Option<bool>,
 }
 
-#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum DirenvSettings {
     /// Load direnv configuration through a shell hook
@@ -397,7 +404,17 @@ pub enum DirenvSettings {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverityContent {
@@ -412,7 +429,7 @@ pub enum DiagnosticSeverityContent {
 
 /// A custom Git hosting provider.
 #[skip_serializing_none]
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct GitHostingProviderConfig {
     /// The type of the provider.
     ///
@@ -426,7 +443,7 @@ pub struct GitHostingProviderConfig {
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum GitHostingProviderKind {
     Github,

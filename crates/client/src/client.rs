@@ -29,9 +29,8 @@ use proxy::connect_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent, SettingsKey, SettingsUi};
+use settings::{Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -50,7 +49,7 @@ use telemetry::Telemetry;
 use thiserror::Error;
 use tokio::net::TcpStream;
 use url::Url;
-use util::{ConnectionResult, MergeFrom, ResultExt};
+use util::{ConnectionResult, ResultExt};
 
 pub use rpc::*;
 pub use telemetry_events::Event;
@@ -102,7 +101,7 @@ pub struct ClientSettings {
 }
 
 impl Settings for ClientSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         if let Some(server_url) = &*ZED_SERVER_URL {
             return Self {
                 server_url: server_url.clone(),
@@ -112,23 +111,6 @@ impl Settings for ClientSettings {
             server_url: content.server_url.clone().unwrap(),
         }
     }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
-        if ZED_SERVER_URL.is_some() {
-            return;
-        }
-        if let Some(server_url) = content.server_url.clone() {
-            self.server_url = server_url;
-        }
-    }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
-}
-
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-pub struct ProxySettingsContent {
-    proxy: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -151,15 +133,9 @@ impl ProxySettings {
 }
 
 impl Settings for ProxySettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
             proxy: content.proxy.clone(),
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
-        if let Some(proxy) = content.proxy.clone() {
-            self.proxy = Some(proxy)
         }
     }
 
@@ -543,19 +519,11 @@ pub struct TelemetrySettings {
 }
 
 impl settings::Settings for TelemetrySettings {
-    fn from_defaults(content: &SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
         Self {
             diagnostics: content.telemetry.as_ref().unwrap().diagnostics.unwrap(),
             metrics: content.telemetry.as_ref().unwrap().metrics.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
-        let Some(telemetry) = &content.telemetry else {
-            return;
-        };
-        self.diagnostics.merge_from(&telemetry.diagnostics);
-        self.metrics.merge_from(&telemetry.metrics);
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {

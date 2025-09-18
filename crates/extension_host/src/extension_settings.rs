@@ -33,26 +33,10 @@ impl ExtensionSettings {
 }
 
 impl Settings for ExtensionSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
             auto_install_extensions: content.extension.auto_install_extensions.clone(),
             auto_update_extensions: content.extension.auto_update_extensions.clone(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        self.auto_install_extensions
-            .extend(content.extension.auto_install_extensions.clone());
-        self.auto_update_extensions
-            .extend(content.extension.auto_update_extensions.clone());
-    }
-
-    fn import_from_vscode(
-        _vscode: &settings::VsCodeSettings,
-        _current: &mut settings::SettingsContent,
-    ) {
-        // settingsSync.ignoredExtensions controls autoupdate for vscode extensions, but we
-        // don't have a mapping to zed-extensions. there's also extensions.autoCheckUpdates
-        // and extensions.autoUpdate which are global switches, we don't support those yet
     }
 }
