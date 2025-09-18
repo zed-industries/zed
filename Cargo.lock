@@ -5161,6 +5161,7 @@ dependencies = [
  "text",
  "tree-sitter",
  "ui",
+ "ui_input",
  "util",
  "workspace",
  "workspace-hack",

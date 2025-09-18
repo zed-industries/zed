@@ -7,11 +7,15 @@ use std::{
 
 use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
-use gpui::{Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, actions, prelude::*};
+use gpui::{
+    Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity, actions,
+    prelude::*,
+};
 use language::{Buffer, DiskState};
 use project::{Project, WorktreeId};
 use text::ToPoint;
-use ui::prelude::*;
+use ui::{NumericStepper, prelude::*};
+use ui_input::SingleLineInput;
 use workspace::{Item, SplitDirection, Workspace};
 
 use crate::{
@@ -58,8 +62,11 @@ pub struct EditPredictionContextDebugView {
     focus_handle: FocusHandle,
     context_editor: Option<Entity<Editor>>,
     project: Entity<Project>,
+    max_bytes_input: Entity<SingleLineInput>,
+    min_bytes_input: Entity<SingleLineInput>,
     // TODO move to project or provider?
     syntax_index: Entity<SyntaxIndex>,
+    last_editor: WeakEntity<Editor>,
     _active_editor_subscription: Option<Subscription>,
     _edit_prediction_context_task: Task<()>,
 }
@@ -93,11 +100,39 @@ impl EditPredictionContextDebugView {
         .detach();
         let syntax_index = cx.new(|cx| SyntaxIndex::new(project, cx));
 
+        let number_input = |label: &'static str,
+                            value: &'static str,
+                            window: &mut Window,
+                            cx: &mut Context<Self>|
+         -> Entity<SingleLineInput> {
+            let input = cx.new(|cx| {
+                let input = SingleLineInput::new(window, cx, "").label(label);
+                input.set_text(value, window, cx);
+                input
+            });
+            cx.subscribe_in(
+                &input.read(cx).editor().clone(),
+                window,
+                |this, _, event, window, cx| {
+                    if let EditorEvent::BufferEdited = event
+                        && let Some(editor) = this.last_editor.upgrade()
+                    {
+                        this.update_context(&editor, window, cx);
+                    }
+                },
+            )
+            .detach();
+            input
+        };
+
         let mut this = Self {
             focus_handle: cx.focus_handle(),
             context_editor: None,
             project: project.clone(),
+            max_bytes_input: number_input("Max Bytes", "512", window, cx),
+            min_bytes_input: number_input("Min Bytes", "128", window, cx),
             syntax_index,
+            last_editor: WeakEntity::new_invalid(),
             _active_editor_subscription: None,
             _edit_prediction_context_task: Task::ready(()),
         };
@@ -115,6 +150,8 @@ impl EditPredictionContextDebugView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.last_editor = editor.downgrade();
+
         let editor = editor.read(cx);
         let buffer = editor.buffer().clone();
         let cursor_position = editor.selections.newest_anchor().start;
@@ -149,15 +186,27 @@ impl EditPredictionContextDebugView {
                     .await;
 
                 let Ok(task) = this.update(cx, |this, cx| {
+                    let number_input_value = |input: &Entity<SingleLineInput>| -> usize {
+                        input
+                            .read(cx)
+                            .editor()
+                            .read(cx)
+                            .text(cx)
+                            .parse()
+                            .unwrap_or_default()
+                    };
+
+                    let options = EditPredictionExcerptOptions {
+                        max_bytes: number_input_value(&this.max_bytes_input),
+                        min_bytes: number_input_value(&this.min_bytes_input),
+                        target_before_cursor_over_total_bytes: 0.5,
+                        include_parent_signatures: true,
+                    };
+
                     EditPredictionContext::gather(
                         cursor_position,
                         current_buffer_snapshot,
-                        EditPredictionExcerptOptions {
-                            max_bytes: 512,
-                            min_bytes: 128,
-                            target_before_cursor_over_total_bytes: 0.5,
-                            include_parent_signatures: true,
-                        },
+                        options,
                         this.syntax_index.clone(),
                         cx,
                     )
@@ -280,6 +329,18 @@ impl Render for EditPredictionContextDebugView {
         v_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
+            .child(
+                v_flex()
+                    .p_4()
+                    .gap_2()
+                    .child(Headline::new("Excerpt Options"))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(self.max_bytes_input.clone())
+                            .child(self.min_bytes_input.clone()),
+                    ),
+            )
             .children(self.context_editor.clone())
     }
 }
