@@ -26,9 +26,7 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{
-        AgentServerStore, AllAgentServersSettings, CLAUDE_CODE_NAME, GEMINI_NAME,
-    },
+    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
