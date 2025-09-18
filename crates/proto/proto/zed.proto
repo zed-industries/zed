@@ -415,6 +415,9 @@ message Envelope {
 
         StashDrop stash_drop = 378;
         StashApply stash_apply = 379; // current max
+
+        GetFoldingRanges get_folding_ranges = 380;
+        GetFoldingRangesResponse get_folding_ranges_response = 381;
     }
 
     reserved 87 to 88;

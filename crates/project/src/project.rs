@@ -850,6 +850,16 @@ impl std::hash::Hash for ColorPresentation {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LspFoldingRange {
+    pub start_line: u32,
+    pub start_character: Option<u32>,
+    pub end_line: u32,
+    pub end_character: Option<u32>,
+    pub kind: Option<lsp::FoldingRangeKind>,
+    pub collapsed_text: Option<String>,
+}
+
 #[derive(Clone)]
 pub enum DirectoryLister {
     Project(Entity<Project>),
@@ -3639,6 +3649,19 @@ impl Project {
             drop(guard);
             result
         })
+    }
+
+    pub fn folding_ranges(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<LspFoldingRange>>> {
+        self.request_lsp(
+            buffer,
+            LanguageServerToQuery::FirstCapable,
+            GetFoldingRanges,
+            cx,
+        )
     }
 
     pub fn document_highlights<T: ToPointUtf16>(

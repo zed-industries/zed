@@ -18,7 +18,7 @@ pub mod rust_analyzer_ext;
 use crate::{
     CodeAction, ColorPresentation, Completion, CompletionDisplayOptions, CompletionResponse,
     CompletionSource, CoreCompletion, DocumentColor, Hover, InlayHint, LocationLink, LspAction,
-    LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
+    LspFoldingRange, LspPullDiagnostics, ManifestProvidersStore, Project, ProjectItem, ProjectPath,
     ProjectTransaction, PulledDiagnostics, ResolveState, Symbol,
     buffer_store::{BufferStore, BufferStoreEvent},
     environment::ProjectEnvironment,
@@ -8178,6 +8178,17 @@ impl LspStore {
                     lsp_request_id,
                     get_implementation,
                     position,
+                    cx.clone(),
+                )
+                .await?;
+            }
+            Request::GetFoldingRanges(get_folding_ranges) => {
+                Self::query_lsp_locally::<GetFoldingRanges>(
+                    lsp_store,
+                    sender_id,
+                    lsp_request_id,
+                    get_folding_ranges,
+                    None,
                     cx.clone(),
                 )
                 .await?;
