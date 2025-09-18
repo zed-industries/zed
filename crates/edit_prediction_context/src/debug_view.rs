@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use collections::HashMap;
@@ -61,8 +61,8 @@ pub fn init(cx: &mut App) {
 
 pub struct EditPredictionContextDebugView {
     focus_handle: FocusHandle,
-    context_editor: Option<Entity<Editor>>,
     project: Entity<Project>,
+    last_context: Option<ContextState>,
     max_bytes_input: Entity<SingleLineInput>,
     min_bytes_input: Entity<SingleLineInput>,
     cursor_context_ratio_input: Entity<SingleLineInput>,
@@ -71,6 +71,11 @@ pub struct EditPredictionContextDebugView {
     last_editor: WeakEntity<Editor>,
     _active_editor_subscription: Option<Subscription>,
     _edit_prediction_context_task: Task<()>,
+}
+
+struct ContextState {
+    context_editor: Entity<Editor>,
+    duration: Duration,
 }
 
 impl EditPredictionContextDebugView {
@@ -108,7 +113,9 @@ impl EditPredictionContextDebugView {
                             cx: &mut Context<Self>|
          -> Entity<SingleLineInput> {
             let input = cx.new(|cx| {
-                let input = SingleLineInput::new(window, cx, "").label(label);
+                let input = SingleLineInput::new(window, cx, "")
+                    .label(label)
+                    .label_min_width(px(64.));
                 input.set_text(value, window, cx);
                 input
             });
@@ -129,8 +136,8 @@ impl EditPredictionContextDebugView {
 
         let mut this = Self {
             focus_handle: cx.focus_handle(),
-            context_editor: None,
             project: project.clone(),
+            last_context: None,
             max_bytes_input: number_input("Max Bytes", "512", window, cx),
             min_bytes_input: number_input("Min Bytes", "128", window, cx),
             cursor_context_ratio_input: number_input("Cursor Context Ratio", "0.5", window, cx),
@@ -160,7 +167,7 @@ impl EditPredictionContextDebugView {
         let cursor_position = editor.selections.newest_anchor().start;
 
         let Some(buffer) = buffer.read(cx).buffer_for_anchor(cursor_position, cx) else {
-            self.context_editor.take();
+            self.last_context.take();
             return;
         };
         let current_buffer_snapshot = buffer.read(cx).snapshot();
@@ -177,7 +184,7 @@ impl EditPredictionContextDebugView {
             .map(|worktree| worktree.read(cx).id())
         else {
             log::error!("Open a worktree to use edit prediction debug view");
-            self.context_editor.take();
+            self.last_context.take();
             return;
         };
 
@@ -188,6 +195,7 @@ impl EditPredictionContextDebugView {
                     .timer(Duration::from_millis(50))
                     .await;
 
+                let mut gather_context_start = None;
                 let Ok(task) = this.update(cx, |this, cx| {
                     fn number_input_value<T: FromStr + Default>(
                         input: &Entity<SingleLineInput>,
@@ -213,6 +221,8 @@ impl EditPredictionContextDebugView {
                         include_parent_signatures: true,
                     };
 
+                    gather_context_start = Some(Instant::now());
+
                     EditPredictionContext::gather(
                         cursor_position,
                         current_buffer_snapshot,
@@ -222,7 +232,7 @@ impl EditPredictionContextDebugView {
                     )
                 }) else {
                     this.update(cx, |this, _cx| {
-                        this.context_editor.take();
+                        this.last_context.take();
                     })
                     .ok();
                     return;
@@ -231,11 +241,13 @@ impl EditPredictionContextDebugView {
                 let Some(context) = task.await else {
                     // TODO: Display message
                     this.update(cx, |this, _cx| {
-                        this.context_editor.take();
+                        this.last_context.take();
                     })
                     .ok();
                     return;
                 };
+
+                let duration = gather_context_start.unwrap().elapsed();
 
                 let mut languages = HashMap::default();
                 for snippet in context.snippets.iter() {
@@ -251,7 +263,7 @@ impl EditPredictionContextDebugView {
                 }
 
                 this.update_in(cx, |this, window, cx| {
-                    this.context_editor = Some(cx.new(|cx| {
+                    let context_editor = cx.new(|cx| {
                         let multibuffer = cx.new(|cx| {
                             let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
                             let excerpt_file = Arc::new(ExcerptMetadataFile {
@@ -312,7 +324,12 @@ impl EditPredictionContextDebugView {
                         });
 
                         Editor::new(EditorMode::full(), multibuffer, None, window, cx)
-                    }));
+                    });
+
+                    this.last_context = Some(ContextState {
+                        context_editor,
+                        duration,
+                    });
                     cx.notify();
                 })
                 .ok();
@@ -347,19 +364,51 @@ impl Render for EditPredictionContextDebugView {
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .child(
-                v_flex()
-                    .p_4()
-                    .gap_2()
-                    .child(Headline::new("Excerpt Options"))
+                h_flex()
+                    .items_start()
+                    .w_full()
                     .child(
-                        h_flex()
+                        v_flex()
+                            .flex_1()
+                            .p_4()
                             .gap_2()
-                            .child(self.max_bytes_input.clone())
-                            .child(self.min_bytes_input.clone())
-                            .child(self.cursor_context_ratio_input.clone()),
-                    ),
+                            .child(Headline::new("Excerpt Options").size(HeadlineSize::Small))
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(self.max_bytes_input.clone())
+                                    .child(self.min_bytes_input.clone())
+                                    .child(self.cursor_context_ratio_input.clone()),
+                            ),
+                    )
+                    .child(ui::Divider::vertical())
+                    .when_some(self.last_context.as_ref(), |this, last_context| {
+                        this.child(
+                            v_flex()
+                                .p_4()
+                                .gap_2()
+                                .min_w(px(160.))
+                                .child(Headline::new("Stats").size(HeadlineSize::Small))
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Label::new("Time to retrieve")
+                                                .color(Color::Muted)
+                                                .size(LabelSize::Small),
+                                        )
+                                        .child(
+                                            Label::new(format!(
+                                                "{} ms",
+                                                last_context.duration.as_millis()
+                                            ))
+                                            .size(LabelSize::Small),
+                                        ),
+                                ),
+                        )
+                    }),
             )
-            .children(self.context_editor.clone())
+            .children(self.last_context.as_ref().map(|c| c.context_editor.clone()))
     }
 }
 

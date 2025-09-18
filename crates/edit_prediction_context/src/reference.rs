@@ -89,6 +89,7 @@ pub fn identifiers_in_range(
                     }
 
                     let identifier_text =
+                        // TODO we found a case where this panicked with an overflow (node_range.start - range.start)
                         &range_text[node_range.start - range.start..node_range.end - range.start];
                     references.push(Reference {
                         identifier: Identifier {
