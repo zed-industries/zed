@@ -3144,7 +3144,6 @@ dependencies = [
  "release_channel",
  "rpc",
  "rustls-pki-types",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -9275,7 +9274,6 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand 2.1.2",
- "util",
  "workspace",
  "workspace-hack",
 ]
@@ -9496,7 +9494,6 @@ dependencies = [
  "http_client",
  "imara-diff",
  "indoc",
- "inventory",
  "itertools 0.14.0",
  "log",
  "lsp",
@@ -15486,7 +15483,6 @@ dependencies = [
 name = "settings_macros"
 version = "0.1.0"
 dependencies = [
- "proc-macro2",
  "quote",
  "settings",
  "syn 2.0.101",
@@ -17162,7 +17158,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indexmap 2.9.0",
- "inventory",
  "log",
  "palette",
  "parking_lot",

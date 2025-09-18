@@ -24,7 +24,6 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 indexmap.workspace = true
-inventory.workspace = true
 log.workspace = true
 palette = { workspace = true, default-features = false, features = ["std"] }
 parking_lot.workspace = true
