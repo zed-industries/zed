@@ -678,7 +678,7 @@ mod tests {
                 assert_eq!(decls.len(), 2);
                 let decl = expect_buffer_decl("c.rs", &decls[0], &project, cx);
                 assert_eq!(decl.identifier, main);
-                assert_eq!(decl.item_range.to_offset(&buffer.read(cx)), 32..279);
+                assert_eq!(decl.item_range.to_offset(&buffer.read(cx)), 32..280);
 
                 expect_file_decl("a.rs", &decls[1], &project, cx);
             });
