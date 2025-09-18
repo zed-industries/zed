@@ -10,7 +10,7 @@ use futures::{
 use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
-use schemars::JsonSchema;
+use schemars::{JsonSchema, schema_for};
 use serde_json::Value;
 use smallvec::SmallVec;
 use std::{
@@ -808,14 +808,16 @@ impl SettingsStore {
             .with_transform(DefaultDenyUnknownFields)
             .into_generator();
 
-        let schema = UserSettingsContent::json_schema(&mut generator);
+        UserSettingsContent::json_schema(&mut generator);
 
         // add schemas which are determined at runtime
         for parameterized_json_schema in inventory::iter::<ParameterizedJsonSchema>() {
             (parameterized_json_schema.add_and_get_ref)(&mut generator, schema_params, cx);
         }
 
-        schema.to_value()
+        generator
+            .root_schema_for::<UserSettingsContent>()
+            .to_value()
     }
 
     fn recompute_values(
