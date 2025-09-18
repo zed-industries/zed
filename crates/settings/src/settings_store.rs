@@ -1246,20 +1246,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_schema(cx: &mut App) {
-        let store = SettingsStore::new(cx, &test_settings());
-        let value = store.json_schema(&SettingsJsonSchemaParams {
-            language_names: &["WOW WOWO".into()],
-            font_names: &["XOX XOXO".into()],
-            theme_names: &["YOY YOYO".into()],
-            icon_theme_names: &["ZOZ ZOZO".into()],
-        });
-
-        eprintln!("{}", serde_json::to_string_pretty(&value).unwrap());
-        assert!(false);
-    }
-
-    #[gpui::test]
     fn test_setting_store_assign_json_before_register(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store
