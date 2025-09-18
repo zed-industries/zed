@@ -31,7 +31,7 @@ pub struct EditPredictionExcerptOptions {
     pub include_parent_signatures: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EditPredictionExcerpt {
     pub range: Range<usize>,
     pub parent_signature_ranges: Vec<Range<usize>>,

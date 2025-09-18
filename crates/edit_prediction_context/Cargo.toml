@@ -15,17 +15,24 @@ path = "src/edit_prediction_context.rs"
 anyhow.workspace = true
 arrayvec.workspace = true
 collections.workspace = true
+futures.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 language.workspace = true
 log.workspace = true
+ordered-float.workspace = true
 project.workspace = true
+regex.workspace = true
+serde.workspace = true
 slotmap.workspace = true
+strum.workspace = true
 text.workspace = true
 tree-sitter.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]
+clap.workspace = true
 futures.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
