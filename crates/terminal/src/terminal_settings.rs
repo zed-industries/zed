@@ -108,7 +108,7 @@ impl settings::Settings for TerminalSettings {
                 breadcrumbs: content.toolbar.unwrap().breadcrumbs.unwrap(),
             },
             scrollbar: ScrollbarSettings {
-                show: content.scrollbar.unwrap().show.flatten(),
+                show: content.scrollbar.unwrap().show,
             },
             minimum_contrast: content.minimum_contrast.unwrap(),
         }
@@ -173,12 +173,9 @@ impl settings::Settings for TerminalSettings {
                 .as_ref()
                 .and_then(|toolbar| toolbar.breadcrumbs),
         );
-        self.scrollbar.show.merge_from(
-            &content
-                .scrollbar
-                .as_ref()
-                .and_then(|scrollbar| scrollbar.show),
-        );
+        self.scrollbar
+            .show
+            .merge_from(&content.scrollbar.as_ref().map(|scrollbar| scrollbar.show));
         self.minimum_contrast.merge_from(&content.minimum_contrast);
     }
 

@@ -838,7 +838,7 @@ impl settings::Settings for ThemeSettings {
             },
             buffer_font_size: content.buffer_font_size.unwrap().into(),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
-            agent_font_size: content.agent_font_size.flatten().map(Into::into),
+            agent_font_size: content.agent_font_size.map(Into::into),
             active_theme: themes
                 .get(theme_selection.theme(*system_appearance))
                 .or(themes.get(&zed_default_dark().name))
@@ -943,11 +943,9 @@ impl settings::Settings for ThemeSettings {
             .merge_from(&value.ui_font_size.map(Into::into).map(clamp_font_size));
         self.buffer_font_size
             .merge_from(&value.buffer_font_size.map(Into::into).map(clamp_font_size));
-        self.agent_font_size.merge_from(
-            &value
-                .agent_font_size
-                .map(|value| value.map(Into::into).map(clamp_font_size)),
-        );
+        if let Some(agent_font_size) = self.agent_font_size {
+            self.agent_font_size = Some(clamp_font_size(agent_font_size.into()))
+        }
 
         self.buffer_line_height
             .merge_from(&value.buffer_line_height.map(Into::into));
