@@ -9,6 +9,8 @@ use std::{
 use crossbeam::queue::ArrayQueue;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
+mod tee;
+
 #[derive(Debug, thiserror::Error)]
 #[error("Replay duration is too short must be >= 100ms")]
 pub struct ReplayDurationTooShort;
