@@ -17,6 +17,20 @@ pub enum SurroundsType {
     Selection,
 }
 
+#[derive(PartialEq, Debug)]
+enum SurroundWhiteSpace {
+    /// Removes all whitespace between the bracket and the content.
+    // {   a   } → cs{] → [a]
+    Remove,
+    /// Adds a new space between the bracket and the content, including existing
+    /// whitespace.
+    // '  a  ' → cs'{ → {   a   }
+    Add,
+    /// Does not alter the existing whitespace between the content and the bracket.
+    // '  a  ' → cs'} → {  a  }
+    Keep,
+}
+
 impl Vim {
     pub fn add_surrounds(
         &mut self,
@@ -241,15 +255,13 @@ impl Vim {
                         },
                     };
 
-                    // Determines whether space should be added after
-                    // and before the surround pairs.
-                    // Space is only added in the following cases:
-                    // - new surround is not quote and is opening bracket (({[<)
-                    // - new surround is quote and original was also quote
-                    let surround = if pair.start != pair.end {
-                        pair.end != surround_alias((*text).as_ref())
-                    } else {
-                        will_replace_pair.start == will_replace_pair.end
+                    let to_quote = pair.start == pair.end;
+                    let to_opening_bracket = pair.end != surround_alias((*text).as_ref());
+
+                    let surround_whitespace = match (to_quote, to_opening_bracket) {
+                        (false, true) => SurroundWhiteSpace::Add,
+                        (true, _) => SurroundWhiteSpace::Keep,
+                        (_, _) => SurroundWhiteSpace::Remove,
                     };
 
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
@@ -278,11 +290,13 @@ impl Vim {
                                     let start = offset;
                                     let mut end = start + 1;
                                     if let Some((next_ch, _)) = chars_and_offset.peek() {
-                                        // If the next position is already a space or line break,
-                                        // we don't need to splice another space even under around
-                                        if surround && !next_ch.is_whitespace() {
+                                        if surround_whitespace == SurroundWhiteSpace::Add
+                                            && !next_ch.is_whitespace()
+                                        {
                                             open_str.push(' ');
-                                        } else if !surround && next_ch.to_string() == " " {
+                                        } else if surround_whitespace == SurroundWhiteSpace::Remove
+                                            && next_ch.to_string() == " "
+                                        {
                                             end += 1;
                                         }
                                     }
@@ -299,16 +313,21 @@ impl Vim {
                                 .peekable();
                             while let Some((ch, offset)) = reverse_chars_and_offsets.next() {
                                 if ch.to_string() == will_replace_pair.end {
-                                    let mut close_str = pair.end.clone();
+                                    let mut close_str = String::new();
                                     let mut start = offset;
                                     let end = start + 1;
                                     if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
-                                        if surround && !next_ch.is_whitespace() {
-                                            close_str.insert(0, ' ')
-                                        } else if !surround && next_ch.to_string() == " " {
+                                        if surround_whitespace == SurroundWhiteSpace::Add
+                                            && !next_ch.is_whitespace()
+                                        {
+                                            close_str.push(' ');
+                                        } else if surround_whitespace == SurroundWhiteSpace::Remove
+                                            && next_ch.to_string() == " "
+                                        {
                                             start -= 1;
                                         }
                                     }
+                                    close_str.push_str(&pair.end);
                                     edits.push((start..end, close_str));
                                     break;
                                 }
@@ -1201,6 +1220,29 @@ mod test {
                 if 2 > 1 ˇ[
                     println!(\"it is fine\");
                 ]
+            ];"},
+            Mode::Normal,
+        );
+
+        // Currently, the same test case but using the closing bracket `]`
+        // actually removes a whitespace before the closing bracket, something
+        // that might need to be fixed?
+        cx.set_state(
+            indoc! {"
+            fn test_surround() {
+                ifˇ 2 > 1 {
+                    ˇprintln!(\"it is fine\");
+                }
+            };"},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s { ]");
+        cx.assert_state(
+            indoc! {"
+            fn test_surround() ˇ[
+                if 2 > 1 ˇ[
+                    println!(\"it is fine\");
+               ]
             ];"},
             Mode::Normal,
         );
