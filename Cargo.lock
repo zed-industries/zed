@@ -337,6 +337,7 @@ dependencies = [
  "gpui",
  "language_model",
  "paths",
+ "project",
  "schemars 1.0.1",
  "serde",
  "serde_json",

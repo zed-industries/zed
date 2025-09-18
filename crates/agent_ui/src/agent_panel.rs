@@ -1,4 +1,4 @@
-use std::ops::{Not, Range};
+use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -662,8 +662,10 @@ impl AgentPanel {
             )
         });
 
-        cx.observe_global_in::<SettingsStore>(window, |panel, window, cx| {
-            if dbg!(DisableAiSettings::get_global(cx).disable_ai) {
+        let mut old_disable_ai = false;
+        cx.observe_global_in::<SettingsStore>(window, move |panel, window, cx| {
+            let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+            if old_disable_ai != disable_ai {
                 let agent_panel_id = cx.entity_id();
                 let agent_panel_visible = panel
                     .workspace
@@ -691,6 +693,8 @@ impl AgentPanel {
                 if agent_panel_visible {
                     cx.emit(PanelEvent::Close);
                 }
+
+                old_disable_ai = disable_ai;
             }
         })
         .detach();
@@ -1529,7 +1533,7 @@ impl Panel for AgentPanel {
     }
 
     fn enabled(&self, cx: &App) -> bool {
-        DisableAiSettings::get_global(cx).disable_ai.not() && AgentSettings::get_global(cx).enabled
+        AgentSettings::get_global(cx).enabled(cx)
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {
