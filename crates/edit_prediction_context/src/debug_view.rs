@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use collections::HashMap;
 use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
 use gpui::{Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, actions, prelude::*};
 use language::{Buffer, DiskState};
@@ -13,7 +14,10 @@ use text::ToPoint;
 use ui::prelude::*;
 use workspace::{Item, SplitDirection, Workspace};
 
-use crate::{EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex};
+use crate::{
+    EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
+    declaration_scoring::SnippetStyle,
+};
 
 actions!(
     dev,
@@ -137,63 +141,116 @@ impl EditPredictionContextDebugView {
             return;
         };
 
-        self._edit_prediction_context_task = cx.spawn_in(window, async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(50))
-                .await;
+        self._edit_prediction_context_task = cx.spawn_in(window, {
+            let language_registry = self.project.read(cx).languages().clone();
+            async move |this, cx| {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
 
-            let Ok(task) = this.update(cx, |this, cx| {
-                EditPredictionContext::gather(
-                    cursor_position,
-                    current_buffer_snapshot,
-                    EditPredictionExcerptOptions {
-                        max_bytes: 512,
-                        min_bytes: 128,
-                        target_before_cursor_over_total_bytes: 0.5,
-                        include_parent_signatures: true,
-                    },
-                    this.syntax_index.clone(),
-                    cx,
-                )
-            }) else {
-                this.update(cx, |this, _cx| {
-                    this.context_editor.take();
+                let Ok(task) = this.update(cx, |this, cx| {
+                    EditPredictionContext::gather(
+                        cursor_position,
+                        current_buffer_snapshot,
+                        EditPredictionExcerptOptions {
+                            max_bytes: 512,
+                            min_bytes: 128,
+                            target_before_cursor_over_total_bytes: 0.5,
+                            include_parent_signatures: true,
+                        },
+                        this.syntax_index.clone(),
+                        cx,
+                    )
+                }) else {
+                    this.update(cx, |this, _cx| {
+                        this.context_editor.take();
+                    })
+                    .ok();
+                    return;
+                };
+
+                let context = task.await;
+
+                let mut languages = HashMap::default();
+                for snippet in context.snippets.iter() {
+                    let lang_id = snippet.declaration.identifier().language_id;
+                    if !languages.contains_key(&lang_id) {
+                        // Most snippets are gonna be the same language,
+                        // so we think it's fine to do this sequentially for now
+                        languages.insert(
+                            lang_id,
+                            language_registry.language_for_id(lang_id).await.ok(),
+                        );
+                    }
+                }
+
+                this.update_in(cx, |this, window, cx| {
+                    this.context_editor = Some(cx.new(|cx| {
+                        let multibuffer = cx.new(|cx| {
+                            let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
+                            let excerpt_file = Arc::new(ExcerptMetadataFile {
+                                title: PathBuf::from("Cursor Excerpt").into(),
+                                worktree_id,
+                            });
+
+                            let excerpt_buffer = cx.new(|cx| {
+                                let mut buffer = Buffer::local(context.excerpt_text.body, cx);
+                                buffer.set_language(language, cx);
+                                buffer.file_updated(excerpt_file, cx);
+                                buffer
+                            });
+
+                            multibuffer.push_excerpts(
+                                excerpt_buffer,
+                                [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                                cx,
+                            );
+
+                            for snippet in context.snippets {
+                                let path = this
+                                    .project
+                                    .read(cx)
+                                    .path_for_entry(snippet.declaration.project_entry_id(), cx);
+
+                                let snippet_file = Arc::new(ExcerptMetadataFile {
+                                    title: PathBuf::from(format!(
+                                        "{} (Score density: {})",
+                                        path.map(|p| p.path.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "".to_string()),
+                                        snippet.score_density(SnippetStyle::Declaration)
+                                    ))
+                                    .into(),
+                                    worktree_id,
+                                });
+
+                                let excerpt_buffer = cx.new(|cx| {
+                                    let mut buffer =
+                                        Buffer::local(snippet.declaration.item_text().0, cx);
+                                    buffer.file_updated(snippet_file, cx);
+                                    if let Some(language) =
+                                        languages.get(&snippet.declaration.identifier().language_id)
+                                    {
+                                        buffer.set_language(language.clone(), cx);
+                                    }
+                                    buffer
+                                });
+
+                                multibuffer.push_excerpts(
+                                    excerpt_buffer,
+                                    [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                                    cx,
+                                );
+                            }
+
+                            multibuffer
+                        });
+
+                        Editor::new(EditorMode::full(), multibuffer, None, window, cx)
+                    }));
+                    cx.notify();
                 })
                 .ok();
-                return;
-            };
-
-            let context = task.await;
-
-            this.update_in(cx, |this, window, cx| {
-                this.context_editor = Some(cx.new(|cx| {
-                    let multibuffer = cx.new(|cx| {
-                        let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
-                        let excerpt_file = Arc::new(ExcerptMetadataFile {
-                            title: PathBuf::from("Cursor Context").into(),
-                            worktree_id,
-                        });
-
-                        let excerpt_buffer = cx.new(|cx| {
-                            let mut buffer = Buffer::local(context.excerpt_text.body, cx);
-                            buffer.set_language(language, cx);
-                            buffer.file_updated(excerpt_file, cx);
-                            buffer
-                        });
-
-                        multibuffer.push_excerpts(
-                            excerpt_buffer,
-                            [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
-                            cx,
-                        );
-                        multibuffer
-                    });
-
-                    Editor::new(EditorMode::full(), multibuffer, None, window, cx)
-                }));
-                cx.notify();
-            })
-            .ok();
+            }
         });
     }
 }

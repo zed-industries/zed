@@ -649,6 +649,21 @@ impl LanguageRegistry {
         async move { rx.await? }
     }
 
+    pub async fn language_for_id(self: &Arc<Self>, id: LanguageId) -> Result<Arc<Language>> {
+        let state = self.state.read();
+        let Some(available_language) = state
+            .available_languages
+            .iter()
+            .find(|lang| lang.id == id)
+            .cloned()
+        else {
+            anyhow::bail!(LanguageNotFound);
+        };
+        drop(state);
+
+        self.load_language(&available_language).await?
+    }
+
     pub fn language_name_for_extension(self: &Arc<Self>, extension: &str) -> Option<LanguageName> {
         self.state.try_read().and_then(|state| {
             state
