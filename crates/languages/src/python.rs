@@ -224,9 +224,14 @@ impl LspInstaller for TyLspAdapter {
             digest: expected_digest,
         } = latest_version;
         let destination_path = container_dir.join(format!("ty-{name}"));
+
+        async_fs::create_dir_all(&destination_path).await?;
+
         let server_path = match Self::GITHUB_ASSET_KIND {
-            AssetKind::TarGz | AssetKind::Gz => destination_path.clone(), // Tar and gzip extract in place.
-            AssetKind::Zip => destination_path.clone().join("ty.exe"),    // zip contains a .exe
+            AssetKind::TarGz | AssetKind::Gz => destination_path
+                .join(Self::build_asset_name()?.0)
+                .join("ty"),
+            AssetKind::Zip => destination_path.clone().join("ty.exe"),
         };
 
         let binary = LanguageServerBinary {
@@ -313,8 +318,10 @@ impl LspInstaller for TyLspAdapter {
 
             let path = last.context("no cached binary")?;
             let path = match TyLspAdapter::GITHUB_ASSET_KIND {
-                AssetKind::TarGz | AssetKind::Gz => path, // Tar and gzip extract in place.
-                AssetKind::Zip => path.join("ty.exe"),    // zip contains a .exe
+                AssetKind::TarGz | AssetKind::Gz => {
+                    path.join(Self::build_asset_name()?.0).join("ty")
+                }
+                AssetKind::Zip => path.join("ty.exe"),
             };
 
             anyhow::Ok(LanguageServerBinary {
