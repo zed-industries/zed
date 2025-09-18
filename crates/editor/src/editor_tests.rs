@@ -30,7 +30,7 @@ use language::{
     },
     tree_sitter_python,
 };
-use language_settings::{Formatter, IndentGuideSettings};
+use language_settings::{Formatter, IndentGuideSettingsContent};
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
@@ -19961,7 +19961,7 @@ fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -
         end_row: MultiBufferRow(end_row),
         depth,
         tab_size: 4,
-        settings: IndentGuideSettings {
+        settings: IndentGuideSettingsContent {
             enabled: true,
             line_width: 1,
             active_line_width: 1,

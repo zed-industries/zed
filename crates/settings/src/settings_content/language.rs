@@ -154,7 +154,7 @@ pub struct LanguageSettingsContent {
     /// Default: []
     pub wrap_guides: Option<Vec<usize>>,
     /// Indent guide related settings.
-    pub indent_guides: Option<IndentGuideSettings>,
+    pub indent_guides: Option<IndentGuideSettingsContent>,
     /// Whether or not to perform a buffer format before saving.
     ///
     /// Default: on
@@ -269,7 +269,7 @@ pub struct LanguageSettingsContent {
     /// Task configuration for this language.
     ///
     /// Default: {}
-    pub tasks: Option<LanguageTaskConfig>,
+    pub tasks: Option<LanguageTaskSettingsContent>,
     /// Whether to pop the completions menu while typing in an editor without
     /// explicitly requesting it.
     ///
@@ -757,55 +757,37 @@ pub enum Formatter {
 /// The settings for indent guides.
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct IndentGuideSettings {
+pub struct IndentGuideSettingsContent {
     /// Whether to display indent guides in the editor.
     ///
     /// Default: true
-    #[serde(default = "default_true")]
-    pub enabled: bool,
+    pub enabled: Option<bool>,
     /// The width of the indent guides in pixels, between 1 and 10.
     ///
     /// Default: 1
-    #[serde(default = "line_width")]
-    pub line_width: u32,
+    pub line_width: Option<u32>,
     /// The width of the active indent guide in pixels, between 1 and 10.
     ///
     /// Default: 1
-    #[serde(default = "active_line_width")]
-    pub active_line_width: u32,
+    pub active_line_width: Option<u32>,
     /// Determines how indent guides are colored.
     ///
     /// Default: Fixed
-    #[serde(default)]
-    pub coloring: IndentGuideColoring,
+    pub coloring: Option<IndentGuideColoring>,
     /// Determines how indent guide backgrounds are colored.
     ///
     /// Default: Disabled
-    #[serde(default)]
-    pub background_coloring: IndentGuideBackgroundColoring,
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn line_width() -> u32 {
-    1
-}
-
-fn active_line_width() -> u32 {
-    line_width()
+    pub background_coloring: Option<IndentGuideBackgroundColoring>,
 }
 
 /// The task settings for a particular language.
 #[skip_serializing_none]
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
-pub struct LanguageTaskConfig {
+pub struct LanguageTaskSettingsContent {
     /// Extra task variables to set for a particular language.
     #[serde(default)]
     pub variables: HashMap<String, String>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
+    pub enabled: Option<bool>,
     /// Use LSP tasks over Zed language extension ones.
     /// If no LSP tasks are returned due to error/timeout or regular execution,
     /// Zed language extension tasks will be used instead.
@@ -813,8 +795,7 @@ pub struct LanguageTaskConfig {
     /// Other Zed tasks will still be shown:
     /// * Zed task from either of the task config file
     /// * Zed task from history (e.g. one-off task was spawned before)
-    #[serde(default = "default_true")]
-    pub prefer_lsp: bool,
+    pub prefer_lsp: Option<bool>,
 }
 
 /// Map from language name to settings. Its `ParameterizedJsonSchema` allows only known language

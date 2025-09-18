@@ -13,13 +13,13 @@ use schemars::json_schema;
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
-    Formatter, FormatterList, IndentGuideSettings, InlayHintKind, LanguageSettingsContent,
+    Formatter, FormatterList, IndentGuideSettingsContent, InlayHintKind, LanguageSettingsContent,
     LspInsertMode, RewrapBehavior, SelectedFormatter, ShowWhitespaceSetting, SoftWrap,
     WordsCompletionMode,
 };
 use settings::{
-    ParameterizedJsonSchema, PrettierSettingsContent, Settings, SettingsContent, SettingsLocation,
-    SettingsStore, SettingsUi,
+    LanguageTaskSettingsContent, ParameterizedJsonSchema, PrettierSettingsContent, Settings,
+    SettingsContent, SettingsLocation, SettingsStore, SettingsUi,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
@@ -150,7 +150,7 @@ pub struct LanguageSettings {
     /// Whether to perform linked edits
     pub linked_edits: bool,
     /// Task configuration for this language.
-    pub tasks: settings::LanguageTaskConfig,
+    pub tasks: LanguageTaskSettings,
     /// Whether to pop the completions menu while typing in an editor without
     /// explicitly requesting it.
     pub show_completions_on_input: bool,
@@ -199,6 +199,70 @@ impl CompletionSettings {
         self.lsp_fetch_timeout_ms
             .merge_from(&src.lsp_fetch_timeout_ms);
         self.lsp_insert_mode.merge_from(&src.lsp_insert_mode);
+    }
+}
+
+/// The settings for indent guides.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndentGuideSettings {
+    /// Whether to display indent guides in the editor.
+    ///
+    /// Default: true
+    pub enabled: bool,
+    /// The width of the indent guides in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    pub line_width: u32,
+    /// The width of the active indent guide in pixels, between 1 and 10.
+    ///
+    /// Default: 1
+    pub active_line_width: u32,
+    /// Determines how indent guides are colored.
+    ///
+    /// Default: Fixed
+    pub coloring: settings::IndentGuideColoring,
+    /// Determines how indent guide backgrounds are colored.
+    ///
+    /// Default: Disabled
+    pub background_coloring: settings::IndentGuideBackgroundColoring,
+}
+
+impl IndentGuideSettings {
+    pub fn merge_from(&mut self, src: &Option<IndentGuideSettingsContent>) {
+        let Some(src) = src else { return };
+
+        self.enabled.merge_from(&src.enabled);
+        self.line_width.merge_from(&src.line_width);
+        self.active_line_width.merge_from(&src.active_line_width);
+        self.coloring.merge_from(&src.coloring);
+        self.background_coloring
+            .merge_from(&src.background_coloring);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LanguageTaskSettings {
+    /// Extra task variables to set for a particular language.
+    pub variables: HashMap<String, String>,
+    pub enabled: bool,
+    /// Use LSP tasks over Zed language extension ones.
+    /// If no LSP tasks are returned due to error/timeout or regular execution,
+    /// Zed language extension tasks will be used instead.
+    ///
+    /// Other Zed tasks will still be shown:
+    /// * Zed task from either of the task config file
+    /// * Zed task from history (e.g. one-off task was spawned before)
+    pub prefer_lsp: bool,
+}
+
+impl LanguageTaskSettings {
+    pub fn merge_from(&mut self, src: &Option<LanguageTaskSettingsContent>) {
+        let Some(src) = src.clone() else {
+            return;
+        };
+        self.variables.extend(src.variables);
+        self.enabled.merge_from(&src.enabled);
+        self.prefer_lsp.merge_from(&src.prefer_lsp);
     }
 }
 
@@ -517,6 +581,8 @@ impl settings::Settings for AllLanguageSettings {
         let inlay_hints = defaults.inlay_hints.unwrap();
         let completions = defaults.completions.unwrap();
         let prettier = defaults.prettier.unwrap();
+        let indent_guides = defaults.indent_guides.unwrap();
+        let tasks = defaults.tasks.unwrap();
 
         let default_language_settings = LanguageSettings {
             tab_size: defaults.tab_size.unwrap(),
@@ -525,7 +591,13 @@ impl settings::Settings for AllLanguageSettings {
             preferred_line_length: defaults.preferred_line_length.unwrap(),
             show_wrap_guides: defaults.show_wrap_guides.unwrap(),
             wrap_guides: defaults.wrap_guides.unwrap(),
-            indent_guides: defaults.indent_guides.unwrap(),
+            indent_guides: IndentGuideSettings {
+                enabled: indent_guides.enabled.unwrap(),
+                line_width: indent_guides.line_width.unwrap(),
+                active_line_width: indent_guides.active_line_width.unwrap(),
+                coloring: indent_guides.coloring.unwrap(),
+                background_coloring: indent_guides.background_coloring.unwrap(),
+            },
             format_on_save: defaults.format_on_save.unwrap(),
             remove_trailing_whitespace_on_save: defaults
                 .remove_trailing_whitespace_on_save
@@ -568,7 +640,11 @@ impl settings::Settings for AllLanguageSettings {
                 .unwrap(),
             code_actions_on_format: defaults.code_actions_on_format.unwrap(),
             linked_edits: defaults.linked_edits.unwrap(),
-            tasks: defaults.tasks.unwrap(),
+            tasks: LanguageTaskSettings {
+                variables: tasks.variables,
+                enabled: tasks.enabled.unwrap(),
+                prefer_lsp: tasks.prefer_lsp.unwrap(),
+            },
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             show_completion_documentation: defaults.show_completion_documentation.unwrap(),
             completions: CompletionSettings {
@@ -787,14 +863,7 @@ impl settings::Settings for AllLanguageSettings {
             d.wrap_guides = arr;
         }
         if let Some(b) = vscode.read_bool("editor.guides.indentation") {
-            if let Some(guide_settings) = d.indent_guides.as_mut() {
-                guide_settings.enabled = b;
-            } else {
-                d.indent_guides = Some(IndentGuideSettings {
-                    enabled: b,
-                    ..Default::default()
-                });
-            }
+            d.indent_guides.get_or_insert_default().enabled = Some(b);
         }
 
         if let Some(b) = vscode.read_bool("editor.guides.formatOnSave") {
@@ -918,7 +987,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
         .code_actions_on_format
         .merge_from(&src.code_actions_on_format.clone());
     settings.linked_edits.merge_from(&src.linked_edits);
-    settings.tasks.merge_from(&src.tasks.clone());
+    settings.tasks.merge_from(&src.tasks);
 
     settings
         .preferred_line_length

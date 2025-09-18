@@ -51,7 +51,7 @@ use gpui::{
     transparent_black,
 };
 use itertools::Itertools;
-use language::language_settings::{IndentGuideSettings, ShowWhitespaceSetting};
+use language::language_settings::{IndentGuideSettingsContent, ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
@@ -10177,7 +10177,7 @@ pub struct IndentGuideLayout {
     single_indent_width: Pixels,
     depth: u32,
     active: bool,
-    settings: IndentGuideSettings,
+    settings: IndentGuideSettingsContent,
 }
 
 pub struct CursorLayout {
