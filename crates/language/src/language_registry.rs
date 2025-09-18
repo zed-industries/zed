@@ -650,16 +650,19 @@ impl LanguageRegistry {
     }
 
     pub async fn language_for_id(self: &Arc<Self>, id: LanguageId) -> Result<Arc<Language>> {
-        let state = self.state.read();
-        let Some(available_language) = state
-            .available_languages
-            .iter()
-            .find(|lang| lang.id == id)
-            .cloned()
-        else {
-            anyhow::bail!(LanguageNotFound);
+        let available_language = {
+            let state = self.state.read();
+
+            let Some(available_language) = state
+                .available_languages
+                .iter()
+                .find(|lang| lang.id == id)
+                .cloned()
+            else {
+                anyhow::bail!(LanguageNotFound);
+            };
+            available_language
         };
-        drop(state);
 
         self.load_language(&available_language).await?
     }

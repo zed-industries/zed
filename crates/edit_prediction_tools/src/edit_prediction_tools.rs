@@ -1,4 +1,5 @@
 use std::{
+    collections::hash_map::Entry,
     ffi::OsStr,
     path::{Path, PathBuf},
     str::FromStr,
@@ -251,13 +252,10 @@ impl EditPredictionTools {
                 let mut languages = HashMap::default();
                 for snippet in context.snippets.iter() {
                     let lang_id = snippet.declaration.identifier().language_id;
-                    if !languages.contains_key(&lang_id) {
+                    if let Entry::Vacant(entry) = languages.entry(lang_id) {
                         // Most snippets are gonna be the same language,
                         // so we think it's fine to do this sequentially for now
-                        languages.insert(
-                            lang_id,
-                            language_registry.language_for_id(lang_id).await.ok(),
-                        );
+                        entry.insert(language_registry.language_for_id(lang_id).await.ok());
                     }
                 }
 
