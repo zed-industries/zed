@@ -3,11 +3,14 @@ use std::fmt::Display;
 
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    App, AppContext as _, Context, Div, IntoElement, Render, Window, actions, div, px, size,
+    App, AppContext as _, Context, Div, IntoElement, ReadGlobal as _, Render, Window, actions, div,
+    px, size,
 };
+use settings::{SettingsContent, SettingsStore};
 use ui::{
     ActiveTheme as _, Color, FluentBuilder as _, InteractiveElement as _, Label, LabelCommon as _,
-    LabelSize, ParentElement, StatefulInteractiveElement as _, Styled as _, v_flex,
+    LabelSize, ParentElement, StatefulInteractiveElement as _, Styled as _, SwitchField,
+    ToggleButton, v_flex,
 };
 use workspace::Workspace;
 
@@ -93,6 +96,7 @@ pub fn open_settings_editor(
         gpui::WindowOptions {
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Zed Settings".into()),
+                appears_transparent: true, // todo(settings_ui) will change in future, this looks cool for now
                 ..Default::default()
             }),
             focus: true,
@@ -152,6 +156,22 @@ fn render_nav(page: SettingsPage, _window: &mut Window, _cx: &mut Context<Settin
         );
     }
     nav
+}
+
+fn render_toggle_button(
+    title: &'static str,
+    description: &'static str,
+    get_value: fn(&SettingsContent) -> &mut bool,
+    cx: &mut App,
+) -> impl IntoElement {
+    let defaults = SettingsStore::global(cx).raw_default_settings()
+    // todo! id?
+    let toggle_state = if *get_value(settings) {
+        ui::ToggleState::Selected
+    } else {
+        ui::ToggleState::Unselected
+    };
+    SwitchField::new(title, title, Some(description), Togglesta)
 }
 
 impl Render for SettingsWindow {
