@@ -1556,7 +1556,8 @@ While other options may be changed at a runtime and should be placed under `sett
 ```json
 {
   "global_lsp_settings": {
-    "button": true
+    "button": true,
+    "request_timeout_secs": 120
   }
 }
 ```
@@ -1564,6 +1565,7 @@ While other options may be changed at a runtime and should be placed under `sett
 **Options**
 
 - `button`: Whether to show the LSP status button in the status bar
+- `request_timeout_secs`: Number of seconds to wait for language server responses before timing out (set to `0` to disable)
 
 ## LSP Highlight Debounce
 
@@ -1579,13 +1581,15 @@ While other options may be changed at a runtime and should be placed under `sett
 
 ```json
 "global_lsp_settings": {
-  "button": true
+  "button": true,
+  "request_timeout_secs": 120
 }
 ```
 
 **Options**
 
-`integer` values representing milliseconds
+- `button`: Whether to show the LSP status button in the status bar
+- `request_timeout_secs`: Number of seconds to wait for language server responses before timing out (set to `0` to disable)
 
 ## Features
 

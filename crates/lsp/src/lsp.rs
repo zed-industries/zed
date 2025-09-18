@@ -8,6 +8,7 @@ use collections::{BTreeMap, HashMap};
 use futures::{
     AsyncRead, AsyncWrite, Future, FutureExt,
     channel::oneshot::{self, Canceled},
+    future::{self, Either},
     io::BufWriter,
     select,
 };
@@ -45,7 +46,8 @@ use util::{ConnectionResult, ResultExt, TryFutureExt, redact};
 const JSON_RPC_VERSION: &str = "2.0";
 const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 
-pub const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const DEFAULT_LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
+pub const LSP_REQUEST_TIMEOUT: Duration = DEFAULT_LSP_REQUEST_TIMEOUT;
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, &mut AsyncApp)>;
@@ -98,6 +100,7 @@ pub struct LanguageServer {
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
     io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
     executor: BackgroundExecutor,
+    request_timeout: Option<Duration>,
     #[allow(clippy::type_complexity)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
@@ -319,6 +322,7 @@ impl LanguageServer {
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
+        request_timeout: Option<Duration>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -367,6 +371,7 @@ impl LanguageServer {
             binary,
             root_uri,
             workspace_folders,
+            request_timeout,
             cx,
             move |notification| {
                 log::info!(
@@ -394,6 +399,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_uri: Uri,
         workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
+        request_timeout: Option<Duration>,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -498,6 +504,7 @@ impl LanguageServer {
             next_id: Default::default(),
             outbound_tx,
             executor: cx.background_executor().clone(),
+            request_timeout,
             io_tasks: Mutex::new(Some((input_task, output_task))),
             output_done_rx: Mutex::new(Some(output_done_rx)),
             server: Arc::new(Mutex::new(server)),
@@ -927,6 +934,7 @@ impl LanguageServer {
                 &response_handlers,
                 &outbound_tx,
                 &executor,
+                self.request_timeout,
                 (),
             );
 
@@ -1183,8 +1191,13 @@ impl LanguageServer {
             &self.response_handlers,
             &self.outbound_tx,
             &self.executor,
+            self.request_timeout,
             params,
         )
+    }
+
+    pub fn request_timer(&self) -> impl Future<Output = String> {
+        Self::request_timeout_future(self.executor.clone(), self.request_timeout)
     }
 
     /// Sends a RPC request to the language server, with a custom timer, a future which when becoming
@@ -1314,6 +1327,7 @@ impl LanguageServer {
         response_handlers: &Mutex<Option<HashMap<RequestId, ResponseHandler>>>,
         outbound_tx: &channel::Sender<String>,
         executor: &BackgroundExecutor,
+        request_timeout: Option<Duration>,
         params: T::Params,
     ) -> impl LspRequestFuture<T::Result> + use<T>
     where
@@ -1325,15 +1339,23 @@ impl LanguageServer {
             response_handlers,
             outbound_tx,
             executor,
-            Self::default_request_timer(executor.clone()),
+            Self::request_timeout_future(executor.clone(), request_timeout),
             params,
         )
     }
 
-    pub fn default_request_timer(executor: BackgroundExecutor) -> impl Future<Output = String> {
-        executor
-            .timer(LSP_REQUEST_TIMEOUT)
-            .map(|_| format!("which took over {LSP_REQUEST_TIMEOUT:?}"))
+    fn request_timeout_future(
+        executor: BackgroundExecutor,
+        request_timeout: Option<Duration>,
+    ) -> impl Future<Output = String> {
+        match request_timeout {
+            Some(timeout) => Either::Left(
+                executor
+                    .timer(timeout)
+                    .map(move |_| format!("which took over {timeout:?}")),
+            ),
+            None => Either::Right(future::pending::<String>()),
+        }
     }
 
     /// Sends a RPC notification to the language server.
@@ -1586,6 +1608,7 @@ impl FakeLanguageServer {
         binary: LanguageServerBinary,
         name: String,
         capabilities: ServerCapabilities,
+        request_timeout: Option<Duration>,
         cx: &mut AsyncApp,
     ) -> (LanguageServer, FakeLanguageServer) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
@@ -1608,6 +1631,7 @@ impl FakeLanguageServer {
             binary.clone(),
             root,
             Some(workspace_folders.clone()),
+            request_timeout,
             cx,
             |_| false,
         );
@@ -1627,6 +1651,7 @@ impl FakeLanguageServer {
                     binary,
                     Self::root_path(),
                     Some(workspace_folders),
+                    request_timeout,
                     cx,
                     move |msg| {
                         notifications_tx
@@ -1844,6 +1869,7 @@ mod tests {
             },
             "the-lsp".to_string(),
             Default::default(),
+            Some(DEFAULT_LSP_REQUEST_TIMEOUT),
             &mut cx.to_async(),
         );
 

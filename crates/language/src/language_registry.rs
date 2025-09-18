@@ -16,6 +16,8 @@ use futures::{
 };
 use globset::GlobSet;
 use gpui::{App, BackgroundExecutor, SharedString};
+#[cfg(any(test, feature = "test-support"))]
+use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
 use lsp::LanguageServerId;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
@@ -1123,6 +1125,7 @@ impl LanguageRegistry {
             binary,
             name.0.to_string(),
             fake_entry.capabilities.clone(),
+            Some(DEFAULT_LSP_REQUEST_TIMEOUT),
             cx,
         );
         fake_entry._server = Some(fake_server.clone());

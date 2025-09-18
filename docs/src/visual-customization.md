@@ -329,7 +329,10 @@ TBD: Centered layout related settings
     // Show/hide the LSP button in the status bar.
     // Activity from the LSP is still shown.
     // Button is not shown if "enable_language_server" if false.
-    "button": true
+    "button": true,
+    // Number of seconds to wait for responses from language servers before timing out.
+    // Set to 0 to disable the timeout entirely. Defaults to 120.
+    "request_timeout_secs": 120
   },
 ```
 

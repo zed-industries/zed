@@ -1829,7 +1829,9 @@
   // Common language server settings.
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
-    "button": true
+    "button": true,
+    // Number of seconds to wait for responses from language servers. Set to 0 to disable the timeout.
+    "request_timeout_secs": 120
   },
   // Jupyter settings
   "jupyter": {

@@ -122,6 +122,13 @@ pub struct GlobalLspSettings {
     /// Default: `true`
     #[serde(default = "default_true")]
     pub button: bool,
+
+    /// The number of seconds to wait for an LSP request before timing out.
+    /// Set to `0` to disable the timeout.
+    ///
+    /// Default: `120`
+    #[serde(default = "default_lsp_request_timeout_secs")]
+    pub request_timeout_secs: u64,
 }
 
 impl ContextServerSettings {
@@ -277,6 +284,20 @@ impl Default for GlobalLspSettings {
     fn default() -> Self {
         Self {
             button: default_true(),
+            request_timeout_secs: default_lsp_request_timeout_secs(),
+        }
+    }
+}
+
+fn default_lsp_request_timeout_secs() -> u64 {
+    120
+}
+
+impl GlobalLspSettings {
+    pub fn request_timeout(&self) -> Option<Duration> {
+        match self.request_timeout_secs {
+            0 => None,
+            secs => Some(Duration::from_secs(secs)),
         }
     }
 }
