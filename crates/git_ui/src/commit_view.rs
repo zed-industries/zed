@@ -637,6 +637,8 @@ impl CommitViewToolbar {
         let Some(stash) = commit_view.read(cx).stash else {
             return;
         };
+        let hash = commit_view.read(cx).commit.sha.clone();
+
         let answer = window.prompt(
             PromptLevel::Info,
             &format!("Apply stash@{{{}}}?", stash),
@@ -655,14 +657,24 @@ impl CommitViewToolbar {
                     .panel::<GitPanel>(cx)
                     .and_then(|p| p.read(cx).active_repository.clone())
             })?;
+            let Some(repo) = repo else {
+                return Ok(());
+            };
+            let result = repo.update(cx, |repo, cx| {
+                if !stash_matches_index(&hash, stash, repo) {
+                    return Err(anyhow::anyhow!("Stash has changed, not applying"));
+                }
+                Ok(repo.stash_apply(Some(stash), cx))
+            })?;
+            match result {
+                Ok(task) => task.await?,
+                Err(err) => {
+                    Self::close_commit_view(commit_view, workspace, cx).await?;
+                    return Err(err);
+                }
+            };
 
-            if let Some(repo) = repo {
-                repo.update(cx, |repo, cx| repo.stash_apply(Some(stash), cx))?
-                    .await?;
-
-                Self::close_commit_view(commit_view, workspace, cx).await?;
-            }
-
+            Self::close_commit_view(commit_view, workspace, cx).await?;
             anyhow::Ok(())
         })
         .detach_and_notify_err(window, cx);
@@ -675,6 +687,7 @@ impl CommitViewToolbar {
         let Some(stash) = commit_view.read(cx).stash else {
             return;
         };
+        let hash = commit_view.read(cx).commit.sha.clone();
         let answer = window.prompt(
             PromptLevel::Info,
             &format!("Pop stash@{{{}}}?", stash),
@@ -695,13 +708,24 @@ impl CommitViewToolbar {
                     .and_then(|p| p.read(cx).active_repository.clone())
             })?;
 
-            if let Some(repo) = repo {
-                repo.update(cx, |repo, cx| repo.stash_pop(Some(stash), cx))?
-                    .await?;
+            let Some(repo) = repo else {
+                return Ok(());
+            };
+            let result = repo.update(cx, |repo, cx| {
+                if !stash_matches_index(&hash, stash, repo) {
+                    return Err(anyhow::anyhow!("Stash has changed, pop aborted"));
+                }
+                Ok(repo.stash_pop(Some(stash), cx))
+            })?;
+            match result {
+                Ok(task) => task.await?,
+                Err(err) => {
+                    Self::close_commit_view(commit_view, workspace, cx).await?;
+                    return Err(err);
+                }
+            };
 
-                Self::close_commit_view(commit_view, workspace, cx).await?;
-            }
-
+            Self::close_commit_view(commit_view, workspace, cx).await?;
             anyhow::Ok(())
         })
         .detach_and_notify_err(window, cx);
@@ -714,6 +738,7 @@ impl CommitViewToolbar {
         let Some(stash) = commit_view.read(cx).stash else {
             return;
         };
+        let hash = commit_view.read(cx).commit.sha.clone();
         let answer = window.prompt(
             PromptLevel::Info,
             &format!("Remove stash@{{{}}}?", stash),
@@ -733,13 +758,24 @@ impl CommitViewToolbar {
                     .and_then(|p| p.read(cx).active_repository.clone())
             })?;
 
-            if let Some(repo) = repo {
-                repo.update(cx, |repo, cx| repo.stash_drop(Some(stash), cx))?
-                    .await??;
+            let Some(repo) = repo else {
+                return Ok(());
+            };
+            let result = repo.update(cx, |repo, cx| {
+                if !stash_matches_index(&hash, stash, repo) {
+                    return Err(anyhow::anyhow!("Stash has changed, drop aborted"));
+                }
+                Ok(repo.stash_drop(Some(stash), cx))
+            })?;
+            match result {
+                Ok(task) => task.await??,
+                Err(err) => {
+                    Self::close_commit_view(commit_view, workspace, cx).await?;
+                    return Err(err);
+                }
+            };
 
-                Self::close_commit_view(commit_view, workspace, cx).await?;
-            }
-
+            Self::close_commit_view(commit_view, workspace, cx).await?;
             anyhow::Ok(())
         })
         .detach_and_notify_err(window, cx);
@@ -796,7 +832,7 @@ impl Render for CommitViewToolbar {
         h_group_xl().my_neg_1().py_1().items_center().child(
             h_group_sm()
                 .child(
-                    Button::new("apply_stash", "Apply")
+                    Button::new("apply-stash", "Apply")
                         .icon(IconName::ArrowDown)
                         .tooltip(Tooltip::for_action_title_in(
                             "Apply current stash",
@@ -806,7 +842,7 @@ impl Render for CommitViewToolbar {
                         .on_click(cx.listener(|this, _, window, cx| this.apply_stash(window, cx))),
                 )
                 .child(
-                    Button::new("pop_stash", "Pop")
+                    Button::new("pop-stash", "Pop")
                         .icon(IconName::ArrowUp)
                         .tooltip(Tooltip::for_action_title_in(
                             "Pop current stash",
@@ -816,7 +852,7 @@ impl Render for CommitViewToolbar {
                         .on_click(cx.listener(|this, _, window, cx| this.pop_stash(window, cx))),
                 )
                 .child(
-                    Button::new("remove_stash", "Remove")
+                    Button::new("remove-stash", "Remove")
                         .icon(IconName::Trash)
                         .tooltip(Tooltip::for_action_title_in(
                             "Remove current stash",
@@ -850,4 +886,21 @@ fn register_workspace_action<A: Action>(
             });
         })
     });
+}
+
+fn stash_matches_index(hash: &str, index: usize, repo: &mut Repository) -> bool {
+    match repo
+        .cached_stash()
+        .entries
+        .iter()
+        .find(|entry| entry.index == index)
+    {
+        Some(entry) => {
+            if entry.oid.to_string() != hash {
+                return false;
+            }
+            true
+        }
+        None => false,
+    }
 }
