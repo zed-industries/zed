@@ -9,7 +9,7 @@ use futures::AsyncReadExt as _;
 use gpui::{App, Task};
 use gpui_tokio::Tokio;
 use http_client::http::request;
-use http_client::{AsyncBody, HttpClientWithUrl, Method, Request, StatusCode};
+use http_client::{AsyncBody, HttpClientWithUrl, HttpRequestExt, Method, Request, StatusCode};
 use parking_lot::RwLock;
 use yawc::WebSocket;
 
@@ -119,15 +119,16 @@ impl CloudApiClient {
         &self,
         system_id: Option<String>,
     ) -> Result<CreateLlmTokenResponse> {
-        let mut request_builder = Request::builder().method(Method::POST).uri(
-            self.http_client
-                .build_zed_cloud_url("/client/llm_tokens", &[])?
-                .as_ref(),
-        );
-
-        if let Some(system_id) = system_id {
-            request_builder = request_builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id);
-        }
+        let request_builder = Request::builder()
+            .method(Method::POST)
+            .uri(
+                self.http_client
+                    .build_zed_cloud_url("/client/llm_tokens", &[])?
+                    .as_ref(),
+            )
+            .when_some(system_id, |builder, system_id| {
+                builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
+            });
 
         let request = self.build_request(request_builder, AsyncBody::default())?;
 
