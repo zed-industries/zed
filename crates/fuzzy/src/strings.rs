@@ -1,14 +1,11 @@
-use crate::{CharBag, matcher::MatchCandidate};
+use crate::{CharBag, matcher};
 use gpui::BackgroundExecutor;
 use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Borrow,
     cmp, iter,
     ops::Range,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 #[derive(Clone, Debug)]
@@ -25,16 +22,6 @@ impl StringMatchCandidate {
             string: string.into(),
             char_bag: string.into(),
         }
-    }
-}
-
-impl MatchCandidate for &StringMatchCandidate {
-    fn has_chars(&self, bag: CharBag) -> bool {
-        self.char_bag.is_superset(bag)
-    }
-
-    fn candidate_chars(&self) -> impl Iterator<Item = char> {
-        self.string.chars()
     }
 }
 
@@ -106,10 +93,12 @@ impl PartialOrd for StringMatch {
 
 impl Ord for StringMatch {
     fn cmp(&self, other: &Self) -> cmp::Ordering {
+        // dbg!(&self.string, self.score);
+        // dbg!(&other.string, other.score);
         self.score
-            .partial_cmp(&other.score)
-            .unwrap_or(cmp::Ordering::Equal)
-            .then_with(|| self.candidate_id.cmp(&other.candidate_id))
+            .total_cmp(&other.score)
+            .reverse()
+            .then_with(|| self.string.cmp(&other.string))
     }
 }
 
@@ -117,7 +106,7 @@ pub async fn match_strings<T>(
     candidates: &[T],
     query: &str,
     smart_case: bool,
-    penalize_length: bool, // TODO: re-add this functionality for lsp completions
+    prefer_shorter: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
     executor: BackgroundExecutor,
@@ -128,12 +117,13 @@ where
     if candidates.is_empty() || max_results == 0 {
         return Default::default();
     }
+    // FIXME should support fzf syntax with Pattern::parse
     let pattern = Pattern::new(
         query,
         if smart_case {
             CaseMatching::Smart
         } else {
-            CaseMatching::Respect
+            CaseMatching::Ignore
         },
         Normalization::Smart,
         AtomKind::Fuzzy,
@@ -157,15 +147,9 @@ where
         .map(|_| Vec::<StringMatch>::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
-    static MATCHERS: Mutex<Vec<nucleo::Matcher>> = Mutex::new(Vec::new());
-    let mut matchers: Vec<_> = {
-        let mut matchers = MATCHERS.lock().unwrap();
-        let numb_matchers = matchers.len();
-        matchers.drain(0..cmp::min(num_cpus, numb_matchers)).collect()
-    };
     let mut config = nucleo::Config::DEFAULT;
-    config.prefer_prefix = true;
-    matchers.resize_with(num_cpus, || nucleo::Matcher::new(config.clone()));
+    config.prefer_prefix = true; // TODO: consider making this a setting
+    let mut matchers = matcher::get_matchers(num_cpus, config);
 
     executor
         .scoped(|scope| {
@@ -192,9 +176,15 @@ where
                             matcher,
                             &mut indices,
                         ) {
+                            let length_modifier = candidate.string.chars().count() as f64 / 10_000.;
                             results.push(StringMatch {
                                 candidate_id: candidate.id,
-                                score: score as f64,
+                                score: score as f64
+                                    + if prefer_shorter {
+                                        -length_modifier
+                                    } else {
+                                        length_modifier
+                                    },
                                 positions: indices.into_iter().map(|n| n as usize).collect(),
                                 string: candidate.string.clone(),
                             })
@@ -205,13 +195,116 @@ where
         })
         .await;
 
-    MATCHERS.lock().unwrap().append(&mut matchers);
+    matcher::return_matchers(matchers);
 
     if cancel_flag.load(Ordering::Relaxed) {
         return Vec::new();
     }
 
     let mut results = segment_results.concat();
-    util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
+    util::truncate_to_bottom_n_sorted(&mut results, max_results);
+    for r in &mut results {
+        r.positions.sort();
+    }
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    use gpui::TestAppContext;
+
+    async fn get_matches(
+        cx: &mut TestAppContext,
+        candidates: &[&'static str],
+        query: &'static str,
+        penalize_length: bool,
+    ) -> Vec<StringMatch> {
+        let candidates: Vec<_> = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, s)| StringMatchCandidate::new(i, s))
+            .collect();
+
+        let cancellation_flag = AtomicBool::new(false);
+        let executor = cx.background_executor.clone();
+        cx.foreground_executor
+            .spawn(async move {
+                super::match_strings(
+                    &candidates,
+                    query,
+                    true,
+                    penalize_length,
+                    100,
+                    &cancellation_flag,
+                    executor,
+                )
+                .await
+            })
+            .await
+    }
+
+    async fn string_matches(
+        cx: &mut TestAppContext,
+        candidates: &[&'static str],
+        query: &'static str,
+        penalize_length: bool,
+    ) -> Vec<String> {
+        let matches = get_matches(cx, candidates, query, penalize_length).await;
+        matches
+            .iter()
+            .map(|sm| sm.string.clone())
+            .collect::<Vec<_>>()
+    }
+
+    async fn match_positions(
+        cx: &mut TestAppContext,
+        candidates: &[&'static str],
+        query: &'static str,
+        penalize_length: bool,
+    ) -> Vec<usize> {
+        let mut matches = get_matches(cx, candidates, query, penalize_length).await;
+        matches.remove(0).positions
+    }
+
+    #[gpui::test]
+    async fn prefer_shorter_matches(cx: &mut TestAppContext) {
+        let candidates = &["a", "aa", "aaa"];
+        assert_eq!(
+            string_matches(cx, candidates, "a", true).await,
+            ["a", "aa", "aaa"]
+        );
+    }
+
+    #[gpui::test]
+    async fn prefer_longer_matches(cx: &mut TestAppContext) {
+        let candidates = &["unreachable", "unreachable!()"];
+        assert_eq!(
+            string_matches(cx, candidates, "unreac", false).await,
+            ["unreachable!()", "unreachable",]
+        );
+    }
+
+    #[gpui::test]
+    async fn shorter_over_lexicographical(cx: &mut TestAppContext) {
+        const CANDIDATES: &'static [&'static str] = &["qr", "qqqqqqqqqqqq"];
+        assert_eq!(
+            string_matches(cx, CANDIDATES, "q", true).await,
+            ["qr", "qqqqqqqqqqqq"]
+        );
+    }
+
+    #[gpui::test]
+    async fn indices_are_sorted_and_correct(cx: &mut TestAppContext) {
+        const CANDIDATES: &'static [&'static str] = &["hello how are you"];
+        assert_eq!(
+            match_positions(cx, CANDIDATES, "you hello", true).await,
+            vec![0, 1, 2, 3, 4, 14, 15, 16]
+        );
+
+        // const CANDIDATES: &'static [&'static str] =
+        //     &["crates/livekit_api/vendored/protocol/README.md"];
+    }
 }

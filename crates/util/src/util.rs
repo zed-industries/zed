@@ -196,15 +196,12 @@ where
     }
 }
 
-pub fn truncate_to_bottom_n_sorted_by<T, F>(items: &mut Vec<T>, limit: usize, compare: &F)
-where
-    F: Fn(&T, &T) -> Ordering,
-{
+pub fn truncate_to_bottom_n_sorted<T: Ord>(items: &mut Vec<T>, limit: usize) {
     if limit == 0 {
         items.truncate(0);
     }
     if items.len() <= limit {
-        items.sort_by(compare);
+        items.sort();
         return;
     }
     // When limit is near to items.len() it may be more efficient to sort the whole list and
@@ -213,9 +210,9 @@ where
     // `select_nth_unstable_by` makes the prefix partially sorted, and so its work is not wasted -
     // the expected number of comparisons needed by `sort_by` is less than it is for some arbitrary
     // unsorted input.
-    items.select_nth_unstable_by(limit, compare);
+    items.select_nth_unstable(limit);
     items.truncate(limit);
-    items.sort_by(compare);
+    items.sort();
 }
 
 /// Prevents execution of the application with root privileges on Unix systems.
@@ -1051,23 +1048,23 @@ mod tests {
     #[test]
     fn test_truncate_to_bottom_n_sorted_by() {
         let mut vec: Vec<u32> = vec![5, 2, 3, 4, 1];
-        truncate_to_bottom_n_sorted_by(&mut vec, 10, &u32::cmp);
+        truncate_to_bottom_n_sorted(&mut vec, 10);
         assert_eq!(vec, &[1, 2, 3, 4, 5]);
 
         vec = vec![5, 2, 3, 4, 1];
-        truncate_to_bottom_n_sorted_by(&mut vec, 5, &u32::cmp);
+        truncate_to_bottom_n_sorted(&mut vec, 5);
         assert_eq!(vec, &[1, 2, 3, 4, 5]);
 
         vec = vec![5, 2, 3, 4, 1];
-        truncate_to_bottom_n_sorted_by(&mut vec, 4, &u32::cmp);
+        truncate_to_bottom_n_sorted(&mut vec, 4);
         assert_eq!(vec, &[1, 2, 3, 4]);
 
         vec = vec![5, 2, 3, 4, 1];
-        truncate_to_bottom_n_sorted_by(&mut vec, 1, &u32::cmp);
+        truncate_to_bottom_n_sorted(&mut vec, 1);
         assert_eq!(vec, &[1]);
 
         vec = vec![5, 2, 3, 4, 1];
-        truncate_to_bottom_n_sorted_by(&mut vec, 0, &u32::cmp);
+        truncate_to_bottom_n_sorted(&mut vec, 0);
         assert!(vec.is_empty());
     }
 

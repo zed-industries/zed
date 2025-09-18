@@ -74,7 +74,7 @@ fn test_path_elision() {
 #[test]
 fn test_custom_project_search_ordering_in_file_finder() {
     let mut file_finder_sorted_output = vec![
-        ProjectPanelOrdMatch(PathMatch {
+        PathMatch {
             score: 0.5,
             positions: Vec::new(),
             worktree_id: 0,
@@ -82,8 +82,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
-        }),
-        ProjectPanelOrdMatch(PathMatch {
+        },
+        PathMatch {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
@@ -91,8 +91,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
-        }),
-        ProjectPanelOrdMatch(PathMatch {
+        },
+        PathMatch {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
@@ -100,8 +100,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
-        }),
-        ProjectPanelOrdMatch(PathMatch {
+        },
+        PathMatch {
             score: 0.5,
             positions: Vec::new(),
             worktree_id: 0,
@@ -109,8 +109,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
-        }),
-        ProjectPanelOrdMatch(PathMatch {
+        },
+        PathMatch {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
@@ -118,14 +118,14 @@ fn test_custom_project_search_ordering_in_file_finder() {
             path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
-        }),
+        },
     ];
     file_finder_sorted_output.sort_by(|a, b| b.cmp(a));
 
     assert_eq!(
         file_finder_sorted_output,
         vec![
-            ProjectPanelOrdMatch(PathMatch {
+            PathMatch {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
@@ -133,8 +133,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
-            }),
-            ProjectPanelOrdMatch(PathMatch {
+            },
+            PathMatch {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
@@ -142,8 +142,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
-            }),
-            ProjectPanelOrdMatch(PathMatch {
+            },
+            PathMatch {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
@@ -151,8 +151,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
-            }),
-            ProjectPanelOrdMatch(PathMatch {
+            },
+            PathMatch {
                 score: 0.5,
                 positions: Vec::new(),
                 worktree_id: 0,
@@ -160,8 +160,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
-            }),
-            ProjectPanelOrdMatch(PathMatch {
+            },
+            PathMatch {
                 score: 0.5,
                 positions: Vec::new(),
                 worktree_id: 0,
@@ -169,7 +169,7 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
-            }),
+            },
         ]
     );
 }
@@ -629,10 +629,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
             delegate.latest_search_id,
             true, // did-cancel
             query.clone(),
-            vec![
-                ProjectPanelOrdMatch(matches[1].clone()),
-                ProjectPanelOrdMatch(matches[3].clone()),
-            ],
+            vec![matches[1].clone(), matches[3].clone()],
             cx,
         );
 
@@ -642,11 +639,7 @@ async fn test_matching_cancellation(cx: &mut TestAppContext) {
             delegate.latest_search_id,
             true, // did-cancel
             query.clone(),
-            vec![
-                ProjectPanelOrdMatch(matches[0].clone()),
-                ProjectPanelOrdMatch(matches[2].clone()),
-                ProjectPanelOrdMatch(matches[3].clone()),
-            ],
+            vec![matches[0].clone(), matches[2].clone(), matches[3].clone()],
             cx,
         );
 
@@ -1171,10 +1164,10 @@ async fn test_history_items_uniqueness_for_multiple_worktree(cx: &mut TestAppCon
 
         if let Match::Search(path_match) = &matches[1] {
             assert_eq!(
-                WorktreeId::from_usize(path_match.0.worktree_id),
+                WorktreeId::from_usize(path_match.worktree_id),
                 worktree_id2
             );
-            assert_eq!(path_match.0.path.as_ref(), rel_path("package.json"));
+            assert_eq!(path_match.path.as_ref(), rel_path("package.json"));
         }
     });
 }
@@ -1585,10 +1578,10 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
             [Match::History { .. }, Match::CreateNew { .. }]
         );
         assert_eq!(
-            matches[0].panel_match().unwrap().0.path.as_ref(),
+            matches[0].panel_match().unwrap().path.as_ref(),
             rel_path("test/first.rs")
         );
-        assert_eq!(matches[0].panel_match().unwrap().0.positions, &[5, 6, 7]);
+        assert_eq!(matches[0].panel_match().unwrap().positions, &[5, 6, 7]);
 
         let (file_label, path_label) =
             finder
@@ -3309,7 +3302,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                 if let Some(path_match) = path_match.as_ref() {
                     search_entries
                         .history
-                        .push(path_match.0.path_prefix.join(&path_match.0.path));
+                        .push(path_match.path_prefix.join(&path_match.path));
                 } else {
                     // This occurs when the query is empty and we show history matches
                     // that are outside the project.
@@ -3322,8 +3315,8 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
             Match::Search(path_match) => {
                 search_entries
                     .search
-                    .push(path_match.0.path_prefix.join(&path_match.0.path));
-                search_entries.search_matches.push(path_match.0.clone());
+                    .push(path_match.path_prefix.join(&path_match.path));
+                search_entries.search_matches.push(path_match.clone());
             }
             Match::CreateNew(_) => {}
         }
@@ -3358,7 +3351,7 @@ fn assert_match_at_position(
         .unwrap_or_else(|| panic!("Finder has no match for index {match_index}"));
     let match_file_name = match &match_item {
         Match::History { path, .. } => path.absolute.file_name().and_then(|s| s.to_str()),
-        Match::Search(path_match) => path_match.0.path.file_name(),
+        Match::Search(path_match) => path_match.path.file_name(),
         Match::CreateNew(project_path) => project_path.path.file_name(),
     }
     .unwrap();
