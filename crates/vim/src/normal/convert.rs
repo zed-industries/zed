@@ -444,15 +444,26 @@ mod test {
         cx.simulate_keystrokes("~");
         cx.assert_state("«HELLO WORLDˇ»", Mode::HelixNormal);
 
-        // Cursor-only (empty) selection
+        // Cursor-only (empty) selection - switch case
         cx.set_state("The ˇquick brown", Mode::HelixNormal);
         cx.simulate_keystrokes("~");
         cx.assert_state("The ˇQuick brown", Mode::HelixNormal);
+        cx.simulate_keystrokes("~");
+        cx.assert_state("The ˇquick brown", Mode::HelixNormal);
+
+        // Cursor-only (empty) selection - switch to uppercase and lowercase explicitly
+        cx.set_state("The ˇquick brown", Mode::HelixNormal);
+        cx.simulate_keystrokes("alt-`");
+        cx.assert_state("The ˇQuick brown", Mode::HelixNormal);
+        cx.simulate_keystrokes("`");
+        cx.assert_state("The ˇquick brown", Mode::HelixNormal);
 
         // With `e` motion (which extends selection to end of word in Helix)
         cx.set_state("The ˇquick brown fox", Mode::HelixNormal);
         cx.simulate_keystrokes("e");
         cx.simulate_keystrokes("~");
         cx.assert_state("The «QUICKˇ» brown fox", Mode::HelixNormal);
+
+        // Cursor-only
     }
 }
