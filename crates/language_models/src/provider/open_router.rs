@@ -211,7 +211,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 max_tokens: model.max_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
-                mode: model.mode.clone().unwrap_or_default(),
+                mode: model.mode.unwrap_or_default(),
                 provider: model.provider.clone(),
             });
         }

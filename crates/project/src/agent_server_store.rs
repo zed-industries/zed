@@ -1071,7 +1071,7 @@ impl settings::Settings for AllAgentServersSettings {
             custom: agent_settings
                 .custom
                 .into_iter()
-                .map(|(k, v)| (k.clone(), v.into()))
+                .map(|(k, v)| (k, v.into()))
                 .collect(),
         }
     }

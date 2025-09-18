@@ -25,5 +25,4 @@ serde_json.workspace = true
 settings.workspace = true
 strum.workspace = true
 thiserror.workspace = true
-util.workspace = true
 workspace-hack.workspace = true

@@ -82,25 +82,22 @@ impl Settings for WorkspaceSettings {
                         .unwrap(),
                 ),
             },
-            bottom_dock_layout: workspace.bottom_dock_layout.clone().unwrap(),
-            pane_split_direction_horizontal: workspace
-                .pane_split_direction_horizontal
-                .clone()
-                .unwrap(),
-            pane_split_direction_vertical: workspace.pane_split_direction_vertical.clone().unwrap(),
-            centered_layout: workspace.centered_layout.clone().unwrap(),
-            confirm_quit: workspace.confirm_quit.clone().unwrap(),
-            show_call_status_icon: workspace.show_call_status_icon.clone().unwrap(),
-            autosave: workspace.autosave.clone().unwrap(),
-            restore_on_startup: workspace.restore_on_startup.clone().unwrap(),
-            restore_on_file_reopen: workspace.restore_on_file_reopen.clone().unwrap(),
-            drop_target_size: workspace.drop_target_size.clone().unwrap(),
-            use_system_path_prompts: workspace.use_system_path_prompts.clone().unwrap(),
-            use_system_prompts: workspace.use_system_prompts.clone().unwrap(),
+            bottom_dock_layout: workspace.bottom_dock_layout.unwrap(),
+            pane_split_direction_horizontal: workspace.pane_split_direction_horizontal.unwrap(),
+            pane_split_direction_vertical: workspace.pane_split_direction_vertical.unwrap(),
+            centered_layout: workspace.centered_layout.unwrap(),
+            confirm_quit: workspace.confirm_quit.unwrap(),
+            show_call_status_icon: workspace.show_call_status_icon.unwrap(),
+            autosave: workspace.autosave.unwrap(),
+            restore_on_startup: workspace.restore_on_startup.unwrap(),
+            restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
+            drop_target_size: workspace.drop_target_size.unwrap(),
+            use_system_path_prompts: workspace.use_system_path_prompts.unwrap(),
+            use_system_prompts: workspace.use_system_prompts.unwrap(),
             command_aliases: workspace.command_aliases.clone(),
-            max_tabs: workspace.max_tabs.clone(),
-            when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.clone().unwrap(),
-            on_last_window_closed: workspace.on_last_window_closed.clone().unwrap(),
+            max_tabs: workspace.max_tabs,
+            when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.unwrap(),
+            on_last_window_closed: workspace.on_last_window_closed.unwrap(),
             resize_all_panels_in_dock: workspace
                 .resize_all_panels_in_dock
                 .clone()
@@ -108,22 +105,22 @@ impl Settings for WorkspaceSettings {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
-            close_on_file_delete: workspace.close_on_file_delete.clone().unwrap(),
-            use_system_window_tabs: workspace.use_system_window_tabs.clone().unwrap(),
-            zoomed_padding: workspace.zoomed_padding.clone().unwrap(),
+            close_on_file_delete: workspace.close_on_file_delete.unwrap(),
+            use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
+            zoomed_padding: workspace.zoomed_padding.unwrap(),
         }
     }
 
     fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
         let workspace = &content.workspace;
-        if let Some(border_size) = *&workspace
+        if let Some(border_size) = workspace
             .active_pane_modifiers
             .and_then(|modifier| modifier.border_size)
         {
             self.active_pane_modifiers.border_size = Some(border_size);
         }
 
-        if let Some(inactive_opacity) = *&workspace
+        if let Some(inactive_opacity) = workspace
             .active_pane_modifiers
             .and_then(|modifier| modifier.inactive_opacity)
         {

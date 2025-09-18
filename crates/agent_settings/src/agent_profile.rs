@@ -126,7 +126,7 @@ impl AgentProfileSettings {
         }
 
         profiles.insert(
-            profile_id.0.clone(),
+            profile_id.0,
             AgentProfileContent {
                 name: self.name.clone().into(),
                 tools: self.tools.clone(),

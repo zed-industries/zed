@@ -303,7 +303,7 @@ impl TextThreadEditor {
                             settings.agent.get_or_insert_default().set_model(
                                 LanguageModelSelection {
                                     provider: LanguageModelProviderSetting(provider),
-                                    model: model.clone(),
+                                    model,
                                 },
                             )
                         });

@@ -15,7 +15,6 @@ path = "src/zlog_settings.rs"
 default = []
 
 [dependencies]
-anyhow.workspace = true
 gpui.workspace = true
 collections.workspace = true
 settings.workspace = true

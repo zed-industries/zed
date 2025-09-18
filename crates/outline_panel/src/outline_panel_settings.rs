@@ -72,7 +72,7 @@ impl Settings for OutlinePanelSettings {
         self.button.merge_from(&panel.button);
         self.default_width
             .merge_from(&panel.default_width.map(Pixels::from));
-        self.dock.merge_from(&panel.dock.map(Into::into));
+        self.dock.merge_from(&panel.dock);
         self.file_icons.merge_from(&panel.file_icons);
         self.folder_icons.merge_from(&panel.folder_icons);
         self.git_status.merge_from(&panel.git_status);

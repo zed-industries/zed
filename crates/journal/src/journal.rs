@@ -39,7 +39,7 @@ impl settings::Settings for JournalSettings {
 
         Self {
             path: journal.path.unwrap(),
-            hour_format: journal.hour_format.unwrap().into(),
+            hour_format: journal.hour_format.unwrap(),
         }
     }
 
@@ -195,7 +195,7 @@ fn heading_entry(now: NaiveTime, hour_format: &HourFormat) -> String {
             let hour = now.hour();
             format!("# {}:{:02}", hour, now.minute())
         }
-        HourFormat::Hour12 =>  {
+        HourFormat::Hour12 => {
             let (pm, hour) = now.hour12();
             let am_or_pm = if pm { "PM" } else { "AM" };
             format!("# {}:{:02} {}", hour, now.minute(), am_or_pm)

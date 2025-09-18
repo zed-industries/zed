@@ -1410,7 +1410,6 @@ dependencies = [
  "log",
  "parking_lot",
  "rodio",
- "schemars 1.0.1",
  "serde",
  "settings",
  "smol",
@@ -1443,7 +1442,6 @@ dependencies = [
  "log",
  "paths",
  "release_channel",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
@@ -2646,7 +2644,6 @@ dependencies = [
  "log",
  "postage",
  "project",
- "schemars 1.0.1",
  "serde",
  "settings",
  "telemetry",
@@ -3458,7 +3455,6 @@ dependencies = [
  "project",
  "release_channel",
  "rpc",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
@@ -5745,7 +5741,6 @@ dependencies = [
  "release_channel",
  "remote",
  "reqwest_client",
- "schemars 1.0.1",
  "semantic_version",
  "serde",
  "serde_json",
@@ -6866,7 +6861,6 @@ dependencies = [
  "indoc",
  "pretty_assertions",
  "regex",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
@@ -7738,7 +7732,6 @@ dependencies = [
 name = "go_to_line"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "editor",
  "gpui",
  "indoc",
@@ -7746,7 +7739,6 @@ dependencies = [
  "menu",
  "project",
  "rope",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
@@ -8772,7 +8764,6 @@ dependencies = [
  "language",
  "log",
  "project",
- "schemars 1.0.1",
  "serde",
  "settings",
  "theme",
@@ -9275,7 +9266,6 @@ dependencies = [
  "editor",
  "gpui",
  "log",
- "schemars 1.0.1",
  "serde",
  "settings",
  "shellexpand 2.1.2",
@@ -11695,7 +11685,6 @@ dependencies = [
  "settings",
  "strum 0.27.1",
  "thiserror 2.0.12",
- "util",
  "workspace-hack",
 ]
 
@@ -11869,7 +11858,6 @@ dependencies = [
  "outline",
  "pretty_assertions",
  "project",
- "schemars 1.0.1",
  "search",
  "serde",
  "serde_json",
@@ -13841,7 +13829,6 @@ dependencies = [
  "project",
  "release_channel",
  "remote",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
@@ -14015,7 +14002,6 @@ dependencies = [
  "prost 0.9.0",
  "release_channel",
  "rpc",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
@@ -14135,7 +14121,6 @@ dependencies = [
  "picker",
  "project",
  "runtimelib",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
@@ -17179,7 +17164,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_json_lenient",
- "serde_repr",
  "settings",
  "strum 0.27.1",
  "thiserror 2.0.12",
@@ -18726,7 +18710,6 @@ dependencies = [
 name = "vim_mode_setting"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui",
  "settings",
  "workspace-hack",
@@ -20849,7 +20832,6 @@ dependencies = [
  "pretty_assertions",
  "rand 0.9.1",
  "rpc",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "settings",
@@ -21707,7 +21689,6 @@ dependencies = [
 name = "zlog_settings"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "collections",
  "gpui",
  "settings",

@@ -505,7 +505,7 @@ impl Settings for ProjectSettings {
                 .lsp
                 .clone()
                 .into_iter()
-                .map(|(key, value)| (LanguageServerName(key.into()), value.into()))
+                .map(|(key, value)| (LanguageServerName(key.into()), value))
                 .collect(),
             global_lsp_settings: GlobalLspSettings {
                 button: content
@@ -559,7 +559,7 @@ impl Settings for ProjectSettings {
                 .dap
                 .clone()
                 .into_iter()
-                .filter_map(|(key, value)| Some((DebugAdapterName(key.into()), value))),
+                .map(|(key, value)| (DebugAdapterName(key.into()), value)),
         );
         if let Some(diagnostics) = content.diagnostics.as_ref() {
             if let Some(inline) = &diagnostics.inline {

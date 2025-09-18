@@ -22916,7 +22916,7 @@ fn inlay_hint_settings(
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
     let language = snapshot.language_at(location).map(|l| l.name());
-    language_settings(language, file, cx).inlay_hints.clone()
+    language_settings(language, file, cx).inlay_hints
 }
 
 fn consume_contiguous_rows(

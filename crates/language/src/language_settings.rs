@@ -917,8 +917,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
             .scroll_debounce_ms
             .merge_from(&inlay_hints.scroll_debounce_ms);
         if let Some(toggle_on_modifiers_press) = &inlay_hints.toggle_on_modifiers_press {
-            settings.inlay_hints.toggle_on_modifiers_press =
-                Some(toggle_on_modifiers_press.clone());
+            settings.inlay_hints.toggle_on_modifiers_press = Some(*toggle_on_modifiers_press);
         }
     }
     settings
