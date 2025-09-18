@@ -32,7 +32,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+    cx.observe_new(move |workspace: &mut Workspace, _, cx| {
         workspace.register_action(
             move |workspace, _: &OpenEditPredictionContext, window, cx| {
                 let workspace_entity = cx.entity();
@@ -217,7 +217,7 @@ impl EditPredictionTools {
                             cx,
                         ),
                         // TODO Display and add to options
-                        include_parent_signatures: true,
+                        include_parent_signatures: false,
                     };
 
                     gather_context_start = Some(Instant::now());
@@ -397,10 +397,19 @@ impl Render for EditPredictionTools {
                                                 .size(LabelSize::Small),
                                         )
                                         .child(
-                                            Label::new(format!(
-                                                "{} ms",
-                                                last_context.duration.as_millis()
-                                            ))
+                                            Label::new(
+                                                if last_context.duration.as_micros() > 1000 {
+                                                    format!(
+                                                        "{} ms",
+                                                        last_context.duration.as_millis()
+                                                    )
+                                                } else {
+                                                    format!(
+                                                        "{} µs",
+                                                        last_context.duration.as_micros()
+                                                    )
+                                                },
+                                            )
                                             .size(LabelSize::Small),
                                         ),
                                 ),
