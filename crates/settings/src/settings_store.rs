@@ -362,6 +362,22 @@ impl SettingsStore {
         Ok(())
     }
 
+    /// Replaces current settings with the values from the given JSON.
+    pub fn set_raw_server_settings(
+        &mut self,
+        new_settings: Option<Value>,
+        cx: &mut App,
+    ) -> Result<()> {
+        // Rewrite the server settings into a content type
+        self.server_settings = new_settings
+            .map(|settings| settings.to_string())
+            .and_then(|str| parse_json_with_comments::<SettingsContent>(&str).ok())
+            .map(Box::new);
+
+        self.recompute_values(None, cx)?;
+        Ok(())
+    }
+
     /// Get the configured settings profile names.
     pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
         self.user_settings

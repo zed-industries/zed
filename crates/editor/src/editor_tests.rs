@@ -41,7 +41,10 @@ use project::{
     project_settings::LspSettings,
 };
 use serde_json::{self, json};
-use settings::{AllLanguageSettingsContent, ProjectSettingsContent};
+use settings::{
+    AllLanguageSettingsContent, IndentGuideBackgroundColoring, IndentGuideColoring,
+    ProjectSettingsContent,
+};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
     iter,
@@ -19965,7 +19968,8 @@ fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -
             enabled: true,
             line_width: 1,
             active_line_width: 1,
-            ..Default::default()
+            coloring: IndentGuideColoring::default(),
+            background_coloring: IndentGuideBackgroundColoring::default(),
         },
     }
 }

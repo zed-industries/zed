@@ -432,7 +432,7 @@ impl InlayHintKind {
     }
 }
 
-/// Controls how completions are processedfor this anguage.
+/// Controls how completions are processed for this language.
 #[skip_serializing_none]
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]

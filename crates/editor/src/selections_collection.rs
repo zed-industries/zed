@@ -469,13 +469,24 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
 
     pub(crate) fn set_pending_anchor_range(&mut self, range: Range<Anchor>, mode: SelectMode) {
+        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
         self.collection.pending = Some(PendingSelection {
-            selection: Selection {
-                id: post_inc(&mut self.collection.next_selection_id),
-                start: range.start,
-                end: range.end,
-                reversed: false,
-                goal: SelectionGoal::None,
+            selection: {
+                let mut start = range.start;
+                let mut end = range.end;
+                let reversed = if start.cmp(&end, &buffer).is_gt() {
+                    mem::swap(&mut start, &mut end);
+                    true
+                } else {
+                    false
+                };
+                Selection {
+                    id: post_inc(&mut self.collection.next_selection_id),
+                    start,
+                    end,
+                    reversed,
+                    goal: SelectionGoal::None,
+                }
             },
             mode,
         });
