@@ -35,6 +35,7 @@ use std::{
     path::Path,
     pin::pin,
     sync::Arc,
+    time::Duration,
 };
 use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher};
@@ -173,6 +174,8 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+const PROJECT_SEARCH_AUTO_SEARCH_DEBOUNCE_MS: u64 = 200;
+
 fn contains_uppercase(str: &str) -> bool {
     str.chars().any(|c| c.is_uppercase())
 }
@@ -217,6 +220,8 @@ pub struct ProjectSearchView {
     replace_enabled: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
+    auto_search_generation: u64,
+    focus_results_on_search: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -688,7 +693,7 @@ impl ProjectSearchView {
             && self.query_editor.read(cx).text(cx) != *last_search_query_text
         {
             // search query has changed, restart search and bail
-            self.search(cx);
+            self.search(true, cx);
             return;
         }
         if self.entity.read(cx).match_ranges.is_empty() {
@@ -715,7 +720,7 @@ impl ProjectSearchView {
             && self.query_editor.read(cx).text(cx) != *last_search_query_text
         {
             // search query has changed, restart search and bail
-            self.search(cx);
+            self.search(true, cx);
             return;
         }
         if self.active_match_index.is_none() {
@@ -787,16 +792,17 @@ impl ProjectSearchView {
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
         subscriptions.push(
             cx.subscribe(&query_editor, |this, _, event: &EditorEvent, cx| {
-                if let EditorEvent::Edited { .. } = event
-                    && EditorSettings::get_global(cx).use_smartcase_search
-                {
-                    let query = this.search_query_text(cx);
-                    if !query.is_empty()
-                        && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                            != contains_uppercase(&query)
-                    {
-                        this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                if matches!(event, EditorEvent::Edited { .. }) {
+                    if EditorSettings::get_global(cx).use_smartcase_search {
+                        let query = this.search_query_text(cx);
+                        if !query.is_empty()
+                            && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
+                                != contains_uppercase(&query)
+                        {
+                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
+                        }
                     }
+                    this.schedule_auto_search(cx);
                 }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
             }),
@@ -900,6 +906,8 @@ impl ProjectSearchView {
             replace_enabled: false,
             included_opened_only: false,
             regex_language: None,
+            auto_search_generation: 0,
+            focus_results_on_search: true,
             _subscriptions: subscriptions,
         };
         this.entity_changed(window, cx);
@@ -1126,14 +1134,15 @@ impl ProjectSearchView {
             };
             if should_search {
                 this.update(cx, |this, cx| {
-                    this.search(cx);
+                    this.search(true, cx);
                 })?;
             }
             anyhow::Ok(())
         })
     }
 
-    fn search(&mut self, cx: &mut Context<Self>) {
+    fn search(&mut self, focus_results: bool, cx: &mut Context<Self>) {
+        self.focus_results_on_search = focus_results;
         if let Some(query) = self.build_search_query(cx) {
             self.entity.update(cx, |model, cx| model.search(query, cx));
         }
@@ -1385,6 +1394,71 @@ impl ProjectSearchView {
         window.focus(&results_handle);
     }
 
+    fn schedule_auto_search(&mut self, cx: &mut Context<Self>) {
+        if self.is_dirty(cx) {
+            return;
+        }
+
+        self.auto_search_generation = self.auto_search_generation.wrapping_add(1);
+        let generation = self.auto_search_generation;
+        let debounce = Duration::from_millis(PROJECT_SEARCH_AUTO_SEARCH_DEBOUNCE_MS);
+        let timer = cx.background_executor().timer(debounce);
+
+        cx.spawn(async move |this, cx| {
+            timer.await;
+            if let Some(this) = this.upgrade() {
+                this.update(cx, |search_view, cx| {
+                    if search_view.auto_search_generation == generation {
+                        search_view.run_auto_search(cx);
+                    }
+                }).ok();
+            }
+        })
+        .detach();
+    }
+
+    fn run_auto_search(&mut self, cx: &mut Context<Self>) {
+        if self.is_dirty(cx) {
+            return;
+        }
+
+        let query_text = self.search_query_text(cx);
+        if query_text.is_empty() {
+            self.clear_search_results(cx);
+            return;
+        }
+
+        let last_query_matches = self
+            .entity
+            .read(cx)
+            .last_search_query_text
+            .as_ref()
+            .is_some_and(|last_query| last_query == &query_text);
+
+        if last_query_matches {
+            return;
+        }
+
+        self.search(false, cx);
+    }
+
+    fn clear_search_results(&mut self, cx: &mut Context<Self>) {
+        self.entity.update(cx, |model, cx| {
+            model.pending_search.take();
+            model.match_ranges.clear();
+            model.active_query = None;
+            model.last_search_query_text = None;
+            model.no_results = None;
+            model.limit_reached = false;
+            cx.notify();
+        });
+        self.active_match_index = None;
+        self.results_editor.update(cx, |editor, cx| {
+            editor.clear_background_highlights::<Self>(cx);
+        });
+        self.focus_results_on_search = false;
+    }
+
     fn entity_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let match_ranges = self.entity.read(cx).match_ranges.clone();
         if match_ranges.is_empty() {
@@ -1413,7 +1487,10 @@ impl ProjectSearchView {
                     cx,
                 );
             });
-            if is_new_search && self.query_editor.focus_handle(cx).is_focused(window) {
+            if is_new_search
+                && self.query_editor.focus_handle(cx).is_focused(window)
+                && self.focus_results_on_search
+            {
                 self.focus_results_editor(window, cx);
             }
         }
@@ -2339,7 +2416,7 @@ pub fn perform_project_search(
         search_view.query_editor.update(cx, |query_editor, cx| {
             query_editor.set_text(text, window, cx)
         });
-        search_view.search(cx);
+        search_view.search(true, cx);
     });
     cx.run_until_parked();
 }
@@ -2606,7 +2683,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -2650,7 +2727,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -2804,7 +2881,7 @@ pub mod tests {
                         .update(cx, |exclude_editor, cx| {
                             exclude_editor.set_text("four.rs", window, cx)
                         });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -2834,7 +2911,7 @@ pub mod tests {
             .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     search_view.toggle_filters(cx);
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -2961,7 +3038,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -3006,7 +3083,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 })
             })
             .unwrap();
@@ -3109,7 +3186,7 @@ pub mod tests {
                     search_view_2.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("FOUR", window, cx)
                     });
-                    search_view_2.search(cx);
+                    search_view_2.search(true, cx);
                 });
             })
             .unwrap();
@@ -3255,7 +3332,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("const", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -3328,7 +3405,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("ONE", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -3340,7 +3417,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -3351,7 +3428,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("THREE", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 })
             })
             .unwrap();
@@ -3508,7 +3585,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO_NEW", window, cx)
                     });
-                    search_view.search(cx);
+                    search_view.search(true, cx);
                 });
             })
             .unwrap();
@@ -3725,7 +3802,7 @@ pub mod tests {
                             search_view.query_editor.update(cx, |query_editor, cx| {
                                 query_editor.set_text(query, window, cx)
                             });
-                            search_view.search(cx);
+                            search_view.search(true, cx);
                         });
                     })
                     .unwrap();
@@ -4172,7 +4249,7 @@ pub mod tests {
                 search_view.query_editor.update(cx, |query_editor, cx| {
                     query_editor.set_text(text, window, cx)
                 });
-                search_view.search(cx);
+                search_view.search(true, cx);
             })
             .unwrap();
         // Ensure editor highlights appear after the search is done
