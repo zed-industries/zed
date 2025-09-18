@@ -467,9 +467,7 @@ pub struct CompletionSettingsContent {
     pub lsp_insert_mode: Option<LspInsertMode>,
 }
 
-#[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, MergeFrom, JsonSchema, MergeFrom,
-)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum LspInsertMode {
     /// Replaces text before the cursor, using the `insert` range described in the LSP specification.
@@ -522,7 +520,7 @@ pub struct PrettierSettingsContent {
 }
 
 /// Controls the behavior of formatting files when they are saved.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, MergeFrom)]
 pub enum FormatOnSave {
     /// Files should be formatted on save.
     On,
@@ -621,7 +619,7 @@ impl<'de> Deserialize<'de> for FormatOnSave {
 }
 
 /// Controls which formatter should be used when formatting code.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, MergeFrom)]
 pub enum SelectedFormatter {
     /// Format files using Zed's Prettier integration (if applicable),
     /// or falling back to formatting via language server.

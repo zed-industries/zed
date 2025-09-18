@@ -5,9 +5,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
-use util::{MergeFrom, serde::default_true};
+use util::serde::default_true;
 
-use crate::{AllLanguageSettingsContent, SlashCommandSettings, merge_from::MergeFrom};
+use crate::{AllLanguageSettingsContent, SlashCommandSettings};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -404,7 +404,17 @@ pub enum DirenvSettings {
 }
 
 #[derive(
-    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize, JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum DiagnosticSeverityContent {

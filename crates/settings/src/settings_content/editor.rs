@@ -297,7 +297,7 @@ pub struct MinimapContent {
     /// How to highlight the current line in the minimap.
     ///
     /// Default: inherits editor line highlights setting
-    pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+    pub current_line_highlight: Option<CurrentLineHighlight>,
 
     /// Maximum number of columns to display in the minimap.
     ///

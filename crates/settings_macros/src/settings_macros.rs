@@ -108,6 +108,7 @@ pub fn derive_merge_from(input: TokenStream) -> TokenStream {
     let expanded = quote! {
         impl #impl_generics crate::merge_from::MergeFrom for #name #ty_generics #where_clause {
             fn merge_from(&mut self, other: ::core::option::Option<&Self>) {
+                use crate::merge_from::MergeFrom as _;
                 #merge_body
             }
         }

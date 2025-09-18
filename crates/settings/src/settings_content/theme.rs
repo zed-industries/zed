@@ -54,7 +54,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_features: Option<FontFeatures>,
     /// The font size for the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
-    pub agent_font_size: Option<Option<f32>>,
+    pub agent_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
@@ -166,6 +166,7 @@ pub enum ThemeMode {
     Serialize,
     Deserialize,
     JsonSchema,
+    MergeFrom,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
@@ -997,7 +998,9 @@ impl From<FontStyleContent> for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq, MergeFrom,
+)]
 #[repr(u16)]
 pub enum FontWeightContent {
     Thin = 100,

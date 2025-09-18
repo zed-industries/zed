@@ -4,6 +4,7 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 
 use crate::{DockPosition, DockSide, ScrollbarSettingsContent, ShowIndentGuides};
 

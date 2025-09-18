@@ -5,6 +5,7 @@ use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 
 use crate::FontFamilyName;
 
@@ -168,7 +169,7 @@ pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the terminal.
     ///
     /// Default: inherits editor scrollbar settings
-    pub show: Option<Option<ShowScrollbar>>,
+    pub show: Option<ShowScrollbar>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]

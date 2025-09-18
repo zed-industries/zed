@@ -288,9 +288,7 @@ pub enum TitleBarVisibility {
 
 /// Configuration of audio in Zed.
 #[skip_serializing_none]
-#[derive(
-    Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, MergeFrom,
-)]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
     /// Opt into the new audio system.
     #[serde(rename = "experimental.rodio_audio", default)]
@@ -312,9 +310,7 @@ pub struct AudioSettingsContent {
 
 /// Control what info is collected by Zed.
 #[skip_serializing_none]
-#[derive(
-    Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, MergeFrom,
-)]
+#[derive(Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Debug, MergeFrom)]
 pub struct TelemetrySettingsContent {
     /// Send debug info like crash reports.
     ///
@@ -327,9 +323,7 @@ pub struct TelemetrySettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(
-    Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom, Clone, MergeFrom,
-)]
+#[derive(Default, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Clone, MergeFrom)]
 pub struct DebuggerSettingsContent {
     /// Determines the stepping granularity.
     ///
@@ -562,7 +556,7 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: None
     /// todo() -> Change this type to an enum
-    pub include_ignored: Option<Option<bool>>,
+    pub include_ignored: Option<bool>,
 }
 
 #[derive(

@@ -1,10 +1,8 @@
-use gpui::SharedString;
-use std::sync::Arc;
-
 /// Trait for recursively merging settings structures.
 ///
 /// This trait allows settings objects to be merged from optional sources,
 /// where `None` values are ignored and `Some` values override existing values.
+#[allow(unused)]
 pub trait MergeFrom {
     /// Merge from an optional source of the same type.
     /// If `other` is `None`, no changes are made.
@@ -37,27 +35,21 @@ merge_from_overwrites!(
     bool,
     f64,
     f32,
+    std::num::NonZeroUsize,
+    std::num::NonZeroU32,
     String,
-    Arc<str>,
-    SharedString,
+    std::sync::Arc<str>,
+    gpui::SharedString,
+    std::path::PathBuf,
     gpui::Modifiers,
+    gpui::FontFeatures
 );
 
-/// Merge for Vec takes all the settings from other
 impl<T: Clone> MergeFrom for Vec<T> {
     fn merge_from(&mut self, other: Option<&Self>) {
         if let Some(other) = other {
             *self = other.clone()
         }
-    }
-}
-
-pub type ExtendedVec<T>(pub Vec<T>);
-/// The default merge
-impl<T: Clone> MergeFrom for Vec<T> {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else {return};
-        self.extend(other.clone());
     }
 }
 
@@ -70,7 +62,7 @@ where
     fn merge_from(&mut self, other: Option<&Self>) {
         let Some(other) = other else { return };
         for (k, v) in other {
-            if let Some(existing) = self.get_mut(&k) {
+            if let Some(existing) = self.get_mut(k) {
                 existing.merge_from(Some(v));
             } else {
                 self.insert(k.clone(), v.clone());
@@ -79,10 +71,27 @@ where
     }
 }
 
-impl<K, Q, V> MergeFrom for collections::IndexMap<K, V>
+impl<K, V> MergeFrom for collections::BTreeMap<K, V>
+where
+    K: Clone + std::hash::Hash + Eq + Ord,
+    V: Clone + MergeFrom,
+{
+    fn merge_from(&mut self, other: Option<&Self>) {
+        let Some(other) = other else { return };
+        for (k, v) in other {
+            if let Some(existing) = self.get_mut(k) {
+                existing.merge_from(Some(v));
+            } else {
+                self.insert(k.clone(), v.clone());
+            }
+        }
+    }
+}
+
+impl<K, V> MergeFrom for collections::IndexMap<K, V>
 where
     K: std::hash::Hash + Eq + Clone,
-    Q: ?Sized + std::hash::Hash + collections::Equivalent<K> + Eq,
+    // Q: ?Sized + std::hash::Hash + collections::Equivalent<K> + Eq,
     V: Clone + MergeFrom,
 {
     fn merge_from(&mut self, other: Option<&Self>) {
@@ -105,6 +114,36 @@ where
         let Some(other) = other else { return };
         for item in other {
             self.insert(item.clone());
+        }
+    }
+}
+
+impl<T> MergeFrom for collections::HashSet<T>
+where
+    T: Clone + std::hash::Hash + Eq,
+{
+    fn merge_from(&mut self, other: Option<&Self>) {
+        let Some(other) = other else { return };
+        for item in other {
+            self.insert(item.clone());
+        }
+    }
+}
+
+impl MergeFrom for serde_json::Value {
+    fn merge_from(&mut self, other: Option<&Self>) {
+        let Some(other) = other else { return };
+        match (self, other) {
+            (serde_json::Value::Object(this), serde_json::Value::Object(other)) => {
+                for (k, v) in other {
+                    if let Some(existing) = this.get_mut(k) {
+                        existing.merge_from(other.get(k));
+                    } else {
+                        this.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            (this, other) => *this = other.clone(),
         }
     }
 }
