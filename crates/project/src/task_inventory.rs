@@ -258,7 +258,7 @@ impl Inventory {
     ) {
         self.last_scheduled_scenarios
             .retain(|(s, _)| s.label != scenario.label);
-        self.last_scheduled_scenarios.push_back((
+        self.last_scheduled_scenarios.push_front((
             scenario,
             DebugScenarioContext {
                 task_context,
