@@ -443,7 +443,7 @@
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
       "`": "vim::ConvertToLowerCase",
-      "Alt-`": "vim::ConvertToUpperCase",
+      "alt-`": "vim::ConvertToUpperCase",
       "g q": "vim::PushRewrap",
       "g w": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
