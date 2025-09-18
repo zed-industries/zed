@@ -359,37 +359,12 @@ pub struct InlineBlameSettings {
 }
 
 impl GitSettings {
-    // todo! remove
-    pub fn inline_blame_enabled(&self) -> bool {
-        self.inline_blame.enabled
-        // #[allow(unknown_lints, clippy::manual_unwrap_or_default)]
-        // match self.inline_blame {
-        //     Some(InlineBlameSettings { enabled, .. }) => enabled,
-        //     _ => false,
-        // }
-    }
-
-    // todo! remove
     pub fn inline_blame_delay(&self) -> Option<Duration> {
-        Some(self.inline_blame.delay_ms)
-        // match self.inline_blame {
-        //     Some(InlineBlameSettings { delay_ms, .. }) if delay_ms > 0 => {
-        //         Some(Duration::from_millis(delay_ms))
-        //     }
-        //     _ => None,
-        // }
-    }
-
-    // todo! remove
-    pub fn show_inline_commit_summary(&self) -> bool {
-        self.inline_blame.show_commit_summary
-        // match self.inline_blame {
-        //     Some(InlineBlameSettings {
-        //         show_commit_summary,
-        //         ..
-        //     }) => show_commit_summary,
-        //     _ => false,
-        // }
+        if self.inline_blame.delay_ms.as_millis() > 0 {
+            Some(self.inline_blame.delay_ms)
+        } else {
+            None
+        }
     }
 }
 

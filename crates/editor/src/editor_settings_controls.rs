@@ -267,7 +267,7 @@ impl EditableSettingControl for InlineGitBlameControl {
 
     fn read(cx: &App) -> Self::Value {
         let settings = ProjectSettings::get_global(cx);
-        settings.git.inline_blame_enabled()
+        settings.git.inline_blame.enabled
     }
 
     fn apply(settings: &mut SettingsContent, value: Self::Value, _cx: &App) {

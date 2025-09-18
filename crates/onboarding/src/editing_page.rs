@@ -70,7 +70,7 @@ fn write_inlay_hints(enabled: bool, cx: &mut App) {
 }
 
 fn read_git_blame(cx: &App) -> bool {
-    ProjectSettings::get_global(cx).git.inline_blame_enabled()
+    ProjectSettings::get_global(cx).git.inline_blame.enabled
 }
 
 fn write_git_blame(enabled: bool, cx: &mut App) {

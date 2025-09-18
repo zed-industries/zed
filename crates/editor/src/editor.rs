@@ -2187,7 +2187,7 @@ impl Editor {
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: full_mode
-                && ProjectSettings::get_global(cx).git.inline_blame_enabled(),
+                && ProjectSettings::get_global(cx).git.inline_blame.enabled,
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
             serialize_dirty_buffers: !is_minimap
                 && ProjectSettings::get_global(cx)
@@ -20722,7 +20722,7 @@ impl Editor {
 
         if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
-            let inline_blame_enabled = project_settings.git.inline_blame_enabled();
+            let inline_blame_enabled = project_settings.git.inline_blame.enabled;
             if self.show_inline_diagnostics != show_inline_diagnostics {
                 self.show_inline_diagnostics = show_inline_diagnostics;
                 self.refresh_inline_diagnostics(false, window, cx);
