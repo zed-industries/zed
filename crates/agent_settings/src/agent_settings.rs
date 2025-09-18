@@ -208,6 +208,11 @@ impl Settings for AgentSettings {
             .or(self.thread_summary_model.take());
         self.inline_alternatives
             .merge_from(&value.inline_alternatives.clone());
+        self.default_profile
+            .merge_from(&value.default_profile.clone().map(AgentProfileId));
+        self.default_view.merge_from(&value.default_view);
+        self.always_allow_tool_actions
+            .merge_from(&value.always_allow_tool_actions);
         self.notify_when_agent_waiting
             .merge_from(&value.notify_when_agent_waiting);
         self.play_sound_when_agent_done
@@ -215,9 +220,6 @@ impl Settings for AgentSettings {
         self.stream_edits.merge_from(&value.stream_edits);
         self.single_file_review
             .merge_from(&value.single_file_review);
-        self.default_profile
-            .merge_from(&value.default_profile.clone().map(AgentProfileId));
-        self.default_view.merge_from(&value.default_view);
         self.preferred_completion_mode
             .merge_from(&value.preferred_completion_mode.map(Into::into));
         self.enable_feedback.merge_from(&value.enable_feedback);
