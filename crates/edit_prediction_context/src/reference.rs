@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 use crate::{
+    declaration::Identifier,
     excerpt::{EditPredictionExcerpt, EditPredictionExcerptText},
-    outline::Identifier,
 };
 
 #[derive(Debug)]
