@@ -645,7 +645,6 @@ mod remote_button {
             this.child(
                 h_flex()
                     .ml_neg_0p5()
-                    .mr_1()
                     .when(behind_count > 0, |this| {
                         this.child(Icon::new(IconName::ArrowDown).size(IconSize::XSmall))
                             .child(count(behind_count))
@@ -660,7 +659,6 @@ mod remote_button {
             this.child(
                 h_flex()
                     .ml_neg_0p5()
-                    .mr_1()
                     .child(Icon::new(left_icon).size(IconSize::XSmall)),
             )
         })
