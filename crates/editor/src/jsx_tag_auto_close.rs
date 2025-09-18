@@ -328,7 +328,7 @@ pub(crate) fn refresh_enabled_in_any_buffer(
                     snapshot.file(),
                     cx,
                 );
-                if language_settings.jsx_tag_auto_close.enabled {
+                if language_settings.jsx_tag_auto_close {
                     found_enabled = true;
                 }
             }
@@ -406,7 +406,7 @@ pub(crate) fn handle_from(
             };
 
             let language_settings = snapshot.settings_at(edit.new.end, cx);
-            if !language_settings.jsx_tag_auto_close.enabled {
+            if !language_settings.jsx_tag_auto_close {
                 continue;
             }
 
@@ -630,7 +630,7 @@ mod jsx_tag_autoclose_tests {
                 .defaults
                 .jsx_tag_auto_close
                 .get_or_insert_default()
-                .enabled = true;
+                .enabled = Some(true);
         });
 
         let mut cx = EditorTestContext::new(cx).await;
@@ -796,7 +796,7 @@ mod jsx_tag_autoclose_tests {
                 .defaults
                 .jsx_tag_auto_close
                 .get_or_insert_default()
-                .enabled = true;
+                .enabled = Some(true);
         });
 
         let buffer_a = cx.new(|cx| {

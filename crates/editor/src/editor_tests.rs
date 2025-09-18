@@ -25,7 +25,7 @@ use language::{
     DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
     LanguageName, Override, Point,
     language_settings::{
-        CompletionSettings, FormatterList, LanguageSettingsContent, LspInsertMode,
+        CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
         SelectedFormatter,
     },
     tree_sitter_python,
@@ -11700,7 +11700,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     update_test_language_settings(cx, |settings| {
         // Enable Prettier formatting for the same buffer, and ensure
         // LSP is called instead of Prettier.
-        settings.defaults.prettier.get_or_insert_default().allowed = true;
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
@@ -12086,7 +12086,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
-        settings.defaults.prettier.get_or_insert_default().allowed = true;
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
     let mut fake_servers = language_registry.register_fake_lsp(
         "TypeScript",
@@ -13341,12 +13341,11 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             );
 
             update_test_language_settings(&mut cx, |settings| {
-                settings.defaults.completions = Some(CompletionSettings {
-                    lsp_insert_mode,
-                    words: WordsCompletionMode::Disabled,
-                    words_min_length: 0,
-                    lsp: true,
-                    lsp_fetch_timeout_ms: 0,
+                settings.defaults.completions = Some(CompletionSettingsContent {
+                    lsp_insert_mode: Some(lsp_insert_mode),
+                    words: Some(WordsCompletionMode::Disabled),
+                    words_min_length: Some(0),
+                    ..Default::default()
                 });
             });
 
@@ -13401,13 +13400,12 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     let expected_with_replace_mode = "SubscriptionErrorˇ";
 
     update_test_language_settings(&mut cx, |settings| {
-        settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Disabled,
-            words_min_length: 0,
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
             // set the opposite here to ensure that the action is overriding the default behavior
-            lsp_insert_mode: LspInsertMode::Insert,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -13438,13 +13436,12 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     apply_additional_edits.await.unwrap();
 
     update_test_language_settings(&mut cx, |settings| {
-        settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Disabled,
-            words_min_length: 0,
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
             // set the opposite here to ensure that the action is overriding the default behavior
-            lsp_insert_mode: LspInsertMode::Replace,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: Some(LspInsertMode::Replace),
+            ..Default::default()
         });
     });
 
@@ -14180,12 +14177,11 @@ async fn test_completion_reuse(cx: &mut TestAppContext) {
 async fn test_word_completion(cx: &mut TestAppContext) {
     let lsp_fetch_timeout_ms = 10;
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Fallback,
-            words_min_length: 0,
-            lsp: true,
-            lsp_fetch_timeout_ms: 10,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words_min_length: Some(0),
+            lsp_fetch_timeout_ms: Some(10),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14277,12 +14273,11 @@ async fn test_word_completion(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Enabled,
-            words_min_length: 0,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Enabled),
+            words_min_length: Some(0),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14341,12 +14336,11 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
 #[gpui::test]
 async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Disabled,
-            words_min_length: 0,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14415,12 +14409,11 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Fallback,
-            words_min_length: 0,
-            lsp: false,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words_min_length: Some(0),
+            lsp: Some(false),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14478,12 +14471,11 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Enabled,
-            words_min_length: 3,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Enabled),
+            words_min_length: Some(3),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14548,12 +14540,11 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
 #[gpui::test]
 async fn test_word_completions_disabled(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Enabled,
-            words_min_length: 0,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Enabled),
+            words_min_length: Some(0),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -17986,7 +17977,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
-        settings.defaults.prettier.get_or_insert_default().allowed = true;
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
 
     let test_plugin = "test_plugin";

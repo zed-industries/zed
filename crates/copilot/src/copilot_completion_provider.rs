@@ -281,7 +281,7 @@ mod tests {
     use indoc::indoc;
     use language::{
         Point,
-        language_settings::{CompletionSettings, LspInsertMode, WordsCompletionMode},
+        language_settings::{CompletionSettingsContent, LspInsertMode, WordsCompletionMode},
     };
     use project::Project;
     use serde_json::json;
@@ -296,12 +296,11 @@ mod tests {
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         // flaky
         init_test(cx, |settings| {
-            settings.defaults.completions = Some(CompletionSettings {
-                words: WordsCompletionMode::Disabled,
-                words_min_length: 0,
-                lsp: true,
-                lsp_fetch_timeout_ms: 0,
-                lsp_insert_mode: LspInsertMode::Insert,
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                words_min_length: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::Insert),
+                ..Default::default()
             });
         });
 
@@ -529,12 +528,11 @@ mod tests {
     ) {
         // flaky
         init_test(cx, |settings| {
-            settings.defaults.completions = Some(CompletionSettings {
-                words: WordsCompletionMode::Disabled,
-                words_min_length: 0,
-                lsp: true,
-                lsp_fetch_timeout_ms: 0,
-                lsp_insert_mode: LspInsertMode::Insert,
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                words_min_length: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::Insert),
+                ..Default::default()
             });
         });
 

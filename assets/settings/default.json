@@ -953,6 +953,7 @@
   //
   // This is typically customized on a per-language basis.
   "language_servers": ["..."],
+
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -1838,7 +1839,7 @@
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
     // // Whether to consider prettier formatter or not when attempting to format a file.
-    // "allowed": false,
+    "allowed": false
     //
     // // Use regular Prettier json configuration.
     // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if

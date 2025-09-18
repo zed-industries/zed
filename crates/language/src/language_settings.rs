@@ -9,16 +9,17 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
-use schemars::{JsonSchema, json_schema};
-use serde::{Deserialize, Serialize};
+use schemars::json_schema;
 
 pub use settings::{
-    CompletionSettings, EditPredictionProvider, EditPredictionsMode, FormatOnSave, Formatter,
-    FormatterList, IndentGuideSettings, InlayHintKind, LanguageSettingsContent, LspInsertMode,
-    RewrapBehavior, SelectedFormatter, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
+    Formatter, FormatterList, IndentGuideSettings, InlayHintKind, LanguageSettingsContent,
+    LspInsertMode, RewrapBehavior, SelectedFormatter, ShowWhitespaceSetting, SoftWrap,
+    WordsCompletionMode,
 };
 use settings::{
-    ParameterizedJsonSchema, Settings, SettingsContent, SettingsLocation, SettingsStore, SettingsUi,
+    ParameterizedJsonSchema, PrettierSettingsContent, Settings, SettingsContent, SettingsLocation,
+    SettingsStore, SettingsUi,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
@@ -100,9 +101,9 @@ pub struct LanguageSettings {
     /// How to perform a buffer format.
     pub formatter: settings::SelectedFormatter,
     /// Zed's Prettier integration settings.
-    pub prettier: settings::PrettierSettingsContent,
+    pub prettier: PrettierSettings,
     /// Whether to automatically close JSX tags.
-    pub jsx_tag_auto_close: settings::JsxTagAutoCloseSettings,
+    pub jsx_tag_auto_close: bool,
     /// Whether to use language servers to provide code intelligence.
     pub enable_language_server: bool,
     /// The list of language servers to use (or disable) for this language.
@@ -157,9 +158,78 @@ pub struct LanguageSettings {
     /// completions menu.
     pub show_completion_documentation: bool,
     /// Completion settings for this language.
-    pub completions: settings::CompletionSettings,
+    pub completions: CompletionSettings,
     /// Preferred debuggers for this language.
     pub debuggers: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CompletionSettings {
+    /// Controls how words are completed.
+    /// For large documents, not all words may be fetched for completion.
+    ///
+    /// Default: `fallback`
+    pub words: WordsCompletionMode,
+    /// How many characters has to be in the completions query to automatically show the words-based completions.
+    /// Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
+    ///
+    /// Default: 3
+    pub words_min_length: usize,
+    /// Whether to fetch LSP completions or not.
+    ///
+    /// Default: true
+    pub lsp: bool,
+    /// When fetching LSP completions, determines how long to wait for a response of a particular server.
+    /// When set to 0, waits indefinitely.
+    ///
+    /// Default: 0
+    pub lsp_fetch_timeout_ms: u64,
+    /// Controls how LSP completions are inserted.
+    ///
+    /// Default: "replace_suffix"
+    pub lsp_insert_mode: LspInsertMode,
+}
+
+impl CompletionSettings {
+    pub fn merge_from(&mut self, src: &Option<CompletionSettingsContent>) {
+        let Some(src) = src else { return };
+        self.words.merge_from(&src.words);
+        self.words_min_length.merge_from(&src.words_min_length);
+        self.lsp.merge_from(&src.lsp);
+        self.lsp_fetch_timeout_ms
+            .merge_from(&src.lsp_fetch_timeout_ms);
+        self.lsp_insert_mode.merge_from(&src.lsp_insert_mode);
+    }
+}
+
+/// Allows to enable/disable formatting with Prettier
+/// and configure default Prettier, used when no project-level Prettier installation is found.
+/// Prettier formatting is disabled by default.
+#[derive(Debug, Clone)]
+pub struct PrettierSettings {
+    /// Enables or disables formatting with Prettier for a given language.
+    pub allowed: bool,
+
+    /// Forces Prettier integration to use a specific parser name when formatting files with the language.
+    pub parser: Option<String>,
+
+    /// Forces Prettier integration to use specific plugins when formatting files with the language.
+    /// The default Prettier will be installed with these plugins.
+    pub plugins: HashSet<String>,
+
+    /// Default Prettier options, in the format as in package.json section for Prettier.
+    /// If project installs Prettier via its package.json, these options will be ignored.
+    pub options: HashMap<String, serde_json::Value>,
+}
+
+impl PrettierSettings {
+    pub fn merge_from(&mut self, src: &Option<PrettierSettingsContent>) {
+        let Some(src) = src.clone() else { return };
+        self.allowed.merge_from(&src.allowed);
+        self.parser = src.parser.clone();
+        self.plugins.extend(src.plugins);
+        self.options.extend(src.options);
+    }
 }
 
 impl LanguageSettings {
@@ -445,6 +515,9 @@ impl settings::Settings for AllLanguageSettings {
         let all_languages = &content.project.all_languages;
         let defaults = all_languages.defaults.clone();
         let inlay_hints = defaults.inlay_hints.unwrap();
+        let completions = defaults.completions.unwrap();
+        let prettier = defaults.prettier.unwrap();
+
         let default_language_settings = LanguageSettings {
             tab_size: defaults.tab_size.unwrap(),
             hard_tabs: defaults.hard_tabs.unwrap(),
@@ -459,8 +532,13 @@ impl settings::Settings for AllLanguageSettings {
                 .unwrap(),
             ensure_final_newline_on_save: defaults.ensure_final_newline_on_save.unwrap(),
             formatter: defaults.formatter.unwrap(),
-            prettier: defaults.prettier.unwrap(),
-            jsx_tag_auto_close: defaults.jsx_tag_auto_close.unwrap(),
+            prettier: PrettierSettings {
+                allowed: prettier.allowed.unwrap(),
+                parser: prettier.parser,
+                plugins: prettier.plugins,
+                options: prettier.options,
+            },
+            jsx_tag_auto_close: defaults.jsx_tag_auto_close.unwrap().enabled.unwrap(),
             enable_language_server: defaults.enable_language_server.unwrap(),
             language_servers: defaults.language_servers.unwrap(),
             allow_rewrap: defaults.allow_rewrap.unwrap(),
@@ -493,7 +571,13 @@ impl settings::Settings for AllLanguageSettings {
             tasks: defaults.tasks.unwrap(),
             show_completions_on_input: defaults.show_completions_on_input.unwrap(),
             show_completion_documentation: defaults.show_completion_documentation.unwrap(),
-            completions: defaults.completions.unwrap(),
+            completions: CompletionSettings {
+                words: completions.words.unwrap(),
+                words_min_length: completions.words_min_length.unwrap(),
+                lsp: completions.lsp.unwrap(),
+                lsp_fetch_timeout_ms: completions.lsp_fetch_timeout_ms.unwrap(),
+                lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
+            },
             debuggers: defaults.debuggers.unwrap(),
         };
 
@@ -760,17 +844,7 @@ impl settings::Settings for AllLanguageSettings {
             } else {
                 WordsCompletionMode::Disabled
             };
-            if let Some(completion_settings) = d.completions.as_mut() {
-                completion_settings.words = mode;
-            } else {
-                d.completions = Some(CompletionSettings {
-                    words: mode,
-                    words_min_length: 3,
-                    lsp: true,
-                    lsp_fetch_timeout_ms: 0,
-                    lsp_insert_mode: LspInsertMode::ReplaceSuffix,
-                });
-            }
+            d.completions.get_or_insert_default().words = Some(mode);
         }
         // TODO: pull ^ out into helper and reuse for per-language settings
 
@@ -853,7 +927,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     settings.prettier.merge_from(&src.prettier.clone());
     settings
         .jsx_tag_auto_close
-        .merge_from(&src.jsx_tag_auto_close.clone());
+        .merge_from(&src.jsx_tag_auto_close.as_ref().and_then(|v| v.enabled));
     settings
         .format_on_save
         .merge_from(&src.format_on_save.clone());
@@ -926,39 +1000,12 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     settings
         .show_completion_documentation
         .merge_from(&src.show_completion_documentation);
-    settings.completions.merge_from(&src.completions.clone());
+    settings.completions.merge_from(&src.completions);
 }
 
-/// Allows to enable/disable formatting with Prettier
-/// and configure default Prettier, used when no project-level Prettier installation is found.
-/// Prettier formatting is disabled by default.
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi)]
-pub struct PrettierSettings {
-    /// Enables or disables formatting with Prettier for a given language.
-    #[serde(default)]
-    pub allowed: bool,
-
-    /// Forces Prettier integration to use a specific parser name when formatting files with the language.
-    #[serde(default)]
-    pub parser: Option<String>,
-
-    /// Forces Prettier integration to use specific plugins when formatting files with the language.
-    /// The default Prettier will be installed with these plugins.
-    #[serde(default)]
-    #[settings_ui(skip)]
-    pub plugins: HashSet<String>,
-
-    /// Default Prettier options, in the format as in package.json section for Prettier.
-    /// If project installs Prettier via its package.json, these options will be ignored.
-    #[serde(flatten)]
-    #[settings_ui(skip)]
-    pub options: HashMap<String, serde_json::Value>,
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, SettingsUi)]
+#[derive(Default, Debug, Clone, PartialEq, Eq, SettingsUi)]
 pub struct JsxTagAutoCloseSettings {
     /// Enables or disables auto-closing of JSX tags.
-    #[serde(default)]
     pub enabled: bool,
 }
 

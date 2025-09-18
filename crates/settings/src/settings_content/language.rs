@@ -180,7 +180,7 @@ pub struct LanguageSettingsContent {
     /// Default: off
     pub prettier: Option<PrettierSettingsContent>,
     /// Whether to automatically close JSX tags.
-    pub jsx_tag_auto_close: Option<JsxTagAutoCloseSettings>,
+    pub jsx_tag_auto_close: Option<JsxTagAutoCloseSettingsContent>,
     /// Whether to use language servers to provide code intelligence.
     ///
     /// Default: true
@@ -281,7 +281,7 @@ pub struct LanguageSettingsContent {
     /// Default: true
     pub show_completion_documentation: Option<bool>,
     /// Controls how completions are processed for this language.
-    pub completions: Option<CompletionSettings>,
+    pub completions: Option<CompletionSettingsContent>,
     /// Preferred debuggers for this language.
     ///
     /// Default: []
@@ -312,9 +312,7 @@ pub enum ShowWhitespaceSetting {
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct WhitespaceMap {
-    #[serde(default)]
     pub space: Option<String>,
-    #[serde(default)]
     pub tab: Option<String>,
 }
 
@@ -347,11 +345,9 @@ pub enum RewrapBehavior {
 
 #[skip_serializing_none]
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct JsxTagAutoCloseSettings {
+pub struct JsxTagAutoCloseSettingsContent {
     /// Enables or disables auto-closing of JSX tags.
-    // todo! option
-    #[serde(default)]
-    pub enabled: bool,
+    pub enabled: Option<bool>,
 }
 
 /// The settings for inlay hints.
@@ -440,37 +436,32 @@ impl InlayHintKind {
 
 /// Controls how completions are processedfor this anguage.
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
-pub struct CompletionSettings {
+pub struct CompletionSettingsContent {
     /// Controls how words are completed.
     /// For large documents, not all words may be fetched for completion.
     ///
     /// Default: `fallback`
-    #[serde(default = "default_words_completion_mode")]
-    pub words: WordsCompletionMode,
+    pub words: Option<WordsCompletionMode>,
     /// How many characters has to be in the completions query to automatically show the words-based completions.
     /// Before that value, it's still possible to trigger the words-based completion manually with the corresponding editor command.
     ///
     /// Default: 3
-    #[serde(default = "default_3")]
-    pub words_min_length: usize,
+    pub words_min_length: Option<usize>,
     /// Whether to fetch LSP completions or not.
     ///
     /// Default: true
-    #[serde(default = "default_true")]
-    pub lsp: bool,
+    pub lsp: Option<bool>,
     /// When fetching LSP completions, determines how long to wait for a response of a particular server.
     /// When set to 0, waits indefinitely.
     ///
     /// Default: 0
-    #[serde(default)]
-    pub lsp_fetch_timeout_ms: u64,
+    pub lsp_fetch_timeout_ms: Option<u64>,
     /// Controls how LSP completions are inserted.
     ///
     /// Default: "replace_suffix"
-    #[serde(default = "default_lsp_insert_mode")]
-    pub lsp_insert_mode: LspInsertMode,
+    pub lsp_insert_mode: Option<LspInsertMode>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -502,18 +493,6 @@ pub enum WordsCompletionMode {
     Disabled,
 }
 
-fn default_words_completion_mode() -> WordsCompletionMode {
-    WordsCompletionMode::Fallback
-}
-
-fn default_lsp_insert_mode() -> LspInsertMode {
-    LspInsertMode::ReplaceSuffix
-}
-
-fn default_3() -> usize {
-    3
-}
-
 /// Allows to enable/disable formatting with Prettier
 /// and configure default Prettier, used when no project-level Prettier installation is found.
 /// Prettier formatting is disabled by default.
@@ -521,11 +500,9 @@ fn default_3() -> usize {
 #[derive(Default, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PrettierSettingsContent {
     /// Enables or disables formatting with Prettier for a given language.
-    #[serde(default)]
-    pub allowed: bool,
+    pub allowed: Option<bool>,
 
     /// Forces Prettier integration to use a specific parser name when formatting files with the language.
-    #[serde(default)]
     pub parser: Option<String>,
 
     /// Forces Prettier integration to use specific plugins when formatting files with the language.

@@ -499,7 +499,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
             store.update_user_settings(cx, |file| {
                 file.project.all_languages.defaults.formatter = Some(SelectedFormatter::Auto);
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
-                    allowed: true,
+                    allowed: Some(true),
                     ..Default::default()
                 });
             });
@@ -512,7 +512,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                     FormatterList::Single(Formatter::LanguageServer { name: None }),
                 ));
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
-                    allowed: true,
+                    allowed: Some(true),
                     ..Default::default()
                 });
             });
@@ -556,7 +556,7 @@ async fn test_ssh_collaboration_formatting_with_prettier(
             store.update_user_settings(cx, |file| {
                 file.project.all_languages.defaults.formatter = Some(SelectedFormatter::Auto);
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
-                    allowed: true,
+                    allowed: Some(true),
                     ..Default::default()
                 });
             });
