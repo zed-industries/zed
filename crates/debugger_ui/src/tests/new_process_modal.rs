@@ -337,7 +337,10 @@ async fn test_debug_modal_subtitles_with_multiple_worktrees(
         modal.debug_picker_candidate_subtitles(cx)
     });
 
-    assert_eq!(subtitles.as_slice(), [".zed/debug.json", ".zed/debug.json"]);
+    assert_eq!(
+        subtitles.as_slice(),
+        [path!(".zed/debug.json"), path!(".zed/debug.json")]
+    );
 }
 
 #[gpui::test]
