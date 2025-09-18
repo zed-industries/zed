@@ -97,7 +97,7 @@ struct Specimen {
 
 impl Specimen {
     pub fn new(id: usize) -> Self {
-        let string = SharedString::new_static("The quick brown fox jumps over the lazy dog");
+        let string = SharedString::new_static("你好世界这段是中文，こんにちはこの段落は日本語です");
         let id_string = format!("specimen-{}", id);
         let id = ElementId::Name(id_string.into());
         Self {
