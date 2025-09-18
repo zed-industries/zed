@@ -1088,22 +1088,19 @@ impl GitRepository for RealGitRepository {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
         let executor = self.executor.clone();
-        let name_clone = name.clone();
         let branch = self.executor.spawn(async move {
             let repo = repo.lock();
-            let branch = if let Ok(branch) = repo.find_branch(&name_clone, BranchType::Local) {
+            let branch = if let Ok(branch) = repo.find_branch(&name, BranchType::Local) {
                 branch
-            } else if let Ok(revision) = repo.find_branch(&name_clone, BranchType::Remote) {
-                let (_, branch_name) = name_clone
-                    .split_once("/")
-                    .context("Unexpected branch format")?;
+            } else if let Ok(revision) = repo.find_branch(&name, BranchType::Remote) {
+                let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
                 let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
-                branch.set_upstream(Some(&name_clone))?;
+                branch.set_upstream(Some(&name))?;
                 branch
             } else {
-                anyhow::bail!("Branch '{}' not found", name_clone);
+                anyhow::bail!("Branch '{}' not found", name);
             };
 
             Ok(branch
