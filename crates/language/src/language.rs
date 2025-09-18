@@ -283,10 +283,16 @@ impl CachedLspAdapter {
     }
 
     pub fn language_id(&self, language_name: &LanguageName) -> String {
-        self.language_ids
+        let candidate = self
+            .language_ids
             .get(language_name)
             .cloned()
-            .unwrap_or_else(|| language_name.lsp_id())
+            .unwrap_or_else(|| language_name.lsp_id());
+        if candidate == "vue.js" {
+            "vue".into()
+        } else {
+            candidate
+        }
     }
 }
 
