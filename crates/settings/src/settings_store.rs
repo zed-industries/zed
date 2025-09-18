@@ -572,7 +572,6 @@ impl SettingsStore {
             tab_size,
             &old_value,
             &new_value,
-            &[], // todo!() is this still needed?
             &mut edits,
         );
         edits
