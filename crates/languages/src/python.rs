@@ -1904,7 +1904,6 @@ impl LspInstaller for BasedPyrightLspAdapter {
         _container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
-        dbg!();
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
         let pip_path = venv.join(BINARY_DIR).join("pip3");
         ensure!(
@@ -1925,9 +1924,8 @@ impl LspInstaller for BasedPyrightLspAdapter {
             delegate.which(path.as_os_str()).await.is_some(),
             "basedpyright installation was incomplete"
         );
-        dbg!();
         Ok(LanguageServerBinary {
-            path: dbg!(path),
+            path,
             env: None,
             arguments: vec!["--stdio".into()],
         })
