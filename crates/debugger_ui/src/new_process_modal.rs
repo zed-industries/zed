@@ -1035,7 +1035,7 @@ impl DebugDelegate {
 
                     match path
                         .components()
-                        .last()
+                        .next_back()
                         .and_then(|component| component.as_os_str().to_str())
                     {
                         Some(".zed") => {
