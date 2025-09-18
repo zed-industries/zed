@@ -133,6 +133,7 @@ smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
 supermaven.workspace = true
+codestral.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
 task.workspace = true

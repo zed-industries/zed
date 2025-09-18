@@ -1,6 +1,7 @@
 use anyhow::Result;
 use client::{UserStore, zed_urls};
 use cloud_llm_client::UsageLimit;
+use codestral::Codestral;
 use copilot::{Copilot, Status};
 use editor::{Editor, SelectionEffects, actions::ShowEditPrediction, scroll::Autoscroll};
 use feature_flags::{FeatureFlagAppExt, PredictEditsRateCompletionsFeatureFlag};
@@ -226,6 +227,87 @@ impl Render for EditPredictionButton {
                                     )
                                 } else {
                                     Tooltip::text(tooltip_text.clone())(window, cx)
+                                }
+                            },
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
+                )
+            }
+
+            EditPredictionProvider::Codestral => {
+                let Some(codestral) = Codestral::global(cx) else {
+                    return div();
+                };
+
+                let enabled = self.editor_enabled.unwrap_or(true);
+                let status = codestral.read(cx);
+
+                let icon = match status {
+                    codestral::Codestral::Error { .. } => IconName::AiMistral,
+                    codestral::Codestral::Ready { .. } => {
+                        if enabled {
+                            IconName::AiMistral
+                        } else {
+                            IconName::AiMistral
+                        }
+                    }
+                    _ => IconName::AiMistral,
+                };
+
+                let tooltip_text = match status {
+                    codestral::Codestral::Starting => "Codestral is starting...",
+                    codestral::Codestral::Authenticating => "Authenticating with Codestral...",
+                    codestral::Codestral::Ready { .. } => "Codestral",
+                    codestral::Codestral::Error { .. } => "Codestral error",
+                };
+
+                let has_error = matches!(status, codestral::Codestral::Error { .. });
+                let is_ready = matches!(status, codestral::Codestral::Ready { .. });
+
+                let fs = self.fs.clone();
+                let this = cx.entity().clone();
+
+                div().child(
+                    PopoverMenu::new("codestral")
+                        .menu(move |window, cx| {
+                            if is_ready {
+                                Some(this.update(cx, |this, cx| {
+                                    this.build_codestral_context_menu(window, cx)
+                                }))
+                            } else {
+                                Some(ContextMenu::build(window, cx, |menu, _, _| {
+                                    let fs = fs.clone();
+                                    menu.entry("Use Zed AI", None, move |_, cx| {
+                                        set_completion_provider(
+                                            fs.clone(),
+                                            cx,
+                                            EditPredictionProvider::Zed,
+                                        )
+                                    })
+                                }))
+                            }
+                        })
+                        .anchor(Corner::BottomRight)
+                        .trigger_with_tooltip(
+                            IconButton::new("codestral-icon", icon)
+                                .shape(IconButtonShape::Square)
+                                .when(has_error, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Error))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                })
+                                .when(enabled && !has_error && is_ready, |this| {
+                                    this.indicator(Indicator::dot().color(Color::Muted))
+                                        .indicator_border_color(Some(
+                                            cx.theme().colors().status_bar_background,
+                                        ))
+                                }),
+                            move |window, cx| {
+                                if is_ready {
+                                    Tooltip::for_action(tooltip_text, &ToggleMenu, window, cx)
+                                } else {
+                                    Tooltip::text(tooltip_text)(window, cx)
                                 }
                             },
                         )
@@ -492,6 +574,7 @@ impl EditPredictionButton {
             EditPredictionProvider::Zed
                 | EditPredictionProvider::Copilot
                 | EditPredictionProvider::Supermaven
+                | EditPredictionProvider::Codestral
         ) {
             menu = menu
                 .separator()
@@ -715,6 +798,23 @@ impl EditPredictionButton {
             self.build_language_settings_menu(menu, window, cx)
                 .separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
+        })
+    }
+
+    fn build_codestral_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<ContextMenu> {
+        ContextMenu::build(window, cx, |menu, window, cx| {
+            self.build_language_settings_menu(menu, window, cx)
+                .separator()
+                .entry("Configure API Key", None, |_window, cx| {
+                    cx.dispatch_action(&zed_actions::OpenSettings);
+                })
+                .entry("Sign Out", None, |_window, cx| {
+                    cx.dispatch_action(&codestral::SignOut);
+                })
         })
     }
 

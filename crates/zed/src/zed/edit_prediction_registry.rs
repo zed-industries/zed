@@ -1,4 +1,5 @@
 use client::{Client, UserStore};
+use codestral::{Codestral, CodestralCompletionProvider};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
@@ -184,6 +185,13 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
                 let provider = cx.new(|_| SupermavenCompletionProvider::new(supermaven));
+                editor.set_edit_prediction_provider(Some(provider), window, cx);
+            }
+        }
+        EditPredictionProvider::Codestral => {
+            if let Some(codestral) = Codestral::global(cx) {
+                let http_client = client.http_client();
+                let provider = cx.new(|_| CodestralCompletionProvider::new(codestral, http_client));
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
