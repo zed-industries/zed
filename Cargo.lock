@@ -5198,6 +5198,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "edit_prediction_tools"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "collections",
+ "edit_prediction_context",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "pretty_assertions",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "text",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zlog",
+]
+
+[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -21217,6 +21244,7 @@ dependencies = [
  "debugger_ui",
  "diagnostics",
  "edit_prediction_button",
+ "edit_prediction_tools",
  "editor",
  "env_logger 0.11.8",
  "extension",
