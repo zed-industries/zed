@@ -175,8 +175,9 @@ impl Audio {
         info!("Opened microphone: {:?}", stream.config());
 
         let (replay, stream) = stream
-            // .suspicious_stereo_to_mono()
-            .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
+            .possibly_disconnected_channels_to_mono()
+            .constant_samplerate(SAMPLE_RATE)
+            // .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
             .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
                 let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
