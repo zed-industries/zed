@@ -1812,7 +1812,11 @@ impl AcpThread {
                     action_log.buffer_read(buffer.clone(), cx);
                 })?;
 
-                buffer.update(cx, |buffer, _| buffer.snapshot())?
+                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                this.update(cx, |this, _| {
+                    this.shared_buffers.insert(buffer.clone(), snapshot.clone());
+                })?;
+                snapshot
             };
 
             let max_point = snapshot.max_point();
