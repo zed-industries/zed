@@ -183,7 +183,7 @@ fn render_toggle_button(
         Some(description.into()),
         toggle_state,
         move |state, _, cx| {
-            let store = SettingsStore::update_global(cx, |store, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings(cx, |settings| {
                     *get_value(settings) = *state == ui::ToggleState::Selected;
                 });
