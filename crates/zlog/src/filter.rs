@@ -1,9 +1,8 @@
-use std::{
-    collections::{HashMap, VecDeque},
-    sync::{
-        OnceLock, RwLock,
-        atomic::{AtomicU8, Ordering},
-    },
+use collections::HashMap;
+use std::collections::VecDeque;
+use std::sync::{
+    OnceLock, RwLock,
+    atomic::{AtomicU8, Ordering},
 };
 
 use crate::{SCOPE_DEPTH_MAX, SCOPE_STRING_SEP_STR, Scope, ScopeAlloc, env_config, private};

@@ -160,9 +160,7 @@ use project::{
     },
     git_store::{GitStoreEvent, RepositoryEvent},
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
-    project_settings::{
-        DiagnosticSeverity, GitGutterSetting, GoToDiagnosticSeverityFilter, ProjectSettings,
-    },
+    project_settings::{DiagnosticSeverity, GoToDiagnosticSeverityFilter, ProjectSettings},
 };
 use rand::seq::SliceRandom;
 use rpc::{ErrorCode, ErrorExt, proto::PeerId};
@@ -171,7 +169,7 @@ use selections_collection::{
     MutableSelectionsCollection, SelectionsCollection, resolve_selections,
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsLocation, SettingsStore, update_settings_file};
+use settings::{GitGutterSetting, Settings, SettingsLocation, SettingsStore, update_settings_file};
 use smallvec::{SmallVec, smallvec};
 use snippet::Snippet;
 use std::{
@@ -2189,7 +2187,7 @@ impl Editor {
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: full_mode
-                && ProjectSettings::get_global(cx).git.inline_blame_enabled(),
+                && ProjectSettings::get_global(cx).git.inline_blame.enabled,
             render_diff_hunk_controls: Arc::new(render_diff_hunk_controls),
             serialize_dirty_buffers: !is_minimap
                 && ProjectSettings::get_global(cx)
@@ -5591,8 +5589,9 @@ impl Editor {
             .language_at(buffer_position)
             .map(|language| language.name());
 
-        let completion_settings =
-            language_settings(language.clone(), buffer_snapshot.file(), cx).completions;
+        let completion_settings = language_settings(language.clone(), buffer_snapshot.file(), cx)
+            .completions
+            .clone();
 
         let show_completion_documentation = buffer_snapshot
             .settings_at(buffer_position, cx)
@@ -19008,8 +19007,8 @@ impl Editor {
         };
         let fs = workspace.read(cx).app_state().fs.clone();
         let current_show = TabBarSettings::get_global(cx).show;
-        update_settings_file::<TabBarSettings>(fs, cx, move |setting, _| {
-            setting.show = Some(!current_show);
+        update_settings_file(fs, cx, move |setting, _| {
+            setting.tab_bar.get_or_insert_default().show = Some(!current_show);
         });
     }
 
@@ -20723,7 +20722,7 @@ impl Editor {
 
         if self.mode.is_full() {
             let show_inline_diagnostics = project_settings.diagnostics.inline.enabled;
-            let inline_blame_enabled = project_settings.git.inline_blame_enabled();
+            let inline_blame_enabled = project_settings.git.inline_blame.enabled;
             if self.show_inline_diagnostics != show_inline_diagnostics {
                 self.show_inline_diagnostics = show_inline_diagnostics;
                 self.refresh_inline_diagnostics(false, window, cx);
@@ -21679,11 +21678,12 @@ impl Editor {
     }
 }
 
+// todo(settings_refactor) this should not be!
 fn vim_enabled(cx: &App) -> bool {
     cx.global::<SettingsStore>()
         .raw_user_settings()
-        .get("vim_mode")
-        == Some(&serde_json::Value::Bool(true))
+        .and_then(|settings| settings.content.vim_mode)
+        == Some(true)
 }
 
 fn process_completion_for_edit(
@@ -23123,7 +23123,7 @@ impl EditorSnapshot {
         let show_git_gutter = self.show_git_diff_gutter.unwrap_or_else(|| {
             matches!(
                 ProjectSettings::get_global(cx).git.git_gutter,
-                Some(GitGutterSetting::TrackedFiles)
+                GitGutterSetting::TrackedFiles
             )
         });
         let gutter_settings = EditorSettings::get_global(cx).gutter;
