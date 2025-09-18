@@ -784,7 +784,10 @@ impl<'a> Chunks<'a> {
             slice_start..slice_end
         };
 
-        let bitmask = (1u128 << slice_range.end as u128).saturating_sub(1);
+        // slice range has a bounds between 0 and 128 in non test builds
+        // We use a non wrapping sub because we want to overflow in the case where slice_range.end == 128
+        // because that represents a full chunk and the bitmask shouldn't remove anything
+        let bitmask = (1u128.unbounded_shl(slice_range.end as u32)).wrapping_sub(1);
 
         let chars = (chunk.chars() & bitmask) >> slice_range.start;
         let tabs = (chunk.tabs & bitmask) >> slice_range.start;
