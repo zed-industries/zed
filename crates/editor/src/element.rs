@@ -51,9 +51,7 @@ use gpui::{
     transparent_black,
 };
 use itertools::Itertools;
-use language::language_settings::{
-    IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
-};
+use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
@@ -63,9 +61,12 @@ use multi_buffer::{
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
-    project_settings::{GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
+    project_settings::ProjectSettings,
 };
-use settings::Settings;
+use settings::{
+    GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring,
+    Settings,
+};
 use smallvec::{SmallVec, smallvec};
 use std::{
     any::TypeId,
@@ -2099,10 +2100,7 @@ impl EditorElement {
             .display_diff_hunks_for_rows(display_rows, folded_buffers)
             .map(|hunk| (hunk, None))
             .collect::<Vec<_>>();
-        let git_gutter_setting = ProjectSettings::get_global(cx)
-            .git
-            .git_gutter
-            .unwrap_or_default();
+        let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;
         if let GitGutterSetting::TrackedFiles = git_gutter_setting {
             for (hunk, hitbox) in &mut display_hunks {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
@@ -2454,11 +2452,7 @@ impl EditorElement {
         let padding = {
             const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
 
-            let mut padding = ProjectSettings::get_global(cx)
-                .git
-                .inline_blame
-                .unwrap_or_default()
-                .padding as f32;
+            let mut padding = ProjectSettings::get_global(cx).git.inline_blame.padding as f32;
 
             if let Some(edit_prediction) = editor.active_edit_prediction.as_ref()
                 && let EditPrediction::Edit {
@@ -2492,12 +2486,10 @@ impl EditorElement {
 
             let padded_line_end = line_end + padding;
 
-            let min_column_in_pixels = ProjectSettings::get_global(cx)
-                .git
-                .inline_blame
-                .map(|settings| settings.min_column)
-                .map(|col| self.column_pixels(col as usize, window))
-                .unwrap_or(px(0.));
+            let min_column_in_pixels = self.column_pixels(
+                ProjectSettings::get_global(cx).git.inline_blame.min_column as usize,
+                window,
+            );
             let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
 
             cmp::max(padded_line_end, min_start)
@@ -5673,7 +5665,7 @@ impl EditorElement {
 
         for indent_guide in indent_guides {
             let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
-            let settings = indent_guide.settings;
+            let settings = &indent_guide.settings;
 
             // TODO fixed for now, expose them through themes later
             const INDENT_AWARE_ALPHA: f32 = 0.2;
@@ -6008,7 +6000,7 @@ impl EditorElement {
             .unwrap_or_else(|| {
                 matches!(
                     ProjectSettings::get_global(cx).git.git_gutter,
-                    Some(GitGutterSetting::TrackedFiles)
+                    GitGutterSetting::TrackedFiles
                 )
             });
         if show_git_gutter {
@@ -7303,10 +7295,10 @@ impl EditorElement {
 
     fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
         let unstaged = status.has_secondary_hunk();
-        let unstaged_hollow = ProjectSettings::get_global(cx)
-            .git
-            .hunk_style
-            .is_some_and(|style| matches!(style, GitHunkStyleSetting::UnstagedHollow));
+        let unstaged_hollow = matches!(
+            ProjectSettings::get_global(cx).git.hunk_style,
+            GitHunkStyleSetting::UnstagedHollow
+        );
 
         unstaged == unstaged_hollow
     }
@@ -8843,13 +8835,9 @@ impl Element for EditorElement {
                                 })
                                 .flatten()?;
                             let mut element = render_inline_blame_entry(blame_entry, style, cx)?;
-                            let inline_blame_padding = ProjectSettings::get_global(cx)
-                                .git
-                                .inline_blame
-                                .unwrap_or_default()
-                                .padding
-                                as f32
-                                * em_advance;
+                            let inline_blame_padding =
+                                ProjectSettings::get_global(cx).git.inline_blame.padding as f32
+                                    * em_advance;
                             Some(
                                 element
                                     .layout_as_root(AvailableSpace::min_size(), window, cx)

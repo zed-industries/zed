@@ -15,8 +15,7 @@ use language_model::{
     LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{ModelType, get_models};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+pub use settings::LmStudioAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -38,15 +37,6 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 pub struct LmStudioSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub supports_tool_calls: bool,
-    pub supports_images: bool,
 }
 
 pub struct LmStudioLanguageModelProvider {

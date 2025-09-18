@@ -150,7 +150,6 @@ members = [
     "crates/session",
     "crates/settings",
     "crates/settings_profile_selector",
-    "crates/settings_ui",
     "crates/settings_ui_macros",
     "crates/snippet",
     "crates/snippet_provider",
@@ -630,6 +629,7 @@ serde_json_lenient = { version = "0.2", features = [
 serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
+serde_with = "3.4.0"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"

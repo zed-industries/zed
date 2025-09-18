@@ -13,12 +13,10 @@ path = "src/go_to_line.rs"
 doctest = false
 
 [dependencies]
-anyhow.workspace = true
 editor.workspace = true
 gpui.workspace = true
 language.workspace = true
 menu.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 text.workspace = true

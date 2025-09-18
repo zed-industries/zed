@@ -16,8 +16,7 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
     RateLimiter, Role, StopReason, TokenUsage,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+pub use settings::DeepseekAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -47,15 +46,6 @@ pub struct DeepSeekSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
 }
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-}
-
 pub struct DeepSeekLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,

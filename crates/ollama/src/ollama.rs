@@ -3,32 +3,10 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use settings::KeepAlive;
 use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(untagged)]
-pub enum KeepAlive {
-    /// Keep model alive for N seconds
-    Seconds(isize),
-    /// Keep model alive for a fixed duration. Accepts durations like "5m", "10m", "1h", "1d", etc.
-    Duration(String),
-}
-
-impl KeepAlive {
-    /// Keep model alive until a new model is loaded or until Ollama shuts down
-    fn indefinite() -> Self {
-        Self::Seconds(-1)
-    }
-}
-
-impl Default for KeepAlive {
-    fn default() -> Self {
-        Self::indefinite()
-    }
-}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

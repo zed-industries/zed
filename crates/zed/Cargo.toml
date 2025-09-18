@@ -126,7 +126,6 @@ serde.workspace = true
 serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
-settings_ui.workspace = true
 keymap_editor.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
@@ -185,7 +184,6 @@ itertools.workspace = true
 language = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
-settings_ui = { workspace = true, features = ["test-support"] }
 terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true

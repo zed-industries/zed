@@ -52,10 +52,7 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
-use language::{
-    Buffer, LanguageRegistry, Rope,
-    language_settings::{AllLanguageSettings, all_language_settings},
-};
+use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -1695,8 +1692,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let fs = self.project().read(cx).fs();
-        settings::update_settings_file::<WorkspaceSettings>(fs.clone(), cx, move |content, _cx| {
-            content.bottom_dock_layout = Some(layout);
+        settings::update_settings_file(fs.clone(), cx, move |content, _cx| {
+            content.workspace.bottom_dock_layout = Some(layout);
         });
 
         cx.notify();
@@ -6014,8 +6011,8 @@ impl Workspace {
     ) {
         let fs = self.project().read(cx).fs().clone();
         let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
-        update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-            file.defaults.show_edit_predictions = Some(!show_edit_predictions)
+        update_settings_file(fs, cx, move |file, _| {
+            file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
     }
 }
@@ -8678,8 +8675,8 @@ mod tests {
         // Autosave on window change.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnWindowChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnWindowChange);
                 })
             });
             item.is_dirty = true;
@@ -8698,13 +8695,12 @@ mod tests {
         item.update_in(cx, |item, window, cx| {
             cx.focus_self(window);
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
             });
             item.is_dirty = true;
         });
-
         // Blurring the item saves the file.
         item.update_in(cx, |_, window, _| window.blur());
         cx.executor().run_until_parked();
@@ -8721,8 +8717,9 @@ mod tests {
         // Autosave after delay.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave =
+                        Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
                 })
             });
             item.is_dirty = true;
@@ -8770,8 +8767,8 @@ mod tests {
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
             });
             item.is_dirty = true;
@@ -9774,8 +9771,8 @@ mod tests {
 
         // Enable the close_on_disk_deletion setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 
@@ -9842,8 +9839,8 @@ mod tests {
 
         // Ensure close_on_disk_deletion is disabled (default)
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(false);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(false);
             });
         });
 
@@ -9919,8 +9916,8 @@ mod tests {
 
         // Enable the close_on_file_delete setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 
@@ -9992,8 +9989,8 @@ mod tests {
 
         // Enable the close_on_file_delete setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 
