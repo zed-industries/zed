@@ -35,11 +35,11 @@ pub mod scrollbars {
     pub enum ShowScrollbar {
         /// Show the scrollbar if there's important information or
         /// follow the system's configured behavior.
+        #[default]
         Auto,
         /// Match the system's configured behavior.
         System,
         /// Always show the scrollbar.
-        #[default]
         Always,
         /// Never show the scrollbar.
         Never,
