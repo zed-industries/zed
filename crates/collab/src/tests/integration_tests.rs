@@ -3506,7 +3506,7 @@ async fn test_local_settings(
             store
                 .local_settings(worktree_b.read(cx).id())
                 .map(|(path, content)| (
-                    path.clone(),
+                    path,
                     content.all_languages.defaults.tab_size.map(Into::into)
                 ))
                 .collect::<Vec<_>>(),
@@ -3529,7 +3529,7 @@ async fn test_local_settings(
             store
                 .local_settings(worktree_b.read(cx).id())
                 .map(|(path, content)| (
-                    path.clone(),
+                    path,
                     content.all_languages.defaults.tab_size.map(Into::into)
                 ))
                 .collect::<Vec<_>>(),
@@ -3562,7 +3562,7 @@ async fn test_local_settings(
             store
                 .local_settings(worktree_b.read(cx).id())
                 .map(|(path, content)| (
-                    path.clone(),
+                    path,
                     content.all_languages.defaults.tab_size.map(Into::into)
                 ))
                 .collect::<Vec<_>>(),
@@ -3597,7 +3597,7 @@ async fn test_local_settings(
         assert_eq!(
             store
                 .local_settings(worktree_b.read(cx).id())
-                .map(|(path, content)| (path.clone(), content.all_languages.defaults.hard_tabs))
+                .map(|(path, content)| (path, content.all_languages.defaults.hard_tabs))
                 .collect::<Vec<_>>(),
             &[(Path::new("a").into(), Some(true))],
         )
