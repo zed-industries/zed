@@ -200,9 +200,8 @@ impl AgentConfiguration {
             .when(is_expanded, |this| this.mb_2())
             .child(
                 div()
-                    .opacity(0.6)
                     .px_2()
-                    .child(Divider::horizontal().color(DividerColor::Border)),
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded)),
             )
             .child(
                 h_flex()
@@ -227,7 +226,7 @@ impl AgentConfiguration {
                             .child(
                                 h_flex()
                                     .w_full()
-                                    .gap_2()
+                                    .gap_1p5()
                                     .child(
                                         Icon::new(provider.icon())
                                             .size(IconSize::Small)
@@ -345,6 +344,8 @@ impl AgentConfiguration {
                                         PopoverMenu::new("add-provider-popover")
                                             .trigger(
                                                 Button::new("add-provider", "Add Provider")
+                                                    .style(ButtonStyle::Filled)
+                                                    .layer(ElevationIndex::ModalSurface)
                                                     .icon_position(IconPosition::Start)
                                                     .icon(IconName::Plus)
                                                     .icon_size(IconSize::Small)
@@ -969,8 +970,8 @@ impl AgentConfiguration {
                 if let Some(error) = error {
                     return parent.child(
                         h_flex()
-                            .p_2()
                             .gap_2()
+                            .pr_4()
                             .items_start()
                             .child(
                                 h_flex()
@@ -998,37 +999,11 @@ impl AgentConfiguration {
                     return parent;
                 }
 
-                parent.child(v_flex().py_1p5().px_1().gap_1().children(
-                    tools.iter().enumerate().map(|(ix, tool)| {
-                        h_flex()
-                            .id(("tool-item", ix))
-                            .px_1()
-                            .gap_2()
-                            .justify_between()
-                            .hover(|style| style.bg(cx.theme().colors().element_hover))
-                            .rounded_sm()
-                            .child(
-                                Label::new(tool.name())
-                                    .buffer_font(cx)
-                                    .size(LabelSize::Small),
-                            )
-                            .child(
-                                Icon::new(IconName::Info)
-                                    .size(IconSize::Small)
-                                    .color(Color::Ignored),
-                            )
-                            .tooltip(Tooltip::text(tool.description()))
-                    }),
-                ))
+                parent
             })
     }
 
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let custom_settings = cx
-            .global::<SettingsStore>()
-            .get::<AllAgentServersSettings>(None)
-            .custom
-            .clone();
         let user_defined_agents = self
             .agent_server_store
             .read(cx)
@@ -1036,22 +1011,12 @@ impl AgentConfiguration {
             .filter(|name| name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME)
             .cloned()
             .collect::<Vec<_>>();
+
         let user_defined_agents = user_defined_agents
             .into_iter()
             .map(|name| {
-                self.render_agent_server(
-                    IconName::Ai,
-                    name.clone(),
-                    ExternalAgent::Custom {
-                        name: name.clone().into(),
-                        command: custom_settings
-                            .get(&name.0)
-                            .map(|settings| settings.command.clone())
-                            .unwrap_or(placeholder_command()),
-                    },
-                    cx,
-                )
-                .into_any_element()
+                self.render_agent_server(IconName::Ai, name.clone())
+                    .into_any_element()
             })
             .collect::<Vec<_>>();
 
@@ -1075,6 +1040,8 @@ impl AgentConfiguration {
                                     .child(Headline::new("External Agents"))
                                     .child(
                                         Button::new("add-agent", "Add Agent")
+                                            .style(ButtonStyle::Filled)
+                                            .layer(ElevationIndex::ModalSurface)
                                             .icon_position(IconPosition::Start)
                                             .icon(IconName::Plus)
                                             .icon_size(IconSize::Small)
@@ -1107,14 +1074,11 @@ impl AgentConfiguration {
                     .child(self.render_agent_server(
                         IconName::AiGemini,
                         "Gemini CLI",
-                        ExternalAgent::Gemini,
-                        cx,
                     ))
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
                     .child(self.render_agent_server(
                         IconName::AiClaude,
                         "Claude Code",
-                        ExternalAgent::ClaudeCode,
-                        cx,
                     ))
                     .children(user_defined_agents),
             )
@@ -1124,47 +1088,18 @@ impl AgentConfiguration {
         &self,
         icon: IconName,
         name: impl Into<SharedString>,
-        agent: ExternalAgent,
-        cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let name = name.into();
-        h_flex()
-            .p_1()
-            .pl_2()
-            .gap_1p5()
-            .justify_between()
-            .border_1()
-            .rounded_md()
-            .border_color(self.card_item_border_color(cx))
-            .bg(self.card_item_bg_color(cx))
-            .overflow_hidden()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-                    .child(Label::new(name.clone())),
-            )
-            .child(
-                Button::new(
-                    SharedString::from(format!("start_acp_thread-{name}")),
-                    "Start New Thread",
-                )
-                .layer(ElevationIndex::ModalSurface)
-                .label_size(LabelSize::Small)
-                .icon(IconName::Thread)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::XSmall)
-                .icon_color(Color::Muted)
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(
-                        NewExternalAgentThread {
-                            agent: Some(agent.clone()),
-                        }
-                        .boxed_clone(),
-                        cx,
-                    );
-                }),
-            )
+        h_flex().gap_1p5().justify_between().child(
+            h_flex()
+                .gap_1p5()
+                .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                .child(Label::new(name.into()))
+                .child(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Success),
+                ),
+        )
     }
 }
 
