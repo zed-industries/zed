@@ -101,7 +101,7 @@ impl VimObject {
         Some(match self {
             Self::AngleBrackets => Box::new(ImmediateBoundary::AngleBrackets),
             Self::BackQuotes => Box::new(ImmediateBoundary::BackQuotes),
-            Self::CurlyBrackets => Box::new(ImmediateBoundary::CurlyBrackets),
+            Self::CurlyBrackets { .. } => Box::new(ImmediateBoundary::CurlyBrackets),
             Self::DoubleQuotes => Box::new(ImmediateBoundary::DoubleQuotes),
             Self::Paragraph => Box::new(FuzzyBoundary::Paragraph),
             Self::Parentheses => Box::new(ImmediateBoundary::Parentheses),

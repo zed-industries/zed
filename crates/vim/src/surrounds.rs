@@ -19,16 +19,38 @@ pub enum SurroundsType {
 
 #[derive(PartialEq, Debug)]
 enum SurroundWhiteSpace {
-    /// Removes all whitespace between the bracket and the content.
+    /// Clears all whitespace between the bracket and the content.
     // {   a   } → cs{] → [a]
-    Remove,
+    Clear,
     /// Adds a new space between the bracket and the content, including existing
     /// whitespace.
     // '  a  ' → cs'{ → {   a   }
     Add,
-    /// Does not alter the existing whitespace between the content and the bracket.
+    /// Does not alter the existing whitespace between the content and the
+    /// bracket.
     // '  a  ' → cs'} → {  a  }
     Keep,
+    /// Updates the space between the bracket and the content to a single space.
+    // {   a   } → cs{[ → [ a ]
+    Single,
+}
+
+impl SurroundWhiteSpace {
+    /// Whether whitespace should be added between the bracket and the content.
+    fn add_whitespace(&self) -> bool {
+        match self {
+            Self::Add | Self::Single => true,
+            Self::Keep | Self::Clear => false,
+        }
+    }
+
+    /// Whether whitespace should be kept between the bracket and the content.
+    fn keep_whitespace(&self) -> bool {
+        match self {
+            Self::Keep | Self::Add => true,
+            Self::Clear | Self::Single => false,
+        }
+    }
 }
 
 impl Vim {
@@ -255,13 +277,29 @@ impl Vim {
                         },
                     };
 
+                    let from_quote = will_replace_pair.start == will_replace_pair.end;
+                    let from_opening_bracket = match target {
+                        Object::CurlyBrackets { bracket } => {
+                            bracket.is_some_and(|ch| ch.to_string() == will_replace_pair.start)
+                        }
+                        _ => false,
+                    };
+
                     let to_quote = pair.start == pair.end;
                     let to_opening_bracket = pair.end != surround_alias((*text).as_ref());
 
-                    let surround_whitespace = match (to_quote, to_opening_bracket) {
-                        (false, true) => SurroundWhiteSpace::Add,
-                        (true, _) => SurroundWhiteSpace::Keep,
-                        (_, _) => SurroundWhiteSpace::Remove,
+                    let surround_whitespace = match (
+                        from_quote,
+                        to_quote,
+                        from_opening_bracket,
+                        to_opening_bracket,
+                    ) {
+                        (false, true, true, _) => SurroundWhiteSpace::Clear,
+                        (false, false, true, true) => SurroundWhiteSpace::Clear,
+                        (true, false, true, true) => SurroundWhiteSpace::Single,
+                        (_, false, false, true) => SurroundWhiteSpace::Add,
+                        (true, true, _, _) | (_, _, false, false) => SurroundWhiteSpace::Keep,
+                        (_, _, _, _) => SurroundWhiteSpace::Clear,
                     };
 
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
@@ -289,17 +327,20 @@ impl Vim {
                                     let mut open_str = pair.start.clone();
                                     let start = offset;
                                     let mut end = start + 1;
-                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
-                                        if surround_whitespace == SurroundWhiteSpace::Add
-                                            && !next_ch.is_whitespace()
-                                        {
-                                            open_str.push(' ');
-                                        } else if surround_whitespace == SurroundWhiteSpace::Remove
-                                            && next_ch.to_string() == " "
-                                        {
-                                            end += 1;
+                                    while let Some((next_ch, _)) = chars_and_offset.next()
+                                        && next_ch.is_whitespace()
+                                    {
+                                        end += 1;
+
+                                        if surround_whitespace.keep_whitespace() {
+                                            open_str.push(next_ch);
                                         }
                                     }
+
+                                    if surround_whitespace.add_whitespace() {
+                                        open_str.push(' ');
+                                    };
+
                                     edits.push((start..end, open_str));
                                     anchors.push(start..start);
                                     break;
@@ -316,17 +357,20 @@ impl Vim {
                                     let mut close_str = String::new();
                                     let mut start = offset;
                                     let end = start + 1;
-                                    if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
-                                        if surround_whitespace == SurroundWhiteSpace::Add
-                                            && !next_ch.is_whitespace()
-                                        {
-                                            close_str.push(' ');
-                                        } else if surround_whitespace == SurroundWhiteSpace::Remove
-                                            && next_ch.to_string() == " "
-                                        {
-                                            start -= 1;
+                                    while let Some((next_ch, _)) = reverse_chars_and_offsets.next()
+                                        && next_ch.is_whitespace()
+                                    {
+                                        start -= 1;
+
+                                        if surround_whitespace.keep_whitespace() {
+                                            close_str.push(next_ch);
                                         }
                                     }
+
+                                    if surround_whitespace.add_whitespace() {
+                                        close_str.push(' ');
+                                    };
+
                                     close_str.push_str(&pair.end);
                                     edits.push((start..end, close_str));
                                     break;
@@ -467,7 +511,7 @@ impl Vim {
                 surround: true,
                 newline: false,
             }),
-            Object::CurlyBrackets => Some(BracketPair {
+            Object::CurlyBrackets { .. } => Some(BracketPair {
                 start: "{".to_string(),
                 end: "}".to_string(),
                 close: true,
@@ -639,7 +683,7 @@ fn pair_to_object(pair: &BracketPair) -> Option<Object> {
         "|" => Some(Object::VerticalBars),
         "(" => Some(Object::Parentheses),
         "[" => Some(Object::SquareBrackets),
-        "{" => Some(Object::CurlyBrackets),
+        "{" => Some(Object::CurlyBrackets { bracket: None }),
         "<" => Some(Object::AngleBrackets),
         _ => None,
     }
@@ -1330,6 +1374,66 @@ mod test {
         "},
             Mode::Normal,
         );
+    }
+
+    // The following test cases all follow tpope/vim-surround's behaviour
+    // and are more focused on how whitespace is handled.
+    #[gpui::test]
+    async fn test_change_surrounds_vim(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // Changing quote to quote should never change the surrounding
+        // whitespace.
+        cx.set_state(indoc! {"'  ˇa  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' \"");
+        cx.assert_state(indoc! {"ˇ\"  a  \""}, Mode::Normal);
+
+        cx.set_state(indoc! {"\"  ˇa  \""}, Mode::Normal);
+        cx.simulate_keystrokes("c s \" '");
+        cx.assert_state(indoc! {"ˇ'  a  '"}, Mode::Normal);
+
+        // Changing quote to bracket adds one more space when the opening
+        // bracket is used, does not affect whitespace when the closing bracket
+        // is used.
+        cx.set_state(indoc! {"'  ˇa  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' {");
+        cx.assert_state(indoc! {"ˇ{   a   }"}, Mode::Normal);
+
+        cx.set_state(indoc! {"'  ˇa  '"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' }");
+        cx.assert_state(indoc! {"ˇ{  a  }"}, Mode::Normal);
+
+        // Changing bracket to quote should remove all space when the
+        // opening bracket is used and preserve all space when the
+        // closing one is used.
+        cx.set_state(indoc! {"{  ˇa  }"}, Mode::Normal);
+        cx.simulate_keystrokes("c s { '");
+        cx.assert_state(indoc! {"ˇ'a'"}, Mode::Normal);
+
+        cx.set_state(indoc! {"{  ˇa  }"}, Mode::Normal);
+        cx.simulate_keystrokes("c s } '");
+        cx.assert_state(indoc! {"ˇ'  a  '"}, Mode::Normal);
+
+        // Changing bracket to bracket follows these rules:
+        // * opening → opening – keeps only one space.
+        // * opening → closing – removes all space.
+        // * closing → opening – adds one space.
+        // * closing → closing – does not change space.
+        cx.set_state(indoc! {"{   ˇa   }"}, Mode::Normal);
+        cx.simulate_keystrokes("c s { [");
+        cx.assert_state(indoc! {"ˇ[a]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"{   ˇa   }"}, Mode::Normal);
+        cx.simulate_keystrokes("c s { ]");
+        cx.assert_state(indoc! {"ˇ[a]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"{  ˇa  }"}, Mode::Normal);
+        cx.simulate_keystrokes("c s } [");
+        cx.assert_state(indoc! {"ˇ[   a   ]"}, Mode::Normal);
+
+        cx.set_state(indoc! {"{  ˇa  }"}, Mode::Normal);
+        cx.simulate_keystrokes("c s } ]");
+        cx.assert_state(indoc! {"ˇ[  a  ]"}, Mode::Normal);
     }
 
     #[gpui::test]

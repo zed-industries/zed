@@ -35,7 +35,7 @@ pub enum Object {
     MiniBrackets,
     Parentheses,
     SquareBrackets,
-    CurlyBrackets,
+    CurlyBrackets { bracket: Option<char> },
     AngleBrackets,
     Argument,
     IndentObj { include_below: bool },
@@ -70,6 +70,15 @@ struct Subword {
 struct IndentObj {
     #[serde(default)]
     include_below: bool,
+}
+
+/// Selects text within curly brackets.
+#[derive(Debug, Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct CurlyBrackets {
+    #[serde(default)]
+    bracket: Option<char>,
 }
 
 #[derive(Debug, Clone)]
@@ -283,8 +292,6 @@ actions!(
         AnyBrackets,
         /// Selects text within square brackets.
         SquareBrackets,
-        /// Selects text within curly brackets.
-        CurlyBrackets,
         /// Selects text within angle brackets.
         AngleBrackets,
         /// Selects a function argument.
@@ -356,8 +363,14 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, |vim, _: &SquareBrackets, window, cx| {
         vim.object(Object::SquareBrackets, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &CurlyBrackets, window, cx| {
-        vim.object(Object::CurlyBrackets, window, cx)
+    Vim::action(editor, cx, |vim, action: &CurlyBrackets, window, cx| {
+        vim.object(
+            Object::CurlyBrackets {
+                bracket: action.bracket,
+            },
+            window,
+            cx,
+        )
     });
     Vim::action(editor, cx, |vim, _: &AngleBrackets, window, cx| {
         vim.object(Object::AngleBrackets, window, cx)
@@ -426,7 +439,7 @@ impl Object {
             | Object::Parentheses
             | Object::Tag
             | Object::AngleBrackets
-            | Object::CurlyBrackets
+            | Object::CurlyBrackets { .. }
             | Object::SquareBrackets
             | Object::Argument
             | Object::Method
@@ -460,7 +473,7 @@ impl Object {
             | Object::Class
             | Object::Comment
             | Object::EntireFile
-            | Object::CurlyBrackets
+            | Object::CurlyBrackets { .. }
             | Object::AngleBrackets => true,
         }
     }
@@ -485,7 +498,7 @@ impl Object {
             | Object::AnyBrackets
             | Object::MiniBrackets
             | Object::SquareBrackets
-            | Object::CurlyBrackets
+            | Object::CurlyBrackets { .. }
             | Object::AngleBrackets
             | Object::VerticalBars
             | Object::Tag
@@ -673,7 +686,7 @@ impl Object {
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
-            Object::CurlyBrackets => {
+            Object::CurlyBrackets { .. } => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '{', '}')
             }
             Object::AngleBrackets => {
