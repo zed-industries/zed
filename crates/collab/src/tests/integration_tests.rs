@@ -3505,10 +3505,14 @@ async fn test_local_settings(
         assert_eq!(
             store
                 .local_settings(worktree_b.read(cx).id())
+                .map(|(path, content)| (
+                    path.clone(),
+                    content.all_languages.defaults.tab_size.map(Into::into)
+                ))
                 .collect::<Vec<_>>(),
             &[
-                (Path::new("").into(), r#"{"tab_size":2}"#.to_string()),
-                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
+                (Path::new("").into(), Some(2)),
+                (Path::new("a").into(), Some(8)),
             ]
         )
     });
@@ -3524,10 +3528,14 @@ async fn test_local_settings(
         assert_eq!(
             store
                 .local_settings(worktree_b.read(cx).id())
+                .map(|(path, content)| (
+                    path.clone(),
+                    content.all_languages.defaults.tab_size.map(Into::into)
+                ))
                 .collect::<Vec<_>>(),
             &[
-                (Path::new("").into(), r#"{}"#.to_string()),
-                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
+                (Path::new("").into(), None),
+                (Path::new("a").into(), Some(8)),
             ]
         )
     });
@@ -3553,10 +3561,14 @@ async fn test_local_settings(
         assert_eq!(
             store
                 .local_settings(worktree_b.read(cx).id())
+                .map(|(path, content)| (
+                    path.clone(),
+                    content.all_languages.defaults.tab_size.map(Into::into)
+                ))
                 .collect::<Vec<_>>(),
             &[
-                (Path::new("a").into(), r#"{"tab_size":8}"#.to_string()),
-                (Path::new("b").into(), r#"{"tab_size":4}"#.to_string()),
+                (Path::new("a").into(), Some(8)),
+                (Path::new("b").into(), Some(4)),
             ]
         )
     });
@@ -3585,8 +3597,9 @@ async fn test_local_settings(
         assert_eq!(
             store
                 .local_settings(worktree_b.read(cx).id())
+                .map(|(path, content)| (path.clone(), content.all_languages.defaults.hard_tabs))
                 .collect::<Vec<_>>(),
-            &[(Path::new("a").into(), r#"{"hard_tabs":true}"#.to_string()),]
+            &[(Path::new("a").into(), Some(true))],
         )
     });
 }

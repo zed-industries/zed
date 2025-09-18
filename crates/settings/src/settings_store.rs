@@ -802,7 +802,7 @@ impl SettingsStore {
     pub fn local_settings(
         &self,
         root_id: WorktreeId,
-    ) -> impl '_ + Iterator<Item = (Arc<Path>, String)> {
+    ) -> impl '_ + Iterator<Item = (Arc<Path>, &ProjectSettingsContent)> {
         self.local_settings
             .range(
                 (root_id, Path::new("").into())
@@ -811,7 +811,7 @@ impl SettingsStore {
                         Path::new("").into(),
                     ),
             )
-            .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
+            .map(|((_, path), content)| (path.clone(), &content.project))
     }
 
     pub fn local_editorconfig_settings(
