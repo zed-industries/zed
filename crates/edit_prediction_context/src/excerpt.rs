@@ -1,8 +1,10 @@
 use language::BufferSnapshot;
 use std::ops::Range;
-use text::{OffsetRangeExt as _, Point, ToOffset as _, ToPoint as _};
+use text::{Point, ToOffset as _, ToPoint as _};
 use tree_sitter::{Node, TreeCursor};
 use util::RangeExt;
+
+use crate::{BufferDeclaration, declaration::DeclarationId, syntax_index::SyntaxIndexState};
 
 // TODO:
 //
@@ -27,14 +29,12 @@ pub struct EditPredictionExcerptOptions {
     pub min_bytes: usize,
     /// Target ratio of bytes before the cursor divided by total bytes in the window.
     pub target_before_cursor_over_total_bytes: f32,
-    /// Whether to include parent signatures
-    pub include_parent_signatures: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct EditPredictionExcerpt {
     pub range: Range<usize>,
-    pub parent_signature_ranges: Vec<Range<usize>>,
+    pub parent_declarations: Vec<(DeclarationId, Range<usize>)>,
     pub size: usize,
 }
 
@@ -50,9 +50,9 @@ impl EditPredictionExcerpt {
             .text_for_range(self.range.clone())
             .collect::<String>();
         let parent_signatures = self
-            .parent_signature_ranges
+            .parent_declarations
             .iter()
-            .map(|range| buffer.text_for_range(range.clone()).collect::<String>())
+            .map(|(_, range)| buffer.text_for_range(range.clone()).collect::<String>())
             .collect();
         EditPredictionExcerptText {
             body,
@@ -62,8 +62,9 @@ impl EditPredictionExcerpt {
 
     /// Selects an excerpt around a buffer position, attempting to choose logical boundaries based
     /// on TreeSitter structure and approximately targeting a goal ratio of bytesbefore vs after the
-    /// cursor. When `include_parent_signatures` is true, the excerpt also includes the signatures
-    /// of parent outline items.
+    /// cursor.
+    ///
+    /// When `index` is provided, the excerpt will include the signatures of parent outline items.
     ///
     /// First tries to use AST node boundaries to select the excerpt, and falls back on line-based
     /// expansion.
@@ -73,6 +74,7 @@ impl EditPredictionExcerpt {
         query_point: Point,
         buffer: &BufferSnapshot,
         options: &EditPredictionExcerptOptions,
+        syntax_index: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
         if buffer.len() <= options.max_bytes {
             log::debug!(
@@ -90,17 +92,9 @@ impl EditPredictionExcerpt {
             return None;
         }
 
-        // TODO: Don't compute text / annotation_range / skip converting to and from anchors.
-        let outline_items = if options.include_parent_signatures {
-            buffer
-                .outline_items_containing(query_range.clone(), false, None)
-                .into_iter()
-                .flat_map(|item| {
-                    Some(ExcerptOutlineItem {
-                        item_range: item.range.to_offset(&buffer),
-                        signature_range: item.signature_range?.to_offset(&buffer),
-                    })
-                })
+        let parent_declarations = if let Some(syntax_index) = syntax_index {
+            syntax_index
+                .buffer_declarations_containing_range(buffer.remote_id(), query_range.clone())
                 .collect()
         } else {
             Vec::new()
@@ -109,7 +103,7 @@ impl EditPredictionExcerpt {
         let excerpt_selector = ExcerptSelector {
             query_offset,
             query_range,
-            outline_items: &outline_items,
+            parent_declarations: &parent_declarations,
             buffer,
             options,
         };
@@ -132,15 +126,15 @@ impl EditPredictionExcerpt {
         excerpt_selector.select_lines()
     }
 
-    fn new(range: Range<usize>, parent_signature_ranges: Vec<Range<usize>>) -> Self {
+    fn new(range: Range<usize>, parent_declarations: Vec<(DeclarationId, Range<usize>)>) -> Self {
         let size = range.len()
-            + parent_signature_ranges
+            + parent_declarations
                 .iter()
-                .map(|r| r.len())
+                .map(|(_, range)| range.len())
                 .sum::<usize>();
         Self {
             range,
-            parent_signature_ranges,
+            parent_declarations,
             size,
         }
     }
@@ -150,20 +144,14 @@ impl EditPredictionExcerpt {
             // this is an issue because parent_signature_ranges may be incorrect
             log::error!("bug: with_expanded_range called with disjoint range");
         }
-        let mut parent_signature_ranges = Vec::with_capacity(self.parent_signature_ranges.len());
-        let mut size = new_range.len();
-        for range in &self.parent_signature_ranges {
-            if range.contains_inclusive(&new_range) {
+        let mut parent_declarations = Vec::with_capacity(self.parent_declarations.len());
+        for (declaration_id, range) in &self.parent_declarations {
+            if !range.contains_inclusive(&new_range) {
                 break;
             }
-            parent_signature_ranges.push(range.clone());
-            size += range.len();
+            parent_declarations.push((*declaration_id, range.clone()));
         }
-        Self {
-            range: new_range,
-            parent_signature_ranges,
-            size,
-        }
+        Self::new(new_range, parent_declarations)
     }
 
     fn parent_signatures_size(&self) -> usize {
@@ -174,14 +162,9 @@ impl EditPredictionExcerpt {
 struct ExcerptSelector<'a> {
     query_offset: usize,
     query_range: Range<usize>,
-    outline_items: &'a [ExcerptOutlineItem],
+    parent_declarations: &'a [(DeclarationId, &'a BufferDeclaration)],
     buffer: &'a BufferSnapshot,
     options: &'a EditPredictionExcerptOptions,
-}
-
-struct ExcerptOutlineItem {
-    item_range: Range<usize>,
-    signature_range: Range<usize>,
 }
 
 impl<'a> ExcerptSelector<'a> {
@@ -396,13 +379,13 @@ impl<'a> ExcerptSelector<'a> {
     }
 
     fn make_excerpt(&self, range: Range<usize>) -> EditPredictionExcerpt {
-        let parent_signature_ranges = self
-            .outline_items
+        let parent_declarations = self
+            .parent_declarations
             .iter()
-            .filter(|item| item.item_range.contains_inclusive(&range))
-            .map(|item| item.signature_range.clone())
+            .filter(|(_, declaration)| declaration.item_range.contains_inclusive(&range))
+            .map(|(id, declaration)| (*id, declaration.signature_range.clone()))
             .collect();
-        EditPredictionExcerpt::new(range, parent_signature_ranges)
+        EditPredictionExcerpt::new(range, parent_declarations)
     }
 
     /// Returns `true` if the `forward` excerpt is a better choice than the `backward` excerpt.
@@ -493,8 +476,9 @@ mod tests {
         let buffer = create_buffer(&text, cx);
         let cursor_point = cursor.to_point(&buffer);
 
-        let excerpt = EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &options)
-            .expect("Should select an excerpt");
+        let excerpt =
+            EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &options, None)
+                .expect("Should select an excerpt");
         pretty_assertions::assert_eq!(
             generate_marked_text(&text, std::slice::from_ref(&excerpt.range), false),
             generate_marked_text(&text, &[expected_excerpt], false)
@@ -517,7 +501,6 @@ fn main() {
             max_bytes: 20,
             min_bytes: 10,
             target_before_cursor_over_total_bytes: 0.5,
-            include_parent_signatures: false,
         };
 
         check_example(options, text, cx);
@@ -541,7 +524,6 @@ fn bar() {}"#;
             max_bytes: 65,
             min_bytes: 10,
             target_before_cursor_over_total_bytes: 0.5,
-            include_parent_signatures: false,
         };
 
         check_example(options, text, cx);
@@ -561,7 +543,6 @@ fn main() {
             max_bytes: 50,
             min_bytes: 10,
             target_before_cursor_over_total_bytes: 0.5,
-            include_parent_signatures: false,
         };
 
         check_example(options, text, cx);
@@ -583,7 +564,6 @@ fn main() {
             max_bytes: 60,
             min_bytes: 45,
             target_before_cursor_over_total_bytes: 0.5,
-            include_parent_signatures: false,
         };
 
         check_example(options, text, cx);
@@ -608,7 +588,6 @@ fn main() {
             max_bytes: 120,
             min_bytes: 10,
             target_before_cursor_over_total_bytes: 0.6,
-            include_parent_signatures: false,
         };
 
         check_example(options, text, cx);

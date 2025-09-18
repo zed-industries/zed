@@ -5174,6 +5174,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "clap",
+ "cloud_llm_client",
  "collections",
  "futures 0.3.31",
  "gpui",

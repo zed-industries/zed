@@ -6,8 +6,8 @@ mod reference;
 mod syntax_index;
 mod text_similarity;
 
-use std::time::Instant;
-
+use cloud_llm_client::predict_edits_v3::{self, Signature};
+use collections::HashMap;
 pub use declaration::{BufferDeclaration, Declaration, FileDeclaration, Identifier};
 pub use declaration_scoring::SnippetStyle;
 pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
@@ -18,14 +18,17 @@ pub use reference::references_in_excerpt;
 pub use syntax_index::SyntaxIndex;
 use text::{Point, ToOffset as _};
 
-use crate::declaration_scoring::{ScoredSnippet, scored_snippets};
+use crate::{
+    declaration::DeclarationId,
+    declaration_scoring::{ScoredSnippet, scored_snippets},
+    syntax_index::SyntaxIndexState,
+};
 
 #[derive(Debug)]
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
     pub snippets: Vec<ScoredSnippet>,
-    pub retrieval_duration: std::time::Duration,
 }
 
 impl EditPredictionContext {
@@ -36,34 +39,135 @@ impl EditPredictionContext {
         syntax_index: Entity<SyntaxIndex>,
         cx: &mut App,
     ) -> Task<Option<Self>> {
-        let start = Instant::now();
         let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
         cx.background_spawn(async move {
             let index_state = index_state.lock().await;
-
-            let excerpt =
-                EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &excerpt_options)?;
-            let excerpt_text = excerpt.text(&buffer);
-            let references = references_in_excerpt(&excerpt, &excerpt_text, &buffer);
-            let cursor_offset = cursor_point.to_offset(&buffer);
-
-            let snippets = scored_snippets(
-                &index_state,
-                &excerpt,
-                &excerpt_text,
-                references,
-                cursor_offset,
-                &buffer,
-            );
-
-            Some(Self {
-                excerpt,
-                excerpt_text,
-                snippets,
-                retrieval_duration: start.elapsed(),
-            })
+            Self::gather_context(cursor_point, buffer, excerpt_options, &index_state)
         })
     }
+
+    fn gather_context(
+        cursor_point: Point,
+        buffer: BufferSnapshot,
+        excerpt_options: EditPredictionExcerptOptions,
+        index_state: &SyntaxIndexState,
+    ) -> Option<Self> {
+        let excerpt = EditPredictionExcerpt::select_from_buffer(
+            cursor_point,
+            &buffer,
+            &excerpt_options,
+            Some(index_state),
+        )?;
+        let excerpt_text = excerpt.text(&buffer);
+        let references = references_in_excerpt(&excerpt, &excerpt_text, &buffer);
+        let cursor_offset = cursor_point.to_offset(&buffer);
+
+        let snippets = scored_snippets(
+            &index_state,
+            &excerpt,
+            &excerpt_text,
+            references,
+            cursor_offset,
+            &buffer,
+        );
+
+        Some(Self {
+            excerpt,
+            excerpt_text,
+            snippets,
+        })
+    }
+
+    pub fn cloud_request(
+        cursor_point: Point,
+        buffer: BufferSnapshot,
+        excerpt_options: EditPredictionExcerptOptions,
+        syntax_index: Entity<SyntaxIndex>,
+        cx: &mut App,
+    ) -> Task<Option<predict_edits_v3::Body>> {
+        let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
+        cx.background_spawn(async move {
+            let index_state = index_state.lock().await;
+            Self::gather_context(cursor_point, buffer, excerpt_options, &index_state)
+                .map(|context| context.into_cloud_request(&index_state))
+        })
+    }
+
+    pub fn into_cloud_request(self, index: &SyntaxIndexState) -> predict_edits_v3::Body {
+        let mut signatures = Vec::new();
+        let mut declaration_to_signature_index = HashMap::default();
+        let mut referenced_declarations = Vec::new();
+        let excerpt_parent = self
+            .excerpt
+            .parent_declarations
+            .last()
+            .and_then(|(parent, _)| {
+                add_signature(
+                    *parent,
+                    &mut declaration_to_signature_index,
+                    &mut signatures,
+                    index,
+                )
+            });
+        for snippet in self.snippets {
+            let parent_index = snippet.declaration.parent().and_then(|parent| {
+                add_signature(
+                    parent,
+                    &mut declaration_to_signature_index,
+                    &mut signatures,
+                    index,
+                )
+            });
+            let (text, text_is_truncated) = snippet.declaration.item_text();
+            referenced_declarations.push(predict_edits_v3::ReferencedDeclaration {
+                text: text.into(),
+                text_is_truncated,
+                signature_range: snippet.declaration.signature_range_in_item_text(),
+                parent_index,
+                score_components: snippet.score_components,
+                signature_score: snippet.scores.signature,
+                declaration_score: snippet.scores.declaration,
+            });
+        }
+        predict_edits_v3::Body {
+            excerpt: self.excerpt_text.body,
+            referenced_declarations,
+            signatures,
+            excerpt_parent,
+            // todo!
+            events: vec![],
+            can_collect_data: false,
+            diagnostic_groups: None,
+            git_info: None,
+        }
+    }
+}
+
+fn add_signature(
+    declaration_id: DeclarationId,
+    declaration_to_signature_index: &mut HashMap<DeclarationId, usize>,
+    signatures: &mut Vec<Signature>,
+    index: &SyntaxIndexState,
+) -> Option<usize> {
+    if let Some(signature_index) = declaration_to_signature_index.get(&declaration_id) {
+        return Some(*signature_index);
+    }
+    let Some(parent_declaration) = index.declaration(declaration_id) else {
+        log::error!("bug: missing parent declaration");
+        return None;
+    };
+    let parent_index = parent_declaration.parent().and_then(|parent| {
+        add_signature(parent, declaration_to_signature_index, signatures, index)
+    });
+    let (text, text_is_truncated) = parent_declaration.signature_text();
+    let signature_index = signatures.len();
+    signatures.push(Signature {
+        text: text.into(),
+        text_is_truncated,
+        parent_index,
+    });
+    declaration_to_signature_index.insert(declaration_id, signature_index);
+    Some(signature_index)
 }
 
 #[cfg(test)]
@@ -105,10 +209,9 @@ mod tests {
                     cursor_point,
                     buffer_snapshot,
                     EditPredictionExcerptOptions {
-                        max_bytes: 40,
+                        max_bytes: 60,
                         min_bytes: 10,
                         target_before_cursor_over_total_bytes: 0.5,
-                        include_parent_signatures: false,
                     },
                     index,
                     cx,
@@ -117,8 +220,13 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(context.snippets.len(), 1);
-        assert_eq!(context.snippets[0].identifier.name.as_ref(), "process_data");
+        let mut snippet_identifiers = context
+            .snippets
+            .iter()
+            .map(|snippet| snippet.identifier.name.as_ref())
+            .collect::<Vec<_>>();
+        snippet_identifiers.sort();
+        assert_eq!(snippet_identifiers, vec!["main", "process_data"]);
         drop(buffer);
     }
 
