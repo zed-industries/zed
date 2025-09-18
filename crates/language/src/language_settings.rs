@@ -13,13 +13,13 @@ use schemars::json_schema;
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
-    Formatter, FormatterList, IndentGuideSettingsContent, InlayHintKind, LanguageSettingsContent,
-    LspInsertMode, RewrapBehavior, SelectedFormatter, ShowWhitespaceSetting, SoftWrap,
-    WordsCompletionMode,
+    Formatter, FormatterList, InlayHintKind, LspInsertMode, RewrapBehavior, SelectedFormatter,
+    ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
 use settings::{
-    LanguageTaskSettingsContent, ParameterizedJsonSchema, PrettierSettingsContent, Settings,
-    SettingsContent, SettingsLocation, SettingsStore, SettingsUi,
+    IndentGuideSettingsContent, LanguageSettingsContent, LanguageTaskSettingsContent,
+    ParameterizedJsonSchema, PrettierSettingsContent, Settings, SettingsContent, SettingsLocation,
+    SettingsStore, SettingsUi,
 };
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};

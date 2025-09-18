@@ -22,15 +22,15 @@ use indoc::indoc;
 use language::{
     BracketPairConfig,
     Capability::ReadWrite,
-    DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
-    LanguageName, Override, Point,
+    DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
+    LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point,
     language_settings::{
         CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
         SelectedFormatter,
     },
     tree_sitter_python,
 };
-use language_settings::{Formatter, IndentGuideSettingsContent};
+use language_settings::Formatter;
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
@@ -19961,7 +19961,7 @@ fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -
         end_row: MultiBufferRow(end_row),
         depth,
         tab_size: 4,
-        settings: IndentGuideSettingsContent {
+        settings: IndentGuideSettings {
             enabled: true,
             line_width: 1,
             active_line_width: 1,
