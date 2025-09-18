@@ -369,6 +369,7 @@ inventory::submit! {
             let language_settings_content_ref = generator
                 .subschema_for::<LanguageSettingsContent>()
                 .to_value();
+            // Note: "errorMessage" is an undocumented VSCode JSON language server extension.
             replace_subschema::<LanguageToSettingsMap>(generator, || json_schema!({
                 "type": "object",
                 "properties": params
@@ -380,7 +381,9 @@ inventory::submit! {
                             language_settings_content_ref.clone(),
                         )
                     })
-                    .collect::<serde_json::Map<_, _>>()
+                    .collect::<serde_json::Map<_, _>>(),
+                "errorMessage": "No language with this name is installed."
+
             }))
         }
     }
