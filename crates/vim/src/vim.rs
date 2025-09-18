@@ -19,7 +19,6 @@ mod state;
 mod surrounds;
 mod visual;
 
-use anyhow::Result;
 use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
@@ -38,15 +37,15 @@ use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde::Serialize;
-use settings::{
-    Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi, update_settings_file,
+pub use settings::{
+    ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use util::MergeFrom;
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
@@ -266,7 +265,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
-            update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
+            update_settings_file(fs, cx, move |setting, _| {
                 setting.vim_mode = Some(!currently_enabled)
             })
         });
@@ -1075,16 +1074,16 @@ impl Vim {
                 }
 
                 let snapshot = s.display_map();
-                if let Some(pending) = s.pending.as_mut()
-                    && pending.selection.reversed
+                if let Some(pending) = s.pending_anchor_mut()
+                    && pending.reversed
                     && mode.is_visual()
                     && !last_mode.is_visual()
                 {
-                    let mut end = pending.selection.end.to_point(&snapshot.buffer_snapshot);
+                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot);
                     end = snapshot
                         .buffer_snapshot
                         .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.selection.end = snapshot.buffer_snapshot.anchor_before(end);
+                    pending.end = snapshot.buffer_snapshot.anchor_before(end);
                 }
 
                 s.move_with(|map, selection| {
@@ -1332,7 +1331,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, _| {
             editor
                 .selections
-                .disjoint_anchors()
+                .disjoint_anchors_arc()
                 .iter()
                 .map(|selection| selection.tail()..selection.head())
                 .collect()
@@ -1793,21 +1792,19 @@ impl Vim {
     }
 }
 
-/// Controls when to use system clipboard.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum UseSystemClipboard {
-    /// Don't use system clipboard.
-    Never,
-    /// Use system clipboard.
-    Always,
-    /// Use system clipboard for yank operations.
-    OnYank,
+struct VimSettings {
+    pub default_mode: Mode,
+    pub toggle_relative_line_numbers: bool,
+    pub use_system_clipboard: settings::UseSystemClipboard,
+    pub use_smartcase_find: bool,
+    pub custom_digraphs: HashMap<String, Arc<str>>,
+    pub highlight_on_yank_duration: u64,
+    pub cursor_shape: CursorShapeSettings,
 }
 
 /// The settings for cursor shape.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-struct CursorShapeSettings {
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
     ///
     /// Default: block
@@ -1826,85 +1823,63 @@ struct CursorShapeSettings {
     pub insert: Option<CursorShape>,
 }
 
-#[derive(Deserialize)]
-struct VimSettings {
-    pub default_mode: Mode,
-    pub toggle_relative_line_numbers: bool,
-    pub use_system_clipboard: UseSystemClipboard,
-    pub use_smartcase_find: bool,
-    pub custom_digraphs: HashMap<String, Arc<str>>,
-    pub highlight_on_yank_duration: u64,
-    pub cursor_shape: CursorShapeSettings,
+impl From<settings::CursorShapeSettings> for CursorShapeSettings {
+    fn from(settings: settings::CursorShapeSettings) -> Self {
+        Self {
+            normal: settings.normal.map(Into::into),
+            replace: settings.replace.map(Into::into),
+            visual: settings.visual.map(Into::into),
+            insert: settings.insert.map(Into::into),
+        }
+    }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(key = "vim")]
-struct VimSettingsContent {
-    pub default_mode: Option<ModeContent>,
-    pub toggle_relative_line_numbers: Option<bool>,
-    pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_smartcase_find: Option<bool>,
-    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
-    pub highlight_on_yank_duration: Option<u64>,
-    pub cursor_shape: Option<CursorShapeSettings>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ModeContent {
-    #[default]
-    Normal,
-    Insert,
-    Replace,
-    Visual,
-    VisualLine,
-    VisualBlock,
-    HelixNormal,
-}
-
-impl From<ModeContent> for Mode {
+impl From<settings::ModeContent> for Mode {
     fn from(mode: ModeContent) -> Self {
         match mode {
             ModeContent::Normal => Self::Normal,
             ModeContent::Insert => Self::Insert,
-            ModeContent::Replace => Self::Replace,
-            ModeContent::Visual => Self::Visual,
-            ModeContent::VisualLine => Self::VisualLine,
-            ModeContent::VisualBlock => Self::VisualBlock,
             ModeContent::HelixNormal => Self::HelixNormal,
         }
     }
 }
 
 impl Settings for VimSettings {
-    type FileContent = VimSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let settings: VimSettingsContent = sources.json_merge()?;
-
-        Ok(Self {
-            default_mode: settings
-                .default_mode
-                .ok_or_else(Self::missing_default)?
-                .into(),
-            toggle_relative_line_numbers: settings
-                .toggle_relative_line_numbers
-                .ok_or_else(Self::missing_default)?,
-            use_system_clipboard: settings
-                .use_system_clipboard
-                .ok_or_else(Self::missing_default)?,
-            use_smartcase_find: settings
-                .use_smartcase_find
-                .ok_or_else(Self::missing_default)?,
-            custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
-            highlight_on_yank_duration: settings
-                .highlight_on_yank_duration
-                .ok_or_else(Self::missing_default)?,
-            cursor_shape: settings.cursor_shape.ok_or_else(Self::missing_default)?,
-        })
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let vim = content.vim.clone().unwrap();
+        Self {
+            default_mode: vim.default_mode.unwrap().into(),
+            toggle_relative_line_numbers: vim.toggle_relative_line_numbers.unwrap(),
+            use_system_clipboard: vim.use_system_clipboard.unwrap(),
+            use_smartcase_find: vim.use_smartcase_find.unwrap(),
+            custom_digraphs: vim.custom_digraphs.unwrap(),
+            highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
+            cursor_shape: vim.cursor_shape.unwrap().into(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        let Some(vim) = content.vim.as_ref() else {
+            return;
+        };
+        self.default_mode
+            .merge_from(&vim.default_mode.map(Into::into));
+        self.toggle_relative_line_numbers
+            .merge_from(&vim.toggle_relative_line_numbers);
+        self.use_system_clipboard
+            .merge_from(&vim.use_system_clipboard);
+        self.use_smartcase_find.merge_from(&vim.use_smartcase_find);
+        self.custom_digraphs.merge_from(&vim.custom_digraphs);
+        self.highlight_on_yank_duration
+            .merge_from(&vim.highlight_on_yank_duration);
+        self.cursor_shape
+            .merge_from(&vim.cursor_shape.map(Into::into));
+    }
+
+    fn import_from_vscode(
+        _vscode: &settings::VsCodeSettings,
+        _current: &mut settings::SettingsContent,
+    ) {
         // TODO: translate vim extension settings
     }
 }

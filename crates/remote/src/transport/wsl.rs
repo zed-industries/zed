@@ -25,6 +25,15 @@ pub struct WslConnectionOptions {
     pub user: Option<String>,
 }
 
+impl From<settings::WslConnection> for WslConnectionOptions {
+    fn from(val: settings::WslConnection) -> Self {
+        WslConnectionOptions {
+            distro_name: val.distro_name.into(),
+            user: val.user,
+        }
+    }
+}
+
 pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<RemotePathBuf>,
     platform: RemotePlatform,

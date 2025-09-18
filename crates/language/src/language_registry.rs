@@ -1,14 +1,11 @@
 use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, ManifestName, PLAIN_TEXT, ToolchainLister,
-    language_settings::{
-        AllLanguageSettingsContent, LanguageSettingsContent, all_language_settings,
-    },
-    task_context::ContextProvider,
-    with_parser,
+    language_settings::all_language_settings, task_context::ContextProvider, with_parser,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 
 use futures::{
     Future,
@@ -1175,7 +1172,7 @@ impl LanguageRegistryState {
             language.set_theme(theme.syntax());
         }
         self.language_settings.languages.0.insert(
-            language.name(),
+            language.name().0,
             LanguageSettingsContent {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,

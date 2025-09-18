@@ -12,12 +12,9 @@ use std::{fmt::Display, path::PathBuf};
 
 use anyhow::Result;
 use client::Client;
-use collections::HashMap;
 use gpui::AsyncApp;
 use parking_lot::RwLock;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use util::redact::should_redact;
+pub use settings::ContextServerCommand;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ContextServerId(pub Arc<str>);
@@ -25,32 +22,6 @@ pub struct ContextServerId(pub Arc<str>);
 impl Display for ContextServerId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema)]
-pub struct ContextServerCommand {
-    #[serde(rename = "command")]
-    pub path: PathBuf,
-    pub args: Vec<String>,
-    pub env: Option<HashMap<String, String>>,
-    /// Timeout for tool calls in milliseconds. Defaults to 60000 (60 seconds) if not specified.
-    pub timeout: Option<u64>,
-}
-
-impl std::fmt::Debug for ContextServerCommand {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let filtered_env = self.env.as_ref().map(|env| {
-            env.iter()
-                .map(|(k, v)| (k, if should_redact(k) { "[REDACTED]" } else { v }))
-                .collect::<Vec<_>>()
-        });
-
-        f.debug_struct("ContextServerCommand")
-            .field("path", &self.path)
-            .field("args", &self.args)
-            .field("env", &filtered_env)
-            .finish()
     }
 }
 

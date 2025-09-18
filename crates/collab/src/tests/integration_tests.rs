@@ -22,9 +22,7 @@ use gpui::{
 use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSourceKind, FakeLspAdapter, Language, LanguageConfig,
     LanguageMatcher, LineEnding, OffsetRangeExt, Point, Rope,
-    language_settings::{
-        AllLanguageSettings, Formatter, FormatterList, PrettierSettings, SelectedFormatter,
-    },
+    language_settings::{Formatter, FormatterList, SelectedFormatter},
     tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{LanguageServerId, OneOf};
@@ -38,7 +36,7 @@ use project::{
 use prompt_store::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{PrettierSettingsContent, SettingsStore};
 use std::{
     cell::{Cell, RefCell},
     env, future, mem,
@@ -4598,15 +4596,15 @@ async fn test_formatting_buffer(
         // host's configuration is honored as opposed to using the guest's settings.
         cx_a.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                    file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
-                        Formatter::External {
+                store.update_user_settings(cx, |file| {
+                    file.project.all_languages.defaults.formatter = Some(SelectedFormatter::List(
+                        FormatterList::Single(Formatter::External {
                             command: "awk".into(),
                             arguments: Some(
                                 vec!["{sub(/two/,\"{buffer_path}\")}1".to_string()].into(),
                             ),
-                        },
-                    )));
+                        }),
+                    ));
                 });
             });
         });
@@ -4694,24 +4692,24 @@ async fn test_prettier_formatting_buffer(
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::Auto);
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::Auto);
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |file| {
-                file.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
-                    Formatter::LanguageServer { name: None },
-                )));
-                file.defaults.prettier = Some(PrettierSettings {
-                    allowed: true,
-                    ..PrettierSettings::default()
+            store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.formatter = Some(SelectedFormatter::List(
+                    FormatterList::Single(Formatter::LanguageServer { name: None }),
+                ));
+                file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
+                    allowed: Some(true),
+                    ..Default::default()
                 });
             });
         });

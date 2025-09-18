@@ -22,7 +22,7 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsKey, SettingsSources, SettingsStore, SettingsUi};
+use settings::{SettingsContent, SettingsKey, SettingsStore, SettingsUi};
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -234,7 +234,7 @@ impl AgentServerStore {
         let subscription = cx.observe_global::<SettingsStore>(|this, cx| {
             this.agent_servers_settings_changed(cx);
         });
-        let this = Self {
+        let mut this = Self {
             state: AgentServerStoreState::Local {
                 node_runtime,
                 fs,
@@ -245,14 +245,7 @@ impl AgentServerStore {
             },
             external_agents: Default::default(),
         };
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(1)).await;
-            this.update(cx, |this, cx| {
-                this.agent_servers_settings_changed(cx);
-            })
-            .ok();
-        })
-        .detach();
+        this.agent_servers_settings_changed(cx);
         this
     }
 
@@ -305,22 +298,29 @@ impl AgentServerStore {
         }
     }
 
-    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient) {
+    pub fn shared(&mut self, project_id: u64, client: AnyProtoClient, cx: &mut Context<Self>) {
         match &mut self.state {
             AgentServerStoreState::Local {
                 downstream_client, ..
             } => {
-                client
-                    .send(proto::ExternalAgentsUpdated {
-                        project_id,
-                        names: self
-                            .external_agents
+                *downstream_client = Some((project_id, client.clone()));
+                // Send the current list of external agents downstream, but only after a delay,
+                // to avoid having the message arrive before the downstream project's agent server store
+                // sets up its handlers.
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(Duration::from_secs(1)).await;
+                    let names = this.update(cx, |this, _| {
+                        this.external_agents
                             .keys()
                             .map(|name| name.to_string())
-                            .collect(),
-                    })
-                    .log_err();
-                *downstream_client = Some((project_id, client));
+                            .collect()
+                    })?;
+                    client
+                        .send(proto::ExternalAgentsUpdated { project_id, names })
+                        .log_err();
+                    anyhow::Ok(())
+                })
+                .detach();
             }
             AgentServerStoreState::Remote { .. } => {
                 debug_panic!(
@@ -721,11 +721,6 @@ struct RemoteExternalAgentServer {
     new_version_available_tx: Option<watch::Sender<Option<String>>>,
 }
 
-// new method: status_updated
-// does nothing in the all-local case
-// for RemoteExternalAgentServer, sends on the stored tx
-// etc.
-
 impl ExternalAgentServer for RemoteExternalAgentServer {
     fn get_command(
         &mut self,
@@ -994,47 +989,19 @@ impl ExternalAgentServer for LocalCustomAgent {
 pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 
-#[derive(
-    Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey, PartialEq,
-)]
+#[derive(Default, Clone, JsonSchema, Debug, SettingsUi, SettingsKey, PartialEq)]
 #[settings_key(key = "agent_servers")]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
-
-    /// Custom agent servers configured by the user
-    #[serde(flatten)]
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
-
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
-    /// Absolute path to a binary to be used when launching this agent.
-    ///
-    /// This can be used to run a specific binary without automatic downloads or searching `$PATH`.
-    #[serde(rename = "command")]
     pub path: Option<PathBuf>,
-    /// If a binary is specified in `command`, it will be passed these arguments.
     pub args: Option<Vec<String>>,
-    /// If a binary is specified in `command`, it will be passed these environment variables.
     pub env: Option<HashMap<String, String>>,
-    /// Whether to skip searching `$PATH` for an agent server binary when
-    /// launching this agent.
-    ///
-    /// This has no effect if a `command` is specified. Otherwise, when this is
-    /// `false`, Zed will search `$PATH` for an agent server binary and, if one
-    /// is found, use it for threads with this agent. If no agent binary is
-    /// found on `$PATH`, Zed will automatically install and use its own binary.
-    /// When this is `true`, Zed will not search `$PATH`, and will always use
-    /// its own binary.
-    ///
-    /// Default: true
     pub ignore_system_version: Option<bool>,
-    /// The default mode to use for this agent.
-    ///
-    /// Note: Not only all agents support modes.
-    ///
-    /// Default: None
     pub default_mode: Option<String>,
 }
 
@@ -1045,6 +1012,18 @@ impl BuiltinAgentServerSettings {
             args: self.args.unwrap_or_default(),
             env: self.env,
         })
+    }
+}
+
+impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
+    fn from(value: settings::BuiltinAgentServerSettings) -> Self {
+        BuiltinAgentServerSettings {
+            path: value.path,
+            args: value.args,
+            env: value.env,
+            ignore_system_version: value.ignore_system_version,
+            default_mode: value.default_mode,
+        }
     }
 }
 
@@ -1059,9 +1038,8 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Clone, JsonSchema, Debug, PartialEq)]
 pub struct CustomAgentServerSettings {
-    #[serde(flatten)]
     pub command: AgentServerCommand,
     /// The default mode to use for this agent.
     ///
@@ -1071,36 +1049,47 @@ pub struct CustomAgentServerSettings {
     pub default_mode: Option<String>,
 }
 
-impl settings::Settings for AllAgentServersSettings {
-    type FileContent = Self;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let mut settings = AllAgentServersSettings::default();
-
-        for AllAgentServersSettings {
-            gemini,
-            claude,
-            custom,
-        } in sources.defaults_and_customizations()
-        {
-            if gemini.is_some() {
-                settings.gemini = gemini.clone();
-            }
-            if claude.is_some() {
-                settings.claude = claude.clone();
-            }
-
-            // Merge custom agents
-            for (name, config) in custom {
-                // Skip built-in agent names to avoid conflicts
-                if name != GEMINI_NAME && name != CLAUDE_CODE_NAME {
-                    settings.custom.insert(name.clone(), config.clone());
-                }
-            }
+impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
+    fn from(value: settings::CustomAgentServerSettings) -> Self {
+        CustomAgentServerSettings {
+            command: AgentServerCommand {
+                path: value.path,
+                args: value.args,
+                env: value.env,
+            },
+            default_mode: value.default_mode,
         }
+    }
+}
 
-        Ok(settings)
+impl settings::Settings for AllAgentServersSettings {
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let agent_settings = content.agent_servers.clone().unwrap();
+        Self {
+            gemini: agent_settings.gemini.map(Into::into),
+            claude: agent_settings.claude.map(Into::into),
+            custom: agent_settings
+                .custom
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        let Some(content) = &content.agent_servers else {
+            return;
+        };
+        if let Some(gemini) = content.gemini.clone() {
+            self.gemini = Some(gemini.into())
+        };
+        if let Some(claude) = content.claude.clone() {
+            self.claude = Some(claude.into());
+        }
+        for (name, config) in content.custom.clone() {
+            self.custom.insert(name, config.into());
+        }
+    }
+
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }

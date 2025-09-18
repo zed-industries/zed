@@ -36,12 +36,13 @@ use project::{
     project_settings::GoToDiagnosticSeverityFilter,
     relativize_path,
 };
-use project_panel_settings::{
-    ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
-};
+use project_panel_settings::ProjectPanelSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{
+    DockSide, ProjectPanelEntrySpacing, Settings, SettingsStore, ShowDiagnostics, ShowIndentGuides,
+    update_settings_file,
+};
 use smallvec::SmallVec;
 use std::{any::TypeId, time::Instant};
 use std::{
@@ -343,8 +344,14 @@ pub fn init(cx: &mut App) {
 
         workspace.register_action(|workspace, _: &ToggleHideGitIgnore, _, cx| {
             let fs = workspace.app_state().fs.clone();
-            update_settings_file::<ProjectPanelSettings>(fs, cx, move |setting, _| {
-                setting.hide_gitignore = Some(!setting.hide_gitignore.unwrap_or(false));
+            update_settings_file(fs, cx, move |setting, _| {
+                setting.project_panel.get_or_insert_default().hide_gitignore = Some(
+                    !setting
+                        .project_panel
+                        .get_or_insert_default()
+                        .hide_gitignore
+                        .unwrap_or(false),
+                );
             })
         });
 
@@ -1147,8 +1154,32 @@ impl ProjectPanel {
     ) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
         // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
+        let multiple_worktrees = self.project.read(cx).worktrees(cx).count() > 1;
+        let project = self.project.read(cx);
+
         self.expanded_dir_ids
-            .retain(|_, expanded_entries| expanded_entries.is_empty());
+            .iter_mut()
+            .for_each(|(worktree_id, expanded_entries)| {
+                if multiple_worktrees {
+                    *expanded_entries = Default::default();
+                    return;
+                }
+
+                let root_entry_id = project
+                    .worktree_for_id(*worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).snapshot())
+                    .and_then(|worktree_snapshot| {
+                        worktree_snapshot.root_entry().map(|entry| entry.id)
+                    });
+
+                match root_entry_id {
+                    Some(id) => {
+                        expanded_entries.retain(|entry_id| entry_id == &id);
+                    }
+                    None => *expanded_entries = Default::default(),
+                };
+            });
+
         self.update_visible_entries(None, cx);
         cx.notify();
     }
@@ -4457,8 +4488,8 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .spacing(match settings.entry_spacing {
-                        project_panel_settings::EntrySpacing::Comfortable => ListItemSpacing::Dense,
-                        project_panel_settings::EntrySpacing::Standard => {
+                        ProjectPanelEntrySpacing::Comfortable => ListItemSpacing::Dense,
+                        ProjectPanelEntrySpacing::Standard => {
                             ListItemSpacing::ExtraDense
                         }
                     })
@@ -5736,8 +5767,8 @@ impl EventEmitter<PanelEvent> for ProjectPanel {}
 impl Panel for ProjectPanel {
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
-            ProjectPanelDockPosition::Left => DockPosition::Left,
-            ProjectPanelDockPosition::Right => DockPosition::Right,
+            DockSide::Left => DockPosition::Left,
+            DockSide::Right => DockPosition::Right,
         }
     }
 
@@ -5746,17 +5777,13 @@ impl Panel for ProjectPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<ProjectPanelSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left | DockPosition::Bottom => ProjectPanelDockPosition::Left,
-                    DockPosition::Right => ProjectPanelDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left | DockPosition::Bottom => DockSide::Left,
+                DockPosition::Right => DockSide::Right,
+            };
+            settings.project_panel.get_or_insert_default().dock = Some(dock);
+        });
     }
 
     fn size(&self, _: &Window, cx: &App) -> Pixels {

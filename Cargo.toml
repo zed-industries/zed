@@ -150,7 +150,6 @@ members = [
     "crates/session",
     "crates/settings",
     "crates/settings_profile_selector",
-    "crates/settings_ui",
     "crates/settings_ui_macros",
     "crates/snippet",
     "crates/snippet_provider",
@@ -437,7 +436,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.2.1", features = ["unstable"] }
+agent-client-protocol = { version = "0.4.0", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
 any_vec = "0.14"
@@ -630,6 +629,7 @@ serde_json_lenient = { version = "0.2", features = [
 serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
+serde_with = "3.4.0"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"

@@ -11,8 +11,6 @@ use language_model::{
 };
 use menu;
 use open_ai::{ResponseStreamEvent, stream_completion};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
 use ui::{ElevationIndex, Tooltip, prelude::*};
@@ -22,41 +20,13 @@ use zed_env_vars::EnvVar;
 
 use crate::api_key::ApiKeyState;
 use crate::provider::open_ai::{OpenAiEventMapper, into_open_ai};
+pub use settings::OpenAiCompatibleAvailableModel as AvailableModel;
+pub use settings::OpenAiCompatibleModelCapabilities as ModelCapabilities;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenAiCompatibleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
-    #[serde(default)]
-    pub capabilities: ModelCapabilities,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct ModelCapabilities {
-    pub tools: bool,
-    pub images: bool,
-    pub parallel_tool_calls: bool,
-    pub prompt_cache_key: bool,
-}
-
-impl Default for ModelCapabilities {
-    fn default() -> Self {
-        Self {
-            tools: true,
-            images: false,
-            parallel_tool_calls: false,
-            prompt_cache_key: false,
-        }
-    }
 }
 
 pub struct OpenAiCompatibleLanguageModelProvider {

@@ -461,7 +461,7 @@ impl LspAdapter for PyrightLspAdapter {
                     pet_core::python_environment::PythonEnvironment,
                 >(toolchain.as_json.clone())
             {
-                if user_settings.is_null() {
+                if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
@@ -492,9 +492,13 @@ impl LspAdapter for PyrightLspAdapter {
                 // Get or create the python section
                 let python = object
                     .entry("python")
-                    .or_insert(Value::Object(serde_json::Map::default()))
-                    .as_object_mut()
-                    .unwrap();
+                    .and_modify(|v| {
+                        if !v.is_object() {
+                            *v = Value::Object(serde_json::Map::default());
+                        }
+                    })
+                    .or_insert(Value::Object(serde_json::Map::default()));
+                let python = python.as_object_mut().unwrap();
 
                 // Set both pythonPath and defaultInterpreterPath for compatibility
                 python.insert(
@@ -1465,7 +1469,7 @@ impl LspAdapter for PyLspAdapter {
 
             // If user did not explicitly modify their python venv, use one from picker.
             if let Some(toolchain) = toolchain {
-                if user_settings.is_null() {
+                if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
@@ -1787,7 +1791,7 @@ impl LspAdapter for BasedPyrightLspAdapter {
                     pet_core::python_environment::PythonEnvironment,
                 >(toolchain.as_json.clone())
             {
-                if user_settings.is_null() {
+                if !user_settings.is_object() {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
@@ -2165,7 +2169,7 @@ impl LspInstaller for RuffLspAdapter {
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
-    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
+    use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
@@ -2178,8 +2182,8 @@ mod tests {
             cx.set_global(test_settings);
             language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                    s.defaults.tab_size = NonZeroU32::new(2);
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
                 });
             });
         });

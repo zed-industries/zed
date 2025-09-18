@@ -1,17 +1,14 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::Result;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi};
+use settings::{Settings, SettingsStore};
+use util::MergeFrom as _;
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Clone, Debug)]
 pub struct AudioSettings {
     /// Opt into the new audio system.
     ///
     /// You need to rejoin a call for this setting to apply
-    #[serde(rename = "experimental.rodio_audio", default)]
     pub rodio_audio: bool, // default is false
     /// Requires 'rodio_audio: true'
     ///
@@ -22,22 +19,16 @@ pub struct AudioSettings {
     /// Microphones are too quite in zed, until everyone is on experimental
     /// audio and has auto speaker volume on this will make you very loud
     /// compared to other speakers.
-    #[serde(
-        rename = "experimental.auto_microphone_volume",
-        default = "default_false"
-    )]
     pub auto_microphone_volume: bool,
     /// Requires 'rodio_audio: true'
     ///
     /// Automatically increate or decrease the volume of other call members.
     /// This only affects how things sound for you.
-    #[serde(rename = "experimental.auto_speaker_volume", default = "default_true")]
     pub auto_speaker_volume: bool,
     /// Requires 'rodio_audio: true'
     ///
     /// Remove background noises. Works great for typing, cars, dogs, AC. Does
     /// not work well on music.
-    #[serde(rename = "experimental.denoise", default = "default_false")]
     pub denoise: bool,
     /// Requires 'rodio_audio: true'
     ///
@@ -47,79 +38,35 @@ pub struct AudioSettings {
     /// the future we will migrate by setting this to false
     ///
     /// You need to rejoin a call for this setting to apply
-    #[serde(
-        rename = "experimental.legacy_audio_compatible",
-        default = "default_true"
-    )]
-    pub legacy_audio_compatible: bool,
-}
-/// Configuration of audio in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
-#[serde(default)]
-#[settings_key(key = "audio")]
-pub struct AudioSettingsContent {
-    /// Opt into the new audio system.
-    ///
-    /// You need to rejoin a call for this setting to apply
-    #[serde(rename = "experimental.rodio_audio", default)]
-    pub rodio_audio: bool, // default is false
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Automatically increase or decrease you microphone's volume. This affects how
-    /// loud you sound to others.
-    ///
-    /// Recommended: off (default)
-    /// Microphones are too quite in zed, until everyone is on experimental
-    /// audio and has auto speaker volume on this will make you very loud
-    /// compared to other speakers.
-    #[serde(
-        rename = "experimental.auto_microphone_volume",
-        default = "default_false"
-    )]
-    pub auto_microphone_volume: bool,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Automatically increate or decrease the volume of other call members.
-    /// This only affects how things sound for you.
-    #[serde(rename = "experimental.auto_speaker_volume", default = "default_true")]
-    pub auto_speaker_volume: bool,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Remove background noises. Works great for typing, cars, dogs, AC. Does
-    /// not work well on music.
-    #[serde(rename = "experimental.denoise", default = "default_false")]
-    pub denoise: bool,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Use audio parameters compatible with the previous versions of
-    /// experimental audio and non-experimental audio. When this is false you
-    /// will sound strange to anyone not on the latest experimental audio. In
-    /// the future we will migrate by setting this to false
-    ///
-    /// You need to rejoin a call for this setting to apply
-    #[serde(
-        rename = "experimental.legacy_audio_compatible",
-        default = "default_true"
-    )]
     pub legacy_audio_compatible: bool,
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn default_false() -> bool {
-    false
-}
-
+/// Configuration of audio in Zed
 impl Settings for AudioSettings {
-    type FileContent = AudioSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let audio = &content.audio.as_ref().unwrap();
+        AudioSettings {
+            rodio_audio: audio.rodio_audio.unwrap(),
+            auto_microphone_volume: audio.auto_microphone_volume.unwrap(),
+            auto_speaker_volume: audio.auto_speaker_volume.unwrap(),
+            denoise: audio.denoise.unwrap(),
+            legacy_audio_compatible: audio.legacy_audio_compatible.unwrap(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        let Some(audio) = content.audio.as_ref() else {
+            return;
+        };
+        self.rodio_audio.merge_from(&audio.rodio_audio);
+        self.auto_microphone_volume
+            .merge_from(&audio.auto_microphone_volume);
+        self.auto_speaker_volume
+            .merge_from(&audio.auto_speaker_volume);
+        self.denoise.merge_from(&audio.denoise);
+        self.legacy_audio_compatible
+            .merge_from(&audio.legacy_audio_compatible);
+    }
 }
 
 /// See docs on [LIVE_SETTINGS]
