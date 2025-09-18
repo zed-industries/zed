@@ -662,6 +662,39 @@ impl AgentPanel {
             )
         });
 
+        cx.observe_global_in::<SettingsStore>(window, |panel, window, cx| {
+            if dbg!(DisableAiSettings::get_global(cx).disable_ai) {
+                let agent_panel_id = cx.entity_id();
+                let agent_panel_visible = panel
+                    .workspace
+                    .update(cx, |workspace, cx| {
+                        let agent_dock_position = panel.position(window, cx);
+                        let agent_dock = workspace.dock_at_position(agent_dock_position);
+                        let agent_panel_focused = agent_dock
+                            .read(cx)
+                            .active_panel()
+                            .is_some_and(|panel| panel.panel_id() == agent_panel_id);
+
+                        let active_panel_visible = agent_dock
+                            .read(cx)
+                            .visible_panel()
+                            .is_some_and(|panel| panel.panel_id() == agent_panel_id);
+
+                        if agent_panel_focused {
+                            cx.dispatch_action(&ToggleFocus);
+                        }
+
+                        active_panel_visible
+                    })
+                    .unwrap_or_default();
+
+                if agent_panel_visible {
+                    cx.emit(PanelEvent::Close);
+                }
+            }
+        })
+        .detach();
+
         Self {
             active_view,
             workspace,
@@ -674,11 +707,9 @@ impl AgentPanel {
             prompt_store,
             configuration: None,
             configuration_subscription: None,
-
             inline_assist_context_store,
             previous_view: None,
             history_store: history_store.clone(),
-
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu_handle: PopoverMenuHandle::default(),
@@ -703,7 +734,6 @@ impl AgentPanel {
         if workspace
             .panel::<Self>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx))
-            && !DisableAiSettings::get_global(cx).disable_ai
         {
             workspace.toggle_panel_focus::<Self>(window, cx);
         }
