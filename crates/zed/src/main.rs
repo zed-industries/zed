@@ -19,7 +19,6 @@ use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
 
 use gpui_tokio::Tokio;
-use http_client::{Url, read_proxy_from_env};
 use language::LanguageRegistry;
 use onboarding::{FIRST_OPEN, show_onboarding_view};
 use prompt_store::PromptBuilder;
@@ -398,16 +397,7 @@ pub fn main() {
             std::env::consts::OS,
             std::env::consts::ARCH
         );
-        let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-        let proxy_url = proxy_str
-            .as_ref()
-            .and_then(|input| {
-                input
-                    .parse::<Url>()
-                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                    .ok()
-            })
-            .or_else(read_proxy_from_env);
+        let proxy_url = ProxySettings::get_global(cx).proxy_url();
         let http = {
             let _guard = Tokio::handle(cx).enter();
 

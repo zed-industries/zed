@@ -1154,8 +1154,32 @@ impl ProjectPanel {
     ) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
         // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
+        let multiple_worktrees = self.project.read(cx).worktrees(cx).count() > 1;
+        let project = self.project.read(cx);
+
         self.expanded_dir_ids
-            .retain(|_, expanded_entries| expanded_entries.is_empty());
+            .iter_mut()
+            .for_each(|(worktree_id, expanded_entries)| {
+                if multiple_worktrees {
+                    *expanded_entries = Default::default();
+                    return;
+                }
+
+                let root_entry_id = project
+                    .worktree_for_id(*worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).snapshot())
+                    .and_then(|worktree_snapshot| {
+                        worktree_snapshot.root_entry().map(|entry| entry.id)
+                    });
+
+                match root_entry_id {
+                    Some(id) => {
+                        expanded_entries.retain(|entry_id| entry_id == &id);
+                    }
+                    None => *expanded_entries = Default::default(),
+                };
+            });
+
         self.update_visible_entries(None, cx);
         cx.notify();
     }
@@ -5608,7 +5632,10 @@ impl Render for ProjectPanel {
                 .custom_scrollbars(
                     Scrollbars::for_settings::<ProjectPanelSettings>()
                         .tracked_scroll_handle(self.scroll_handle.clone())
-                        .with_track_along(ScrollAxes::Horizontal)
+                        .with_track_along(
+                            ScrollAxes::Horizontal,
+                            cx.theme().colors().panel_background,
+                        )
                         .notify_content(),
                     window,
                     cx,

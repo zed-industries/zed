@@ -6129,6 +6129,12 @@ impl MultiBufferSnapshot {
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
+                        signature_range: item.signature_range.and_then(|signature_range| {
+                            Some(
+                                self.anchor_in_excerpt(*excerpt_id, signature_range.start)?
+                                    ..self.anchor_in_excerpt(*excerpt_id, signature_range.end)?,
+                            )
+                        }),
                         body_range: item.body_range.and_then(|body_range| {
                             Some(
                                 self.anchor_in_excerpt(*excerpt_id, body_range.start)?
@@ -6169,6 +6175,12 @@ impl MultiBufferSnapshot {
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
+                        signature_range: item.signature_range.and_then(|signature_range| {
+                            Some(
+                                self.anchor_in_excerpt(excerpt_id, signature_range.start)?
+                                    ..self.anchor_in_excerpt(excerpt_id, signature_range.end)?,
+                            )
+                        }),
                         body_range: item.body_range.and_then(|body_range| {
                             Some(
                                 self.anchor_in_excerpt(excerpt_id, body_range.start)?

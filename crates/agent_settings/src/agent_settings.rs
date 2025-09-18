@@ -50,6 +50,7 @@ pub struct AgentSettings {
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
     pub use_modifier_to_send: bool,
+    pub message_editor_min_lines: usize,
 }
 
 impl AgentSettings {
@@ -90,6 +91,10 @@ impl AgentSettings {
             provider: provider.into(),
             model,
         });
+    }
+
+    pub fn set_message_editor_max_lines(&self) -> usize {
+        self.message_editor_min_lines * 2
     }
 }
 
@@ -175,6 +180,7 @@ impl Settings for AgentSettings {
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
+            message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
         }
     }
 
@@ -224,6 +230,8 @@ impl Settings for AgentSettings {
 
         self.model_parameters
             .extend_from_slice(&value.model_parameters);
+        self.message_editor_min_lines
+            .merge_from(&value.message_editor_min_lines);
 
         if let Some(profiles) = value.profiles.as_ref() {
             self.profiles.extend(

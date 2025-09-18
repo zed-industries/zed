@@ -22,6 +22,7 @@ use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use std::collections::BTreeSet;
 use std::env;
 use std::sync::Arc;
 pub use util::serde::default_true;
@@ -745,6 +746,7 @@ pub enum ImageFileSizeUnit {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
+    pub wsl_connections: Option<Vec<WslConnection>>,
     pub read_ssh_config: Option<bool>,
 }
 
@@ -767,6 +769,14 @@ pub struct SshConnection {
     pub upload_binary_over_ssh: Option<bool>,
 
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, Debug)]
+pub struct WslConnection {
+    pub distro_name: SharedString,
+    pub user: Option<String>,
+    #[serde(default)]
+    pub projects: BTreeSet<SshProject>,
 }
 
 #[skip_serializing_none]

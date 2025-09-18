@@ -18,8 +18,8 @@ use remote::{
     ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform,
     SshConnectionOptions,
 };
-use settings::Settings;
 pub use settings::SshConnection;
+use settings::{Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
@@ -30,12 +30,18 @@ use workspace::{AppState, ModalView, Workspace};
 
 pub struct SshSettings {
     pub ssh_connections: Vec<SshConnection>,
+    pub wsl_connections: Vec<WslConnection>,
+    /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
 }
 
 impl SshSettings {
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
         self.ssh_connections.clone().into_iter()
+    }
+
+    pub fn wsl_connections(&self) -> impl Iterator<Item = WslConnection> + use<> {
+        self.wsl_connections.clone().into_iter()
     }
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
@@ -70,11 +76,39 @@ impl SshSettings {
     }
 }
 
+#[derive(Clone, PartialEq)]
+pub enum Connection {
+    Ssh(SshConnection),
+    Wsl(WslConnection),
+}
+
+impl From<Connection> for RemoteConnectionOptions {
+    fn from(val: Connection) -> Self {
+        match val {
+            Connection::Ssh(conn) => RemoteConnectionOptions::Ssh(conn.into()),
+            Connection::Wsl(conn) => RemoteConnectionOptions::Wsl(conn.into()),
+        }
+    }
+}
+
+impl From<SshConnection> for Connection {
+    fn from(val: SshConnection) -> Self {
+        Connection::Ssh(val)
+    }
+}
+
+impl From<WslConnection> for Connection {
+    fn from(val: WslConnection) -> Self {
+        Connection::Wsl(val)
+    }
+}
+
 impl Settings for SshSettings {
     fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let remote = &content.remote;
         Self {
             ssh_connections: remote.ssh_connections.clone().unwrap_or_default(),
+            wsl_connections: remote.wsl_connections.clone().unwrap_or_default(),
             read_ssh_config: remote.read_ssh_config.unwrap(),
         }
     }
@@ -82,6 +116,9 @@ impl Settings for SshSettings {
     fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
         if let Some(ssh_connections) = content.remote.ssh_connections.clone() {
             self.ssh_connections.extend(ssh_connections)
+        }
+        if let Some(wsl_connections) = content.remote.wsl_connections.clone() {
+            self.wsl_connections.extend(wsl_connections)
         }
         self.read_ssh_config
             .merge_from(&content.remote.read_ssh_config);
@@ -91,6 +128,7 @@ impl Settings for SshSettings {
 pub struct RemoteConnectionPrompt {
     connection_string: SharedString,
     nickname: Option<SharedString>,
+    is_wsl: bool,
     status_message: Option<SharedString>,
     prompt: Option<(Entity<Markdown>, oneshot::Sender<String>)>,
     cancellation: Option<oneshot::Sender<()>>,
@@ -115,12 +153,14 @@ impl RemoteConnectionPrompt {
     pub(crate) fn new(
         connection_string: String,
         nickname: Option<String>,
+        is_wsl: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
             connection_string: connection_string.into(),
             nickname: nickname.map(|nickname| nickname.into()),
+            is_wsl,
             editor: cx.new(|cx| Editor::single_line(window, cx)),
             status_message: None,
             cancellation: None,
@@ -249,15 +289,16 @@ impl RemoteConnectionModal {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (connection_string, nickname) = match connection_options {
+        let (connection_string, nickname, is_wsl) = match connection_options {
             RemoteConnectionOptions::Ssh(options) => {
-                (options.connection_string(), options.nickname.clone())
+                (options.connection_string(), options.nickname.clone(), false)
             }
-            RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None),
+            RemoteConnectionOptions::Wsl(options) => (options.distro_name.clone(), None, true),
         };
         Self {
-            prompt: cx
-                .new(|cx| RemoteConnectionPrompt::new(connection_string, nickname, window, cx)),
+            prompt: cx.new(|cx| {
+                RemoteConnectionPrompt::new(connection_string, nickname, is_wsl, window, cx)
+            }),
             finished: false,
             paths,
         }
@@ -288,6 +329,7 @@ pub(crate) struct SshConnectionHeader {
     pub(crate) connection_string: SharedString,
     pub(crate) paths: Vec<PathBuf>,
     pub(crate) nickname: Option<SharedString>,
+    pub(crate) is_wsl: bool,
 }
 
 impl RenderOnce for SshConnectionHeader {
@@ -303,6 +345,11 @@ impl RenderOnce for SshConnectionHeader {
             (self.connection_string, None)
         };
 
+        let icon = match self.is_wsl {
+            true => IconName::Linux,
+            false => IconName::Server,
+        };
+
         h_flex()
             .px(DynamicSpacing::Base12.rems(cx))
             .pt(DynamicSpacing::Base08.rems(cx))
@@ -310,7 +357,7 @@ impl RenderOnce for SshConnectionHeader {
             .rounded_t_sm()
             .w_full()
             .gap_1p5()
-            .child(Icon::new(IconName::Server).size(IconSize::Small))
+            .child(Icon::new(icon).size(IconSize::Small))
             .child(
                 h_flex()
                     .gap_1()
@@ -342,6 +389,7 @@ impl Render for RemoteConnectionModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
+        let is_wsl = self.prompt.read(cx).is_wsl;
 
         let theme = cx.theme().clone();
         let body_color = theme.colors().editor_background;
@@ -360,6 +408,7 @@ impl Render for RemoteConnectionModal {
                     paths: self.paths.clone(),
                     connection_string,
                     nickname,
+                    is_wsl,
                 }
                 .render(window, cx),
             )
@@ -499,6 +548,36 @@ pub fn connect_over_ssh(
     ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
 
     remote::RemoteClient::ssh(
+        unique_identifier,
+        connection_options,
+        rx,
+        Arc::new(RemoteClientDelegate {
+            window,
+            ui: ui.downgrade(),
+            known_password,
+        }),
+        cx,
+    )
+}
+
+pub fn connect(
+    unique_identifier: ConnectionIdentifier,
+    connection_options: RemoteConnectionOptions,
+    ui: Entity<RemoteConnectionPrompt>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Option<Entity<RemoteClient>>>> {
+    let window = window.window_handle();
+    let known_password = match &connection_options {
+        RemoteConnectionOptions::Ssh(ssh_connection_options) => {
+            ssh_connection_options.password.clone()
+        }
+        _ => None,
+    };
+    let (tx, rx) = oneshot::channel();
+    ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
+
+    remote::RemoteClient::new(
         unique_identifier,
         connection_options,
         rx,

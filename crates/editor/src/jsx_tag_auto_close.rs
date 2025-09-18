@@ -507,7 +507,7 @@ pub(crate) fn handle_from(
 
             {
                 let selections = this
-                    .read_with(cx, |this, _| this.selections.disjoint_anchors())
+                    .read_with(cx, |this, _| this.selections.disjoint_anchors_arc())
                     .ok()?;
                 for selection in selections.iter() {
                     let Some(selection_buffer_offset_head) =

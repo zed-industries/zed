@@ -16,3 +16,4 @@ default = []
 
 [dependencies]
 workspace-hack.workspace = true
+gpui.workspace = true

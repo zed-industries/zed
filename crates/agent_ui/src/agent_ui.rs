@@ -14,7 +14,6 @@ mod message_editor;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
-mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
@@ -46,7 +45,6 @@ use std::any::TypeId;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
-use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
 use zed_actions;
@@ -257,7 +255,6 @@ pub fn init(
     cx: &mut App,
 ) {
     AgentSettings::register(cx);
-    SlashCommandSettings::register(cx);
 
     assistant_context::init(client.clone(), cx);
     rules_library::init(cx);
@@ -413,8 +410,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
-    slash_command_registry
-        .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
@@ -434,21 +429,4 @@ fn register_slash_commands(cx: &mut App) {
         }
     })
     .detach();
-
-    update_slash_commands_from_settings(cx);
-    cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
-        .detach();
-}
-
-fn update_slash_commands_from_settings(cx: &mut App) {
-    let slash_command_registry = SlashCommandRegistry::global(cx);
-    let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.cargo_workspace.enabled {
-        slash_command_registry
-            .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
-    } else {
-        slash_command_registry
-            .unregister_command(assistant_slash_commands::CargoWorkspaceSlashCommand);
-    }
 }

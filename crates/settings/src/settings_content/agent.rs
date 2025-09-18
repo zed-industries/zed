@@ -104,6 +104,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub use_modifier_to_send: Option<bool>,
+    /// Minimum number of lines of height the agent message editor should have.
+    ///
+    /// Default: 4
+    pub message_editor_min_lines: Option<usize>,
 }
 
 impl AgentSettingsContent {
@@ -231,21 +235,30 @@ impl JsonSchema for LanguageModelProviderSetting {
     }
 
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        // list the builtin providers as a subset so that we still auto complete them in the settings
         json_schema!({
-            "enum": [
-                "amazon-bedrock",
-                "anthropic",
-                "copilot_chat",
-                "deepseek",
-                "google",
-                "lmstudio",
-                "mistral",
-                "ollama",
-                "openai",
-                "openrouter",
-                "vercel",
-                "x_ai",
-                "zed.dev"
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": [
+                        "amazon-bedrock",
+                        "anthropic",
+                        "copilot_chat",
+                        "deepseek",
+                        "google",
+                        "lmstudio",
+                        "mistral",
+                        "ollama",
+                        "openai",
+                        "openrouter",
+                        "vercel",
+                        "x_ai",
+                        "zed.dev"
+                    ]
+                },
+                {
+                    "type": "string",
+                }
             ]
         })
     }
