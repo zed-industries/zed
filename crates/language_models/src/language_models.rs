@@ -14,6 +14,7 @@ pub mod ui;
 
 use crate::provider::anthropic::AnthropicLanguageModelProvider;
 use crate::provider::bedrock::BedrockLanguageModelProvider;
+use crate::provider::cerebras::CerebrasLanguageModelProvider;
 use crate::provider::cloud::CloudLanguageModelProvider;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
@@ -127,6 +128,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         DeepSeekLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        CerebrasLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(
