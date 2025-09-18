@@ -263,13 +263,13 @@ impl StashListDelegate {
         let Some(entry_match) = self.matches.get(ix) else {
             return;
         };
-        let stash_hash = entry_match.entry.oid.to_string();
+        let stash_sha = entry_match.entry.oid.to_string();
         let stash_index = entry_match.entry.index;
         let Some(repo) = self.repo.clone() else {
             return;
         };
         CommitView::open(
-            stash_hash,
+            stash_sha,
             repo.downgrade(),
             self.workspace.clone(),
             Some(stash_index),
