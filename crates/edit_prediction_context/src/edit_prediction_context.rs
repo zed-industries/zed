@@ -1,3 +1,4 @@
+pub mod debug_view;
 mod declaration;
 mod declaration_scoring;
 mod excerpt;
@@ -16,6 +17,7 @@ use text::{Point, ToOffset as _};
 
 use crate::declaration_scoring::{ScoredSnippet, scored_snippets};
 
+#[derive(Debug)]
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,

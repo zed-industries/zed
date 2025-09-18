@@ -1,0 +1,269 @@
+use std::{
+    ffi::OsStr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+
+use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
+use gpui::{Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, actions, prelude::*};
+use language::{Buffer, DiskState};
+use project::{Project, WorktreeId};
+use text::ToPoint;
+use ui::prelude::*;
+use workspace::{Item, SplitDirection, Workspace};
+
+use crate::{EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex};
+
+actions!(
+    dev,
+    [
+        /// Opens the language server protocol logs viewer.
+        OpenEditPredictionContext
+    ]
+);
+
+pub fn init(cx: &mut App) {
+    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
+        workspace.register_action(
+            move |workspace, _: &OpenEditPredictionContext, window, cx| {
+                let workspace_entity = cx.entity();
+                let project = workspace.project();
+                let active_editor = workspace.active_item_as::<Editor>(cx);
+                workspace.split_item(
+                    SplitDirection::Right,
+                    Box::new(cx.new(|cx| {
+                        EditPredictionContextDebugView::new(
+                            &workspace_entity,
+                            &project,
+                            active_editor,
+                            window,
+                            cx,
+                        )
+                    })),
+                    window,
+                    cx,
+                );
+            },
+        );
+    })
+    .detach();
+}
+
+pub struct EditPredictionContextDebugView {
+    focus_handle: FocusHandle,
+    context_editor: Option<Entity<Editor>>,
+    project: Entity<Project>,
+    // TODO move to project or provider?
+    syntax_index: Entity<SyntaxIndex>,
+    _active_editor_subscription: Option<Subscription>,
+    _edit_prediction_context_task: Task<()>,
+}
+
+impl EditPredictionContextDebugView {
+    pub fn new(
+        workspace: &Entity<Workspace>,
+        project: &Entity<Project>,
+        active_editor: Option<Entity<Editor>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        cx.subscribe_in(workspace, window, |this, workspace, event, window, cx| {
+            if let workspace::Event::ActiveItemChanged = event {
+                if let Some(editor) = workspace.read(cx).active_item_as::<Editor>(cx) {
+                    this._active_editor_subscription = Some(cx.subscribe_in(
+                        &editor,
+                        window,
+                        |this, editor, event, window, cx| {
+                            if let EditorEvent::SelectionsChanged { .. } = event {
+                                this.update_context(editor, window, cx);
+                            }
+                        },
+                    ));
+                    this.update_context(&editor, window, cx);
+                } else {
+                    this._active_editor_subscription = None;
+                }
+            }
+        })
+        .detach();
+        let syntax_index = cx.new(|cx| SyntaxIndex::new(project, cx));
+
+        let mut this = Self {
+            focus_handle: cx.focus_handle(),
+            context_editor: None,
+            project: project.clone(),
+            syntax_index,
+            _active_editor_subscription: None,
+            _edit_prediction_context_task: Task::ready(()),
+        };
+
+        if let Some(editor) = active_editor {
+            this.update_context(&editor, window, cx);
+        }
+
+        this
+    }
+
+    fn update_context(
+        &mut self,
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = editor.read(cx);
+        let buffer = editor.buffer().clone();
+        let cursor_position = editor.selections.newest_anchor().start;
+
+        let Some(buffer) = buffer.read(cx).buffer_for_anchor(cursor_position, cx) else {
+            self.context_editor.take();
+            return;
+        };
+        let current_buffer_snapshot = buffer.read(cx).snapshot();
+        let cursor_position = cursor_position
+            .text_anchor
+            .to_point(&current_buffer_snapshot);
+
+        let language = current_buffer_snapshot.language().cloned();
+        let Some(worktree_id) = self
+            .project
+            .read(cx)
+            .worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).id())
+        else {
+            log::error!("Open a worktree to use edit prediction debug view");
+            self.context_editor.take();
+            return;
+        };
+
+        self._edit_prediction_context_task = cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(50))
+                .await;
+
+            let Ok(task) = this.update(cx, |this, cx| {
+                EditPredictionContext::gather(
+                    cursor_position,
+                    current_buffer_snapshot,
+                    EditPredictionExcerptOptions {
+                        max_bytes: 512,
+                        min_bytes: 128,
+                        target_before_cursor_over_total_bytes: 0.5,
+                        include_parent_signatures: true,
+                    },
+                    this.syntax_index.clone(),
+                    cx,
+                )
+            }) else {
+                this.update(cx, |this, _cx| {
+                    this.context_editor.take();
+                })
+                .ok();
+                return;
+            };
+
+            let context = task.await;
+
+            this.update_in(cx, |this, window, cx| {
+                this.context_editor = Some(cx.new(|cx| {
+                    let multibuffer = cx.new(|cx| {
+                        let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
+                        let excerpt_file = Arc::new(ExcerptMetadataFile {
+                            title: PathBuf::from("Cursor Context").into(),
+                            worktree_id,
+                        });
+
+                        let excerpt_buffer = cx.new(|cx| {
+                            let mut buffer = Buffer::local(context.excerpt_text.body, cx);
+                            buffer.set_language(language, cx);
+                            buffer.file_updated(excerpt_file, cx);
+                            buffer
+                        });
+
+                        multibuffer.push_excerpts(
+                            excerpt_buffer,
+                            [ExcerptRange::new(text::Anchor::MIN..text::Anchor::MAX)],
+                            cx,
+                        );
+                        multibuffer
+                    });
+
+                    Editor::new(EditorMode::full(), multibuffer, None, window, cx)
+                }));
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+}
+
+impl Focusable for EditPredictionContextDebugView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Item for EditPredictionContextDebugView {
+    type Event = ();
+
+    fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+        "Edit Prediction Context Debug View".into()
+    }
+
+    fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
+        Some(Icon::new(IconName::ZedPredict))
+    }
+}
+
+impl EventEmitter<()> for EditPredictionContextDebugView {}
+
+impl Render for EditPredictionContextDebugView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .bg(cx.theme().colors().editor_background)
+            .children(self.context_editor.clone())
+    }
+}
+
+// Using same approach as commit view
+
+struct ExcerptMetadataFile {
+    title: Arc<Path>,
+    worktree_id: WorktreeId,
+}
+
+impl language::File for ExcerptMetadataFile {
+    fn as_local(&self) -> Option<&dyn language::LocalFile> {
+        None
+    }
+
+    fn disk_state(&self) -> DiskState {
+        DiskState::New
+    }
+
+    fn path(&self) -> &Arc<Path> {
+        &self.title
+    }
+
+    fn full_path(&self, _: &App) -> PathBuf {
+        self.title.as_ref().into()
+    }
+
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a OsStr {
+        self.title.file_name().unwrap()
+    }
+
+    fn worktree_id(&self, _: &App) -> WorktreeId {
+        self.worktree_id
+    }
+
+    fn to_proto(&self, _: &App) -> language::proto::File {
+        unimplemented!()
+    }
+
+    fn is_private(&self) -> bool {
+        false
+    }
+}

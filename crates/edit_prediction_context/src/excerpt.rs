@@ -38,7 +38,7 @@ pub struct EditPredictionExcerpt {
     pub size: usize,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EditPredictionExcerptText {
     pub body: String,
     pub parent_signatures: Vec<String>,
