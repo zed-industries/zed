@@ -237,7 +237,7 @@ impl Settings for EditorSettings {
                 display_in: minimap.display_in.unwrap(),
                 thumb: minimap.thumb.unwrap(),
                 thumb_border: minimap.thumb_border.unwrap(),
-                current_line_highlight: minimap.current_line_highlight.clone(),
+                current_line_highlight: minimap.current_line_highlight,
                 max_width_columns: minimap.max_width_columns.unwrap(),
             },
             gutter: Gutter {
