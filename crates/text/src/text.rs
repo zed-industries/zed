@@ -2400,6 +2400,7 @@ impl BufferSnapshot {
         } else if bias == Bias::Right && offset == self.len() {
             Anchor::MAX
         } else {
+            assert!(self.visible_text.is_char_boundary(offset));
             let mut fragment_cursor = self.fragments.cursor::<usize>(&None);
             fragment_cursor.seek(&offset, bias);
             let fragment = fragment_cursor.item().unwrap();
