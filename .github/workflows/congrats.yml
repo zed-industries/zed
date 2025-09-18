@@ -1,0 +1,57 @@
+name: Congratsbot
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  check-author:
+    if: ${{ github.repository_owner == 'zed-industries' }}
+    runs-on: ubuntu-latest
+    outputs:
+      should_congratulate: ${{ steps.check.outputs.should_congratulate }}
+    steps:
+      - name: Get PR info and check if author is external
+        id: check
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.CONGRATSBOT_GITHUB_TOKEN }}
+          script: |
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha
+            });
+
+            if (prs.length === 0) {
+              core.setOutput('should_congratulate', 'false');
+              return;
+            }
+
+            const mergedPR = prs.find(pr => pr.merged_at !== null) || prs[0];
+            const prAuthor = mergedPR.user.login;
+
+            try {
+              await github.rest.teams.getMembershipForUserInOrg({
+                org: 'zed-industries',
+                team_slug: 'staff',
+                username: prAuthor
+              });
+              core.setOutput('should_congratulate', 'false');
+            } catch (error) {
+              if (error.status === 404) {
+                core.setOutput('should_congratulate', 'true');
+              } else {
+                console.error(`Error checking team membership: ${error.message}`);
+                core.setOutput('should_congratulate', 'false');
+              }
+            }
+
+  congrats:
+    needs: check-author
+    if: needs.check-author.outputs.should_congratulate == 'true'
+    uses: withastro/automation/.github/workflows/congratsbot.yml@main
+    with:
+      EMOJIS: 🎉,🎊,🧑‍🚀,🥳,🙌,🚀,🦀,🔥,🚢
+    secrets:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_CONGRATS }}

@@ -13,8 +13,8 @@ use editor::{CompletionProvider, Editor, EditorEvent};
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AppContext as _, AsyncApp, Axis, ClickEvent, Context, DismissEvent, Entity,
-    EventEmitter, FocusHandle, Focusable, Global, IsZero,
+    Action, AppContext as _, AsyncApp, ClickEvent, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, Global, IsZero,
     KeyBindingContextPredicate::{And, Descendant, Equal, Identifier, Not, NotEqual, Or},
     KeyContext, KeybindingKeystroke, MouseButton, PlatformKeyboardMapper, Point, ScrollStrategy,
     ScrollWheelEvent, Stateful, StyledText, Subscription, Task, TextStyleRefinement, WeakEntity,
@@ -27,7 +27,8 @@ use settings::{BaseKeymap, KeybindSource, KeymapFile, Settings as _, SettingsAss
 use ui::{
     ActiveTheme as _, App, Banner, BorrowAppContext, ContextMenu, IconButtonShape, Indicator,
     Modal, ModalFooter, ModalHeader, ParentElement as _, Render, Section, SharedString,
-    Styled as _, Tooltip, Window, prelude::*, right_click_menu,
+    Styled as _, Table, TableColumnWidths, TableInteractionState, TableResizeBehavior, Tooltip,
+    Window, prelude::*, right_click_menu,
 };
 use ui_input::SingleLineInput;
 use util::ResultExt;
@@ -41,9 +42,8 @@ use zed_actions::OpenKeymapEditor;
 
 use crate::{
     persistence::KEYBINDING_EDITORS,
-    ui_components::{
-        keystroke_input::{ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording},
-        table::{ColumnWidths, ResizeBehavior, Table, TableInteractionState},
+    ui_components::keystroke_input::{
+        ClearKeystrokes, KeystrokeInput, StartRecording, StopRecording,
     },
 };
 
@@ -369,7 +369,7 @@ struct KeymapEditor {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     previous_edit: Option<PreviousEdit>,
     humanized_action_names: HumanizedActionNameCache,
-    current_widths: Entity<ColumnWidths<6>>,
+    current_widths: Entity<TableColumnWidths<6>>,
     show_hover_menus: bool,
     /// In order for the JSON LSP to run in the actions arguments editor, we
     /// require a backing file In order to avoid issues (primarily log spam)
@@ -425,7 +425,10 @@ impl KeymapEditor {
     fn new(workspace: WeakEntity<Workspace>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let _keymap_subscription =
             cx.observe_global_in::<KeymapEventChannel>(window, Self::on_keymap_changed);
-        let table_interaction_state = TableInteractionState::new(window, cx);
+        let table_interaction_state = cx.new(|cx| {
+            TableInteractionState::new(cx)
+                .with_custom_scrollbar(ui::Scrollbars::for_settings::<editor::EditorSettings>())
+        });
 
         let keystroke_editor = cx.new(|cx| {
             let mut keystroke_editor = KeystrokeInput::new(None, window, cx);
@@ -496,7 +499,7 @@ impl KeymapEditor {
             show_hover_menus: true,
             action_args_temp_dir: None,
             action_args_temp_dir_worktree: None,
-            current_widths: cx.new(|cx| ColumnWidths::new(cx)),
+            current_widths: cx.new(|cx| TableColumnWidths::new(cx)),
         };
 
         this.on_keymap_changed(window, cx);
@@ -781,9 +784,8 @@ impl KeymapEditor {
                     match previous_edit {
                         // should remove scroll from process_query
                         PreviousEdit::ScrollBarOffset(offset) => {
-                            this.table_interaction_state.update(cx, |table, _| {
-                                table.set_scrollbar_offset(Axis::Vertical, offset)
-                            })
+                            this.table_interaction_state
+                                .update(cx, |table, _| table.set_scroll_offset(offset))
                             // set selected index and scroll
                         }
                         PreviousEdit::Keybinding {
@@ -812,9 +814,8 @@ impl KeymapEditor {
                                     cx,
                                 );
                             } else {
-                                this.table_interaction_state.update(cx, |table, _| {
-                                    table.set_scrollbar_offset(Axis::Vertical, fallback)
-                                });
+                                this.table_interaction_state
+                                    .update(cx, |table, _| table.set_scroll_offset(fallback));
                             }
                             cx.notify();
                         }
@@ -1199,9 +1200,7 @@ impl KeymapEditor {
         };
         let tab_size = cx.global::<settings::SettingsStore>().json_tab_size();
         self.previous_edit = Some(PreviousEdit::ScrollBarOffset(
-            self.table_interaction_state
-                .read(cx)
-                .get_scrollbar_offset(Axis::Vertical),
+            self.table_interaction_state.read(cx).scroll_offset(),
         ));
         let keyboard_mapper = cx.keyboard_mapper().clone();
         cx.spawn(async move |_, _| {
@@ -1784,12 +1783,12 @@ impl Render for KeymapEditor {
                     ])
                     .resizable_columns(
                         [
-                            ResizeBehavior::None,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable,
-                            ResizeBehavior::Resizable, // this column doesn't matter
+                            TableResizeBehavior::None,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable,
+                            TableResizeBehavior::Resizable, // this column doesn't matter
                         ],
                         &self.current_widths,
                         cx,
@@ -2374,10 +2373,7 @@ impl KeybindingEditorModal {
                             keymap.previous_edit = Some(PreviousEdit::Keybinding {
                                 action_mapping,
                                 action_name,
-                                fallback: keymap
-                                    .table_interaction_state
-                                    .read(cx)
-                                    .get_scrollbar_offset(Axis::Vertical),
+                                fallback: keymap.table_interaction_state.read(cx).scroll_offset(),
                             });
                             let status_toast = StatusToast::new(
                                 format!("Saved edits to the {} action.", humanized_action_name),

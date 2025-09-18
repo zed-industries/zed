@@ -46,27 +46,6 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
     let mut first_user = None;
     let mut others = vec![];
 
-    let flag_names = ["language-models"];
-    let mut flags = Vec::new();
-
-    let existing_feature_flags = db.list_feature_flags().await?;
-
-    for flag_name in flag_names {
-        if existing_feature_flags
-            .iter()
-            .any(|flag| flag.flag == flag_name)
-        {
-            log::info!("Flag {flag_name:?} already exists");
-            continue;
-        }
-
-        let flag = db
-            .create_user_flag(flag_name, false)
-            .await
-            .unwrap_or_else(|err| panic!("failed to create flag: '{flag_name}': {err}"));
-        flags.push(flag);
-    }
-
     for admin_login in seed_config.admins {
         let user = fetch_github::<GithubUser>(
             &client,
@@ -89,15 +68,6 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
             first_user = Some(user.user_id);
         } else {
             others.push(user.user_id)
-        }
-
-        for flag in &flags {
-            db.add_user_flag(user.user_id, *flag)
-                .await
-                .context(format!(
-                    "Unable to enable flag '{}' for user '{}'",
-                    flag, user.user_id
-                ))?;
         }
     }
 
@@ -126,24 +96,16 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
     for github_user in github_users {
         log::info!("Seeding {:?} from GitHub", github_user.login);
 
-        let user = db
-            .update_or_create_user_by_github_account(
-                &github_user.login,
-                github_user.id,
-                github_user.email.as_deref(),
-                github_user.name.as_deref(),
-                github_user.created_at,
-                None,
-            )
-            .await
-            .expect("failed to insert user");
-
-        for flag in &flags {
-            db.add_user_flag(user.id, *flag).await.context(format!(
-                "Unable to enable flag '{}' for user '{}'",
-                flag, user.id
-            ))?;
-        }
+        db.update_or_create_user_by_github_account(
+            &github_user.login,
+            github_user.id,
+            github_user.email.as_deref(),
+            github_user.name.as_deref(),
+            github_user.created_at,
+            None,
+        )
+        .await
+        .expect("failed to insert user");
     }
 
     Ok(())

@@ -1,7 +1,7 @@
 use anyhow::Result;
 use gpui::App;
 use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 
 #[derive(Deserialize, Debug)]

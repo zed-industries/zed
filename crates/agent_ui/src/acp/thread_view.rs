@@ -9,11 +9,12 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
 use client::zed_urls;
+use cloud_llm_client::PlanV1;
 use collections::{HashMap, HashSet};
 use editor::scroll::Autoscroll;
 use editor::{Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects};
@@ -23,10 +24,9 @@ use futures::FutureExt as _;
 use gpui::{
     Action, Animation, AnimationExt, AnyView, App, BorderStyle, ClickEvent, ClipboardItem,
     CursorStyle, EdgesRefinement, ElementId, Empty, Entity, FocusHandle, Focusable, Hsla, Length,
-    ListOffset, ListState, MouseButton, PlatformDisplay, SharedString, Stateful, StyleRefinement,
-    Subscription, Task, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window,
-    WindowHandle, div, ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*,
-    pulsating_between,
+    ListOffset, ListState, PlatformDisplay, SharedString, StyleRefinement, Subscription, Task,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, Window, WindowHandle, div,
+    ease_in_out, linear_color_stop, linear_gradient, list, point, prelude::*, pulsating_between,
 };
 use language::Buffer;
 
@@ -36,7 +36,7 @@ use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
 use settings::{Settings as _, SettingsStore};
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -46,7 +46,7 @@ use text::Anchor;
 use theme::{AgentFontSize, ThemeSettings};
 use ui::{
     Callout, CommonAnimationExt, Disclosure, Divider, DividerColor, ElevationIndex, KeyBinding,
-    PopoverMenuHandle, Scrollbar, ScrollbarState, SpinnerLabel, TintColor, Tooltip, prelude::*,
+    PopoverMenuHandle, SpinnerLabel, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{ResultExt, size::format_file_size, time::duration_alt_display};
 use workspace::{CollaboratorId, Workspace};
@@ -61,18 +61,15 @@ use crate::acp::message_editor::{MessageEditor, MessageEditorEvent};
 use crate::agent_diff::AgentDiff;
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
 
-use crate::ui::preview::UsageCallout;
 use crate::ui::{
     AgentNotification, AgentNotificationEvent, BurnModeTooltip, UnavailableEditingTooltip,
+    UsageCallout,
 };
 use crate::{
     AgentDiffPane, AgentPanel, AllowAlways, AllowOnce, ContinueThread, ContinueWithBurnMode,
     CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll,
     RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
-
-pub const MIN_EDITOR_LINES: usize = 4;
-pub const MAX_EDITOR_LINES: usize = 8;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -280,7 +277,6 @@ pub struct AcpThreadView {
     thread_error: Option<ThreadError>,
     thread_feedback: ThreadFeedbackState,
     list_state: ListState,
-    scrollbar_state: ScrollbarState,
     auth_task: Option<Task<()>>,
     expanded_tool_calls: HashSet<acp::ToolCallId>,
     expanded_thinking_blocks: HashSet<(usize, usize)>,
@@ -289,7 +285,7 @@ pub struct AcpThreadView {
     editor_expanded: bool,
     should_be_following: bool,
     editing_message: Option<usize>,
-    prompt_capabilities: Rc<Cell<PromptCapabilities>>,
+    prompt_capabilities: Rc<RefCell<PromptCapabilities>>,
     available_commands: Rc<RefCell<Vec<acp::AvailableCommand>>>,
     is_loading_contents: bool,
     new_server_version_available: Option<SharedString>,
@@ -333,7 +329,7 @@ impl AcpThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let prompt_capabilities = Rc::new(Cell::new(acp::PromptCapabilities::default()));
+        let prompt_capabilities = Rc::new(RefCell::new(acp::PromptCapabilities::default()));
         let available_commands = Rc::new(RefCell::new(vec![]));
 
         let placeholder = if agent.name() == "Zed Agent" {
@@ -358,8 +354,8 @@ impl AcpThreadView {
                 agent.name(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
-                    min_lines: MIN_EDITOR_LINES,
-                    max_lines: Some(MAX_EDITOR_LINES),
+                    min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
+                    max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
                 },
                 window,
                 cx,
@@ -404,8 +400,7 @@ impl AcpThreadView {
 
             notifications: Vec::new(),
             notification_subscriptions: HashMap::default(),
-            list_state: list_state.clone(),
-            scrollbar_state: ScrollbarState::new(list_state).parent_entity(&cx.entity()),
+            list_state: list_state,
             thread_retry_status: None,
             thread_error: None,
             thread_feedback: Default::default(),
@@ -558,7 +553,7 @@ impl AcpThreadView {
                         let action_log = thread.read(cx).action_log().clone();
 
                         this.prompt_capabilities
-                            .set(thread.read(cx).prompt_capabilities());
+                            .replace(thread.read(cx).prompt_capabilities());
 
                         let count = thread.read(cx).entries().len();
                         this.entry_view_state.update(cx, |view_state, cx| {
@@ -859,10 +854,11 @@ impl AcpThreadView {
                     cx,
                 )
             } else {
+                let agent_settings = AgentSettings::get_global(cx);
                 editor.set_mode(
                     EditorMode::AutoHeight {
-                        min_lines: MIN_EDITOR_LINES,
-                        max_lines: Some(MAX_EDITOR_LINES),
+                        min_lines: agent_settings.message_editor_min_lines,
+                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
                     },
                     cx,
                 )
@@ -1376,7 +1372,7 @@ impl AcpThreadView {
             }
             AcpThreadEvent::PromptCapabilitiesUpdated => {
                 self.prompt_capabilities
-                    .set(thread.read(cx).prompt_capabilities());
+                    .replace(thread.read(cx).prompt_capabilities());
             }
             AcpThreadEvent::TokenUsageUpdated => {}
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
@@ -1393,11 +1389,13 @@ impl AcpThreadView {
                         name: "login".to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
+                        meta: None,
                     });
                     available_commands.push(acp::AvailableCommand {
                         name: "logout".to_owned(),
                         description: "Authenticate".to_owned(),
                         input: None,
+                        meta: None,
                     });
                 }
 
@@ -1588,19 +1586,6 @@ impl AcpThreadView {
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
-            task.command = task
-                .command
-                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
-                .transpose()?;
-            task.args = task
-                .args
-                .iter()
-                .map(|arg| {
-                    Ok(shlex::try_quote(arg)
-                        .context("Failed to quote argument")?
-                        .to_string())
-                })
-                .collect::<Result<Vec<_>>>()?;
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
@@ -3201,10 +3186,14 @@ impl AcpThreadView {
                                     };
 
                                     Button::new(SharedString::from(method_id.clone()), name)
-                                        .when(ix == 0, |el| {
-                                            el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                        })
                                         .label_size(LabelSize::Small)
+                                        .map(|this| {
+                                            if ix == 0 {
+                                                this.style(ButtonStyle::Tinted(TintColor::Warning))
+                                            } else {
+                                                this.style(ButtonStyle::Outlined)
+                                            }
+                                        })
                                         .on_click({
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
@@ -4765,39 +4754,6 @@ impl AcpThreadView {
         cx.notify();
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .id("acp-thread-scrollbar")
-            .occlude()
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()).map(|s| s.auto_hide(cx)))
-    }
-
     fn render_token_limit_callout(
         &self,
         line_height: Pixels,
@@ -4879,7 +4835,9 @@ impl AcpThreadView {
             return None;
         }
 
-        let plan = user_store.plan().unwrap_or(cloud_llm_client::Plan::ZedFree);
+        let plan = user_store
+            .plan()
+            .unwrap_or(cloud_llm_client::Plan::V1(PlanV1::ZedFree));
 
         let usage = user_store.model_request_usage()?;
 
@@ -5138,13 +5096,12 @@ impl AcpThreadView {
         cx: &mut Context<Self>,
     ) -> Callout {
         let error_message = match plan {
-            cloud_llm_client::Plan::ZedPro => "Upgrade to usage-based billing for more prompts.",
-            cloud_llm_client::Plan::ZedProTrial | cloud_llm_client::Plan::ZedFree => {
-                "Upgrade to Zed Pro for more prompts."
+            cloud_llm_client::Plan::V1(PlanV1::ZedPro) => {
+                "Upgrade to usage-based billing for more prompts."
             }
-            cloud_llm_client::Plan::ZedProV2
-            | cloud_llm_client::Plan::ZedProTrialV2
-            | cloud_llm_client::Plan::ZedFreeV2 => "",
+            cloud_llm_client::Plan::V1(PlanV1::ZedProTrial)
+            | cloud_llm_client::Plan::V1(PlanV1::ZedFree) => "Upgrade to Zed Pro for more prompts.",
+            cloud_llm_client::Plan::V2(_) => "",
         };
 
         Callout::new()
@@ -5370,23 +5327,27 @@ impl Render for AcpThreadView {
                     configuration_view,
                     pending_auth_method,
                     ..
-                } => self.render_auth_required_state(
-                    connection,
-                    description.as_ref(),
-                    configuration_view.as_ref(),
-                    pending_auth_method.as_ref(),
-                    window,
-                    cx,
-                ),
+                } => self
+                    .render_auth_required_state(
+                        connection,
+                        description.as_ref(),
+                        configuration_view.as_ref(),
+                        pending_auth_method.as_ref(),
+                        window,
+                        cx,
+                    )
+                    .into_any(),
                 ThreadState::Loading { .. } => v_flex()
                     .flex_1()
-                    .child(self.render_recent_history(window, cx)),
+                    .child(self.render_recent_history(window, cx))
+                    .into_any(),
                 ThreadState::LoadError(e) => v_flex()
                     .flex_1()
                     .size_full()
                     .items_center()
                     .justify_end()
-                    .child(self.render_load_error(e, window, cx)),
+                    .child(self.render_load_error(e, window, cx))
+                    .into_any(),
                 ThreadState::Ready { .. } => v_flex().flex_1().map(|this| {
                     if has_messages {
                         this.child(
@@ -5406,9 +5367,11 @@ impl Render for AcpThreadView {
                             .flex_grow()
                             .into_any(),
                         )
-                        .child(self.render_vertical_scrollbar(cx))
+                        .vertical_scrollbar_for(self.list_state.clone(), window, cx)
+                        .into_any()
                     } else {
                         this.child(self.render_recent_history(window, cx))
+                            .into_any()
                     }
                 }),
             })
@@ -5711,6 +5674,23 @@ pub(crate) mod tests {
     }
 
     #[gpui::test]
+    async fn test_spawn_external_agent_login_handles_spaces(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // Verify paths with spaces aren't pre-quoted
+        let path_with_spaces = "/Users/test/Library/Application Support/Zed/cli.js";
+        let login_task = task::SpawnInTerminal {
+            command: Some("node".to_string()),
+            args: vec![path_with_spaces.to_string(), "/login".to_string()],
+            ..Default::default()
+        };
+
+        // Args should be passed as-is, not pre-quoted
+        assert!(!login_task.args[0].starts_with('"'));
+        assert!(!login_task.args[0].starts_with('\''));
+    }
+
+    #[gpui::test]
     async fn test_notification_for_tool_authorization(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -5724,6 +5704,7 @@ pub(crate) mod tests {
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         };
         let connection =
             StubAgentConnection::new().with_permission_requests(HashMap::from_iter([(
@@ -5732,6 +5713,7 @@ pub(crate) mod tests {
                     id: acp::PermissionOptionId("1".into()),
                     name: "Allow".into(),
                     kind: acp::PermissionOptionKind::AllowOnce,
+                    meta: None,
                 }],
             )]));
 
@@ -5908,6 +5890,7 @@ pub(crate) mod tests {
                         image: true,
                         audio: true,
                         embedded_context: true,
+                        meta: None,
                     }),
                     cx,
                 )
@@ -5967,6 +5950,7 @@ pub(crate) mod tests {
                         image: true,
                         audio: true,
                         embedded_context: true,
+                        meta: None,
                     }),
                     cx,
                 )
@@ -5993,6 +5977,7 @@ pub(crate) mod tests {
         ) -> Task<gpui::Result<acp::PromptResponse>> {
             Task::ready(Ok(acp::PromptResponse {
                 stop_reason: acp::StopReason::Refusal,
+                meta: None,
             }))
         }
 
@@ -6076,11 +6061,13 @@ pub(crate) mod tests {
                     path: "/project/test1.txt".into(),
                     old_text: Some("old content 1".into()),
                     new_text: "new content 1".into(),
+                    meta: None,
                 },
             }],
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         })]);
 
         thread
@@ -6117,11 +6104,13 @@ pub(crate) mod tests {
                     path: "/project/test2.txt".into(),
                     old_text: Some("old content 2".into()),
                     new_text: "new content 2".into(),
+                    meta: None,
                 },
             }],
             locations: vec![],
             raw_input: None,
             raw_output: None,
+            meta: None,
         })]);
 
         thread
@@ -6199,6 +6188,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6288,6 +6278,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6331,6 +6322,7 @@ pub(crate) mod tests {
             content: acp::ContentBlock::Text(acp::TextContent {
                 text: "New Response".into(),
                 annotations: None,
+                meta: None,
             }),
         }]);
 
@@ -6423,6 +6415,7 @@ pub(crate) mod tests {
                     content: acp::ContentBlock::Text(acp::TextContent {
                         text: "Response".into(),
                         annotations: None,
+                        meta: None,
                     }),
                 },
                 cx,

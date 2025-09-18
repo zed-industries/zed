@@ -8,7 +8,7 @@ use std::{ops::Range, sync::Arc};
 use agent_settings::AgentSettings;
 use anyhow::Result;
 use assistant_tool::{ToolSource, ToolWorkingSet};
-use cloud_llm_client::Plan;
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use collections::HashMap;
 use context_server::ContextServerId;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
@@ -35,8 +35,7 @@ use project::{
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
     Chip, CommonAnimationExt, ContextMenu, Disclosure, Divider, DividerColor, ElevationIndex,
-    Indicator, PopoverMenu, Scrollbar, ScrollbarState, Switch, SwitchColor, SwitchField, Tooltip,
-    prelude::*,
+    Indicator, PopoverMenu, Switch, SwitchColor, SwitchField, Tooltip, WithScrollbar, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{Workspace, create_and_open_local_file};
@@ -64,7 +63,6 @@ pub struct AgentConfiguration {
     tools: Entity<ToolWorkingSet>,
     _registry_subscription: Subscription,
     scroll_handle: ScrollHandle,
-    scrollbar_state: ScrollbarState,
     _check_for_gemini: Task<()>,
 }
 
@@ -101,9 +99,6 @@ impl AgentConfiguration {
         cx.subscribe(&context_server_store, |_, _, _, cx| cx.notify())
             .detach();
 
-        let scroll_handle = ScrollHandle::new();
-        let scrollbar_state = ScrollbarState::new(scroll_handle.clone());
-
         let mut this = Self {
             fs,
             language_registry,
@@ -116,8 +111,7 @@ impl AgentConfiguration {
             expanded_provider_configurations: HashMap::default(),
             tools,
             _registry_subscription: registry_subscription,
-            scroll_handle,
-            scrollbar_state,
+            scroll_handle: ScrollHandle::new(),
             _check_for_gemini: Task::ready(()),
         };
         this.build_provider_configuration_views(window, cx);
@@ -280,13 +274,28 @@ impl AgentConfiguration {
                                     *is_expanded = !*is_expanded;
                                 }
                             })),
-                    )
-                    .when(provider.is_authenticated(cx), |parent| {
+                    ),
+            )
+            .child(
+                v_flex()
+                    .w_full()
+                    .px_2()
+                    .gap_1()
+                    .when(is_expanded, |parent| match configuration_view {
+                        Some(configuration_view) => parent.child(configuration_view),
+                        None => parent.child(Label::new(format!(
+                            "No configuration view for {provider_name}",
+                        ))),
+                    })
+                    .when(is_expanded && provider.is_authenticated(cx), |parent| {
                         parent.child(
                             Button::new(
                                 SharedString::from(format!("new-thread-{provider_id}")),
                                 "Start New Thread",
                             )
+                            .full_width()
+                            .style(ButtonStyle::Filled)
+                            .layer(ElevationIndex::ModalSurface)
                             .icon_position(IconPosition::Start)
                             .icon(IconName::Thread)
                             .icon_size(IconSize::Small)
@@ -301,17 +310,6 @@ impl AgentConfiguration {
                                 }
                             })),
                         )
-                    }),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .px_2()
-                    .when(is_expanded, |parent| match configuration_view {
-                        Some(configuration_view) => parent.child(configuration_view),
-                        None => parent.child(Label::new(format!(
-                            "No configuration view for {provider_name}",
-                        ))),
                     }),
             )
     }
@@ -515,11 +513,15 @@ impl AgentConfiguration {
                 .blend(cx.theme().colors().text_accent.opacity(0.2));
 
             let (plan_name, label_color, bg_color) = match plan {
-                Plan::ZedFree | Plan::ZedFreeV2 => ("Free", Color::Default, free_chip_bg),
-                Plan::ZedProTrial | Plan::ZedProTrialV2 => {
+                Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree) => {
+                    ("Free", Color::Default, free_chip_bg)
+                }
+                Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial) => {
                     ("Pro Trial", Color::Accent, pro_chip_bg)
                 }
-                Plan::ZedPro | Plan::ZedProV2 => ("Pro", Color::Accent, pro_chip_bg),
+                Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro) => {
+                    ("Pro", Color::Accent, pro_chip_bg)
+                }
             };
 
             Chip::new(plan_name.to_string())
@@ -563,11 +565,28 @@ impl AgentConfiguration {
                         .color(Color::Muted),
                     ),
             )
-            .children(
-                context_server_ids.into_iter().map(|context_server_id| {
-                    self.render_context_server(context_server_id, window, cx)
-                }),
-            )
+            .map(|parent| {
+                if context_server_ids.is_empty() {
+                    parent.child(
+                        h_flex()
+                            .p_4()
+                            .justify_center()
+                            .border_1()
+                            .border_dashed()
+                            .border_color(cx.theme().colors().border.opacity(0.6))
+                            .rounded_sm()
+                            .child(
+                                Label::new("No MCP servers added yet.")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            ),
+                    )
+                } else {
+                    parent.children(context_server_ids.into_iter().map(|context_server_id| {
+                        self.render_context_server(context_server_id, window, cx)
+                    }))
+                }
+            })
             .child(
                 h_flex()
                     .justify_between()
@@ -820,6 +839,8 @@ impl AgentConfiguration {
                     )
                     .child(
                         h_flex()
+                            .flex_1()
+                            .min_w_0()
                             .child(
                                 Disclosure::new(
                                     "tool-list-disclosure",
@@ -843,17 +864,19 @@ impl AgentConfiguration {
                                     .id(SharedString::from(format!("tooltip-{}", item_id)))
                                     .h_full()
                                     .w_3()
-                                    .mx_1()
+                                    .ml_1()
+                                    .mr_1p5()
                                     .justify_center()
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
                             )
-                            .child(Label::new(item_id).ml_0p5())
+                            .child(Label::new(item_id).truncate())
                             .child(
                                 div()
                                     .id("extension-source")
                                     .mt_0p5()
                                     .mx_1()
+                                    .flex_none()
                                     .tooltip(Tooltip::text(source_tooltip))
                                     .child(
                                         Icon::new(source_icon)
@@ -875,7 +898,8 @@ impl AgentConfiguration {
                     )
                     .child(
                         h_flex()
-                            .gap_1()
+                            .gap_0p5()
+                            .flex_none()
                             .child(context_server_configuration_menu)
                             .child(
                                 Switch::new("context-server-switch", is_running.into())
@@ -1125,6 +1149,7 @@ impl AgentConfiguration {
                     SharedString::from(format!("start_acp_thread-{name}")),
                     "Start New Thread",
                 )
+                .layer(ElevationIndex::ModalSurface)
                 .label_size(LabelSize::Small)
                 .icon(IconName::Thread)
                 .icon_position(IconPosition::Start)
@@ -1154,41 +1179,20 @@ impl Render for AgentConfiguration {
             .pb_8()
             .bg(cx.theme().colors().panel_background)
             .child(
-                v_flex()
-                    .id("assistant-configuration-content")
-                    .track_scroll(&self.scroll_handle)
-                    .size_full()
-                    .overflow_y_scroll()
-                    .child(self.render_general_settings_section(cx))
-                    .child(self.render_agent_servers_section(cx))
-                    .child(self.render_context_servers_section(window, cx))
-                    .child(self.render_provider_configuration_section(cx)),
-            )
-            .child(
                 div()
-                    .id("assistant-configuration-scrollbar")
-                    .occlude()
-                    .absolute()
-                    .right(px(3.))
-                    .top_0()
-                    .bottom_0()
-                    .pb_6()
-                    .w(px(12.))
-                    .cursor_default()
-                    .on_mouse_move(cx.listener(|_, _, _window, cx| {
-                        cx.notify();
-                        cx.stop_propagation()
-                    }))
-                    .on_hover(|_, _window, cx| {
-                        cx.stop_propagation();
-                    })
-                    .on_any_mouse_down(|_, _window, cx| {
-                        cx.stop_propagation();
-                    })
-                    .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
-                        cx.notify();
-                    }))
-                    .children(Scrollbar::vertical(self.scrollbar_state.clone())),
+                    .size_full()
+                    .child(
+                        v_flex()
+                            .id("assistant-configuration-content")
+                            .track_scroll(&self.scroll_handle)
+                            .size_full()
+                            .overflow_y_scroll()
+                            .child(self.render_general_settings_section(cx))
+                            .child(self.render_agent_servers_section(cx))
+                            .child(self.render_context_servers_section(window, cx))
+                            .child(self.render_provider_configuration_section(cx)),
+                    )
+                    .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
             )
     }
 }

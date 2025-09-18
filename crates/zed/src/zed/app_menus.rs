@@ -10,7 +10,7 @@ pub fn app_menus() -> Vec<Menu> {
         Menu {
             name: "Zed".into(),
             items: vec![
-                MenuItem::action("About Zed…", zed_actions::About),
+                MenuItem::action("About Zed", zed_actions::About),
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {

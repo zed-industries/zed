@@ -17,8 +17,8 @@ use project::{
 };
 use settings::{Settings as _, SettingsStore};
 use ui::{
-    Context, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationAside, DocumentationSide,
-    Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, Window, prelude::*,
+    Context, ContextMenu, ContextMenuEntry, ContextMenuItem, DocumentationAside, DocumentationEdge,
+    DocumentationSide, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, Window, prelude::*,
 };
 
 use workspace::{StatusItemView, Workspace};
@@ -121,7 +121,6 @@ impl LanguageServerHealthStatus {
 
 impl LanguageServerState {
     fn fill_menu(&self, mut menu: ContextMenu, cx: &mut Context<Self>) -> ContextMenu {
-        menu = menu.align_popover_bottom();
         let lsp_logs = cx
             .try_global::<GlobalLogStore>()
             .map(|lsp_logs| lsp_logs.0.clone());
@@ -357,6 +356,7 @@ impl LanguageServerState {
                 message.map(|server_message| {
                     DocumentationAside::new(
                         DocumentationSide::Right,
+                        DocumentationEdge::Bottom,
                         Rc::new(move |_| Label::new(server_message.clone()).into_any_element()),
                     )
                 }),

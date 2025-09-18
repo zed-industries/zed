@@ -1264,36 +1264,30 @@ impl BlockMapWriter<'_> {
         range: Range<usize>,
         inclusive: bool,
     ) -> &[Arc<CustomBlock>] {
+        if range.is_empty() && !inclusive {
+            return &[];
+        }
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
         let start_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
             let block_end = block.end().to_offset(buffer);
-            block_end.cmp(&range.start).then_with(|| {
-                if inclusive || (range.is_empty() && block.start().to_offset(buffer) == block_end) {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
+            block_end.cmp(&range.start).then(Ordering::Greater)
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_block_ix = match self.0.custom_blocks[start_block_ix..].binary_search_by(|block| {
+            let block_start = block.start().to_offset(buffer);
+            block_start.cmp(&range.end).then(if inclusive {
+                Ordering::Less
+            } else {
+                Ordering::Greater
             })
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
-            block
-                .start()
-                .to_offset(buffer)
-                .cmp(&range.end)
-                .then(if inclusive {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                })
-        }) {
-            Ok(ix) | Err(ix) => ix,
-        };
 
-        &self.0.custom_blocks[start_block_ix..end_block_ix]
+        &self.0.custom_blocks[start_block_ix..][..end_block_ix]
     }
 }
 
@@ -1737,6 +1731,7 @@ impl<'a> Iterator for BlockChunks<'a> {
 
             return Some(Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count as usize]) },
+                chars: (1 << line_count) - 1,
                 ..Default::default()
             });
         }
@@ -1766,17 +1761,26 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
+        self.input_chunk.tabs >>= prefix_bytes.saturating_sub(1);
+        self.input_chunk.chars >>= prefix_bytes.saturating_sub(1);
+
+        let mut tabs = self.input_chunk.tabs;
+        let mut chars = self.input_chunk.chars;
 
         if self.masked {
             // Not great for multibyte text because to keep cursor math correct we
             // need to have the same number of bytes in the input as output.
-            let chars = prefix.chars().count();
-            let bullet_len = chars;
+            let chars_count = prefix.chars().count();
+            let bullet_len = chars_count;
             prefix = &BULLETS[..bullet_len];
+            chars = (1 << bullet_len) - 1;
+            tabs = 0;
         }
 
         let chunk = Chunk {
             text: prefix,
+            tabs,
+            chars,
             ..self.input_chunk.clone()
         };
 

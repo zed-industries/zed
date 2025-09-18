@@ -1,21 +1,20 @@
-use std::{ops::Range, rc::Rc, time::Duration};
+use std::{ops::Range, rc::Rc};
 
-use editor::{EditorSettings, ShowScrollbar, scroll::ScrollbarAutoHide};
 use gpui::{
-    AbsoluteLength, AppContext, Axis, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
-    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, MouseButton, Point,
-    Stateful, Task, UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
+    AbsoluteLength, AppContext, Context, DefiniteLength, DragMoveEvent, Entity, EntityId,
+    FocusHandle, Length, ListHorizontalSizingBehavior, ListSizingBehavior, Point, Stateful,
+    UniformListScrollHandle, WeakEntity, transparent_black, uniform_list,
 };
 
-use itertools::intersperse_with;
-use settings::Settings as _;
-use ui::{
+use crate::{
     ActiveTheme as _, AnyElement, App, Button, ButtonCommon as _, ButtonStyle, Color, Component,
     ComponentScope, Div, ElementId, FixedWidth as _, FluentBuilder as _, Indicator,
     InteractiveElement, IntoElement, ParentElement, Pixels, RegisterComponent, RenderOnce,
-    Scrollbar, ScrollbarState, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
-    StyledTypography, Window, div, example_group_with_title, h_flex, px, single_example, v_flex,
+    ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
+    StyledTypography, Window, WithScrollbar, div, example_group_with_title, h_flex, px,
+    single_example, v_flex,
 };
+use itertools::intersperse_with;
 
 const RESIZE_COLUMN_WIDTH: f32 = 8.0;
 
@@ -56,136 +55,29 @@ impl<const COLS: usize> TableContents<COLS> {
 pub struct TableInteractionState {
     pub focus_handle: FocusHandle,
     pub scroll_handle: UniformListScrollHandle,
-    pub horizontal_scrollbar: ScrollbarProperties,
-    pub vertical_scrollbar: ScrollbarProperties,
+    pub custom_scrollbar: Option<Scrollbars>,
 }
 
 impl TableInteractionState {
-    pub fn new(window: &mut Window, cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| {
-            let focus_handle = cx.focus_handle();
-
-            cx.on_focus_out(&focus_handle, window, |this: &mut Self, _, window, cx| {
-                this.hide_scrollbars(window, cx);
-            })
-            .detach();
-
-            let scroll_handle = UniformListScrollHandle::new();
-            let vertical_scrollbar = ScrollbarProperties {
-                axis: Axis::Vertical,
-                state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
-                show_scrollbar: false,
-                show_track: false,
-                auto_hide: false,
-                hide_task: None,
-            };
-
-            let horizontal_scrollbar = ScrollbarProperties {
-                axis: Axis::Horizontal,
-                state: ScrollbarState::new(scroll_handle.clone()).parent_entity(&cx.entity()),
-                show_scrollbar: false,
-                show_track: false,
-                auto_hide: false,
-                hide_task: None,
-            };
-
-            let mut this = Self {
-                focus_handle,
-                scroll_handle,
-                horizontal_scrollbar,
-                vertical_scrollbar,
-            };
-
-            this.update_scrollbar_visibility(cx);
-            this
-        })
-    }
-
-    pub fn get_scrollbar_offset(&self, axis: Axis) -> Point<Pixels> {
-        match axis {
-            Axis::Vertical => self.vertical_scrollbar.state.scroll_handle().offset(),
-            Axis::Horizontal => self.horizontal_scrollbar.state.scroll_handle().offset(),
+    pub fn new(cx: &mut App) -> Self {
+        Self {
+            focus_handle: cx.focus_handle(),
+            scroll_handle: UniformListScrollHandle::new(),
+            custom_scrollbar: None,
         }
     }
 
-    pub fn set_scrollbar_offset(&self, axis: Axis, offset: Point<Pixels>) {
-        match axis {
-            Axis::Vertical => self
-                .vertical_scrollbar
-                .state
-                .scroll_handle()
-                .set_offset(offset),
-            Axis::Horizontal => self
-                .horizontal_scrollbar
-                .state
-                .scroll_handle()
-                .set_offset(offset),
-        }
+    pub fn with_custom_scrollbar(mut self, custom_scrollbar: Scrollbars) -> Self {
+        self.custom_scrollbar = Some(custom_scrollbar);
+        self
     }
 
-    fn update_scrollbar_visibility(&mut self, cx: &mut Context<Self>) {
-        let show_setting = EditorSettings::get_global(cx).scrollbar.show;
-
-        let scroll_handle = self.scroll_handle.0.borrow();
-
-        let autohide = |show: ShowScrollbar, cx: &mut Context<Self>| match show {
-            ShowScrollbar::Auto => true,
-            ShowScrollbar::System => cx
-                .try_global::<ScrollbarAutoHide>()
-                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
-            ShowScrollbar::Always => false,
-            ShowScrollbar::Never => false,
-        };
-
-        let longest_item_width = scroll_handle.last_item_size.and_then(|size| {
-            (size.contents.width > size.item.width).then_some(size.contents.width)
-        });
-
-        // is there an item long enough that we should show a horizontal scrollbar?
-        let item_wider_than_container = if let Some(longest_item_width) = longest_item_width {
-            longest_item_width > px(scroll_handle.base_handle.bounds().size.width.0)
-        } else {
-            true
-        };
-
-        let show_scrollbar = match show_setting {
-            ShowScrollbar::Auto | ShowScrollbar::System | ShowScrollbar::Always => true,
-            ShowScrollbar::Never => false,
-        };
-        let show_vertical = show_scrollbar;
-
-        let show_horizontal = item_wider_than_container && show_scrollbar;
-
-        let show_horizontal_track =
-            show_horizontal && matches!(show_setting, ShowScrollbar::Always);
-
-        // TODO: we probably should hide the scroll track when the list doesn't need to scroll
-        let show_vertical_track = show_vertical && matches!(show_setting, ShowScrollbar::Always);
-
-        self.vertical_scrollbar = ScrollbarProperties {
-            axis: self.vertical_scrollbar.axis,
-            state: self.vertical_scrollbar.state.clone(),
-            show_scrollbar: show_vertical,
-            show_track: show_vertical_track,
-            auto_hide: autohide(show_setting, cx),
-            hide_task: None,
-        };
-
-        self.horizontal_scrollbar = ScrollbarProperties {
-            axis: self.horizontal_scrollbar.axis,
-            state: self.horizontal_scrollbar.state.clone(),
-            show_scrollbar: show_horizontal,
-            show_track: show_horizontal_track,
-            auto_hide: autohide(show_setting, cx),
-            hide_task: None,
-        };
-
-        cx.notify();
+    pub fn scroll_offset(&self) -> Point<Pixels> {
+        self.scroll_handle.offset()
     }
 
-    fn hide_scrollbars(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.horizontal_scrollbar.hide(window, cx);
-        self.vertical_scrollbar.hide(window, cx);
+    pub fn set_scroll_offset(&self, offset: Point<Pixels>) {
+        self.scroll_handle.set_offset(offset);
     }
 
     pub fn listener<E: ?Sized>(
@@ -201,9 +93,9 @@ impl TableInteractionState {
     fn render_resize_handles<const COLS: usize>(
         &self,
         column_widths: &[Length; COLS],
-        resizable_columns: &[ResizeBehavior; COLS],
+        resizable_columns: &[TableResizeBehavior; COLS],
         initial_sizes: [DefiniteLength; COLS],
-        columns: Option<Entity<ColumnWidths<COLS>>>,
+        columns: Option<Entity<TableColumnWidths<COLS>>>,
         window: &mut Window,
         cx: &mut App,
     ) -> AnyElement {
@@ -235,7 +127,7 @@ impl TableInteractionState {
 
                 if resizable_columns
                     .next()
-                    .is_some_and(ResizeBehavior::is_resizable)
+                    .is_some_and(TableResizeBehavior::is_resizable)
                 {
                     let hovered = window.use_state(cx, |_window, _cx| false);
 
@@ -280,214 +172,37 @@ impl TableInteractionState {
             .children(dividers)
             .into_any_element()
     }
-
-    fn render_vertical_scrollbar_track(
-        this: &Entity<Self>,
-        parent: Div,
-        scroll_track_size: Pixels,
-        cx: &mut App,
-    ) -> Div {
-        if !this.read(cx).vertical_scrollbar.show_track {
-            return parent;
-        }
-        let child = v_flex()
-            .h_full()
-            .flex_none()
-            .w(scroll_track_size)
-            .bg(cx.theme().colors().background)
-            .child(
-                div()
-                    .size_full()
-                    .flex_1()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border),
-            );
-        parent.child(child)
-    }
-
-    fn render_vertical_scrollbar(this: &Entity<Self>, parent: Div, cx: &mut App) -> Div {
-        if !this.read(cx).vertical_scrollbar.show_scrollbar {
-            return parent;
-        }
-        let child = div()
-            .id(("table-vertical-scrollbar", this.entity_id()))
-            .occlude()
-            .flex_none()
-            .h_full()
-            .cursor_default()
-            .absolute()
-            .right_0()
-            .top_0()
-            .bottom_0()
-            .w(px(12.))
-            .on_mouse_move(Self::listener(this, |_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                Self::listener(this, |this, _, window, cx| {
-                    if !this.vertical_scrollbar.state.is_dragging()
-                        && !this.focus_handle.contains_focused(window, cx)
-                    {
-                        this.vertical_scrollbar.hide(window, cx);
-                        cx.notify();
-                    }
-
-                    cx.stop_propagation();
-                }),
-            )
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_scroll_wheel(Self::listener(this, |_, _, _, cx| {
-                cx.notify();
-            }))
-            .children(Scrollbar::vertical(
-                this.read(cx).vertical_scrollbar.state.clone(),
-            ));
-        parent.child(child)
-    }
-
-    /// Renders the horizontal scrollbar.
-    ///
-    /// The right offset is used to determine how far to the right the
-    /// scrollbar should extend to, useful for ensuring it doesn't collide
-    /// with the vertical scrollbar when visible.
-    fn render_horizontal_scrollbar(
-        this: &Entity<Self>,
-        parent: Div,
-        right_offset: Pixels,
-        cx: &mut App,
-    ) -> Div {
-        if !this.read(cx).horizontal_scrollbar.show_scrollbar {
-            return parent;
-        }
-        let child = div()
-            .id(("table-horizontal-scrollbar", this.entity_id()))
-            .occlude()
-            .flex_none()
-            .w_full()
-            .cursor_default()
-            .absolute()
-            .bottom_neg_px()
-            .left_0()
-            .right_0()
-            .pr(right_offset)
-            .on_mouse_move(Self::listener(this, |_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                Self::listener(this, |this, _, window, cx| {
-                    if !this.horizontal_scrollbar.state.is_dragging()
-                        && !this.focus_handle.contains_focused(window, cx)
-                    {
-                        this.horizontal_scrollbar.hide(window, cx);
-                        cx.notify();
-                    }
-
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(Self::listener(this, |_, _, _, cx| {
-                cx.notify();
-            }))
-            .children(Scrollbar::horizontal(
-                // percentage as f32..end_offset as f32,
-                this.read(cx).horizontal_scrollbar.state.clone(),
-            ));
-        parent.child(child)
-    }
-
-    fn render_horizontal_scrollbar_track(
-        this: &Entity<Self>,
-        parent: Div,
-        scroll_track_size: Pixels,
-        cx: &mut App,
-    ) -> Div {
-        if !this.read(cx).horizontal_scrollbar.show_track {
-            return parent;
-        }
-        let child = h_flex()
-            .w_full()
-            .h(scroll_track_size)
-            .flex_none()
-            .relative()
-            .child(
-                div()
-                    .w_full()
-                    .flex_1()
-                    // for some reason the horizontal scrollbar is 1px
-                    // taller than the vertical scrollbar??
-                    .h(scroll_track_size - px(1.))
-                    .bg(cx.theme().colors().background)
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border),
-            )
-            .when(this.read(cx).vertical_scrollbar.show_track, |parent| {
-                parent
-                    .child(
-                        div()
-                            .flex_none()
-                            // -1px prevents a missing pixel between the two container borders
-                            .w(scroll_track_size - px(1.))
-                            .h_full(),
-                    )
-                    .child(
-                        // HACK: Fill the missing 1px 🥲
-                        div()
-                            .absolute()
-                            .right(scroll_track_size - px(1.))
-                            .bottom(scroll_track_size - px(1.))
-                            .size_px()
-                            .bg(cx.theme().colors().border),
-                    )
-            });
-
-        parent.child(child)
-    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub enum ResizeBehavior {
+pub enum TableResizeBehavior {
     None,
     Resizable,
     MinSize(f32),
 }
 
-impl ResizeBehavior {
+impl TableResizeBehavior {
     pub fn is_resizable(&self) -> bool {
-        *self != ResizeBehavior::None
+        *self != TableResizeBehavior::None
     }
 
     pub fn min_size(&self) -> Option<f32> {
         match self {
-            ResizeBehavior::None => None,
-            ResizeBehavior::Resizable => Some(0.05),
-            ResizeBehavior::MinSize(min_size) => Some(*min_size),
+            TableResizeBehavior::None => None,
+            TableResizeBehavior::Resizable => Some(0.05),
+            TableResizeBehavior::MinSize(min_size) => Some(*min_size),
         }
     }
 }
 
-pub struct ColumnWidths<const COLS: usize> {
+pub struct TableColumnWidths<const COLS: usize> {
     widths: [DefiniteLength; COLS],
     visible_widths: [DefiniteLength; COLS],
     cached_bounds_width: Pixels,
     initialized: bool,
 }
 
-impl<const COLS: usize> ColumnWidths<COLS> {
+impl<const COLS: usize> TableColumnWidths<COLS> {
     pub fn new(_: &mut App) -> Self {
         Self {
             widths: [DefiniteLength::default(); COLS],
@@ -511,7 +226,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         &mut self,
         double_click_position: usize,
         initial_sizes: &[DefiniteLength; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
         window: &mut Window,
     ) {
         let bounds_width = self.cached_bounds_width;
@@ -536,7 +251,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         col_idx: usize,
         mut widths: [f32; COLS],
         initial_sizes: [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
     ) -> [f32; COLS] {
         // RESET:
         // Part 1:
@@ -622,7 +337,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -667,7 +382,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         diff: f32,
         col_idx: usize,
         widths: &mut [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
     ) {
         // if diff > 0.0 then go right
         if diff > 0.0 {
@@ -681,7 +396,7 @@ impl<const COLS: usize> ColumnWidths<COLS> {
         diff: f32,
         col_idx: usize,
         widths: &mut [f32; COLS],
-        resize_behavior: &[ResizeBehavior; COLS],
+        resize_behavior: &[TableResizeBehavior; COLS],
         direction: i8,
     ) -> f32 {
         let mut diff_remaining = diff;
@@ -737,8 +452,8 @@ impl<const COLS: usize> ColumnWidths<COLS> {
 
 pub struct TableWidths<const COLS: usize> {
     initial: [DefiniteLength; COLS],
-    current: Option<Entity<ColumnWidths<COLS>>>,
-    resizable: [ResizeBehavior; COLS],
+    current: Option<Entity<TableColumnWidths<COLS>>>,
+    resizable: [TableResizeBehavior; COLS],
 }
 
 impl<const COLS: usize> TableWidths<COLS> {
@@ -748,7 +463,7 @@ impl<const COLS: usize> TableWidths<COLS> {
         TableWidths {
             initial: widths,
             current: None,
-            resizable: [ResizeBehavior::None; COLS],
+            resizable: [TableResizeBehavior::None; COLS],
         }
     }
 
@@ -854,8 +569,8 @@ impl<const COLS: usize> Table<COLS> {
 
     pub fn resizable_columns(
         mut self,
-        resizable: [ResizeBehavior; COLS],
-        column_widths: &Entity<ColumnWidths<COLS>>,
+        resizable: [TableResizeBehavior; COLS],
+        column_widths: &Entity<TableColumnWidths<COLS>>,
         cx: &mut App,
     ) -> Self {
         if let Some(table_widths) = self.col_widths.as_mut() {
@@ -907,7 +622,7 @@ fn base_cell_style_text(width: Option<Length>, cx: &App) -> Div {
     base_cell_style(width).text_ui(cx)
 }
 
-pub fn render_row<const COLS: usize>(
+pub fn render_table_row<const COLS: usize>(
     row_index: usize,
     items: [impl IntoElement; COLS],
     table_context: TableRenderContext<COLS>,
@@ -954,12 +669,12 @@ pub fn render_row<const COLS: usize>(
     div().size_full().child(row).into_any_element()
 }
 
-pub fn render_header<const COLS: usize>(
+pub fn render_table_header<const COLS: usize>(
     headers: [impl IntoElement; COLS],
     table_context: TableRenderContext<COLS>,
     columns_widths: Option<(
-        WeakEntity<ColumnWidths<COLS>>,
-        [ResizeBehavior; COLS],
+        WeakEntity<TableColumnWidths<COLS>>,
+        [TableResizeBehavior; COLS],
         [DefiniteLength; COLS],
     )>,
     entity_id: Option<EntityId>,
@@ -1054,17 +769,6 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .and_then(|widths| Some((widths.current.as_ref()?, widths.resizable, widths.initial)))
             .map(|(curr, resize_behavior, initial)| (curr.downgrade(), resize_behavior, initial));
 
-        let scroll_track_size = px(16.);
-        let h_scroll_offset = if interaction_state
-            .as_ref()
-            .is_some_and(|state| state.read(cx).vertical_scrollbar.show_scrollbar)
-        {
-            // magic number
-            px(3.)
-        } else {
-            px(0.)
-        };
-
         let width = self.width;
         let no_rows_rendered = self.rows.is_empty();
 
@@ -1073,7 +777,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
             .h_full()
             .v_flex()
             .when_some(self.headers.take(), |this, headers| {
-                this.child(render_header(
+                this.child(render_table_header(
                     headers,
                     table_context.clone(),
                     current_widths_with_initial_sizes,
@@ -1115,8 +819,8 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     })
                 }
             })
-            .child(
-                div()
+            .child({
+                let content = div()
                     .flex_grow()
                     .w_full()
                     .relative()
@@ -1124,7 +828,13 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                     .map(|parent| match self.rows {
                         TableContents::Vec(items) => {
                             parent.children(items.into_iter().enumerate().map(|(index, row)| {
-                                render_row(index, row, table_context.clone(), window, cx)
+                                div().child(render_table_row(
+                                    index,
+                                    row,
+                                    table_context.clone(),
+                                    window,
+                                    cx,
+                                ))
                             }))
                         }
                         TableContents::UniformList(uniform_list_data) => parent.child(
@@ -1139,7 +849,7 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                             .into_iter()
                                             .zip(range)
                                             .map(|(row, row_index)| {
-                                                render_row(
+                                                render_table_row(
                                                     row_index,
                                                     row,
                                                     table_context.clone(),
@@ -1187,25 +897,25 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                                 )
                             }))
                         },
-                    )
-                    .when_some(interaction_state.as_ref(), |this, interaction_state| {
-                        this.map(|this| {
-                            TableInteractionState::render_vertical_scrollbar_track(
-                                interaction_state,
-                                this,
-                                scroll_track_size,
-                                cx,
-                            )
-                        })
-                        .map(|this| {
-                            TableInteractionState::render_vertical_scrollbar(
-                                interaction_state,
-                                this,
-                                cx,
-                            )
-                        })
-                    }),
-            )
+                    );
+
+                if let Some(state) = interaction_state.as_ref() {
+                    let scrollbars = state
+                        .read(cx)
+                        .custom_scrollbar
+                        .clone()
+                        .unwrap_or_else(|| Scrollbars::new(super::ScrollAxes::Both));
+                    content
+                        .custom_scrollbars(
+                            scrollbars.tracked_scroll_handle(state.read(cx).scroll_handle.clone()),
+                            window,
+                            cx,
+                        )
+                        .into_any_element()
+                } else {
+                    content.into_any_element()
+                }
+            })
             .when_some(
                 no_rows_rendered
                     .then_some(self.empty_table_callback)
@@ -1220,115 +930,16 @@ impl<const COLS: usize> RenderOnce for Table<COLS> {
                             .child(callback(window, cx)),
                     )
                 },
-            )
-            .when_some(
-                width.and(interaction_state.as_ref()),
-                |this, interaction_state| {
-                    this.map(|this| {
-                        TableInteractionState::render_horizontal_scrollbar_track(
-                            interaction_state,
-                            this,
-                            scroll_track_size,
-                            cx,
-                        )
-                    })
-                    .map(|this| {
-                        TableInteractionState::render_horizontal_scrollbar(
-                            interaction_state,
-                            this,
-                            h_scroll_offset,
-                            cx,
-                        )
-                    })
-                },
             );
 
         if let Some(interaction_state) = interaction_state.as_ref() {
             table
                 .track_focus(&interaction_state.read(cx).focus_handle)
                 .id(("table", interaction_state.entity_id()))
-                .on_hover({
-                    let interaction_state = interaction_state.downgrade();
-                    move |hovered, window, cx| {
-                        interaction_state
-                            .update(cx, |interaction_state, cx| {
-                                if *hovered {
-                                    interaction_state.horizontal_scrollbar.show(cx);
-                                    interaction_state.vertical_scrollbar.show(cx);
-                                    cx.notify();
-                                } else if !interaction_state
-                                    .focus_handle
-                                    .contains_focused(window, cx)
-                                {
-                                    interaction_state.hide_scrollbars(window, cx);
-                                }
-                            })
-                            .ok();
-                    }
-                })
                 .into_any_element()
         } else {
             table.into_any_element()
         }
-    }
-}
-
-// computed state related to how to render scrollbars
-// one per axis
-// on render we just read this off the keymap editor
-// we update it when
-// - settings change
-// - on focus in, on focus out, on hover, etc.
-#[derive(Debug)]
-pub struct ScrollbarProperties {
-    axis: Axis,
-    show_scrollbar: bool,
-    show_track: bool,
-    auto_hide: bool,
-    hide_task: Option<Task<()>>,
-    state: ScrollbarState,
-}
-
-impl ScrollbarProperties {
-    // Shows the scrollbar and cancels any pending hide task
-    fn show(&mut self, cx: &mut Context<TableInteractionState>) {
-        if !self.auto_hide {
-            return;
-        }
-        self.show_scrollbar = true;
-        self.hide_task.take();
-        cx.notify();
-    }
-
-    fn hide(&mut self, window: &mut Window, cx: &mut Context<TableInteractionState>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-
-        if !self.auto_hide {
-            return;
-        }
-
-        let axis = self.axis;
-        self.hide_task = Some(cx.spawn_in(window, async move |keymap_editor, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-
-            if let Some(keymap_editor) = keymap_editor.upgrade() {
-                keymap_editor
-                    .update(cx, |keymap_editor, cx| {
-                        match axis {
-                            Axis::Vertical => {
-                                keymap_editor.vertical_scrollbar.show_scrollbar = false
-                            }
-                            Axis::Horizontal => {
-                                keymap_editor.horizontal_scrollbar.show_scrollbar = false
-                            }
-                        }
-                        cx.notify();
-                    })
-                    .ok();
-            }
-        }));
     }
 }
 
@@ -1460,14 +1071,15 @@ mod test {
     fn parse_resize_behavior<const COLS: usize>(
         input: &str,
         total_size: f32,
-    ) -> [ResizeBehavior; COLS] {
-        let mut resize_behavior = [ResizeBehavior::None; COLS];
+    ) -> [TableResizeBehavior; COLS] {
+        let mut resize_behavior = [TableResizeBehavior::None; COLS];
         let mut max_index = 0;
         for (index, col) in input.split('|').enumerate() {
             if col.starts_with('X') || col.is_empty() {
-                resize_behavior[index] = ResizeBehavior::None;
+                resize_behavior[index] = TableResizeBehavior::None;
             } else if col.starts_with('*') {
-                resize_behavior[index] = ResizeBehavior::MinSize(col.len() as f32 / total_size);
+                resize_behavior[index] =
+                    TableResizeBehavior::MinSize(col.len() as f32 / total_size);
             } else {
                 panic!("invalid test input: unrecognized resize behavior: {}", col);
             }
@@ -1528,7 +1140,7 @@ mod test {
                 "invalid test input: total width not the same"
             );
             let resize_behavior = parse_resize_behavior::<COLS>(resize_behavior, total_1);
-            let result = ColumnWidths::reset_to_initial_size(
+            let result = TableColumnWidths::reset_to_initial_size(
                 column_index,
                 widths,
                 initial_sizes,
@@ -1706,7 +1318,7 @@ mod test {
 
             let distance = distance as f32 / total_1;
 
-            let result = ColumnWidths::drag_column_handle(
+            let result = TableColumnWidths::drag_column_handle(
                 distance,
                 column_index,
                 &mut widths,

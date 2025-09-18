@@ -1481,6 +1481,8 @@ impl CodeActionsMenu {
     ) -> AnyElement {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
+        let is_quick_action_bar = matches!(self.origin(), ContextMenuOrigin::QuickActionBar);
+
         let list = uniform_list(
             "code_actions_menu",
             self.actions.len(),
@@ -1502,7 +1504,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
-                                            .text_sm()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child(
                                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                                                 action.lsp_action.title().replace("\n", ""),

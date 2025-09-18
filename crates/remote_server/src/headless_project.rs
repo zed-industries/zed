@@ -85,7 +85,7 @@ impl HeadlessProject {
         cx: &mut Context<Self>,
     ) -> Self {
         debug_adapter_extension::init(proxy.clone(), cx);
-        languages::init(languages.clone(), node_runtime.clone(), cx);
+        languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new(|cx| {
             let mut store = WorktreeStore::local(true, fs.clone());
@@ -153,7 +153,6 @@ impl HeadlessProject {
 
         let task_store = cx.new(|cx| {
             let mut task_store = TaskStore::local(
-                fs.clone(),
                 buffer_store.downgrade(),
                 worktree_store.clone(),
                 toolchain_store.read(cx).as_language_toolchain_store(),
@@ -198,7 +197,7 @@ impl HeadlessProject {
         let agent_server_store = cx.new(|cx| {
             let mut agent_server_store =
                 AgentServerStore::local(node_runtime.clone(), fs.clone(), environment, cx);
-            agent_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone());
+            agent_server_store.shared(REMOTE_SERVER_PROJECT_ID, session.clone(), cx);
             agent_server_store
         });
 

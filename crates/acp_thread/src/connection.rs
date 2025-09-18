@@ -354,6 +354,7 @@ mod test_support {
                         image: true,
                         audio: true,
                         embedded_context: true,
+                        meta: None,
                     }),
                     cx,
                 )
@@ -393,7 +394,10 @@ mod test_support {
                 response_tx.replace(tx);
                 cx.spawn(async move |_| {
                     let stop_reason = rx.await?;
-                    Ok(acp::PromptResponse { stop_reason })
+                    Ok(acp::PromptResponse {
+                        stop_reason,
+                        meta: None,
+                    })
                 })
             } else {
                 for update in self.next_prompt_updates.lock().drain(..) {
@@ -432,6 +436,7 @@ mod test_support {
                     try_join_all(tasks).await?;
                     Ok(acp::PromptResponse {
                         stop_reason: acp::StopReason::EndTurn,
+                        meta: None,
                     })
                 })
             }

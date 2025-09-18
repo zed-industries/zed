@@ -10,7 +10,7 @@ pub use agent_api_keys_onboarding::{ApiKeysWithProviders, ApiKeysWithoutProvider
 pub use agent_panel_onboarding_card::AgentPanelOnboardingCard;
 pub use agent_panel_onboarding_content::AgentPanelOnboarding;
 pub use ai_upsell_card::AiUpsellCard;
-use cloud_llm_client::Plan;
+use cloud_llm_client::{Plan, PlanV1, PlanV2};
 pub use edit_prediction_onboarding_content::EditPredictionOnboarding;
 pub use plan_definitions::PlanDefinitions;
 pub use young_account_banner::YoungAccountBanner;
@@ -308,13 +308,13 @@ impl RenderOnce for ZedAiOnboarding {
         if matches!(self.sign_in_status, SignInStatus::SignedIn) {
             match self.plan {
                 None => self.render_free_plan_state(cx.has_flag::<BillingV2FeatureFlag>(), cx),
-                Some(plan @ (Plan::ZedFree | Plan::ZedFreeV2)) => {
+                Some(plan @ (Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree))) => {
                     self.render_free_plan_state(plan.is_v2(), cx)
                 }
-                Some(plan @ (Plan::ZedProTrial | Plan::ZedProTrialV2)) => {
+                Some(plan @ (Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial))) => {
                     self.render_trial_state(plan.is_v2(), cx)
                 }
-                Some(plan @ (Plan::ZedPro | Plan::ZedProV2)) => {
+                Some(plan @ (Plan::V1(PlanV1::ZedPro) | Plan::V2(PlanV2::ZedPro))) => {
                     self.render_pro_plan_state(plan.is_v2(), cx)
                 }
             }
@@ -370,15 +370,27 @@ impl Component for ZedAiOnboarding {
                     ),
                     single_example(
                         "Free Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedFree), false),
+                        onboarding(
+                            SignInStatus::SignedIn,
+                            Some(Plan::V1(PlanV1::ZedFree)),
+                            false,
+                        ),
                     ),
                     single_example(
                         "Pro Trial",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedProTrial), false),
+                        onboarding(
+                            SignInStatus::SignedIn,
+                            Some(Plan::V1(PlanV1::ZedProTrial)),
+                            false,
+                        ),
                     ),
                     single_example(
                         "Pro Plan",
-                        onboarding(SignInStatus::SignedIn, Some(Plan::ZedPro), false),
+                        onboarding(
+                            SignInStatus::SignedIn,
+                            Some(Plan::V1(PlanV1::ZedPro)),
+                            false,
+                        ),
                     ),
                 ])
                 .into_any_element(),

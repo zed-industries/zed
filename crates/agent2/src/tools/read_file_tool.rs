@@ -147,8 +147,9 @@ impl AgentTool for ReadFileTool {
 
         event_stream.update_fields(ToolCallUpdateFields {
             locations: Some(vec![acp::ToolCallLocation {
-                path: abs_path,
+                path: abs_path.clone(),
                 line: input.start_line.map(|line| line.saturating_sub(1)),
+                meta: None,
             }]),
             ..Default::default()
         });
@@ -200,7 +201,6 @@ impl AgentTool for ReadFileTool {
             // Check if specific line ranges are provided
             let result = if input.start_line.is_some() || input.end_line.is_some() {
                 let result = buffer.read_with(cx, |buffer, _cx| {
-                    let text = buffer.text();
                     // .max(1) because despite instructions to be 1-indexed, sometimes the model passes 0.
                     let start = input.start_line.unwrap_or(1).max(1);
                     let start_row = start - 1;
@@ -209,13 +209,13 @@ impl AgentTool for ReadFileTool {
                         anchor = Some(buffer.anchor_before(Point::new(start_row, column)));
                     }
 
-                    let lines = text.split('\n').skip(start_row as usize);
-                    if let Some(end) = input.end_line {
-                        let count = end.saturating_sub(start).saturating_add(1); // Ensure at least 1 line
-                        itertools::intersperse(lines.take(count as usize), "\n").collect::<String>()
-                    } else {
-                        itertools::intersperse(lines, "\n").collect::<String>()
+                    let mut end_row = input.end_line.unwrap_or(u32::MAX);
+                    if end_row <= start_row {
+                        end_row = start_row + 1; // read at least one lines
                     }
+                    let start = buffer.anchor_before(Point::new(start_row, 0));
+                    let end = buffer.anchor_before(Point::new(end_row, 0));
+                    buffer.text_for_range(start..end).collect::<String>()
                 })?;
 
                 action_log.update(cx, |log, cx| {
@@ -225,38 +225,30 @@ impl AgentTool for ReadFileTool {
                 Ok(result.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
-                let file_size = buffer.read_with(cx, |buffer, _cx| buffer.text().len())?;
+                let buffer_content =
+                    outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), cx)
+                        .await?;
 
-                if file_size <= outline::AUTO_OUTLINE_SIZE {
-                    // File is small enough, so return its contents.
-                    let result = buffer.read_with(cx, |buffer, _cx| buffer.text())?;
+                action_log.update(cx, |log, cx| {
+                    log.buffer_read(buffer.clone(), cx);
+                })?;
 
-                    action_log.update(cx, |log, cx| {
-                        log.buffer_read(buffer.clone(), cx);
-                    })?;
-
-                    Ok(result.into())
-                } else {
-                    // File is too big, so return the outline
-                    // and a suggestion to read again with line numbers.
-                    let outline =
-                        outline::file_outline(project.clone(), file_path, action_log, None, cx)
-                            .await?;
+                if buffer_content.is_outline {
                     Ok(formatdoc! {"
                         This file was too big to read all at once.
 
-                        Here is an outline of its symbols:
-
-                        {outline}
+                        {}
 
                         Using the line numbers in this outline, you can call this tool again
                         while specifying the start_line and end_line fields to see the
                         implementations of symbols in the outline.
 
                         Alternatively, you can fall back to the `grep` tool (if available)
-                        to search the file for specific content."
+                        to search the file for specific content.", buffer_content.text
                     }
                     .into())
+                } else {
+                    Ok(buffer_content.text.into())
                 }
             };
 
@@ -452,7 +444,7 @@ mod test {
                 tool.run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4".into());
+        assert_eq!(result.unwrap(), "Line 2\nLine 3\nLine 4\n".into());
     }
 
     #[gpui::test]
@@ -482,7 +474,7 @@ mod test {
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1\nLine 2".into());
+        assert_eq!(result.unwrap(), "Line 1\nLine 2\n".into());
 
         // end_line of 0 should result in at least 1 line
         let result = cx
@@ -495,7 +487,7 @@ mod test {
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 1".into());
+        assert_eq!(result.unwrap(), "Line 1\n".into());
 
         // when start_line > end_line, should still return at least 1 line
         let result = cx
@@ -508,7 +500,7 @@ mod test {
                 tool.clone().run(input, ToolCallEventStream::test().0, cx)
             })
             .await;
-        assert_eq!(result.unwrap(), "Line 3".into());
+        assert_eq!(result.unwrap(), "Line 3\n".into());
     }
 
     fn init_test(cx: &mut TestAppContext) {

@@ -108,6 +108,7 @@ To disable this behavior use:
 ```json
   // Control which items are shown/hidden in the title bar
   "title_bar": {
+    "show": "always",               // When to show: always | never | hide_in_full_screen
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
@@ -184,6 +185,10 @@ TBD: Centered layout related settings
 
   // Visually show tabs and spaces  (none, all, selection, boundary, trailing)
   "show_whitespaces": "selection",
+  "whitespace_map": { // Which characters to show when `show_whitespaces` enabled
+    "space": "•",
+    "tab": "→"
+  },
 
   "unnecessary_code_fade": 0.3, // How much to fade out unused code.
 
@@ -456,7 +461,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "button": true,         // Show/hide the icon in the status bar
     "dock": "right",        // Where to dock: left, right, bottom
     "default_width": 640,   // Default width (left/right docked)
-    "default_height": 320,  // Default height (bottom dockeed)
+    "default_height": 320,  // Default height (bottom docked)
   },
   "agent_font_size": 16
 ```
@@ -471,7 +476,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
     "dock": "bottom",                   // Where to dock: left, right, bottom
     "button": true,                     // Show/hide status bar icon
     "default_width": 640,               // Default width (left/right docked)
-    "default_height": 320,              // Default height (bottom dockeed)
+    "default_height": 320,              // Default height (bottom docked)
 
     // Set the cursor blinking behavior in the terminal (on, off, terminal_controlled)
     "blinking": "terminal_controlled",

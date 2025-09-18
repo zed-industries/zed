@@ -487,6 +487,17 @@ impl SettingsStore {
         Ok(())
     }
 
+    /// Replaces current settings with the values from the given JSON.
+    pub fn set_raw_server_settings(
+        &mut self,
+        new_settings: Option<Value>,
+        cx: &mut App,
+    ) -> Result<()> {
+        self.raw_server_settings = new_settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
+    }
+
     /// Get the configured settings profile names.
     pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
         self.raw_user_settings
@@ -1588,7 +1599,7 @@ mod tests {
     use super::*;
     // This is so the SettingsUi macro can still work properly
     use crate as settings;
-    use serde_derive::Deserialize;
+    use serde::Deserialize;
     use settings_ui_macros::{SettingsKey, SettingsUi};
     use unindent::Unindent;
 
@@ -2232,7 +2243,9 @@ mod tests {
 
     #[derive(Debug, Deserialize)]
     struct JournalSettings {
+        #[expect(unused)]
         pub path: String,
+        #[expect(unused)]
         pub hour_format: HourFormat,
     }
 
