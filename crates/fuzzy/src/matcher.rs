@@ -27,7 +27,7 @@ pub struct Matcher<'a> {
 
 pub trait MatchCandidate {
     fn has_chars(&self, bag: CharBag) -> bool;
-    fn to_string(&self) -> Cow<'_, str>;
+    fn candidate_chars(&self) -> impl Iterator<Item = char>;
 }
 
 impl<'a> Matcher<'a> {
@@ -83,7 +83,7 @@ impl<'a> Matcher<'a> {
             candidate_chars.clear();
             lowercase_candidate_chars.clear();
             extra_lowercase_chars.clear();
-            for (i, c) in candidate.borrow().to_string().chars().enumerate() {
+            for (i, c) in candidate.borrow().candidate_chars().enumerate() {
                 candidate_chars.push(c);
                 let mut char_lowercased = c.to_lowercase().collect::<Vec<_>>();
                 if char_lowercased.len() > 1 {
@@ -348,6 +348,8 @@ impl<'a> Matcher<'a> {
 
 #[cfg(test)]
 mod tests {
+    use util::rel_path::RelPath;
+
     use crate::{PathMatch, PathMatchCandidate};
 
     use super::*;
@@ -632,8 +634,8 @@ mod tests {
                 score,
                 worktree_id: 0,
                 positions: positions.clone(),
-                path: Arc::from(candidate.path),
-                path_prefix: "".into(),
+                path: candidate.path.into(),
+                path_prefix: RelPath::empty().into(),
                 distance_to_relative_ancestor: usize::MAX,
                 is_dir: false,
             },

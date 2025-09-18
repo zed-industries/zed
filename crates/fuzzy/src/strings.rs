@@ -33,8 +33,8 @@ impl<'a> MatchCandidate for &'a StringMatchCandidate {
         self.char_bag.is_superset(bag)
     }
 
-    fn to_string(&self) -> Cow<'a, str> {
-        self.string.as_str().into()
+    fn candidate_chars(&self) -> impl Iterator<Item = char> {
+        self.string.chars()
     }
 }
 

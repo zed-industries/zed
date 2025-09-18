@@ -27,8 +27,8 @@ pub struct PathMatch {
     pub score: f64,
     pub positions: Vec<usize>,
     pub worktree_id: usize,
-    pub path: Arc<Path>,
-    pub path_prefix: Arc<str>,
+    pub path: Arc<RelPath>,
+    pub path_prefix: Arc<RelPath>,
     pub is_dir: bool,
     /// Number of steps removed from a shared parent with the relative path
     /// Used to order closer paths first in the search list
@@ -52,8 +52,8 @@ impl<'a> MatchCandidate for PathMatchCandidate<'a> {
         self.char_bag.is_superset(bag)
     }
 
-    fn to_string(&self) -> Cow<'a, str> {
-        self.path.into()
+    fn candidate_chars(&self) -> impl Iterator<Item = char> {
+        self.path.as_str().chars()
     }
 }
 
@@ -111,8 +111,8 @@ pub fn match_fixed_path_set(
             worktree_id,
             positions: positions.clone(),
             is_dir: candidate.is_dir,
-            path: Arc::from(candidate.path),
-            path_prefix: Arc::default(),
+            path: candidate.path.into(),
+            path_prefix: RelPath::empty().into(),
             distance_to_relative_ancestor: usize::MAX,
         },
     );
@@ -171,7 +171,12 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             let candidates = candidate_set.candidates(start).take(end - start);
 
                             let worktree_id = candidate_set.id();
-                            let prefix = candidate_set.prefix().chars().collect::<Vec<_>>();
+                            let prefix = candidate_set
+                                .prefix()
+                                .as_str()
+                                .chars()
+                                .chain(candidate_set.path_style().separator().chars())
+                                .collect::<Vec<_>>();
                             let lowercase_prefix = prefix
                                 .iter()
                                 .map(|c| c.to_ascii_lowercase())
@@ -222,7 +227,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
 /// Compute the distance from a given path to some other path
 /// If there is no shared path, returns usize::MAX
-fn distance_between_paths(path: &Path, relative_to: &Path) -> usize {
+fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
     let mut path_components = path.components();
     let mut relative_components = relative_to.components();
 
@@ -237,12 +242,12 @@ fn distance_between_paths(path: &Path, relative_to: &Path) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use util::rel_path::RelPath;
 
     use super::distance_between_paths;
 
     #[test]
     fn test_distance_between_paths_empty() {
-        distance_between_paths(Path::new(""), Path::new(""));
+        distance_between_paths(RelPath::empty(), RelPath::empty());
     }
 }
