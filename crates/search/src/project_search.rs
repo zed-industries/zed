@@ -1411,7 +1411,8 @@ impl ProjectSearchView {
                     if search_view.auto_search_generation == generation {
                         search_view.run_auto_search(cx);
                     }
-                }).ok();
+                })
+                .ok();
             }
         })
         .detach();
