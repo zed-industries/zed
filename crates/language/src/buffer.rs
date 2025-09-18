@@ -145,7 +145,7 @@ struct BufferBranchState {
 /// state of a buffer.
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
-    pub(crate) syntax: SyntaxSnapshot,
+    pub syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -660,7 +660,10 @@ impl HighlightedTextBuilder {
         syntax_snapshot: &'a SyntaxSnapshot,
     ) -> BufferChunks<'a> {
         let captures = syntax_snapshot.captures(range.clone(), snapshot, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
         });
 
         let highlight_maps = captures
@@ -3246,7 +3249,10 @@ impl BufferSnapshot {
 
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
         let captures = self.syntax.captures(range, &self.text, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
         });
         let highlight_maps = captures
             .grammars()

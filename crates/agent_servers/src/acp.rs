@@ -13,7 +13,7 @@ use util::ResultExt as _;
 
 use std::path::PathBuf;
 use std::{any::Any, cell::RefCell};
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{path::Path, rc::Rc};
 use thiserror::Error;
 
 use anyhow::{Context as _, Result};
@@ -505,6 +505,7 @@ struct ClientDelegate {
     cx: AsyncApp,
 }
 
+#[async_trait::async_trait(?Send)]
 impl acp::Client for ClientDelegate {
     async fn request_permission(
         &self,
@@ -638,19 +639,11 @@ impl acp::Client for ClientDelegate {
         Ok(Default::default())
     }
 
-    async fn ext_method(
-        &self,
-        _name: Arc<str>,
-        _params: Arc<serde_json::value::RawValue>,
-    ) -> Result<Arc<serde_json::value::RawValue>, acp::Error> {
+    async fn ext_method(&self, _args: acp::ExtRequest) -> Result<acp::ExtResponse, acp::Error> {
         Err(acp::Error::method_not_found())
     }
 
-    async fn ext_notification(
-        &self,
-        _name: Arc<str>,
-        _params: Arc<serde_json::value::RawValue>,
-    ) -> Result<(), acp::Error> {
+    async fn ext_notification(&self, _args: acp::ExtNotification) -> Result<(), acp::Error> {
         Err(acp::Error::method_not_found())
     }
 

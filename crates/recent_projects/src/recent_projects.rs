@@ -3,6 +3,9 @@ mod remote_connections;
 mod remote_servers;
 mod ssh_config;
 
+#[cfg(target_os = "windows")]
+mod wsl_picker;
+
 use remote::RemoteConnectionOptions;
 pub use remote_connections::open_remote_project;
 
@@ -31,6 +34,74 @@ use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {
+        let create_new_window = open_wsl.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            use gpui::PathPromptOptions;
+            use project::DirectoryLister;
+
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: false,
+                    prompt: None,
+                },
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                ),
+                window,
+                cx,
+            );
+
+            cx.spawn_in(window, async move |workspace, cx| {
+                use util::paths::SanitizedPath;
+
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+
+                let paths = paths
+                    .into_iter()
+                    .filter_map(|path| SanitizedPath::new(&path).local_to_wsl())
+                    .collect::<Vec<_>>();
+
+                if paths.is_empty() {
+                    let message = indoc::indoc! { r#"
+                        Invalid path specified when trying to open a folder inside WSL.
+
+                        Please note that Zed currently does not support opening network share folders inside wsl.
+                    "#};
+
+                    let _ = cx.prompt(gpui::PromptLevel::Critical, "Invalid path", Some(&message), &["Ok"]).await;
+                    return;
+                }
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        crate::wsl_picker::WslOpenModal::new(paths, create_new_window, window, cx)
+                    });
+                }).log_err();
+            })
+            .detach();
+        });
+    });
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenWsl, cx| {
+        let create_new_window = open_wsl.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let handle = cx.entity().downgrade();
+            let fs = workspace.project().read(cx).fs().clone();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::wsl(create_new_window, fs, window, handle, cx)
+            });
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
@@ -417,10 +488,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
                                     .color(Color::Muted)
                                     .into_any_element(),
-                                SerializedWorkspaceLocation::Remote(_) => {
-                                    Icon::new(IconName::Server)
-                                        .color(Color::Muted)
-                                        .into_any_element()
+                                SerializedWorkspaceLocation::Remote(options) => {
+                                    Icon::new(match options {
+                                        RemoteConnectionOptions::Ssh { .. } => IconName::Server,
+                                        RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
+                                    })
+                                    .color(Color::Muted)
+                                    .into_any_element()
                                 }
                             })
                         })

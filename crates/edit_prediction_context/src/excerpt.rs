@@ -38,7 +38,28 @@ pub struct EditPredictionExcerpt {
     pub size: usize,
 }
 
+#[derive(Clone)]
+pub struct EditPredictionExcerptText {
+    pub body: String,
+    pub parent_signatures: Vec<String>,
+}
+
 impl EditPredictionExcerpt {
+    pub fn text(&self, buffer: &BufferSnapshot) -> EditPredictionExcerptText {
+        let body = buffer
+            .text_for_range(self.range.clone())
+            .collect::<String>();
+        let parent_signatures = self
+            .parent_signature_ranges
+            .iter()
+            .map(|range| buffer.text_for_range(range.clone()).collect::<String>())
+            .collect();
+        EditPredictionExcerptText {
+            body,
+            parent_signatures,
+        }
+    }
+
     /// Selects an excerpt around a buffer position, attempting to choose logical boundaries based
     /// on TreeSitter structure and approximately targeting a goal ratio of bytesbefore vs after the
     /// cursor. When `include_parent_signatures` is true, the excerpt also includes the signatures

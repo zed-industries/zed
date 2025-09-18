@@ -1060,7 +1060,7 @@ impl EditorElement {
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
-                            id: post_inc(&mut editor.selections.next_selection_id),
+                            id: post_inc(&mut editor.selections.next_selection_id()),
                             start: drop_anchor,
                             end: drop_anchor,
                             reversed: false,
@@ -1547,9 +1547,13 @@ impl EditorElement {
         // Local cursors
         if !skip_local {
             let color = cx.theme().players().local().cursor;
-            editor.selections.disjoint.iter().for_each(|selection| {
-                add_cursor(selection.head(), color);
-            });
+            editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .for_each(|selection| {
+                    add_cursor(selection.head(), color);
+                });
             if let Some(ref selection) = editor.selections.pending_anchor() {
                 add_cursor(selection.head(), color);
             }
@@ -3015,6 +3019,12 @@ impl EditorElement {
             .ilog10()
             + 1;
 
+        let git_gutter_width = Self::gutter_strip_width(line_height)
+            + gutter_dimensions
+                .git_blame_entries_width
+                .unwrap_or_default();
+        let available_width = gutter_dimensions.left_padding - git_gutter_width;
+
         buffer_rows
             .iter()
             .enumerate()
@@ -3029,9 +3039,6 @@ impl EditorElement {
                     ExpandExcerptDirection::Down => IconName::ExpandDown,
                     ExpandExcerptDirection::UpAndDown => IconName::ExpandVertical,
                 };
-
-                let git_gutter_width = Self::gutter_strip_width(line_height);
-                let available_width = gutter_dimensions.left_padding - git_gutter_width;
 
                 let editor = self.editor.clone();
                 let is_wide = max_line_number_length
@@ -9694,7 +9701,7 @@ impl EditorScrollbars {
                 editor_bounds.bottom_left(),
                 size(
                     // The horizontal viewport size differs from the space available for the
-                    // horizontal scrollbar, so we have to manually stich it together here.
+                    // horizontal scrollbar, so we have to manually stitch it together here.
                     editor_bounds.size.width - right_margin,
                     scrollbar_width,
                 ),
