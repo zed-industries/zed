@@ -6,6 +6,8 @@ mod reference;
 mod syntax_index;
 mod text_similarity;
 
+use std::time::Instant;
+
 pub use declaration::{BufferDeclaration, Declaration, FileDeclaration, Identifier};
 pub use declaration_scoring::SnippetStyle;
 pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
@@ -23,6 +25,7 @@ pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
     pub snippets: Vec<ScoredSnippet>,
+    pub retrieval_duration: std::time::Duration,
 }
 
 impl EditPredictionContext {
@@ -33,6 +36,7 @@ impl EditPredictionContext {
         syntax_index: Entity<SyntaxIndex>,
         cx: &mut App,
     ) -> Task<Option<Self>> {
+        let start = Instant::now();
         let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
         cx.background_spawn(async move {
             let index_state = index_state.lock().await;
@@ -56,6 +60,7 @@ impl EditPredictionContext {
                 excerpt,
                 excerpt_text,
                 snippets,
+                retrieval_duration: start.elapsed(),
             })
         })
     }

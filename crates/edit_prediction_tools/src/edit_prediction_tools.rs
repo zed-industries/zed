@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use collections::HashMap;
@@ -75,7 +75,7 @@ pub struct EditPredictionTools {
 
 struct ContextState {
     context_editor: Entity<Editor>,
-    duration: Duration,
+    retrieval_duration: Duration,
 }
 
 impl EditPredictionTools {
@@ -195,7 +195,6 @@ impl EditPredictionTools {
                     .timer(Duration::from_millis(50))
                     .await;
 
-                let mut gather_context_start = None;
                 let Ok(task) = this.update(cx, |this, cx| {
                     fn number_input_value<T: FromStr + Default>(
                         input: &Entity<SingleLineInput>,
@@ -221,8 +220,6 @@ impl EditPredictionTools {
                         include_parent_signatures: false,
                     };
 
-                    gather_context_start = Some(Instant::now());
-
                     EditPredictionContext::gather(
                         cursor_position,
                         current_buffer_snapshot,
@@ -246,8 +243,6 @@ impl EditPredictionTools {
                     .ok();
                     return;
                 };
-
-                let duration = gather_context_start.unwrap().elapsed();
 
                 let mut languages = HashMap::default();
                 for snippet in context.snippets.iter() {
@@ -325,7 +320,7 @@ impl EditPredictionTools {
 
                     this.last_context = Some(ContextState {
                         context_editor,
-                        duration,
+                        retrieval_duration: context.retrieval_duration,
                     });
                     cx.notify();
                 })
@@ -396,15 +391,17 @@ impl Render for EditPredictionTools {
                                         )
                                         .child(
                                             Label::new(
-                                                if last_context.duration.as_micros() > 1000 {
+                                                if last_context.retrieval_duration.as_micros()
+                                                    > 1000
+                                                {
                                                     format!(
                                                         "{} ms",
-                                                        last_context.duration.as_millis()
+                                                        last_context.retrieval_duration.as_millis()
                                                     )
                                                 } else {
                                                     format!(
                                                         "{} µs",
-                                                        last_context.duration.as_micros()
+                                                        last_context.retrieval_duration.as_micros()
                                                     )
                                                 },
                                             )
