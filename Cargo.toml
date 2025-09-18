@@ -717,6 +717,7 @@ windows-core = "0.61"
 wit-component = "0.221"
 workspace-hack = "0.1.0"
 yawc = "0.2.5"
+zeroize = "1.8"
 zstd = "0.11"
 
 [workspace.dependencies.windows]
@@ -743,6 +744,7 @@ features = [
     "Win32_Networking_WinSock",
     "Win32_Security",
     "Win32_Security_Credentials",
+    "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",

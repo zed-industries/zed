@@ -817,7 +817,9 @@ dependencies = [
  "smol",
  "tempfile",
  "util",
+ "windows 0.61.1",
  "workspace-hack",
+ "zeroize",
 ]
 
 [[package]]
@@ -13898,6 +13900,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zeroize",
 ]
 
 [[package]]
