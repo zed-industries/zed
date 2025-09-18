@@ -422,18 +422,17 @@ impl ConfigureContextServerModal {
             workspace.update(cx, |workspace, cx| {
                 let fs = workspace.app_state().fs.clone();
                 let original_server_id = self.original_server_id.clone();
-                update_settings_file::<ProjectSettings>(
-                    fs.clone(),
-                    cx,
-                    move |project_settings, _| {
-                        if let Some(original_id) = original_server_id {
-                            if original_id != id {
-                                project_settings.context_servers.remove(&original_id.0);
-                            }
+                update_settings_file(fs.clone(), cx, move |current, _| {
+                    if let Some(original_id) = original_server_id {
+                        if original_id != id {
+                            current.project.context_servers.remove(&original_id.0);
                         }
-                        project_settings.context_servers.insert(id.0, settings);
-                    },
-                );
+                    }
+                    current
+                        .project
+                        .context_servers
+                        .insert(id.0, settings.into());
+                });
             });
         } else if let Some(existing_server) = existing_server {
             self.context_server_store

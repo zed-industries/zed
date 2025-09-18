@@ -7,15 +7,19 @@ mod gemini;
 pub mod e2e_tests;
 
 pub use claude::*;
+use client::ProxySettings;
+use collections::HashMap;
 pub use custom::*;
 use fs::Fs;
 pub use gemini::*;
+use http_client::read_no_proxy_from_env;
 use project::agent_server_store::AgentServerStore;
 
 use acp_thread::AgentConnection;
 use anyhow::Result;
-use gpui::{App, Entity, SharedString, Task};
+use gpui::{App, AppContext, Entity, SharedString, Task};
 use project::Project;
+use settings::SettingsStore;
 use std::{any::Any, path::Path, rc::Rc, sync::Arc};
 
 pub use acp::AcpConnection;
@@ -76,4 +80,26 @@ impl dyn AgentServer {
     pub fn downcast<T: 'static + AgentServer + Sized>(self: Rc<Self>) -> Option<Rc<T>> {
         self.into_any().downcast().ok()
     }
+}
+
+/// Load the default proxy environment variables to pass through to the agent
+pub fn load_proxy_env(cx: &mut App) -> HashMap<String, String> {
+    let proxy_url = cx
+        .read_global(|settings: &SettingsStore, _| settings.get::<ProxySettings>(None).proxy_url());
+    let mut env = HashMap::default();
+
+    if let Some(proxy_url) = &proxy_url {
+        let env_var = if proxy_url.scheme() == "https" {
+            "HTTPS_PROXY"
+        } else {
+            "HTTP_PROXY"
+        };
+        env.insert(env_var.to_owned(), proxy_url.to_string());
+    }
+
+    if let Some(no_proxy) = read_no_proxy_from_env() {
+        env.insert("NO_PROXY".to_owned(), no_proxy);
+    }
+
+    env
 }

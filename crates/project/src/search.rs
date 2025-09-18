@@ -64,7 +64,6 @@ pub enum SearchQuery {
         include_ignored: bool,
         inner: SearchInputs,
     },
-
     Regex {
         regex: Regex,
         replacement: Option<String>,

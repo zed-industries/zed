@@ -17,11 +17,11 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
-    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
-    TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
-    Unclipped,
-    language_settings::{IndentGuideSettings, LanguageSettings, language_settings},
+    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentGuideSettings,
+    IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point,
+    PointUtf16, Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId,
+    TreeSitterOptions, Unclipped,
+    language_settings::{LanguageSettings, language_settings},
 };
 
 use rope::DimensionPair;
@@ -5913,7 +5913,7 @@ impl MultiBufferSnapshot {
                             end_row: last_row,
                             depth: next_depth,
                             tab_size,
-                            settings: settings.indent_guides,
+                            settings: settings.indent_guides.clone(),
                         });
                     }
                 }
@@ -6129,6 +6129,12 @@ impl MultiBufferSnapshot {
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
+                        signature_range: item.signature_range.and_then(|signature_range| {
+                            Some(
+                                self.anchor_in_excerpt(*excerpt_id, signature_range.start)?
+                                    ..self.anchor_in_excerpt(*excerpt_id, signature_range.end)?,
+                            )
+                        }),
                         body_range: item.body_range.and_then(|body_range| {
                             Some(
                                 self.anchor_in_excerpt(*excerpt_id, body_range.start)?
@@ -6169,6 +6175,12 @@ impl MultiBufferSnapshot {
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
+                        signature_range: item.signature_range.and_then(|signature_range| {
+                            Some(
+                                self.anchor_in_excerpt(excerpt_id, signature_range.start)?
+                                    ..self.anchor_in_excerpt(excerpt_id, signature_range.end)?,
+                            )
+                        }),
                         body_range: item.body_range.and_then(|body_range| {
                             Some(
                                 self.anchor_in_excerpt(excerpt_id, body_range.start)?

@@ -340,10 +340,7 @@ pub fn init(cx: &mut App) -> Arc<AgentAppState> {
     release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
-    let mut settings_store = SettingsStore::new(cx);
-    settings_store
-        .set_default_settings(settings::default_settings().as_ref(), cx)
-        .unwrap();
+    let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
     client::init_settings(cx);
 

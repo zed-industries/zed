@@ -1095,6 +1095,15 @@ impl<O> From<anyhow::Result<O>> for ConnectionResult<O> {
     }
 }
 
+#[track_caller]
+pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
+    #[cfg(debug_assertions)]
+    if option.is_none() {
+        panic!("Unexpected None");
+    }
+    option
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1379,5 +1388,23 @@ Line 3"#
         assert_eq!(result.len(), 2);
         assert_eq!(result[0], (0..6, "héllo")); // 'é' is 2 bytes
         assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
+    }
+}
+
+pub fn refine<T: Clone>(dest: &mut T, src: &Option<T>) {
+    if let Some(src) = src {
+        *dest = src.clone()
+    }
+}
+
+pub trait MergeFrom: Sized + Clone {
+    fn merge_from(&mut self, src: &Option<Self>);
+}
+
+impl<T: Clone> MergeFrom for T {
+    fn merge_from(&mut self, src: &Option<Self>) {
+        if let Some(src) = src {
+            *self = src.clone();
+        }
     }
 }

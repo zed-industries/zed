@@ -7,12 +7,12 @@ use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
 pub use diff::*;
-use futures::future::Shared;
 use language::language_settings::FormatOnSave;
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
+use task::{Shell, ShellBuilder};
 pub use terminal::*;
 
 use action_log::ActionLog;
@@ -34,7 +34,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{fmt::Display, mem, path::PathBuf, sync::Arc};
 use ui::App;
-use util::{ResultExt, get_system_shell};
+use util::{ResultExt, get_default_system_shell};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -786,7 +786,6 @@ pub struct AcpThread {
     token_usage: Option<TokenUsage>,
     prompt_capabilities: acp::PromptCapabilities,
     _observe_prompt_capabilities: Task<anyhow::Result<()>>,
-    determine_shell: Shared<Task<String>>,
     terminals: HashMap<acp::TerminalId, Entity<Terminal>>,
 }
 
@@ -873,20 +872,6 @@ impl AcpThread {
             }
         });
 
-        let determine_shell = cx
-            .background_spawn(async move {
-                if cfg!(windows) {
-                    return get_system_shell();
-                }
-
-                if which::which("bash").is_ok() {
-                    "bash".into()
-                } else {
-                    get_system_shell()
-                }
-            })
-            .shared();
-
         Self {
             action_log,
             shared_buffers: Default::default(),
@@ -901,7 +886,6 @@ impl AcpThread {
             prompt_capabilities,
             _observe_prompt_capabilities: task,
             terminals: HashMap::default(),
-            determine_shell,
         }
     }
 
@@ -1127,9 +1111,33 @@ impl AcpThread {
         let update = update.into();
         let languages = self.project.read(cx).languages().clone();
 
-        let ix = self
-            .index_for_tool_call(update.id())
-            .context("Tool call not found")?;
+        let ix = match self.index_for_tool_call(update.id()) {
+            Some(ix) => ix,
+            None => {
+                // Tool call not found - create a failed tool call entry
+                let failed_tool_call = ToolCall {
+                    id: update.id().clone(),
+                    label: cx.new(|cx| Markdown::new("Tool call not found".into(), None, None, cx)),
+                    kind: acp::ToolKind::Fetch,
+                    content: vec![ToolCallContent::ContentBlock(ContentBlock::new(
+                        acp::ContentBlock::Text(acp::TextContent {
+                            text: "Tool call not found".to_string(),
+                            annotations: None,
+                            meta: None,
+                        }),
+                        &languages,
+                        cx,
+                    ))],
+                    status: ToolCallStatus::Failed,
+                    locations: Vec::new(),
+                    resolved_locations: Vec::new(),
+                    raw_input: None,
+                    raw_output: None,
+                };
+                self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
+                return Ok(());
+            }
+        };
         let AgentThreadEntry::ToolCall(call) = &mut self.entries[ix] else {
             unreachable!()
         };
@@ -1773,6 +1781,9 @@ impl AcpThread {
         reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<String>> {
+        // Args are 1-based, move to 0-based
+        let line = line.unwrap_or_default().saturating_sub(1);
+        let limit = limit.unwrap_or(u32::MAX);
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
@@ -1800,44 +1811,37 @@ impl AcpThread {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
                 })?;
-                project.update(cx, |project, cx| {
-                    let position = buffer
-                        .read(cx)
-                        .snapshot()
-                        .anchor_before(Point::new(line.unwrap_or_default(), 0));
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        }),
-                        cx,
-                    );
-                })?;
 
-                buffer.update(cx, |buffer, _| buffer.snapshot())?
+                let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot())?;
+                this.update(cx, |this, _| {
+                    this.shared_buffers.insert(buffer.clone(), snapshot.clone());
+                })?;
+                snapshot
             };
 
-            this.update(cx, |this, _| {
-                let text = snapshot.text();
-                this.shared_buffers.insert(buffer.clone(), snapshot);
-                if line.is_none() && limit.is_none() {
-                    return Ok(text);
-                }
-                let limit = limit.unwrap_or(u32::MAX) as usize;
-                let Some(line) = line else {
-                    return Ok(text.lines().take(limit).collect::<String>());
-                };
+            let max_point = snapshot.max_point();
+            if line >= max_point.row {
+                anyhow::bail!(
+                    "Attempting to read beyond the end of the file, line {}:{}",
+                    max_point.row + 1,
+                    max_point.column
+                );
+            }
 
-                let count = text.lines().count();
-                if count < line as usize {
-                    anyhow::bail!("There are only {} lines", count);
-                }
-                Ok(text
-                    .lines()
-                    .skip(line as usize + 1)
-                    .take(limit)
-                    .collect::<String>())
-            })?
+            let start = snapshot.anchor_before(Point::new(line, 0));
+            let end = snapshot.anchor_before(Point::new(line.saturating_add(limit), 0));
+
+            project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position: start,
+                    }),
+                    cx,
+                );
+            })?;
+
+            Ok(snapshot.text_for_range(start..end).collect::<String>())
         })
     }
 
@@ -1940,28 +1944,13 @@ impl AcpThread {
 
     pub fn create_terminal(
         &self,
-        mut command: String,
+        command: String,
         args: Vec<String>,
         extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
-        for arg in args {
-            command.push(' ');
-            command.push_str(&arg);
-        }
-
-        let shell_command = if cfg!(windows) {
-            format!("$null | & {{{}}}", command.replace("\"", "'"))
-        } else if let Some(cwd) = cwd.as_ref().and_then(|cwd| cwd.as_os_str().to_str()) {
-            // Make sure once we're *inside* the shell, we cd into `cwd`
-            format!("(cd {cwd}; {}) </dev/null", command)
-        } else {
-            format!("({}) </dev/null", command)
-        };
-        let args = vec!["-c".into(), shell_command];
-
         let env = match &cwd {
             Some(dir) => self.project.update(cx, |project, cx| {
                 project.directory_environment(dir.as_path().into(), cx)
@@ -1982,20 +1971,30 @@ impl AcpThread {
 
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
-        let determine_shell = self.determine_shell.clone();
 
         let terminal_id = acp::TerminalId(Uuid::new_v4().to_string().into());
         let terminal_task = cx.spawn({
             let terminal_id = terminal_id.clone();
             async move |_this, cx| {
-                let program = determine_shell.await;
                 let env = env.await;
+                let (command, args) = ShellBuilder::new(
+                    project
+                        .update(cx, |project, cx| {
+                            project
+                                .remote_client()
+                                .and_then(|r| r.read(cx).default_system_shell())
+                        })?
+                        .as_deref(),
+                    &Shell::Program(get_default_system_shell()),
+                )
+                .redirect_stdin_to_dev_null()
+                .build(Some(command), &args);
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
-                                command: Some(program),
-                                args,
+                                command: Some(command.clone()),
+                                args: args.clone(),
                                 cwd: cwd.clone(),
                                 env,
                                 ..Default::default()
@@ -2008,7 +2007,7 @@ impl AcpThread {
                 cx.new(|cx| {
                     Terminal::new(
                         terminal_id,
-                        command,
+                        &format!("{} {}", command, args.join(" ")),
                         cwd,
                         output_byte_limit.map(|l| l as usize),
                         terminal,
@@ -2386,6 +2385,82 @@ mod tests {
             "zero\none\ntwo\nthree\nfour\nfive\n"
         );
         request.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_reading_from_line(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": "one\ntwo\nthree\nfour\n"}))
+            .await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .await
+            .unwrap();
+
+        // Whole file
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "one\ntwo\nthree\nfour\n");
+
+        // Only start line
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(3), None, false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "three\nfour\n");
+
+        // Only limit
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, Some(2), false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "one\ntwo\n");
+
+        // Range
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(2), Some(2), false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "two\nthree\n");
+
+        // Invalid
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(5), Some(2), false, cx)
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Attempting to read beyond the end of the file, line 5:0"
+        );
     }
 
     #[gpui::test]
@@ -3180,5 +3255,66 @@ mod tests {
         fn run(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_not_found_creates_failed_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/test")), cx))
+            .await
+            .unwrap();
+
+        // Try to update a tool call that doesn't exist
+        let nonexistent_id = acp::ToolCallId("nonexistent-tool-call".into());
+        thread.update(cx, |thread, cx| {
+            let result = thread.handle_session_update(
+                acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate {
+                    id: nonexistent_id.clone(),
+                    fields: acp::ToolCallUpdateFields {
+                        status: Some(acp::ToolCallStatus::Completed),
+                        ..Default::default()
+                    },
+                    meta: None,
+                }),
+                cx,
+            );
+
+            // The update should succeed (not return an error)
+            assert!(result.is_ok());
+
+            // There should now be exactly one entry in the thread
+            assert_eq!(thread.entries.len(), 1);
+
+            // The entry should be a failed tool call
+            if let AgentThreadEntry::ToolCall(tool_call) = &thread.entries[0] {
+                assert_eq!(tool_call.id, nonexistent_id);
+                assert!(matches!(tool_call.status, ToolCallStatus::Failed));
+                assert_eq!(tool_call.kind, acp::ToolKind::Fetch);
+
+                // Check that the content contains the error message
+                assert_eq!(tool_call.content.len(), 1);
+                if let ToolCallContent::ContentBlock(content_block) = &tool_call.content[0] {
+                    match content_block {
+                        ContentBlock::Markdown { markdown } => {
+                            let markdown_text = markdown.read(cx).source();
+                            assert!(markdown_text.contains("Tool call not found"));
+                        }
+                        ContentBlock::Empty => panic!("Expected markdown content, got empty"),
+                        ContentBlock::ResourceLink { .. } => {
+                            panic!("Expected markdown content, got resource link")
+                        }
+                    }
+                } else {
+                    panic!("Expected ContentBlock, got: {:?}", tool_call.content[0]);
+                }
+            } else {
+                panic!("Expected ToolCall entry, got: {:?}", thread.entries[0]);
+            }
+        });
     }
 }

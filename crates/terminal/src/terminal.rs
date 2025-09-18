@@ -25,7 +25,7 @@ use alacritty_terminal::{
         ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
     },
 };
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 
 use futures::{
     FutureExt,
@@ -364,6 +364,7 @@ impl TerminalBuilder {
         env.insert("ZED_TERM".to_string(), "true".to_string());
         env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
         env.insert("TERM".to_string(), "xterm-256color".to_string());
+        env.insert("COLORTERM".to_string(), "truecolor".to_string());
         env.insert(
             "TERM_PROGRAM_VERSION".to_string(),
             release_channel::AppVersion::global(cx).to_string(),
@@ -486,7 +487,8 @@ impl TerminalBuilder {
             pty,
             pty_options.drain_on_exit,
             false,
-        )?;
+        )
+        .context("failed to create event loop")?;
 
         //Kick things off
         let pty_tx = event_loop.channel();
@@ -528,16 +530,13 @@ impl TerminalBuilder {
                 max_scroll_history_lines,
                 window_id,
             },
+            child_exited: None,
         };
 
-        if !activation_script.is_empty() && no_task {
+        if cfg!(not(target_os = "windows")) && !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
                 terminal.input(activation_script.into_bytes());
-                terminal.write_to_pty(if cfg!(windows) {
-                    &b"\r\n"[..]
-                } else {
-                    &b"\n"[..]
-                });
+                terminal.write_to_pty(b"\n");
             }
             terminal.clear();
         }
@@ -726,6 +725,7 @@ pub struct Terminal {
     shell_program: Option<String>,
     template: CopyTemplate,
     activation_script: Vec<String>,
+    child_exited: Option<ExitStatus>,
 }
 
 struct CopyTemplate {
@@ -1921,10 +1921,13 @@ impl Terminal {
         if let Some(tx) = &self.completion_tx {
             tx.try_send(e).ok();
         }
+        if let Some(e) = e {
+            self.child_exited = Some(e);
+        }
         let task = match &mut self.task {
             Some(task) => task,
             None => {
-                if error_code.is_none() {
+                if self.child_exited.is_none_or(|e| e.code() == Some(0)) {
                     cx.emit(Event::CloseTerminal);
                 }
                 return;

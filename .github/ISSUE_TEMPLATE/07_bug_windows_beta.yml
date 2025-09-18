@@ -1,8 +1,8 @@
-name: Bug Report (Windows Alpha)
-description: Zed Windows Alpha Related Bugs
+name: Bug Report (Windows Beta)
+description: Zed Windows Beta Related Bugs
 type: "Bug"
 labels: ["windows"]
-title: "Windows Alpha: <a short description of the Windows bug>"
+title: "Windows Beta: <a short description of the Windows bug>"
 body:
   - type: textarea
     attributes:

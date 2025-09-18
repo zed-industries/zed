@@ -1409,12 +1409,15 @@ fn assert_capture_ranges(
 ) {
     let mut actual_ranges = Vec::<Range<usize>>::new();
     let captures = syntax_map.captures(0..buffer.len(), buffer, |grammar| {
-        grammar.highlights_query.as_ref()
+        grammar
+            .highlights_config
+            .as_ref()
+            .map(|config| &config.query)
     });
     let queries = captures
         .grammars()
         .iter()
-        .map(|grammar| grammar.highlights_query.as_ref().unwrap())
+        .map(|grammar| &grammar.highlights_config.as_ref().unwrap().query)
         .collect::<Vec<_>>();
     for capture in captures {
         let name = &queries[capture.grammar_index].capture_names()[capture.index as usize];

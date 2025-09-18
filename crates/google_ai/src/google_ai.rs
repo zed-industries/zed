@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+pub use settings::ModelMode as GoogleModelMode;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -293,16 +294,6 @@ pub struct UsageMetadata {
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
     pub thinking_budget: u32,
-}
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub enum GoogleModelMode {
-    #[default]
-    Default,
-    Thinking {
-        budget_tokens: Option<u32>,
-    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]

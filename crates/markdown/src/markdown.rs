@@ -1079,7 +1079,7 @@ impl Element for MarkdownElement {
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
-                                    parsed_markdown.source()[range.clone()].trim(),
+                                    &parsed_markdown.source()[range.clone()],
                                 );
                                 let content_range = content_range.start + range.start
                                     ..content_range.end + range.start;
@@ -1110,7 +1110,7 @@ impl Element for MarkdownElement {
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
-                                    parsed_markdown.source()[range.clone()].trim(),
+                                    &parsed_markdown.source()[range.clone()],
                                 );
                                 let content_range = content_range.start + range.start
                                     ..content_range.end + range.start;

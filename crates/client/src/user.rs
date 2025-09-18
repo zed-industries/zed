@@ -754,6 +754,10 @@ impl UserStore {
     }
 
     pub fn model_request_usage(&self) -> Option<ModelRequestUsage> {
+        if self.plan().is_some_and(|plan| plan.is_v2()) {
+            return None;
+        }
+
         self.model_request_usage
     }
 

@@ -1,62 +1,53 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::Result;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi};
+use settings::{Settings, SettingsStore};
+use util::MergeFrom as _;
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi)]
+#[derive(Clone, Debug)]
 pub struct AudioSettings {
     /// Opt into the new audio system.
-    #[serde(rename = "experimental.rodio_audio", default)]
     pub rodio_audio: bool, // default is false
     /// Requires 'rodio_audio: true'
     ///
     /// Use the new audio systems automatic gain control for your microphone.
     /// This affects how loud you sound to others.
-    #[serde(rename = "experimental.control_input_volume", default)]
     pub control_input_volume: bool,
     /// Requires 'rodio_audio: true'
     ///
     /// Use the new audio systems automatic gain control on everyone in the
     /// call. This makes call members who are too quite louder and those who are
     /// too loud quieter. This only affects how things sound for you.
-    #[serde(rename = "experimental.control_output_volume", default)]
     pub control_output_volume: bool,
 }
 
-/// Configuration of audio in Zed.
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
-#[serde(default)]
-#[settings_key(key = "audio")]
-pub struct AudioSettingsContent {
-    /// Opt into the new audio system.
-    #[serde(rename = "experimental.rodio_audio", default)]
-    pub rodio_audio: bool, // default is false
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Use the new audio systems automatic gain control for your microphone.
-    /// This affects how loud you sound to others.
-    #[serde(rename = "experimental.control_input_volume", default)]
-    pub control_input_volume: bool,
-    /// Requires 'rodio_audio: true'
-    ///
-    /// Use the new audio systems automatic gain control on everyone in the
-    /// call. This makes call members who are too quite louder and those who are
-    /// too loud quieter. This only affects how things sound for you.
-    #[serde(rename = "experimental.control_output_volume", default)]
-    pub control_output_volume: bool,
-}
-
+/// Configuration of audio in Zed
 impl Settings for AudioSettings {
-    type FileContent = AudioSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let audio = &content.audio.as_ref().unwrap();
+        AudioSettings {
+            control_input_volume: audio.control_input_volume.unwrap(),
+            control_output_volume: audio.control_output_volume.unwrap(),
+            rodio_audio: audio.rodio_audio.unwrap(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        let Some(audio) = content.audio.as_ref() else {
+            return;
+        };
+        self.control_input_volume
+            .merge_from(&audio.control_input_volume);
+        self.control_output_volume
+            .merge_from(&audio.control_output_volume);
+        self.rodio_audio.merge_from(&audio.rodio_audio);
+    }
+
+    fn import_from_vscode(
+        _vscode: &settings::VsCodeSettings,
+        _current: &mut settings::SettingsContent,
+    ) {
+    }
 }
 
 /// See docs on [LIVE_SETTINGS]

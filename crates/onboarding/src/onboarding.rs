@@ -5,8 +5,8 @@ use db::kvp::KEY_VALUE_STORE;
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, SharedString, Subscription,
-    Task, WeakEntity, Window, actions,
+    FocusHandle, Focusable, Global, IntoElement, KeyContext, Render, ScrollHandle, SharedString,
+    Subscription, Task, WeakEntity, Window, actions,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use schemars::JsonSchema;
@@ -15,7 +15,7 @@ use settings::{SettingsStore, VsCodeSettingsSource};
 use std::sync::Arc;
 use ui::{
     Avatar, ButtonLike, FluentBuilder, Headline, KeyBinding, ParentElement as _,
-    StatefulInteractiveElement, Vector, VectorName, prelude::*, rems_from_px,
+    StatefulInteractiveElement, Vector, VectorName, WithScrollbar, prelude::*, rems_from_px,
 };
 use workspace::{
     AppState, Workspace, WorkspaceId,
@@ -237,6 +237,7 @@ struct Onboarding {
     focus_handle: FocusHandle,
     selected_page: SelectedPage,
     user_store: Entity<UserStore>,
+    scroll_handle: ScrollHandle,
     _settings_subscription: Subscription,
 }
 
@@ -256,6 +257,7 @@ impl Onboarding {
             Self {
                 workspace: workspace.weak_handle(),
                 focus_handle: cx.focus_handle(),
+                scroll_handle: ScrollHandle::new(),
                 selected_page: SelectedPage::Basics,
                 user_store: workspace.user_store().clone(),
                 _settings_subscription: cx
@@ -280,6 +282,7 @@ impl Onboarding {
         }
 
         self.selected_page = page;
+        self.scroll_handle.set_offset(Default::default());
         cx.notify();
         cx.emit(ItemEvent::UpdateTab);
     }
@@ -584,16 +587,23 @@ impl Render for Onboarding {
                     .gap_12()
                     .child(self.render_nav(window, cx))
                     .child(
-                        v_flex()
-                            .id("page-content")
+                        div()
                             .size_full()
-                            .max_w_full()
-                            .min_w_0()
-                            .pl_12()
-                            .border_l_1()
-                            .border_color(cx.theme().colors().border_variant.opacity(0.5))
-                            .overflow_y_scroll()
-                            .child(self.render_page(window, cx)),
+                            .pr_6()
+                            .child(
+                                v_flex()
+                                    .id("page-content")
+                                    .size_full()
+                                    .max_w_full()
+                                    .min_w_0()
+                                    .pl_12()
+                                    .border_l_1()
+                                    .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                                    .overflow_y_scroll()
+                                    .child(self.render_page(window, cx))
+                                    .track_scroll(&self.scroll_handle),
+                            )
+                            .vertical_scrollbar_for(self.scroll_handle.clone(), window, cx),
                     ),
             )
     }
@@ -632,6 +642,7 @@ impl Item for Onboarding {
             workspace: self.workspace.clone(),
             user_store: self.user_store.clone(),
             selected_page: self.selected_page,
+            scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
         }))

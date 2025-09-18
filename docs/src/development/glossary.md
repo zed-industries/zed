@@ -23,7 +23,7 @@ here. An example would be `AnyElement` and `LspStore`.
 
 ## GPUI
 
-### State menagement
+### State management
 
 - `App`: A singleton which holds the full application state including all the entities. Crucially: `App` is not `Send`, which means that `App` only exists on the thread that created it (which is the main/UI thread, usually). Thus, if you see a `&mut App`, know that you're on UI thread.
 - `Context`: A wrapper around the `App` struct with specialized behavior for a specific `Entity`. Think of it as `(&mut App, Entity<V>)`. The specialized behavior is surfaced in the API surface of `Context`. E.g., `App::spawn` takes an `AsyncFnOnce(AsyncApp) -> Ret`, whereas `Context::spawn` takes an `AsyncFnOnce(WeakEntity<V>, AsyncApp) -> Ret`.
@@ -67,7 +67,7 @@ h_flex()
 - `Component`: A builder which can be rendered turning it into an `Element`.
 - `Dispatch tree`: TODO
 - `Focus`: The place where keystrokes are handled first
-- `Focus tree`: Path from the place thats the current focus to the UI Root. Example <img> TODO
+- `Focus tree`: Path from the place that has the current focus to the UI Root. Example <img> TODO
 
 ## Zed UI
 

@@ -10,7 +10,7 @@ pub enum ShellKind {
     Posix,
     Csh,
     Fish,
-    Powershell,
+    PowerShell,
     Nushell,
     Cmd,
 }
@@ -21,7 +21,7 @@ impl fmt::Display for ShellKind {
             ShellKind::Posix => write!(f, "sh"),
             ShellKind::Csh => write!(f, "csh"),
             ShellKind::Fish => write!(f, "fish"),
-            ShellKind::Powershell => write!(f, "powershell"),
+            ShellKind::PowerShell => write!(f, "powershell"),
             ShellKind::Nushell => write!(f, "nu"),
             ShellKind::Cmd => write!(f, "cmd"),
         }
@@ -43,7 +43,7 @@ impl ShellKind {
             || program == "pwsh"
             || program.ends_with("pwsh.exe")
         {
-            ShellKind::Powershell
+            ShellKind::PowerShell
         } else if program == "cmd" || program.ends_with("cmd.exe") {
             ShellKind::Cmd
         } else if program == "nu" {
@@ -61,7 +61,7 @@ impl ShellKind {
 
     fn to_shell_variable(self, input: &str) -> String {
         match self {
-            Self::Powershell => Self::to_powershell_variable(input),
+            Self::PowerShell => Self::to_powershell_variable(input),
             Self::Cmd => Self::to_cmd_variable(input),
             Self::Posix => input.to_owned(),
             Self::Fish => input.to_owned(),
@@ -184,7 +184,7 @@ impl ShellKind {
 
     fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
         match self {
-            ShellKind::Powershell => vec!["-C".to_owned(), combined_command],
+            ShellKind::PowerShell => vec!["-C".to_owned(), combined_command],
             ShellKind::Cmd => vec!["/C".to_owned(), combined_command],
             ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => interactive
                 .then(|| "-i".to_owned())
@@ -196,7 +196,7 @@ impl ShellKind {
 
     pub fn command_prefix(&self) -> Option<char> {
         match self {
-            ShellKind::Powershell => Some('&'),
+            ShellKind::PowerShell => Some('&'),
             ShellKind::Nushell => Some('^'),
             _ => None,
         }
@@ -210,6 +210,7 @@ pub struct ShellBuilder {
     program: String,
     args: Vec<String>,
     interactive: bool,
+    redirect_stdin: bool,
     kind: ShellKind,
 }
 
@@ -231,6 +232,7 @@ impl ShellBuilder {
             args,
             interactive: true,
             kind,
+            redirect_stdin: false,
         }
     }
     pub fn non_interactive(mut self) -> Self {
@@ -241,7 +243,7 @@ impl ShellBuilder {
     /// Returns the label to show in the terminal tab
     pub fn command_label(&self, command_label: &str) -> String {
         match self.kind {
-            ShellKind::Powershell => {
+            ShellKind::PowerShell => {
                 format!("{} -C '{}'", self.program, command_label)
             }
             ShellKind::Cmd => {
@@ -256,6 +258,12 @@ impl ShellBuilder {
             }
         }
     }
+
+    pub fn redirect_stdin_to_dev_null(mut self) -> Self {
+        self.redirect_stdin = true;
+        self
+    }
+
     /// Returns the program and arguments to run this task in a shell.
     pub fn build(
         mut self,
@@ -263,11 +271,24 @@ impl ShellBuilder {
         task_args: &[String],
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
-            let combined_command = task_args.iter().fold(task_command, |mut command, arg| {
+            let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
                 command.push(' ');
                 command.push_str(&self.kind.to_shell_variable(arg));
                 command
             });
+            if self.redirect_stdin {
+                match self.kind {
+                    ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
+                        combined_command.push_str(" </dev/null");
+                    }
+                    ShellKind::PowerShell => {
+                        combined_command.insert_str(0, "$null | ");
+                    }
+                    ShellKind::Cmd => {
+                        combined_command.push_str("< NUL");
+                    }
+                }
+            }
 
             self.args
                 .extend(self.kind.args_for_shell(self.interactive, combined_command));

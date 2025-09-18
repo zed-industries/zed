@@ -127,6 +127,10 @@ struct Notification<'a, T> {
 
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
+    #[expect(
+        unused,
+        reason = "Part of the JSON-RPC protocol - we expect the field to be present in a valid JSON-RPC notification"
+    )]
     jsonrpc: &'a str,
     method: String,
     #[serde(default)]

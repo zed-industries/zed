@@ -30,6 +30,10 @@ impl BasedPyrightBanner {
             _subscriptions: [subscription],
         }
     }
+
+    fn onboarding_banner_enabled(&self) -> bool {
+        !self.dismissed && self.have_basedpyright
+    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for BasedPyrightBanner {}
@@ -38,7 +42,7 @@ impl Render for BasedPyrightBanner {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("basedpyright-banner")
-            .when(!self.dismissed && self.have_basedpyright, |el| {
+            .when(self.onboarding_banner_enabled(), |el| {
                 el.child(
                     Banner::new()
                         .child(
@@ -81,6 +85,9 @@ impl ToolbarItemView for BasedPyrightBanner {
         _window: &mut ui::Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
+        if !self.onboarding_banner_enabled() {
+            return ToolbarItemLocation::Hidden;
+        }
         if let Some(item) = active_pane_item
             && let Some(editor) = item.act_as::<Editor>(cx)
             && let Some(path) = editor.update(cx, |editor, cx| editor.target_file_abs_path(cx))

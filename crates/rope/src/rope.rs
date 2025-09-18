@@ -767,7 +767,7 @@ impl<'a> Chunks<'a> {
     }
 
     /// Returns bitmaps that represent character positions and tab positions
-    pub fn peak_with_bitmaps(&self) -> Option<ChunkBitmaps<'a>> {
+    pub fn peek_with_bitmaps(&self) -> Option<ChunkBitmaps<'a>> {
         if !self.offset_is_valid() {
             return None;
         }
@@ -898,7 +898,7 @@ impl<'a> Iterator for ChunkWithBitmaps<'a> {
     type Item = ChunkBitmaps<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let chunk_bitmaps = self.0.peak_with_bitmaps()?;
+        let chunk_bitmaps = self.0.peek_with_bitmaps()?;
         if self.0.reversed {
             self.0.offset -= chunk_bitmaps.text.len();
             if self.0.offset <= *self.0.chunks.start() {

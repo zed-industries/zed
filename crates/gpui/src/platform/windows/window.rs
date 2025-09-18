@@ -684,8 +684,16 @@ impl PlatformWindow for WindowsWindow {
             .executor
             .spawn(async move {
                 this.set_window_placement().log_err();
-                unsafe { SetActiveWindow(hwnd).log_err() };
-                unsafe { SetFocus(Some(hwnd)).log_err() };
+
+                unsafe {
+                    // If the window is minimized, restore it.
+                    if IsIconic(hwnd).as_bool() {
+                        ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
+                    }
+
+                    SetActiveWindow(hwnd).log_err();
+                    SetFocus(Some(hwnd)).log_err();
+                }
 
                 // premium ragebait by windows, this is needed because the window
                 // must have received an input event to be able to set itself to foreground

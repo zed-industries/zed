@@ -24,7 +24,7 @@ use rpc::{
     ErrorCode, ErrorExt,
     proto::{self, ChannelVisibility, PeerId},
 };
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smallvec::SmallVec;
 use std::{mem, sync::Arc};
@@ -2993,11 +2993,9 @@ impl Panel for CollabPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        settings::update_settings_file::<CollaborationPanelSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| settings.dock = Some(position),
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.collaboration_panel.get_or_insert_default().dock = Some(position.into())
+        });
     }
 
     fn size(&self, _window: &Window, cx: &App) -> Pixels {

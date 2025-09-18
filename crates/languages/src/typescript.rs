@@ -5,6 +5,7 @@ use collections::HashMap;
 use futures::future::join_all;
 use gpui::{App, AppContext, AsyncApp, Task};
 use http_client::github::{AssetKind, GitHubLspBinaryVersion, build_asset_url};
+use itertools::Itertools as _;
 use language::{
     ContextLocation, ContextProvider, File, LanguageName, LanguageToolchainStore, LspAdapter,
     LspAdapterDelegate, LspInstaller, Toolchain,
@@ -18,7 +19,7 @@ use std::{
     borrow::Cow,
     ffi::OsString,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::merge_json_value_into;
@@ -511,9 +512,9 @@ fn eslint_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 }
 
 fn replace_test_name_parameters(test_name: &str) -> String {
-    let pattern = regex::Regex::new(r"(%|\$)[0-9a-zA-Z]+").unwrap();
-
-    regex::escape(&pattern.replace_all(test_name, "(.+?)"))
+    static PATTERN: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"(\$([A-Za-z0-9_\.]+|[\#])|%[psdifjo#\$%])").unwrap());
+    PATTERN.split(test_name).map(regex::escape).join("(.+?)")
 }
 
 pub struct TypeScriptLspAdapter {
@@ -1015,7 +1016,9 @@ mod tests {
     use unindent::Unindent;
     use util::path;
 
-    use crate::typescript::{PackageJsonData, TypeScriptContextProvider};
+    use crate::typescript::{
+        PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
+    };
 
     #[gpui::test]
     async fn test_outline(cx: &mut TestAppContext) {
@@ -1226,5 +1229,38 @@ mod tests {
                 ),
             ]
         );
+    }
+    #[test]
+    fn test_escaping_name() {
+        let cases = [
+            ("plain test name", "plain test name"),
+            ("test name with $param_name", "test name with (.+?)"),
+            ("test name with $nested.param.name", "test name with (.+?)"),
+            ("test name with $#", "test name with (.+?)"),
+            ("test name with $##", "test name with (.+?)\\#"),
+            ("test name with %p", "test name with (.+?)"),
+            ("test name with %s", "test name with (.+?)"),
+            ("test name with %d", "test name with (.+?)"),
+            ("test name with %i", "test name with (.+?)"),
+            ("test name with %f", "test name with (.+?)"),
+            ("test name with %j", "test name with (.+?)"),
+            ("test name with %o", "test name with (.+?)"),
+            ("test name with %#", "test name with (.+?)"),
+            ("test name with %$", "test name with (.+?)"),
+            ("test name with %%", "test name with (.+?)"),
+            ("test name with %q", "test name with %q"),
+            (
+                "test name with regex chars .*+?^${}()|[]\\",
+                "test name with regex chars \\.\\*\\+\\?\\^\\$\\{\\}\\(\\)\\|\\[\\]\\\\",
+            ),
+            (
+                "test name with multiple $params and %pretty and %b and (.+?)",
+                "test name with multiple (.+?) and (.+?)retty and %b and \\(\\.\\+\\?\\)",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            assert_eq!(replace_test_name_parameters(input), expected);
+        }
     }
 }

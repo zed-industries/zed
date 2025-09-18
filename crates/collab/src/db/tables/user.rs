@@ -35,8 +35,6 @@ pub enum Relation {
     HostedProjects,
     #[sea_orm(has_many = "super::channel_member::Entity")]
     ChannelMemberships,
-    #[sea_orm(has_many = "super::user_feature::Entity")]
-    UserFeatures,
     #[sea_orm(has_one = "super::contributor::Entity")]
     Contributor,
 }
@@ -84,25 +82,4 @@ impl Related<super::channel_member::Entity> for Entity {
     }
 }
 
-impl Related<super::user_feature::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::UserFeatures.def()
-    }
-}
-
 impl ActiveModelBehavior for ActiveModel {}
-
-pub struct UserFlags;
-
-impl Linked for UserFlags {
-    type FromEntity = Entity;
-
-    type ToEntity = super::feature_flag::Entity;
-
-    fn link(&self) -> Vec<RelationDef> {
-        vec![
-            super::user_feature::Relation::User.def().rev(),
-            super::user_feature::Relation::Flag.def(),
-        ]
-    }
-}

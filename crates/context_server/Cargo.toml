@@ -25,8 +25,9 @@ net.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 schemars.workspace = true
-serde.workspace = true
 serde_json.workspace = true
+serde.workspace = true
+settings.workspace = true
 smol.workspace = true
 tempfile.workspace = true
 url = { workspace = true, features = ["serde"] }

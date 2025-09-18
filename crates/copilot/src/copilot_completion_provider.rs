@@ -281,14 +281,11 @@ mod tests {
     use indoc::indoc;
     use language::{
         Point,
-        language_settings::{
-            AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, LspInsertMode,
-            WordsCompletionMode,
-        },
+        language_settings::{CompletionSettingsContent, LspInsertMode, WordsCompletionMode},
     };
     use project::Project;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{AllLanguageSettingsContent, SettingsStore};
     use std::future::Future;
     use util::{
         path,
@@ -299,12 +296,11 @@ mod tests {
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         // flaky
         init_test(cx, |settings| {
-            settings.defaults.completions = Some(CompletionSettings {
-                words: WordsCompletionMode::Disabled,
-                words_min_length: 0,
-                lsp: true,
-                lsp_fetch_timeout_ms: 0,
-                lsp_insert_mode: LspInsertMode::Insert,
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                words_min_length: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::Insert),
+                ..Default::default()
             });
         });
 
@@ -532,12 +528,11 @@ mod tests {
     ) {
         // flaky
         init_test(cx, |settings| {
-            settings.defaults.completions = Some(CompletionSettings {
-                words: WordsCompletionMode::Disabled,
-                words_min_length: 0,
-                lsp: true,
-                lsp_fetch_timeout_ms: 0,
-                lsp_insert_mode: LspInsertMode::Insert,
+            settings.defaults.completions = Some(CompletionSettingsContent {
+                words: Some(WordsCompletionMode::Disabled),
+                words_min_length: Some(0),
+                lsp_insert_mode: Some(LspInsertMode::Insert),
+                ..Default::default()
             });
         });
 
@@ -1128,7 +1123,7 @@ mod tests {
             Project::init_settings(cx);
             workspace::init_settings(cx);
             SettingsStore::update_global(cx, |store: &mut SettingsStore, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, f);
+                store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
             });
         });
     }

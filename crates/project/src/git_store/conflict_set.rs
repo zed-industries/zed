@@ -257,7 +257,7 @@ impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
 mod tests {
     use std::{path::Path, sync::mpsc};
 
-    use crate::{Project, project_settings::ProjectSettings};
+    use crate::Project;
 
     use super::*;
     use fs::FakeFs;
@@ -484,7 +484,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
-            ProjectSettings::register(cx);
+            Project::init_settings(cx);
             AllLanguageSettings::register(cx);
         });
         let initial_text = "
@@ -585,7 +585,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
-            ProjectSettings::register(cx);
+            Project::init_settings(cx);
             AllLanguageSettings::register(cx);
         });
 

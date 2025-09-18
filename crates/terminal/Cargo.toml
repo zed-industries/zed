@@ -29,7 +29,6 @@ libc.workspace = true
 release_channel.workspace = true
 schemars.workspace = true
 serde.workspace = true
-serde_derive.workspace = true
 settings.workspace = true
 sysinfo.workspace = true
 smol.workspace = true

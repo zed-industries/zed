@@ -1,8 +1,5 @@
 use super::*;
 use crate::Buffer;
-use crate::language_settings::{
-    AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent,
-};
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
@@ -13,6 +10,7 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use std::collections::BTreeSet;
 use std::{
     env,
@@ -3849,7 +3847,7 @@ fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     cx.set_global(settings_store);
     crate::init(cx);
     cx.update_global::<SettingsStore, _>(|settings, cx| {
-        settings.update_user_settings::<AllLanguageSettings>(cx, f);
+        settings.update_user_settings(cx, |content| f(&mut content.project.all_languages));
     });
 }
 

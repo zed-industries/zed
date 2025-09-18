@@ -793,14 +793,11 @@ mod tests {
         // First, test with format_on_save enabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.format_on_save = Some(FormatOnSave::On);
-                        settings.defaults.formatter =
-                            Some(language::language_settings::SelectedFormatter::Auto);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.format_on_save = Some(FormatOnSave::On);
+                    settings.project.all_languages.defaults.formatter =
+                        Some(language::language_settings::SelectedFormatter::Auto);
+                });
             });
         });
 
@@ -855,12 +852,10 @@ mod tests {
         // Next, test with format_on_save disabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.format_on_save = Some(FormatOnSave::Off);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings.project.all_languages.defaults.format_on_save =
+                        Some(FormatOnSave::Off);
+                });
             });
         });
 
@@ -938,12 +933,13 @@ mod tests {
         // First, test with remove_trailing_whitespace_on_save enabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.remove_trailing_whitespace_on_save = Some(true);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .remove_trailing_whitespace_on_save = Some(true);
+                });
             });
         });
 
@@ -994,12 +990,13 @@ mod tests {
         // Next, test with remove_trailing_whitespace_on_save disabled
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<language::language_settings::AllLanguageSettings>(
-                    cx,
-                    |settings| {
-                        settings.defaults.remove_trailing_whitespace_on_save = Some(false);
-                    },
-                );
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .project
+                        .all_languages
+                        .defaults
+                        .remove_trailing_whitespace_on_save = Some(false);
+                });
             });
         });
 

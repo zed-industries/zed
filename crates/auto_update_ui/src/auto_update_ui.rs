@@ -31,6 +31,10 @@ pub fn init(cx: &mut App) {
 
 #[derive(Deserialize)]
 struct ReleaseNotesBody {
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     title: String,
     release_notes: String,
 }

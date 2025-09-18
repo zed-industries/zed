@@ -194,27 +194,27 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
 
     fn write_mode_change(mode: ThemeMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, _cx| {
-            settings.set_mode(mode);
+        update_settings_file(fs, cx, move |settings, _cx| {
+            theme::set_mode(settings, mode);
         });
     }
 
     fn write_theme_change(theme: impl Into<Arc<str>>, theme_mode: ThemeMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
         let theme = theme.into();
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+        update_settings_file(fs, cx, move |settings, cx| {
             if theme_mode == ThemeMode::System {
                 let (light_theme, dark_theme) =
                     get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
 
-                settings.theme = Some(ThemeSelection::Dynamic {
+                settings.theme.theme = Some(settings::ThemeSelection::Dynamic {
                     mode: ThemeMode::System,
                     light: ThemeName(light_theme.into()),
                     dark: ThemeName(dark_theme.into()),
                 });
             } else {
                 let appearance = *SystemAppearance::global(cx);
-                settings.set_theme(theme, appearance);
+                theme::set_theme(settings, theme, appearance);
             }
         });
     }
@@ -247,10 +247,13 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                     ToggleState::Indeterminate => { return; },
                 };
 
-                update_settings_file::<TelemetrySettings>(
+                update_settings_file(
                     fs.clone(),
                     cx,
-                    move |setting, _| setting.metrics = Some(enabled),
+                    move |setting, _| {
+                        setting.telemetry.get_or_insert_default().metrics = Some(enabled);
+                    }
+                    ,
                 );
 
                 // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
@@ -286,10 +289,13 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                         ToggleState::Indeterminate => { return; },
                     };
 
-                    update_settings_file::<TelemetrySettings>(
+                    update_settings_file(
                         fs.clone(),
                         cx,
-                        move |setting, _| setting.diagnostics = Some(enabled),
+                        move |setting, _| {
+                            setting.telemetry.get_or_insert_default().diagnostics = Some(enabled);
+                        },
+
                     );
 
                     // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
@@ -358,8 +364,8 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
     fn write_keymap_base(keymap_base: BaseKeymap, cx: &App) {
         let fs = <dyn Fs>::global(cx);
 
-        update_settings_file::<BaseKeymap>(fs, cx, move |setting, _| {
-            setting.base_keymap = Some(keymap_base);
+        update_settings_file(fs, cx, move |setting, _| {
+            setting.base_keymap = Some(keymap_base.into());
         });
 
         telemetry::event!("Welcome Keymap Changed", keymap = keymap_base);
@@ -387,7 +393,7 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
                         return;
                     }
                 };
-                update_settings_file::<VimModeSetting>(fs.clone(), cx, move |setting, _| {
+                update_settings_file(fs.clone(), cx, move |setting, _| {
                     setting.vim_mode = Some(vim_mode);
                 });
 

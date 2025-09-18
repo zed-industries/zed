@@ -114,6 +114,10 @@ impl InnerTreeNode {
             }),
         }
     }
+
+    pub(crate) fn id(&self) -> Option<LanguageServerId> {
+        self.id.get().copied()
+    }
 }
 
 impl LanguageServerTree {

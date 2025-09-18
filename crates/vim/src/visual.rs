@@ -748,7 +748,7 @@ impl Vim {
                 // after the change
                 let stable_anchors = editor
                     .selections
-                    .disjoint_anchors()
+                    .disjoint_anchors_arc()
                     .iter()
                     .map(|selection| {
                         let start = selection.start.bias_left(&display_map.buffer_snapshot);

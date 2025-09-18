@@ -11,7 +11,6 @@ use collab::ServiceMode;
 use collab::api::CloudflareIpCountryHeader;
 use collab::llm::db::LlmDatabase;
 use collab::migrations::run_database_migrations;
-use collab::user_backfiller::spawn_user_backfiller;
 use collab::{
     AppState, Config, Result, api::fetch_extensions_from_blob_store_periodically, db, env,
     executor::Executor, rpc::ResultExt,
@@ -114,7 +113,6 @@ async fn main() -> Result<()> {
 
                 if mode.is_api() {
                     fetch_extensions_from_blob_store_periodically(state.clone());
-                    spawn_user_backfiller(state.clone());
 
                     app = app
                         .merge(collab::api::events::router())

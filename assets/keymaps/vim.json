@@ -328,7 +328,7 @@
   {
     "context": "vim_mode == helix_select",
     "bindings": {
-      "escape": "vim::NormalBefore",
+      "v": "vim::NormalBefore",
       ";": "vim::HelixCollapseSelection",
       "~": "vim::ChangeCase",
       "ctrl-a": "vim::Increment",
@@ -442,9 +442,8 @@
       ">": "vim::Indent",
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
-      "g u": "vim::PushLowercase",
-      "g shift-u": "vim::PushUppercase",
-      "g ~": "vim::PushOppositeCase",
+      "`": "vim::ConvertToLowerCase",
+      "alt-`": "vim::ConvertToUpperCase",
       "g q": "vim::PushRewrap",
       "g w": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
