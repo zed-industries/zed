@@ -237,7 +237,7 @@ impl LspInstaller for TyLspAdapter {
         let binary = LanguageServerBinary {
             path: server_path.clone(),
             env: None,
-            arguments: Default::default(),
+            arguments: vec!["server".into()],
         };
 
         let metadata_path = destination_path.with_extension("metadata");
@@ -327,7 +327,7 @@ impl LspInstaller for TyLspAdapter {
             anyhow::Ok(LanguageServerBinary {
                 path,
                 env: None,
-                arguments: Default::default(),
+                arguments: vec!["server".into()],
             })
         })
         .await
