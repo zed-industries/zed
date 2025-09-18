@@ -101,6 +101,12 @@ const UNKNOWN_KEYBOARD_LAYOUT_NAME: SharedString = SharedString::new_static("unk
 
 const TOUCH_SCROLL_SENSITIVITY: f32 = 0.1;
 
+/// Minimum distance change (in pixels) to trigger a zoom level change
+const PINCH_ZOOM_STEP_THRESHOLD: f32 = 50.0;
+
+/// Sensitivity for pinch zoom (lower = more sensitive)
+const PINCH_ZOOM_SENSITIVITY: f32 = 0.8;
+
 #[derive(Clone)]
 pub struct Globals {
     pub qh: QueueHandle<WaylandClientStatePtr>,
@@ -239,6 +245,9 @@ pub(crate) struct WaylandClientState {
     second_touch_location: Option<Point<Pixels>>,
     scroll_start_position: Option<Point<Pixels>>,
     is_scrolling: bool,
+    pinch_start_distance: Option<f32>,
+    last_pinch_distance: Option<f32>,
+    pinch_zoom_threshold: f32,
     loop_handle: LoopHandle<'static, WaylandClientStatePtr>,
     cursor_style: Option<CursorStyle>,
     clipboard: Clipboard,
@@ -626,6 +635,9 @@ impl WaylandClient {
             second_touch_location: None,
             scroll_start_position: None,
             is_scrolling: false,
+            pinch_start_distance: None,
+            last_pinch_distance: None,
+            pinch_zoom_threshold: 0.0,
             loop_handle: handle.clone(),
             enter_token: None,
             cursor_style: None,
@@ -2245,6 +2257,14 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                         state.scroll_start_position = Some(center);
                         state.mouse_location = Some(center);
 
+                        // Initialize pinch distance tracking
+                        let dx = first_pos.x.0 - position.x.0;
+                        let dy = first_pos.y.0 - position.y.0;
+                        let initial_distance = (dx * dx + dy * dy).sqrt();
+                        state.pinch_start_distance = Some(initial_distance);
+                        state.last_pinch_distance = Some(initial_distance);
+                        state.pinch_zoom_threshold = 0.0;
+
                         // Cancel any active mouse button press when starting scroll
                         if let Some(window) = state.mouse_focused_window.clone() {
                             let input = PlatformInput::MouseUp(MouseUpEvent {
@@ -2271,7 +2291,7 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                 }
 
                 if state.is_scrolling && state.active_touch_id.is_some() && state.second_touch_id.is_some() {
-                    // Two-finger scroll mode
+                    // Two-finger gesture mode
                     if let (Some(first_pos), Some(second_pos)) = (state.touch_location, state.second_touch_location) {
                         let current_center = point(
                             px((first_pos.x.0 + second_pos.x.0) / 2.0),
@@ -2279,24 +2299,86 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                         );
                         state.mouse_location = Some(current_center);
 
-                        // Calculate scroll delta from the start position
-                        if let Some(scroll_start) = state.scroll_start_position {
-                            let scroll_delta = point(
-                                px((current_center.x.0 - scroll_start.x.0) * TOUCH_SCROLL_SENSITIVITY),
-                                px((current_center.y.0 - scroll_start.y.0) * TOUCH_SCROLL_SENSITIVITY),
-                            );
+                        // Calculate current distance between fingers
+                        let dx = first_pos.x.0 - second_pos.x.0;
+                        let dy = first_pos.y.0 - second_pos.y.0;
+                        let current_distance = (dx * dx + dy * dy).sqrt();
 
-                            // Only send scroll events if there's meaningful movement
-                            if scroll_delta.x.0.abs() > 1.0 || scroll_delta.y.0.abs() > 1.0 {
-                                if let Some(window) = state.mouse_focused_window.clone() {
-                                    let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                                        position: current_center,
-                                        delta: ScrollDelta::Pixels(point(px(-scroll_delta.x.0), px(-scroll_delta.y.0))),
-                                        modifiers: state.modifiers,
-                                        touch_phase: TouchPhase::Moved,
-                                    });
-                                    drop(state);
-                                    window.handle_input(input);
+                        // Check for pinch gesture (distance change vs center movement)
+                        if let (Some(start_distance), Some(last_distance)) = (state.pinch_start_distance, state.last_pinch_distance) {
+                            let distance_change = current_distance - start_distance;
+                            let center_movement = if let Some(scroll_start) = state.scroll_start_position {
+                                let dx = current_center.x.0 - scroll_start.x.0;
+                                let dy = current_center.y.0 - scroll_start.y.0;
+                                (dx * dx + dy * dy).sqrt()
+                            } else {
+                                0.0
+                            };
+
+                            // Determine if this is primarily a pinch (distance change > center movement)
+                            if distance_change.abs() > 20.0 && distance_change.abs() > center_movement {
+                                // This is a pinch gesture - handle zoom
+                                let distance_delta = (current_distance - last_distance) * PINCH_ZOOM_SENSITIVITY;
+                                state.pinch_zoom_threshold += distance_delta;
+                                state.last_pinch_distance = Some(current_distance);
+
+                                // Trigger zoom when threshold is reached
+                                if state.pinch_zoom_threshold.abs() >= PINCH_ZOOM_STEP_THRESHOLD {
+                                    if let Some(window) = state.mouse_focused_window.clone() {
+                                        let zoom_in = state.pinch_zoom_threshold > 0.0;
+
+                                        // Send zoom as keyboard shortcut: ctrl+= (zoom in) or ctrl+- (zoom out)
+                                        let mut zoom_modifiers = Modifiers::default();
+                                        zoom_modifiers.control = true;
+
+                                        let keystroke = if zoom_in {
+                                            Keystroke {
+                                                modifiers: zoom_modifiers,
+                                                key: "=".to_string(),
+                                                key_char: Some("=".to_string()),
+                                            }
+                                        } else {
+                                            Keystroke {
+                                                modifiers: zoom_modifiers,
+                                                key: "-".to_string(),
+                                                key_char: Some("-".to_string()),
+                                            }
+                                        };
+
+                                        let input = PlatformInput::KeyDown(KeyDownEvent {
+                                            keystroke,
+                                            is_held: false,
+                                        });
+
+                                        // Reset threshold after zoom
+                                        state.pinch_zoom_threshold = 0.0;
+                                        drop(state);
+                                        window.handle_input(input);
+                                    }
+                                }
+                            } else {
+                                // This is a scroll gesture - handle scroll
+                                state.last_pinch_distance = Some(current_distance);
+
+                                if let Some(scroll_start) = state.scroll_start_position {
+                                    let scroll_delta = point(
+                                        px((current_center.x.0 - scroll_start.x.0) * TOUCH_SCROLL_SENSITIVITY),
+                                        px((current_center.y.0 - scroll_start.y.0) * TOUCH_SCROLL_SENSITIVITY),
+                                    );
+
+                                    // Only send scroll events if there's meaningful movement
+                                    if scroll_delta.x.0.abs() > 1.0 || scroll_delta.y.0.abs() > 1.0 {
+                                        if let Some(window) = state.mouse_focused_window.clone() {
+                                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                                position: current_center,
+                                                delta: ScrollDelta::Pixels(point(px(-scroll_delta.x.0), px(-scroll_delta.y.0))),
+                                                modifiers: state.modifiers,
+                                                touch_phase: TouchPhase::Moved,
+                                            });
+                                            drop(state);
+                                            window.handle_input(input);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2325,6 +2407,9 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                         state.touch_location = state.second_touch_location.take();
                         state.is_scrolling = false;
                         state.scroll_start_position = None;
+                        state.pinch_start_distance = None;
+                        state.last_pinch_distance = None;
+                        state.pinch_zoom_threshold = 0.0;
 
                         // Send scroll end event
                         if let Some(window) = state.mouse_focused_window.clone() {
@@ -2363,6 +2448,9 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                     state.second_touch_location = None;
                     state.is_scrolling = false;
                     state.scroll_start_position = None;
+                    state.pinch_start_distance = None;
+                    state.last_pinch_distance = None;
+                    state.pinch_zoom_threshold = 0.0;
 
                     // Send scroll end event and switch back to single touch
                     if let Some(window) = state.mouse_focused_window.clone() {
@@ -2390,6 +2478,9 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                 state.is_scrolling = false;
                 state.scroll_start_position = None;
                 state.button_pressed = None;
+                state.pinch_start_distance = None;
+                state.last_pinch_distance = None;
+                state.pinch_zoom_threshold = 0.0;
 
                 if let Some(window) = state.mouse_focused_window.clone() {
                     if was_scrolling {
