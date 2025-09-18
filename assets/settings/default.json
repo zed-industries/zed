@@ -391,6 +391,8 @@
   "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
+    // When to show the title bar: "always" | "never" | "hide_in_full_screen".
+    "show": "always",
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
     // Whether to show the branch name button in the titlebar.
@@ -912,15 +914,11 @@
     /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
     ///
     /// Default: true
-    "expand_terminal_card": true
-  },
-  // The settings for slash commands.
-  "slash_commands": {
-    // Settings for the `/project` slash command.
-    "project": {
-      // Whether `/project` is enabled.
-      "enabled": false
-    }
+    "expand_terminal_card": true,
+    // Minimum number of lines to display in the agent message editor.
+    //
+    // Default: 4
+    "message_editor_min_lines": 4
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
@@ -1841,6 +1839,15 @@
     //    "python": "conda-base"
     //    "typescript": "deno"
     // }
+  },
+  // REPL settings.
+  "repl": {
+    // Maximum number of columns to keep in REPL's scrollback buffer.
+    // Clamped with [20, 512] range.
+    "max_columns": 128,
+    // Maximum number of lines to keep in REPL's scrollback buffer.
+    // Clamped with [4, 256] range.
+    "max_lines": 32
   },
   // Vim settings
   "vim": {

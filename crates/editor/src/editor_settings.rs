@@ -7,6 +7,7 @@ use project::project_settings::DiagnosticSeverity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsKey, SettingsSources, SettingsUi, VsCodeSettings};
+use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
 use util::serde::default_true;
 
 /// Imports from the VSCode settings at
@@ -203,23 +204,6 @@ pub struct Gutter {
     pub runnables: bool,
     pub breakpoints: bool,
     pub folds: bool,
-}
-
-/// When to show the scrollbar in the editor.
-///
-/// Default: auto
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowScrollbar {
-    /// Show the scrollbar if there's important information or
-    /// follow the system's configured behavior.
-    Auto,
-    /// Match the system's configured behavior.
-    System,
-    /// Always show the scrollbar.
-    Always,
-    /// Never show the scrollbar.
-    Never,
 }
 
 /// When to show the minimap in the editor.
@@ -775,6 +759,12 @@ pub struct GutterContent {
 impl EditorSettings {
     pub fn jupyter_enabled(cx: &App) -> bool {
         EditorSettings::get_global(cx).jupyter.enabled
+    }
+}
+
+impl ScrollbarVisibility for EditorSettings {
+    fn visibility(&self, _cx: &App) -> ShowScrollbar {
+        self.scrollbar.show
     }
 }
 

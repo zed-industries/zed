@@ -65,6 +65,7 @@ pub trait PathExt {
                 .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+    fn local_to_wsl(&self) -> Option<PathBuf>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -117,6 +118,26 @@ impl<T: AsRef<Path>> PathExt for T {
         {
             self.as_ref().to_string_lossy().to_string()
         }
+    }
+
+    /// Converts a local path to one that can be used inside of WSL.
+    /// Returns `None` if the path cannot be converted into a WSL one (network share).
+    fn local_to_wsl(&self) -> Option<PathBuf> {
+        let mut new_path = PathBuf::new();
+        for component in self.as_ref().components() {
+            match component {
+                std::path::Component::Prefix(prefix) => {
+                    let drive_letter = prefix.as_os_str().to_string_lossy().to_lowercase();
+                    let drive_letter = drive_letter.strip_suffix(':')?;
+
+                    new_path.push(format!("/mnt/{}", drive_letter));
+                }
+                std::path::Component::RootDir => {}
+                _ => new_path.push(component),
+            }
+        }
+
+        Some(new_path)
     }
 }
 

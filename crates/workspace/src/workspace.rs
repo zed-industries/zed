@@ -2043,6 +2043,11 @@ impl Workspace {
         cx.notify();
     }
 
+    pub fn clear_titlebar_item(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.titlebar_item = None;
+        cx.notify();
+    }
+
     pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
         self.on_prompt_for_new_path = Some(prompt)
     }
@@ -8732,6 +8737,36 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(250));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
 
+        // Autosave after delay, should save earlier than delay if tab is closed
+        item.update(cx, |item, cx| {
+            item.is_dirty = true;
+            cx.emit(ItemEvent::Edit);
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+
+        // // Ensure auto save with delay saves the item on close, even if the timer hasn't yet run out.
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, move |id| id == item_id)
+        })
+        .await
+        .unwrap();
+        assert!(!cx.has_pending_prompt());
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+
+        // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+        item.update_in(cx, |item, _window, cx| {
+            item.is_dirty = true;
+            for project_item in &mut item.project_items {
+                project_item.update(cx, |project_item, _| project_item.is_dirty = true);
+            }
+        });
+        cx.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
@@ -8751,7 +8786,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!cx.has_pending_prompt());
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
         workspace.update_in(cx, |workspace, window, cx| {
@@ -8765,7 +8800,7 @@ mod tests {
             window.blur();
         });
         cx.run_until_parked();
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = pane.update_in(cx, |pane, window, cx| {
@@ -8773,7 +8808,7 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
     }
 
     #[gpui::test]

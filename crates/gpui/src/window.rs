@@ -4960,6 +4960,12 @@ impl<T: Into<SharedString>> From<(ElementId, T)> for ElementId {
     }
 }
 
+impl From<&'static core::panic::Location<'static>> for ElementId {
+    fn from(location: &'static core::panic::Location<'static>) -> Self {
+        ElementId::CodeLocation(*location)
+    }
+}
+
 /// A rectangle to be rendered in the window at the given position and size.
 /// Passed as an argument [`Window::paint_quad`].
 #[derive(Clone)]

@@ -38,7 +38,7 @@ use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_derive::Serialize;
+use serde::Serialize;
 use settings::{
     Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi, update_settings_file,
 };
@@ -1075,16 +1075,16 @@ impl Vim {
                 }
 
                 let snapshot = s.display_map();
-                if let Some(pending) = s.pending.as_mut()
-                    && pending.selection.reversed
+                if let Some(pending) = s.pending_anchor_mut()
+                    && pending.reversed
                     && mode.is_visual()
                     && !last_mode.is_visual()
                 {
-                    let mut end = pending.selection.end.to_point(&snapshot.buffer_snapshot);
+                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot);
                     end = snapshot
                         .buffer_snapshot
                         .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.selection.end = snapshot.buffer_snapshot.anchor_before(end);
+                    pending.end = snapshot.buffer_snapshot.anchor_before(end);
                 }
 
                 s.move_with(|map, selection| {
@@ -1332,7 +1332,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, _| {
             editor
                 .selections
-                .disjoint_anchors()
+                .disjoint_anchors_arc()
                 .iter()
                 .map(|selection| selection.tail()..selection.head())
                 .collect()

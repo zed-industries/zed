@@ -7,12 +7,11 @@ use collections::{BTreeSet, HashMap, hash_map};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    Editor, EditorEvent, EditorSettings, ShowScrollbar,
+    Editor, EditorEvent,
     items::{
         entry_diagnostic_aware_icon_decoration_and_color,
         entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
-    scroll::ScrollbarAutoHide,
 };
 use file_icons::FileIcons;
 use git::status::GitSummary;
@@ -59,7 +58,8 @@ use theme::ThemeSettings;
 use ui::{
     Color, ContextMenu, DecoratedIcon, Divider, Icon, IconDecoration, IconDecorationKind,
     IndentGuideColors, IndentGuideLayout, KeyBinding, Label, LabelSize, ListItem, ListItemSpacing,
-    ScrollableHandle, Scrollbar, ScrollbarState, StickyCandidate, Tooltip, prelude::*, v_flex,
+    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
+    v_flex,
 };
 use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
 use workspace::{
@@ -109,10 +109,6 @@ pub struct ProjectPanel {
     workspace: WeakEntity<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
-    show_scrollbar: bool,
-    vertical_scrollbar_state: ScrollbarState,
-    horizontal_scrollbar_state: ScrollbarState,
-    hide_scrollbar_task: Option<Task<()>>,
     diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
     max_width_item_index: Option<usize>,
     diagnostic_summary_update: Task<()>,
@@ -461,7 +457,6 @@ impl ProjectPanel {
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                 this.focus_out(window, cx);
-                this.hide_scrollbar(window, cx);
             })
             .detach();
 
@@ -652,12 +647,6 @@ impl ProjectPanel {
                 workspace: workspace.weak_handle(),
                 width: None,
                 pending_serialization: Task::ready(None),
-                show_scrollbar: !Self::should_autohide_scrollbar(cx),
-                hide_scrollbar_task: None,
-                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_entity(&cx.entity()),
-                horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_entity(&cx.entity()),
                 max_width_item_index: None,
                 diagnostics: Default::default(),
                 diagnostic_summary_update: Task::ready(()),
@@ -1158,8 +1147,32 @@ impl ProjectPanel {
     ) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
         // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
+        let multiple_worktrees = self.project.read(cx).worktrees(cx).count() > 1;
+        let project = self.project.read(cx);
+
         self.expanded_dir_ids
-            .retain(|_, expanded_entries| expanded_entries.is_empty());
+            .iter_mut()
+            .for_each(|(worktree_id, expanded_entries)| {
+                if multiple_worktrees {
+                    *expanded_entries = Default::default();
+                    return;
+                }
+
+                let root_entry_id = project
+                    .worktree_for_id(*worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).snapshot())
+                    .and_then(|worktree_snapshot| {
+                        worktree_snapshot.root_entry().map(|entry| entry.id)
+                    });
+
+                match root_entry_id {
+                    Some(id) => {
+                        expanded_entries.retain(|entry_id| entry_id == &id);
+                    }
+                    None => *expanded_entries = Default::default(),
+                };
+            });
+
         self.update_visible_entries(None, cx);
         cx.notify();
     }
@@ -4847,103 +4860,6 @@ impl ProjectPanel {
         }
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx)
-            || !(self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())
-        {
-            return None;
-        }
-        Some(
-            div()
-                .occlude()
-                .id("project-panel-vertical-scroll")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        if !this.vertical_scrollbar_state.is_dragging()
-                            && !this.focus_handle.contains_focused(window, cx)
-                        {
-                            this.hide_scrollbar(window, cx);
-                            cx.notify();
-                        }
-
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_1()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(
-                    // percentage as f32..end_offset as f32,
-                    self.vertical_scrollbar_state.clone(),
-                )),
-        )
-    }
-
-    fn render_horizontal_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx)
-            || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
-        {
-            return None;
-        }
-        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
-            div()
-                .occlude()
-                .id("project-panel-horizontal-scroll")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        if !this.horizontal_scrollbar_state.is_dragging()
-                            && !this.focus_handle.contains_focused(window, cx)
-                        {
-                            this.hide_scrollbar(window, cx);
-                            cx.notify();
-                        }
-
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .w_full()
-                .absolute()
-                .right_1()
-                .left_1()
-                .bottom_1()
-                .h(px(12.))
-                .cursor_default()
-                .child(scrollbar)
-        })
-    }
-
     fn dispatch_context(&self, window: &Window, cx: &Context<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("ProjectPanel");
@@ -4957,52 +4873,6 @@ impl ProjectPanel {
 
         dispatch_context.add(identifier);
         dispatch_context
-    }
-
-    fn should_show_scrollbar(cx: &App) -> bool {
-        let show = ProjectPanelSettings::get_global(cx)
-            .scrollbar
-            .show
-            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
-        match show {
-            ShowScrollbar::Auto => true,
-            ShowScrollbar::System => true,
-            ShowScrollbar::Always => true,
-            ShowScrollbar::Never => false,
-        }
-    }
-
-    fn should_autohide_scrollbar(cx: &App) -> bool {
-        let show = ProjectPanelSettings::get_global(cx)
-            .scrollbar
-            .show
-            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
-        match show {
-            ShowScrollbar::Auto => true,
-            ShowScrollbar::System => cx
-                .try_global::<ScrollbarAutoHide>()
-                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
-            ShowScrollbar::Always => false,
-            ShowScrollbar::Never => true,
-        }
-    }
-
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        if !Self::should_autohide_scrollbar(cx) {
-            return;
-        }
-        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
     }
 
     fn reveal_entry(
@@ -5357,23 +5227,6 @@ impl Render for ProjectPanel {
                         this.refresh_drag_cursor_style(&event.modifiers, window, cx);
                     },
                 ))
-                .on_hover(cx.listener(|this, hovered, window, cx| {
-                    if *hovered {
-                        this.show_scrollbar = true;
-                        this.hide_scrollbar_task.take();
-                        cx.notify();
-                    } else if !this.focus_handle.contains_focused(window, cx) {
-                        this.hide_scrollbar(window, cx);
-                    }
-                }))
-                .on_click(cx.listener(|this, event, _, cx| {
-                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
-                        return;
-                    }
-                    cx.stop_propagation();
-                    this.selection = None;
-                    this.marked_entries.clear();
-                }))
                 .key_context(self.dispatch_context(window, cx))
                 .on_action(cx.listener(Self::select_next))
                 .on_action(cx.listener(Self::select_previous))
@@ -5443,16 +5296,6 @@ impl Render for ProjectPanel {
                 .when(project.is_via_remote_server(), |el| {
                     el.on_action(cx.listener(Self::open_in_terminal))
                 })
-                .on_mouse_down(
-                    MouseButton::Right,
-                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                        // When deploying the context menu anywhere below the last project entry,
-                        // act as if the user clicked the root of the last worktree.
-                        if let Some(entry_id) = this.last_worktree_root_id {
-                            this.deploy_context_menu(event.position, entry_id, window, cx);
-                        }
-                    }),
-                )
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
@@ -5670,6 +5513,7 @@ impl Render for ProjectPanel {
                         )
                         .child(
                             div()
+                                .id("project-panel-blank-area")
                                 .block_mouse_except_scroll()
                                 .flex_grow()
                                 .when(
@@ -5751,14 +5595,44 @@ impl Render for ProjectPanel {
                                         }
                                         cx.stop_propagation();
                                     },
-                                )),
+                                ))
+                                .on_click(cx.listener(|this, event, _, cx| {
+                                    if matches!(event, gpui::ClickEvent::Keyboard(_)) {
+                                        return;
+                                    }
+                                    cx.stop_propagation();
+                                    this.selection = None;
+                                    this.marked_entries.clear();
+                                }))
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                                        // When deploying the context menu anywhere below the last project entry,
+                                        // act as if the user clicked the root of the last worktree.
+                                        if let Some(entry_id) = this.last_worktree_root_id {
+                                            this.deploy_context_menu(
+                                                event.position,
+                                                entry_id,
+                                                window,
+                                                cx,
+                                            );
+                                        }
+                                    }),
+                                ),
                         )
                         .size_full(),
                 )
-                .children(self.render_vertical_scrollbar(cx))
-                .when_some(self.render_horizontal_scrollbar(cx), |this, scrollbar| {
-                    this.pb_4().child(scrollbar)
-                })
+                .custom_scrollbars(
+                    Scrollbars::for_settings::<ProjectPanelSettings>()
+                        .tracked_scroll_handle(self.scroll_handle.clone())
+                        .with_track_along(
+                            ScrollAxes::Horizontal,
+                            cx.theme().colors().panel_background,
+                        )
+                        .notify_content(),
+                    window,
+                    cx,
+                )
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()

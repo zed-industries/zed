@@ -1112,10 +1112,15 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
     const MAX_LINES: usize = 1000;
     workspace
         .with_local_workspace(window, cx, move |workspace, window, cx| {
-            let fs = workspace.app_state().fs.clone();
+            let app_state = workspace.app_state();
+            let languages = app_state.languages.clone();
+            let fs = app_state.fs.clone();
             cx.spawn_in(window, async move |workspace, cx| {
-                let (old_log, new_log) =
-                    futures::join!(fs.load(paths::old_log_file()), fs.load(paths::log_file()));
+                let (old_log, new_log, log_language) = futures::join!(
+                    fs.load(paths::old_log_file()),
+                    fs.load(paths::log_file()),
+                    languages.language_for_name("log")
+                );
                 let log = match (old_log, new_log) {
                     (Err(_), Err(_)) => None,
                     (old_log, new_log) => {
@@ -1138,6 +1143,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         )
                     }
                 };
+                let log_language = log_language.ok();
 
                 workspace
                     .update_in(cx, |workspace, window, cx| {
@@ -1163,7 +1169,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut Contex
                         };
                         let project = workspace.project().clone();
                         let buffer = project.update(cx, |project, cx| {
-                            project.create_local_buffer(&log, None, false, cx)
+                            project.create_local_buffer(&log, log_language, false, cx)
                         });
 
                         let buffer = cx

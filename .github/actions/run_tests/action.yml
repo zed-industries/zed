@@ -21,8 +21,3 @@ runs:
     - name: Run tests
       shell: bash -euxo pipefail {0}
       run: cargo nextest run --workspace --no-fail-fast
-
-    - name: Run doctests
-      shell: bash -euxo pipefail {0}
-      # Nextest currently doesn't support doctests
-      run: cargo test --workspace --doc --no-fail-fast

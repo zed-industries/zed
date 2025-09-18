@@ -4,7 +4,7 @@ mod onboarding_banner;
 pub mod platform_title_bar;
 mod platforms;
 mod system_window_tabs;
-mod title_bar_settings;
+pub mod title_bar_settings;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -35,7 +35,7 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::{path::Path, sync::Arc};
 use theme::ActiveTheme;
-use title_bar_settings::TitleBarSettings;
+use title_bar_settings::{TitleBarSettings, TitleBarVisibility};
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
@@ -73,8 +73,49 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-        workspace.set_titlebar_item(item.into(), window, cx);
+        let should_show = match TitleBarSettings::get_global(cx).show {
+            TitleBarVisibility::Always => true,
+            TitleBarVisibility::Never => false,
+            TitleBarVisibility::HideInFullScreen => !window.is_fullscreen(),
+        };
+        if should_show {
+            let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+            workspace.set_titlebar_item(item.into(), window, cx);
+        }
+
+        cx.observe_global_in::<settings::SettingsStore>(window, |workspace, window, cx| {
+            let should_show = match TitleBarSettings::get_global(cx).show {
+                TitleBarVisibility::Always => true,
+                TitleBarVisibility::Never => false,
+                TitleBarVisibility::HideInFullScreen => !window.is_fullscreen(),
+            };
+            if should_show {
+                if workspace.titlebar_item().is_none() {
+                    let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+                    workspace.set_titlebar_item(item.into(), window, cx);
+                }
+            } else {
+                workspace.clear_titlebar_item(window, cx);
+            }
+        })
+        .detach();
+
+        cx.observe_window_bounds(window, |workspace, window, cx| {
+            let should_show = match TitleBarSettings::get_global(cx).show {
+                TitleBarVisibility::Always => true,
+                TitleBarVisibility::Never => false,
+                TitleBarVisibility::HideInFullScreen => !window.is_fullscreen(),
+            };
+            if should_show {
+                if workspace.titlebar_item().is_none() {
+                    let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+                    workspace.set_titlebar_item(item.into(), window, cx);
+                }
+            } else {
+                workspace.clear_titlebar_item(window, cx);
+            }
+        })
+        .detach();
 
         #[cfg(not(target_os = "macos"))]
         workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
@@ -308,10 +349,11 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let nickname = if let RemoteConnectionOptions::Ssh(options) = options {
-            options.nickname.map(|nick| nick.into())
-        } else {
-            None
+        let (nickname, icon) = match options {
+            RemoteConnectionOptions::Ssh(options) => {
+                (options.nickname.map(|nick| nick.into()), IconName::Server)
+            }
+            RemoteConnectionOptions::Wsl(_) => (None, IconName::Linux),
         };
         let nickname = nickname.unwrap_or_else(|| host.clone());
 
@@ -349,9 +391,7 @@ impl TitleBar {
                         .max_w_32()
                         .child(
                             IconWithIndicator::new(
-                                Icon::new(IconName::Server)
-                                    .size(IconSize::Small)
-                                    .color(icon_color),
+                                Icon::new(icon).size(IconSize::Small).color(icon_color),
                                 Some(Indicator::dot().color(indicator_color)),
                             )
                             .indicator_border_color(Some(cx.theme().colors().title_bar_background))
@@ -596,9 +636,9 @@ impl TitleBar {
                     Some(AutoUpdateStatus::Installing { .. })
                     | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
-                    Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
-                        "Please update Zed to Collaborate"
-                    }
+                    Some(AutoUpdateStatus::Idle)
+                    | Some(AutoUpdateStatus::Errored { .. })
+                    | None => "Please update Zed to Collaborate",
                 };
 
                 Some(
