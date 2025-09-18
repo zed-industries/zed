@@ -245,6 +245,7 @@ fn context_server_input_template(server_type: ServerType) -> String {
     "command": "npx",
     /// The arguments to pass to the MCP server
     "args": [
+        "-y",
         "mcp-remote",
         "https://mcp.atlassian.com/v1/sse",
         "--header",
