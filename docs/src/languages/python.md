@@ -84,7 +84,7 @@ These are disabled by default, but can be enabled in your settings. For example:
       "language_servers": [
         // Disable basedpyright and enable Ty, and otherwise
         // use the default configuration.
-        "ty", "!basedpyright", ".."
+        "ty", "!basedpyright", "..."
       ]
     }
   }
