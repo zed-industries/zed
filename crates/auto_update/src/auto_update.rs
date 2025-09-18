@@ -8,9 +8,8 @@ use gpui::{
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi};
+use settings::{Settings, SettingsContent, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
 use std::{
@@ -113,47 +112,27 @@ impl Drop for MacOsUnmounter {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 struct AutoUpdateSetting(bool);
 
 /// Whether or not to automatically check for updates.
 ///
 /// Default: true
-#[derive(Clone, Copy, Default, JsonSchema, Deserialize, Serialize, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-#[settings_ui(group = "Auto Update")]
-struct AutoUpdateSettingContent {
-    pub auto_update: Option<bool>,
-}
-
 impl Settings for AutoUpdateSetting {
-    type FileContent = AutoUpdateSettingContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let auto_update = [
-            sources.server,
-            sources.release_channel,
-            sources.operating_system,
-            sources.user,
-        ]
-        .into_iter()
-        .find_map(|value| value.and_then(|val| val.auto_update))
-        .or(sources.default.auto_update)
-        .ok_or_else(Self::missing_default)?;
-
-        Ok(Self(auto_update))
+    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        debug_assert_eq!(content.auto_update.unwrap(), true);
+        Self(content.auto_update.unwrap())
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        let mut cur = &mut Some(*current);
-        vscode.enum_setting("update.mode", &mut cur, |s| match s {
-            "none" | "manual" => Some(AutoUpdateSettingContent {
-                auto_update: Some(false),
-            }),
-            _ => Some(AutoUpdateSettingContent {
-                auto_update: Some(true),
-            }),
-        });
-        *current = cur.unwrap();
+    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
+        if let Some(auto_update) = content.auto_update {
+            self.0 = auto_update;
+        }
+    }
+
+    fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut SettingsContent) {
+        // We could match on vscode's update.mode here, but
+        // I think it's more important to have more people updating zed by default.
     }
 }
 
@@ -1002,7 +981,7 @@ mod tests {
     #[gpui::test]
     fn test_auto_update_defaults_to_true(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            let mut store = SettingsStore::new(cx);
+            let mut store = SettingsStore::new(cx, &settings::default_settings());
             store
                 .set_default_settings(&default_settings(), cx)
                 .expect("Unable to set default settings");

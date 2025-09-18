@@ -31,14 +31,14 @@ pub struct EditPredictionExcerptOptions {
     pub include_parent_signatures: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EditPredictionExcerpt {
     pub range: Range<usize>,
     pub parent_signature_ranges: Vec<Range<usize>>,
     pub size: usize,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EditPredictionExcerptText {
     pub body: String,
     pub parent_signatures: Vec<String>,

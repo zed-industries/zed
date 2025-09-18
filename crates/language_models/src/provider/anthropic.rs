@@ -18,8 +18,6 @@ use language_model::{
     LanguageModelToolResultContent, MessageContent, RateLimiter, Role,
 };
 use language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr;
@@ -30,6 +28,8 @@ use ui::{Icon, IconName, List, Tooltip, prelude::*};
 use util::{ResultExt, truncate_and_trailoff};
 use zed_env_vars::{EnvVar, env_var};
 
+pub use settings::AnthropicAvailableModel as AvailableModel;
+
 const PROVIDER_ID: LanguageModelProviderId = language_model::ANTHROPIC_PROVIDER_ID;
 const PROVIDER_NAME: LanguageModelProviderName = language_model::ANTHROPIC_PROVIDER_NAME;
 
@@ -38,55 +38,6 @@ pub struct AnthropicSettings {
     pub api_url: String,
     /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
-    pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
-    pub display_name: Option<String>,
-    /// The model's context window size.
-    pub max_tokens: u64,
-    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
-    pub tool_override: Option<String>,
-    /// Configuration of Anthropic's caching API.
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u64>,
-    pub default_temperature: Option<f32>,
-    #[serde(default)]
-    pub extra_beta_headers: Vec<String>,
-    /// The model's mode (e.g. thinking)
-    pub mode: Option<ModelMode>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
-        budget_tokens: Option<u32>,
-    },
-}
-
-impl From<ModelMode> for AnthropicModelMode {
-    fn from(value: ModelMode) -> Self {
-        match value {
-            ModelMode::Default => AnthropicModelMode::Default,
-            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
-        }
-    }
-}
-
-impl From<AnthropicModelMode> for ModelMode {
-    fn from(value: AnthropicModelMode) -> Self {
-        match value {
-            AnthropicModelMode::Default => ModelMode::Default,
-            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
-        }
-    }
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -237,7 +188,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
                     extra_beta_headers: model.extra_beta_headers.clone(),
-                    mode: model.mode.clone().unwrap_or_default().into(),
+                    mode: model.mode.unwrap_or_default().into(),
                 },
             );
         }

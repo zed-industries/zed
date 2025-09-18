@@ -13,12 +13,10 @@ use language_model::{
 };
 use menu;
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OLLAMA_API_URL,
-    OllamaFunctionCall, OllamaFunctionTool, OllamaToolCall, get_models, show_model,
-    stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OLLAMA_API_URL, OllamaFunctionCall,
+    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::LazyLock;
@@ -46,24 +44,6 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct OllamaSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The model name in the Ollama API (e.g. "llama3.2:latest")
-    pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
-    pub display_name: Option<String>,
-    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
-    pub max_tokens: u64,
-    /// The number of seconds to keep the connection open after the last request
-    pub keep_alive: Option<KeepAlive>,
-    /// Whether the model supports tools
-    pub supports_tools: Option<bool>,
-    /// Whether the model supports vision
-    pub supports_images: Option<bool>,
-    /// Whether to enable think mode
-    pub supports_thinking: Option<bool>,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -703,15 +683,13 @@ impl ConfigurationView {
         let current_url = OllamaLanguageModelProvider::api_url(cx);
         if !api_url.is_empty() && &api_url != &current_url {
             let fs = <dyn Fs>::global(cx);
-            update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
-                if let Some(settings) = settings.ollama.as_mut() {
-                    settings.api_url = Some(api_url);
-                } else {
-                    settings.ollama = Some(crate::settings::OllamaSettingsContent {
-                        api_url: Some(api_url),
-                        available_models: None,
-                    });
-                }
+            update_settings_file(fs, cx, move |settings, _| {
+                settings
+                    .language_models
+                    .get_or_insert_default()
+                    .ollama
+                    .get_or_insert_default()
+                    .api_url = Some(api_url);
             });
         }
     }
@@ -720,8 +698,12 @@ impl ConfigurationView {
         self.api_url_editor
             .update(cx, |input, cx| input.set_text("", window, cx));
         let fs = <dyn Fs>::global(cx);
-        update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-            if let Some(settings) = settings.ollama.as_mut() {
+        update_settings_file(fs, cx, |settings, _cx| {
+            if let Some(settings) = settings
+                .language_models
+                .as_mut()
+                .and_then(|models| models.ollama.as_mut())
+            {
                 settings.api_url = Some(OLLAMA_API_URL.into());
             }
         });
