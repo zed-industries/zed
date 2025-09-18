@@ -1811,22 +1811,20 @@ impl AcpThread {
                 action_log.update(cx, |action_log, cx| {
                     action_log.buffer_read(buffer.clone(), cx);
                 })?;
-                project.update(cx, |project, cx| {
-                    let position = buffer
-                        .read(cx)
-                        .snapshot()
-                        .anchor_before(Point::new(line, 0));
-                    project.set_agent_location(
-                        Some(AgentLocation {
-                            buffer: buffer.downgrade(),
-                            position,
-                        }),
-                        cx,
-                    );
-                })?;
 
                 buffer.update(cx, |buffer, _| buffer.snapshot())?
             };
+
+            let position = snapshot.anchor_before(Point::new(line, 0));
+            project.update(cx, |project, cx| {
+                project.set_agent_location(
+                    Some(AgentLocation {
+                        buffer: buffer.downgrade(),
+                        position,
+                    }),
+                    cx,
+                );
+            })?;
 
             this.update(cx, |this, _| {
                 let text = snapshot.text();
