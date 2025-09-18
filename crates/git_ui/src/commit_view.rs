@@ -610,7 +610,7 @@ impl CommitViewToolbar {
         let Some(stash) = commit_view.read(cx).stash else {
             return;
         };
-        let hash = commit_view.read(cx).commit.sha.clone();
+        let sha = commit_view.read(cx).commit.sha.clone();
 
         let answer = window.prompt(
             PromptLevel::Info,
@@ -634,7 +634,7 @@ impl CommitViewToolbar {
                 return Ok(());
             };
             let result = repo.update(cx, |repo, cx| {
-                if !stash_matches_index(&hash, stash, repo) {
+                if !stash_matches_index(&sha, stash, repo) {
                     return Err(anyhow::anyhow!("Stash has changed, not applying"));
                 }
                 Ok(repo.stash_apply(Some(stash), cx))
@@ -660,7 +660,7 @@ impl CommitViewToolbar {
         let Some(stash) = commit_view.read(cx).stash else {
             return;
         };
-        let hash = commit_view.read(cx).commit.sha.clone();
+        let sha = commit_view.read(cx).commit.sha.clone();
         let answer = window.prompt(
             PromptLevel::Info,
             &format!("Pop stash@{{{}}}?", stash),
@@ -685,7 +685,7 @@ impl CommitViewToolbar {
                 return Ok(());
             };
             let result = repo.update(cx, |repo, cx| {
-                if !stash_matches_index(&hash, stash, repo) {
+                if !stash_matches_index(&sha, stash, repo) {
                     return Err(anyhow::anyhow!("Stash has changed, pop aborted"));
                 }
                 Ok(repo.stash_pop(Some(stash), cx))
@@ -711,7 +711,7 @@ impl CommitViewToolbar {
         let Some(stash) = commit_view.read(cx).stash else {
             return;
         };
-        let hash = commit_view.read(cx).commit.sha.clone();
+        let sha = commit_view.read(cx).commit.sha.clone();
         let answer = window.prompt(
             PromptLevel::Info,
             &format!("Remove stash@{{{}}}?", stash),
@@ -735,7 +735,7 @@ impl CommitViewToolbar {
                 return Ok(());
             };
             let result = repo.update(cx, |repo, cx| {
-                if !stash_matches_index(&hash, stash, repo) {
+                if !stash_matches_index(&sha, stash, repo) {
                     return Err(anyhow::anyhow!("Stash has changed, drop aborted"));
                 }
                 Ok(repo.stash_drop(Some(stash), cx))
@@ -861,7 +861,7 @@ fn register_workspace_action<A: Action>(
     });
 }
 
-fn stash_matches_index(hash: &str, index: usize, repo: &mut Repository) -> bool {
+fn stash_matches_index(sha: &str, index: usize, repo: &mut Repository) -> bool {
     match repo
         .cached_stash()
         .entries
@@ -869,7 +869,7 @@ fn stash_matches_index(hash: &str, index: usize, repo: &mut Repository) -> bool 
         .find(|entry| entry.index == index)
     {
         Some(entry) => {
-            if entry.oid.to_string() != hash {
+            if entry.oid.to_string() != sha {
                 return false;
             }
             true
