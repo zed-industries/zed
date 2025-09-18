@@ -1,14 +1,11 @@
-use crate::{CharBag, matcher::MatchCandidate};
+use crate::{CharBag, matcher};
 use gpui::BackgroundExecutor;
 use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Borrow,
     cmp, iter,
     ops::Range,
-    sync::{
-        Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 #[derive(Clone, Debug)]
@@ -25,16 +22,6 @@ impl StringMatchCandidate {
             string: string.into(),
             char_bag: string.into(),
         }
-    }
-}
-
-impl MatchCandidate for &StringMatchCandidate {
-    fn has_chars(&self, bag: CharBag) -> bool {
-        self.char_bag.is_superset(bag)
-    }
-
-    fn candidate_chars(&self) -> impl Iterator<Item = char> {
-        self.string.chars()
     }
 }
 
@@ -117,7 +104,7 @@ pub async fn match_strings<T>(
     candidates: &[T],
     query: &str,
     smart_case: bool,
-    penalize_length: bool, // TODO: re-add this functionality for lsp completions
+    prefer_prefix: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
     executor: BackgroundExecutor,
@@ -133,7 +120,7 @@ where
         if smart_case {
             CaseMatching::Smart
         } else {
-            CaseMatching::Respect
+            CaseMatching::Ignore
         },
         Normalization::Smart,
         AtomKind::Fuzzy,
@@ -157,15 +144,9 @@ where
         .map(|_| Vec::<StringMatch>::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
-    static MATCHERS: Mutex<Vec<nucleo::Matcher>> = Mutex::new(Vec::new());
-    let mut matchers: Vec<_> = {
-        let mut matchers = MATCHERS.lock().unwrap();
-        let numb_matchers = matchers.len();
-        matchers.drain(0..cmp::min(num_cpus, numb_matchers)).collect()
-    };
     let mut config = nucleo::Config::DEFAULT;
-    config.prefer_prefix = true;
-    matchers.resize_with(num_cpus, || nucleo::Matcher::new(config.clone()));
+    config.prefer_prefix = prefer_prefix;
+    let mut matchers = matcher::get_matchers(num_cpus, config);
 
     executor
         .scoped(|scope| {
@@ -205,7 +186,7 @@ where
         })
         .await;
 
-    MATCHERS.lock().unwrap().append(&mut matchers);
+    matcher::return_matchers(matchers);
 
     if cancel_flag.load(Ordering::Relaxed) {
         return Vec::new();
