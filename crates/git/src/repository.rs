@@ -14,7 +14,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::ffi::{OsStr, OsString};
 use std::io::prelude::*;
-use std::path::Component;
 use std::process::{ExitStatus, Stdio};
 use std::{
     cmp::Ordering,
@@ -679,7 +678,7 @@ impl GitRepository for RealGitRepository {
             let mut newline = [b'\0'];
             for (path, status_code) in changes {
                 // git-show outputs `/`-delimited paths even on Windows.
-                let Some(rel_path) = RelPath::new(path) else {
+                let Ok(rel_path) = RelPath::new(path) else {
                     continue;
                 };
 
@@ -2018,9 +2017,9 @@ async fn run_askpass_command(
 pub struct RepoPath(pub Arc<RelPath>);
 
 impl RepoPath {
-    pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Option<Self> {
+    pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
         let rel_path = RelPath::new(s)?;
-        Some(rel_path.into())
+        Ok(rel_path.into())
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2028,73 +2027,16 @@ impl RepoPath {
         Self(RelPath::from_str(s).into())
     }
 
-    pub fn from_proto(proto: &str) -> Option<Self> {
+    pub fn from_proto(proto: &str) -> Result<Self> {
         let rel_path = RelPath::from_proto(proto)?;
-        Some(rel_path.into())
+        Ok(rel_path.into())
     }
 
-    pub fn from_std_path(path: &Path, path_style: PathStyle) -> Option<Self> {
+    pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Self> {
         let rel_path = RelPath::from_std_path(path, path_style)?;
-        Some(rel_path.into())
+        Ok(rel_path.into())
     }
-
-    // pub fn new(path: PathBuf) -> Self {
-    //     debug_assert!(path.is_relative(), "Repo paths must be relative");
-
-    //     RepoPath(path.into())
-    // }
-
-    // pub fn from_str(path: &str) -> Self {
-    //     let path = Path::new(path);
-    //     debug_assert!(path.is_relative(), "Repo paths must be relative");
-
-    //     RepoPath(path.into())
-    // }
-
-    // pub fn to_unix_style(&self) -> Cow<'_, OsStr> {
-    //     #[cfg(target_os = "windows")]
-    //     {
-    //         use std::ffi::OsString;
-
-    //         let path = self.0.as_os_str().to_string_lossy().replace("\\", "/");
-    //         Cow::Owned(OsString::from(path))
-    //     }
-    //     #[cfg(not(target_os = "windows"))]
-    //     {
-    //         Cow::Borrowed(self.0.as_os_str())
-    //     }
-    // }
 }
-
-// impl std::fmt::Display for RepoPath {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         self.0.to_string_lossy().fmt(f)
-//     }
-// }
-
-// impl From<&Path> for RepoPath {
-//     fn from(value: &Path) -> Self {
-//         RepoPath::new(value.into())
-//     }
-// }
-
-// impl From<Arc<Path>> for RepoPath {
-//     fn from(value: Arc<Path>) -> Self {
-//         RepoPath(value)
-//     }
-// }
-
-// impl From<PathBuf> for RepoPath {
-//     fn from(value: PathBuf) -> Self {
-//         RepoPath::new(value)
-//     }
-// }
-
-// impl From<&str> for RepoPath {
-//     fn from(value: &str) -> Self {
-//         Self::from_str(value)
-//     }
-// }
 
 impl From<&RelPath> for RepoPath {
     fn from(value: &RelPath) -> Self {
@@ -2122,25 +2064,11 @@ impl std::ops::Deref for RepoPath {
     }
 }
 
-// impl AsRef<Path> for RepoPath {
-//     fn as_ref(&self) -> &Path {
-//         self.0.as_ref()
-//     }
-// }
-
-// impl std::ops::Deref for RepoPath {
-//     type Target = Path;
-
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
-//     }
-// }
-
-// impl Borrow<Path> for RepoPath {
-//     fn borrow(&self) -> &Path {
-//         self.0.as_ref()
-//     }
-// }
+impl AsRef<Path> for RepoPath {
+    fn as_ref(&self) -> &Path {
+        RelPath::as_ref(&self.0)
+    }
+}
 
 #[derive(Debug)]
 pub struct RepoPathDescendants<'a>(pub &'a RepoPath);
@@ -2227,35 +2155,6 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
         ahead,
         behind,
     }))
-}
-
-fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
-    match relative_file_path.components().next() {
-        None => anyhow::bail!("repo path should not be empty"),
-        Some(Component::Prefix(_)) => anyhow::bail!(
-            "repo path `{}` should be relative, not a windows prefix",
-            relative_file_path.to_string_lossy()
-        ),
-        Some(Component::RootDir) => {
-            anyhow::bail!(
-                "repo path `{}` should be relative",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        Some(Component::CurDir) => {
-            anyhow::bail!(
-                "repo path `{}` should not start with `.`",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        Some(Component::ParentDir) => {
-            anyhow::bail!(
-                "repo path `{}` should not start with `..`",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        _ => Ok(()),
-    }
 }
 
 fn checkpoint_author_envs() -> HashMap<String, String> {

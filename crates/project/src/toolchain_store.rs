@@ -246,10 +246,10 @@ impl ToolchainStore {
                 language_name,
             };
             let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-            let path: Arc<Path> = if let Some(path) = envelope.payload.path {
-                Arc::from(path.as_ref())
+            let path = if let Some(path) = envelope.payload.path {
+                RelPath::from_proto(&path)?
             } else {
-                Arc::from("".as_ref())
+                RelPath::empty().into()
             };
             Ok(this.activate_toolchain(ProjectPath { worktree_id, path }, toolchain, cx))
         })??
@@ -261,12 +261,11 @@ impl ToolchainStore {
         envelope: TypedEnvelope<proto::ActiveToolchain>,
         mut cx: AsyncApp,
     ) -> Result<proto::ActiveToolchainResponse> {
+        let path = RelPath::new(envelope.payload.path.as_deref().unwrap_or(""))?;
         let toolchain = this
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
                 let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-                let path = RelPath::new(envelope.payload.path.as_deref().unwrap_or(""))
-                    .context("Expected a relative path")?;
                 this.active_toolchain(
                     ProjectPath {
                         worktree_id,
@@ -299,9 +298,9 @@ impl ToolchainStore {
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
                 let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-                let path = Arc::from(envelope.payload.path.as_deref().unwrap_or("").as_ref());
-                this.list_toolchains(ProjectPath { worktree_id, path }, language_name, cx)
-            })?
+                let path = RelPath::from_proto(envelope.payload.path.as_deref().unwrap_or(""))?;
+                Ok(this.list_toolchains(ProjectPath { worktree_id, path }, language_name, cx))
+            })??
             .await;
         let has_values = toolchains.is_some();
         let groups = if let Some(Toolchains { toolchains, .. }) = &toolchains {

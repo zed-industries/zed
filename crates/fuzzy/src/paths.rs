@@ -8,6 +8,7 @@ use std::{
         atomic::{self, AtomicBool},
     },
 };
+use util::{paths::PathStyle, rel_path::RelPath};
 
 use crate::{
     CharBag,
@@ -17,7 +18,7 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
     pub is_dir: bool,
-    pub path: &'a Path,
+    pub path: &'a RelPath,
     pub char_bag: CharBag,
 }
 
@@ -41,8 +42,9 @@ pub trait PathMatchCandidateSet<'a>: Send + Sync {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
-    fn prefix(&self) -> Arc<str>;
+    fn prefix(&self) -> Arc<RelPath>;
     fn candidates(&'a self, start: usize) -> Self::Candidates;
+    fn path_style(&self) -> PathStyle;
 }
 
 impl<'a> MatchCandidate for PathMatchCandidate<'a> {
@@ -51,7 +53,7 @@ impl<'a> MatchCandidate for PathMatchCandidate<'a> {
     }
 
     fn to_string(&self) -> Cow<'a, str> {
-        self.path.to_string_lossy()
+        self.path.into()
     }
 }
 
@@ -121,7 +123,7 @@ pub fn match_fixed_path_set(
 pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,
-    relative_to: Option<Arc<Path>>,
+    relative_to: Option<Arc<RelPath>>,
     smart_case: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,

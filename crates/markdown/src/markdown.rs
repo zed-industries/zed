@@ -335,7 +335,7 @@ impl Markdown {
                 }
 
                 for path in paths {
-                    if let Some(rel_path) = RelPath::new(&path)
+                    if let Ok(rel_path) = RelPath::new(&path)
                         && let Ok(language) = registry.language_for_file_path(&rel_path).await
                     {
                         languages_by_path.insert(path, language);

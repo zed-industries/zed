@@ -79,7 +79,7 @@ use gpui::{
 };
 use language::{
     Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
-    LanguageRegistry, PointUtf16, SymbolPath, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
+    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
     ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
 };
@@ -372,7 +372,7 @@ impl ProjectPath {
     pub fn from_proto(p: proto::ProjectPath) -> Option<Self> {
         Some(Self {
             worktree_id: WorktreeId::from_proto(p.worktree_id),
-            path: RelPath::from_proto(p.path),
+            path: RelPath::from_proto(&p.path).log_err()?,
         })
     }
 
@@ -894,8 +894,7 @@ impl DirectoryLister {
         .read(cx)
         .visible_worktrees(cx)
         .next()
-        .map(|worktree| worktree.read(cx).abs_path())
-        .map(|dir| dir.to_string())
+        .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
         .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().to_string()))
         .map(|mut s| {
             s.push_str(separator);
@@ -2166,7 +2165,7 @@ impl Project {
     ) -> Task<Result<Option<Entry>>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.copy_entry(entry_id, new_project_path, cx)
-        });
+        })
     }
 
     /// Renames the project entry with given `entry_id`.
@@ -2180,7 +2179,6 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Result<CreatedEntry>> {
         let worktree_store = self.worktree_store.clone();
-        let new_path = new_path.into();
         let Some((worktree, old_path, is_dir)) = worktree_store
             .read(cx)
             .worktree_and_entry_for_id(entry_id, cx)
@@ -2197,11 +2195,14 @@ impl Project {
             let (old_abs_path, new_abs_path) = {
                 let root_path = worktree.read_with(cx, |this, _| this.abs_path())?;
                 let new_abs_path = if is_root_entry {
-                    root_path.parent().unwrap().join(&new_path)
+                    root_path
+                        .parent()
+                        .unwrap()
+                        .join(new_path.path.as_std_path())
                 } else {
-                    root_path.join(&new_path)
+                    root_path.join(&new_path.path.as_std_path())
                 };
-                (root_path.join(&old_path), new_abs_path)
+                (root_path.join(old_path.as_std_path()), new_abs_path)
             };
             let transaction = LspStore::will_rename_entry(
                 lsp_store.clone(),
@@ -4051,7 +4052,7 @@ impl Project {
             .filter(|buffer| {
                 let b = buffer.read(cx);
                 if let Some(file) = b.file() {
-                    if !search_query.match_path(file.path()) {
+                    if !search_query.match_path(file.path().as_std_path()) {
                         return false;
                     }
                     if let Some(entry) = b
@@ -4071,7 +4072,10 @@ impl Project {
             (None, None) => a.read(cx).remote_id().cmp(&b.read(cx).remote_id()),
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => compare_paths((a.path(), true), (b.path(), true)),
+            (Some(a), Some(b)) => compare_paths(
+                (a.path().as_std_path(), true),
+                (b.path().as_std_path(), true),
+            ),
         });
         for buffer in buffers {
             tx.send_blocking(buffer.clone()).unwrap()
@@ -4178,13 +4182,17 @@ impl Project {
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<(Entity<Worktree>, PathBuf)>> {
+    ) -> Task<Result<(Entity<Worktree>, Arc<RelPath>)>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.find_or_create_worktree(abs_path, visible, cx)
         })
     }
 
-    pub fn find_worktree(&self, abs_path: &Path, cx: &App) -> Option<(Entity<Worktree>, PathBuf)> {
+    pub fn find_worktree(
+        &self,
+        abs_path: &Path,
+        cx: &App,
+    ) -> Option<(Entity<Worktree>, Arc<RelPath>)> {
         self.worktree_store.read(cx).find_worktree(abs_path, cx)
     }
 
@@ -4273,7 +4281,7 @@ impl Project {
         if let Some(file) = buffer.read(cx).file()
             && let Some(dir) = file.path().parent()
         {
-            let joined = dir.to_path_buf().join(path);
+            let joined = dir.as_std_path().join(&path);
             candidates.push(joined);
         }
 
@@ -4319,10 +4327,14 @@ impl Project {
     ) -> Option<ResolvedPath> {
         worktree
             .read_with(cx, |worktree, _| {
-                let root_entry_path = &worktree.root_entry()?.path;
+                let root_entry_path = &worktree.abs_path();
                 let resolved = resolve_path(root_entry_path, path);
-                let stripped = resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
-                worktree.entry_for_path(stripped).map(|entry| {
+                let stripped = RelPath::from_std_path(
+                    resolved.strip_prefix(root_entry_path).unwrap_or(&resolved),
+                    worktree.path_style(),
+                )
+                .ok()?;
+                worktree.entry_for_path(&stripped).map(|entry| {
                     let project_path = ProjectPath {
                         worktree_id: worktree.id(),
                         path: entry.path.clone(),
@@ -4397,7 +4409,7 @@ impl Project {
     pub fn set_active_path(&mut self, entry: Option<ProjectPath>, cx: &mut Context<Self>) {
         let new_active_entry = entry.and_then(|project_path| {
             let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
-            let entry = worktree.read(cx).entry_for_path(project_path.path)?;
+            let entry = worktree.read(cx).entry_for_path(&project_path.path)?;
             Some(entry.id)
         });
         if new_active_entry != self.active_entry {
@@ -4458,10 +4470,11 @@ impl Project {
     }
 
     pub fn absolute_path(&self, project_path: &ProjectPath, cx: &App) -> Option<PathBuf> {
-        self.worktree_for_id(project_path.worktree_id, cx)?
-            .read(cx)
-            .absolutize(&project_path.path)
-            .ok()
+        Some(
+            self.worktree_for_id(project_path.worktree_id, cx)?
+                .read(cx)
+                .absolutize(&project_path.path),
+        )
     }
 
     /// Attempts to find a `ProjectPath` corresponding to the given path. If the path
@@ -4474,7 +4487,7 @@ impl Project {
     ///
     /// # Arguments
     ///
-    /// * `path` - A full path that starts with a worktree root name, or alternatively a
+    /// * `path` - An absolute path, or a full path that starts with a worktree root name, or a
     ///   relative path within a visible worktree.
     /// * `cx` - A reference to the `AppContext`.
     ///
@@ -4482,6 +4495,7 @@ impl Project {
     ///
     /// Returns `Some(ProjectPath)` if a matching worktree is found, otherwise `None`.
     pub fn find_project_path(&self, path: impl AsRef<Path>, cx: &App) -> Option<ProjectPath> {
+        let path_style = self.path_style(cx);
         let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
@@ -4489,27 +4503,33 @@ impl Project {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_abs_path = worktree.read(cx).abs_path();
 
-                if let Ok(relative_path) = path.strip_prefix(worktree_abs_path) {
+                if let Ok(relative_path) = path.strip_prefix(worktree_abs_path)
+                    && let Ok(path) = RelPath::from_std_path(relative_path, path_style)
+                {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative_path.into(),
+                        path,
                     });
                 }
             }
         } else {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
-                if let Ok(relative_path) = path.strip_prefix(worktree_root_name) {
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name)
+                    && let Ok(path) = RelPath::from_std_path(relative_path, path_style)
+                {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative_path.into(),
+                        path,
                     });
                 }
             }
 
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Some(entry) = worktree.entry_for_path(path) {
+                if let Ok(path) = RelPath::from_std_path(path, path_style)
+                    && let Some(entry) = worktree.entry_for_path(&path)
+                {
                     return Some(ProjectPath {
                         worktree_id: worktree.id(),
                         path: entry.path.clone(),
@@ -4524,17 +4544,25 @@ impl Project {
     /// If there's only one visible worktree, returns the given worktree-relative path with no prefix.
     ///
     /// Otherwise, returns the full path for the project path (obtained by prefixing the worktree-relative path with the name of the worktree).
-    pub fn short_full_path_for_project_path(
+    pub fn short_full_path_for_project_path<'a>(
         &self,
-        project_path: &ProjectPath,
+        project_path: &'a ProjectPath,
         cx: &App,
-    ) -> Option<PathBuf> {
+    ) -> Option<String> {
+        let path_style = self.path_style(cx);
         if self.visible_worktrees(cx).take(2).count() < 2 {
-            return Some(project_path.path.as_std_path());
+            return Some(project_path.path.display(path_style).to_string());
         }
         self.worktree_for_id(project_path.worktree_id, cx)
             .and_then(|worktree| {
-                Some(Path::new(worktree.read(cx).abs_path().file_name()?).join(&project_path.path))
+                let worktree_name = worktree.read(cx).root_name();
+                Some(
+                    RelPath::new(worktree_name)
+                        .unwrap()
+                        .join(&project_path.path)
+                        .display(path_style)
+                        .to_string(),
+                )
             })
     }
 
@@ -4949,13 +4977,13 @@ impl Project {
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let path = RelPath::from_proto(envelope.payload.path)?.into();
-        let open_buffer = this.update(&mut cx, |this, cx| {
-            this.open_buffer(ProjectPath { worktree_id, path }, cx)
-        })??;
-
-        let buffer = open_buffer.await?;
-        Project::respond_to_open_buffer_request(this, buffer, peer_id, &mut cx)
+        let path = RelPath::from_proto(&envelope.payload.path)?.into();
+        let open_buffer = this
+            .update(&mut cx, |this, cx| {
+                this.open_buffer(ProjectPath { worktree_id, path }, cx)
+            })?
+            .await?;
+        Project::respond_to_open_buffer_request(this, open_buffer, peer_id, &mut cx)
     }
 
     async fn handle_open_new_buffer(
@@ -5361,14 +5389,16 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         }
     }
 
-    fn prefix(&self) -> Arc<str> {
-        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) {
-            self.snapshot.root_name().into()
+    fn prefix(&self) -> Arc<RelPath> {
+        if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
+            RelPath::new(self.snapshot.root_name()).unwrap().into()
         } else if self.include_root_name {
-            format!("{}{}", self.snapshot.root_name(), std::path::MAIN_SEPARATOR).into()
-        } else {
-            Arc::default()
+            RelPath::empty().into()
         }
+    }
+
+    fn path_style(&self) -> PathStyle {
+        self.snapshot.path_style()
     }
 
     fn candidates(&'a self, start: usize) -> Self::Candidates {
@@ -5566,8 +5596,8 @@ pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
         let entry_a = entry_a.as_ref();
         let entry_b = entry_b.as_ref();
         compare_paths(
-            (&entry_a.path, entry_a.is_file()),
-            (&entry_b.path, entry_b.is_file()),
+            (entry_a.path.as_std_path(), entry_a.is_file()),
+            (entry_b.path.as_std_path(), entry_b.is_file()),
         )
     });
 }

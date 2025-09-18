@@ -216,9 +216,7 @@ impl AgentTool for EditFileTool {
                         .read(cx)
                         .short_full_path_for_project_path(&project_path, cx)
                 })
-                .unwrap_or(Path::new(&input.path).into())
-                .to_string_lossy()
-                .to_string()
+                .unwrap_or(input.path.into())
                 .into(),
             Err(raw_input) => {
                 if let Some(input) =
@@ -235,9 +233,7 @@ impl AgentTool for EditFileTool {
                                     .read(cx)
                                     .short_full_path_for_project_path(&project_path, cx)
                             })
-                            .unwrap_or(Path::new(&input.path).into())
-                            .to_string_lossy()
-                            .to_string()
+                            .unwrap_or(input.path.into())
                             .into();
                     }
 

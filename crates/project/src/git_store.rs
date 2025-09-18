@@ -1683,8 +1683,8 @@ impl GitStore {
             .payload
             .paths
             .into_iter()
-            .filter_map(|path| RepoPath::new(&path))
-            .collect();
+            .map(|path| RepoPath::new(&path))
+            .collect::<Result<Vec<_>>>()?;
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
@@ -1706,8 +1706,8 @@ impl GitStore {
             .payload
             .paths
             .into_iter()
-            .filter_map(|path| RepoPath::new(&path))
-            .collect();
+            .map(|path| RepoPath::new(&path))
+            .collect::<Result<Vec<_>>>()?;
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
@@ -1730,8 +1730,8 @@ impl GitStore {
             .payload
             .paths
             .into_iter()
-            .filter_map(|path| RepoPath::new(&path))
-            .collect();
+            .map(|path| RepoPath::new(&path))
+            .collect::<Result<Vec<_>>>()?;
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
@@ -2887,7 +2887,7 @@ impl RepositorySnapshot {
         abs_path
             .strip_prefix(&work_directory_abs_path)
             .ok()
-            .and_then(|path| RepoPath::from_std_path(path, path_style))
+            .and_then(|path| RepoPath::from_std_path(path, path_style).ok())
     }
 
     pub fn had_conflict_on_last_merge_head_change(&self, repo_path: &RepoPath) -> bool {
@@ -3539,14 +3539,14 @@ impl Repository {
                         files: response
                             .files
                             .into_iter()
-                            .filter_map(|file| {
-                                Some(CommitFile {
+                            .map(|file| {
+                                Ok(CommitFile {
                                     path: RepoPath::from_proto(&file.path)?,
                                     old_text: file.old_text,
                                     new_text: file.new_text,
                                 })
                             })
-                            .collect(),
+                            .collect::<Result<Vec<_>>>()?,
                     })
                 }
             }
@@ -4393,7 +4393,7 @@ impl Repository {
             update
                 .current_merge_conflicts
                 .into_iter()
-                .filter_map(|path| RepoPath::from_proto(&path)),
+                .filter_map(|path| RepoPath::from_proto(&path).log_err()),
         );
         self.snapshot.branch = update.branch_summary.as_ref().map(proto_to_branch);
         self.snapshot.head_commit = update
@@ -4414,7 +4414,11 @@ impl Repository {
         let edits = update
             .removed_statuses
             .into_iter()
-            .filter_map(|path| Some(sum_tree::Edit::Remove(PathKey(RelPath::from_proto(&path)?))))
+            .filter_map(|path| {
+                Some(sum_tree::Edit::Remove(PathKey(
+                    RelPath::from_proto(&path).log_err()?,
+                )))
+            })
             .chain(
                 update
                     .updated_statuses

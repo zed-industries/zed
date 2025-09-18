@@ -2831,35 +2831,35 @@ impl ProjectPanel {
     fn move_worktree_entry(
         &mut self,
         entry_to_move: ProjectEntryId,
-        destination: ProjectEntryId,
+        destination_entry: ProjectEntryId,
         destination_is_file: bool,
         cx: &mut Context<Self>,
     ) {
-        if entry_to_move == destination {
+        if entry_to_move == destination_entry {
             return;
         }
 
         let destination_worktree = self.project.update(cx, |project, cx| {
-            let entry_path = project.path_for_entry(entry_to_move, cx)?;
-            let destination_entry_path = project.path_for_entry(destination, cx)?.path;
+            let source_path = project.path_for_entry(entry_to_move, cx)?;
+            let destination_path = project.path_for_entry(destination_entry, cx)?;
 
-            let mut destination_path = destination_entry_path.as_ref();
+            let mut destination_path = destination_path.path.as_ref();
             if destination_is_file {
                 destination_path = destination_path.parent()?;
             }
 
             let mut new_path = destination_path.to_path_buf();
-            new_path.push(entry_path.path.file_name()?);
-            if new_path != entry_path.path.as_ref() {
+            new_path.push(source_path.path.file_name()?);
+            if new_path != source_path {
                 let task = project.rename_entry(entry_to_move, new_path, cx);
                 cx.foreground_executor().spawn(task).detach_and_log_err(cx);
             }
 
-            project.worktree_id_for_entry(destination, cx)
+            project.worktree_id_for_entry(destination_entry, cx)
         });
 
         if let Some(destination_worktree) = destination_worktree {
-            self.expand_entry(destination_worktree, destination, cx);
+            self.expand_entry(destination_worktree, destination_entry, cx);
         }
     }
 

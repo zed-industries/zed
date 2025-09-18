@@ -56,7 +56,7 @@ impl ManifestProvider for PyprojectTomlManifestProvider {
         for path in path.ancestors().take(depth) {
             let p = path.join("pyproject.toml");
             if delegate.exists(&p, Some(false)) {
-                return Some(path.into());
+                return Some(path);
             }
         }
 

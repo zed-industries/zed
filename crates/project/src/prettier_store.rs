@@ -447,7 +447,7 @@ impl PrettierStore {
     ) {
         let prettier_config_files = Prettier::CONFIG_FILE_NAMES
             .iter()
-            .map(Path::new)
+            .map(|name| RelPath::new(name).unwrap())
             .collect::<HashSet<_>>();
 
         let prettier_config_file_changed = changes
@@ -456,7 +456,7 @@ impl PrettierStore {
             .filter(|(path, _, _)| {
                 !path
                     .components()
-                    .any(|component| component.as_os_str().to_string_lossy() == "node_modules")
+                    .any(|component| component == "node_modules")
             })
             .find(|(path, _, _)| prettier_config_files.contains(path.as_ref()));
         let current_worktree_id = worktree.read(cx).id();

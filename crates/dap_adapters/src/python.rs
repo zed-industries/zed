@@ -733,6 +733,7 @@ impl DebugAdapter for PythonDebugAdapter {
                         .ok()?,
                     PathStyle::current(),
                 )
+                .ok()
             })
             .unwrap_or_else(|| RelPath::empty().into());
         let toolchain = delegate

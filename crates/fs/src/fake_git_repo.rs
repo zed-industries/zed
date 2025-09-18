@@ -226,7 +226,7 @@ impl GitRepository for FakeGitRepository {
                     .read_file_sync(path)
                     .ok()
                     .map(|content| String::from_utf8(content).unwrap())?;
-                let repo_path = RelPath::from_std_path(repo_path, PathStyle::current())?;
+                let repo_path = RelPath::from_std_path(repo_path, PathStyle::current()).ok()?;
                 Some((repo_path.into(), (content, is_ignored)))
             })
             .collect();

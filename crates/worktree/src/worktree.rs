@@ -442,7 +442,7 @@ impl Worktree {
                 if !metadata.is_dir {
                     if let Some(file_name) = abs_path.file_name()
                         && let Some(file_name) = file_name.to_str()
-                        && let Some(path) = RelPath::new(file_name)
+                        && let Ok(path) = RelPath::new(file_name)
                     {
                         entry.is_private = !share_private_files && settings.is_path_private(path);
                     }
@@ -1670,10 +1670,13 @@ impl LocalWorktree {
         let paths_to_refresh = paths
             .iter()
             .filter_map(|(_, target)| {
-                Some(RelPath::from_std_path(
-                    target.strip_prefix(&worktree_path).ok()?,
-                    PathStyle::current(),
-                )?)
+                Some(
+                    RelPath::from_std_path(
+                        target.strip_prefix(&worktree_path).ok()?,
+                        PathStyle::current(),
+                    )
+                    .ok()?,
+                )
             })
             .collect::<Vec<_>>();
 
@@ -2074,7 +2077,7 @@ impl RemoteWorktree {
                 let Some(filename) = root_path_to_copy
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .and_then(|filename| RelPath::new(filename))
+                    .and_then(|filename| RelPath::new(filename).ok())
                 else {
                     continue;
                 };
@@ -2083,10 +2086,11 @@ impl RemoteWorktree {
                 {
                     let Some(relative_path) = abs_path
                         .strip_prefix(&root_path_to_copy)
-                        .ok()
+                        .map_err(|e| anyhow::Error::from(e))
                         .and_then(|relative_path| {
                             RelPath::from_std_path(relative_path, PathStyle::current())
                         })
+                        .log_err()
                     else {
                         continue;
                     };
@@ -3869,7 +3873,10 @@ impl BackgroundScanner {
 
                 let dot_git_paths = abs_path.as_path().ancestors().find_map(|ancestor| {
                     if smol::block_on(is_git_dir(ancestor, self.fs.as_ref())) {
-                        let path_in_git_dir = abs_path.as_path().strip_prefix(ancestor).expect("stripping off the ancestor");
+                        let path_in_git_dir = abs_path
+                            .as_path()
+                            .strip_prefix(ancestor)
+                            .expect("stripping off the ancestor");
                         Some((ancestor.to_owned(), path_in_git_dir.to_owned()))
                     } else {
                         None
@@ -3877,7 +3884,13 @@ impl BackgroundScanner {
                 });
 
                 if let Some((dot_git_abs_path, path_in_git_dir)) = dot_git_paths {
-                    if skipped_files_in_dot_git.iter().any(|skipped| OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str()) || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| path_in_git_dir.starts_with(skipped_git_subdir)) {
+                    if skipped_files_in_dot_git
+                        .iter()
+                        .any(|skipped| OsStr::new(skipped) == path_in_git_dir.as_path().as_os_str())
+                        || skipped_dirs_in_dot_git.iter().any(|skipped_git_subdir| {
+                            path_in_git_dir.starts_with(skipped_git_subdir)
+                        })
+                    {
                         log::debug!("ignoring event {abs_path:?} as it's in the .git directory among skipped files or directories");
                         return false;
                     }
@@ -3888,25 +3901,33 @@ impl BackgroundScanner {
                     }
                 }
 
-                let relative_path: Arc<RelPath> =
-                    if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) && let Some(path) = RelPath::from_std_path(path, PathStyle::current()) {
-                        path
+                let relative_path: Arc<RelPath> = if let Ok(path) =
+                    abs_path.strip_prefix(&root_canonical_path)
+                    && let Ok(path) = RelPath::from_std_path(path, PathStyle::current())
+                {
+                    path
+                } else {
+                    if is_git_related {
+                        log::debug!(
+                            "ignoring event {abs_path:?}, since it's in git dir outside of root path {root_canonical_path:?}",
+                        );
                     } else {
-                        if is_git_related {
-                            log::debug!(
-                              "ignoring event {abs_path:?}, since it's in git dir outside of root path {root_canonical_path:?}",
-                            );
-                        } else {
-                            log::error!(
-                              "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
-                            );
-                        }
-                        return false;
-                    };
+                        log::error!(
+                          "ignoring event {abs_path:?} outside of root path {root_canonical_path:?}",
+                        );
+                    }
+                    return false;
+                };
 
                 if abs_path.file_name() == Some(OsStr::new(GITIGNORE)) {
-                    for (_, repo) in snapshot.git_repositories.iter().filter(|(_, repo)| repo.directory_contains(&relative_path)) {
-                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| dot_git_abs_path == repo.common_dir_abs_path.as_ref()) {
+                    for (_, repo) in snapshot
+                        .git_repositories
+                        .iter()
+                        .filter(|(_, repo)| repo.directory_contains(&relative_path))
+                    {
+                        if !dot_git_abs_paths.iter().any(|dot_git_abs_path| {
+                            dot_git_abs_path == repo.common_dir_abs_path.as_ref()
+                        }) {
                             dot_git_abs_paths.push(repo.common_dir_abs_path.to_path_buf());
                         }
                     }
@@ -4181,7 +4202,7 @@ impl BackgroundScanner {
             let child_name = child_abs_path.file_name().unwrap();
             let Some(child_path) = child_name
                 .to_str()
-                .and_then(|name| Some(job.path.join(RelPath::new(name)?)))
+                .and_then(|name| Some(job.path.join(RelPath::new(name).ok()?)))
             else {
                 continue;
             };
@@ -4553,7 +4574,7 @@ impl BackgroundScanner {
                 .retain(|parent_abs_path, (_, needs_update)| {
                     if let Ok(parent_path) = parent_abs_path.strip_prefix(abs_path.as_path())
                         && let Some(parent_path) =
-                            RelPath::from_std_path(&parent_path, PathStyle::current())
+                            RelPath::from_std_path(&parent_path, PathStyle::current()).log_err()
                     {
                         if *needs_update {
                             *needs_update = false;
@@ -4610,7 +4631,7 @@ impl BackgroundScanner {
             .abs_path
             .strip_prefix(snapshot.abs_path.as_path())
             .unwrap();
-        let Some(path) = RelPath::from_std_path(&path, PathStyle::current()) else {
+        let Some(path) = RelPath::from_std_path(&path, PathStyle::current()).log_err() else {
             return;
         };
 

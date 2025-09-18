@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 
 use crate::paths::{PathStyle, SanitizedPath};
 
@@ -142,7 +142,7 @@ impl RelPath {
         unsafe { Self::new_unchecked("") }
     }
 
-    pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Option<&Self> {
+    pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> anyhow::Result<&Self> {
         let this = unsafe { Self::new_unchecked(s) };
         if this.0.starts_with("/")
             || this.0.ends_with("/")
@@ -150,10 +150,9 @@ impl RelPath {
                 .components()
                 .any(|component| component == ".." || component == "." || component.is_empty())
         {
-            log::debug!("invalid relative path: {:?}", &this.0);
-            return None;
+            bail!("invalid relative path: {:?}", &this.0);
         }
-        Some(this)
+        Ok(this)
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -161,8 +160,8 @@ impl RelPath {
         Self::new(s.as_ref()).unwrap()
     }
 
-    pub fn from_std_path(path: &Path, path_style: PathStyle) -> Option<Arc<Self>> {
-        let mut string = Cow::Borrowed(path.to_str()?);
+    pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Arc<Self>> {
+        let mut string = Cow::Borrowed(path.to_str().context("non utf-8 path")?);
 
         if path_style == PathStyle::Windows {
             string = Cow::Owned(string.as_ref().replace('\\', "/"))
@@ -249,8 +248,8 @@ impl RelPath {
         self.0.to_owned()
     }
 
-    pub fn from_proto(path: &str) -> Option<Arc<Self>> {
-        Some(Arc::from(Self::new(path)?))
+    pub fn from_proto(path: &str) -> Result<Arc<Self>> {
+        Ok(Arc::from(Self::new(path)?))
     }
 
     pub fn as_str(&self) -> &str {
@@ -284,11 +283,10 @@ impl From<&RelPath> for Arc<RelPath> {
     }
 }
 
-impl<'a> TryFrom<&'a str> for &'a RelPath {
-    type Error = ();
-
-    fn try_from(value: &str) -> std::result::Result<&RelPath, ()> {
-        RelPath::new(value).ok_or(())
+#[cfg(any(test, feature = "test-support"))]
+impl<'a> From<&'a str> for &'a RelPath {
+    fn from(value: &'a str) -> Self {
+        RelPath::new(value).unwrap()
     }
 }
 
@@ -362,17 +360,17 @@ mod tests {
 
     #[test]
     fn test_path_construction() {
-        assert!(RelPath::new("/").is_none());
-        assert!(RelPath::new("/foo").is_none());
-        assert!(RelPath::new("foo/").is_none());
-        assert!(RelPath::new("foo//bar").is_none());
-        assert!(RelPath::new("foo/../bar").is_none());
-        assert!(RelPath::new("./foo/bar").is_none());
-        assert!(RelPath::new("..").is_none());
+        assert!(RelPath::new("/").is_err());
+        assert!(RelPath::new("/foo").is_err());
+        assert!(RelPath::new("foo/").is_err());
+        assert!(RelPath::new("foo//bar").is_err());
+        assert!(RelPath::new("foo/../bar").is_err());
+        assert!(RelPath::new("./foo/bar").is_err());
+        assert!(RelPath::new("..").is_err());
 
-        assert!(RelPath::from_std_path(Path::new("/"), PathStyle::current()).is_none());
-        assert!(RelPath::from_std_path(Path::new("//"), PathStyle::current()).is_none());
-        assert!(RelPath::from_std_path(Path::new("/foo/"), PathStyle::current()).is_none());
+        assert!(RelPath::from_std_path(Path::new("/"), PathStyle::current()).is_err());
+        assert!(RelPath::from_std_path(Path::new("//"), PathStyle::current()).is_err());
+        assert!(RelPath::from_std_path(Path::new("/foo/"), PathStyle::current()).is_err());
         assert_eq!(
             RelPath::from_std_path(&PathBuf::from_iter(["foo", ""]), PathStyle::current()).unwrap(),
             Arc::from(RelPath::from_str("foo"))
@@ -415,7 +413,7 @@ mod tests {
     fn test_rel_path_parent() {
         assert_eq!(
             RelPath::from_str("foo/bar/baz").parent(),
-            RelPath::new("foo/bar")
+            Some(RelPath::new("foo/bar").unwrap())
         );
         assert_eq!(RelPath::from_str("foo").parent(), Some(RelPath::empty()));
         assert_eq!(RelPath::from_str("").parent(), None);

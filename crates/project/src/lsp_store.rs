@@ -3284,7 +3284,7 @@ impl LocalLspStore {
                     let literal_prefix = glob_literal_prefix(relative);
                     Some((
                         worktree.clone(),
-                        RelPath::from_std_path(&literal_prefix, path_style)?,
+                        RelPath::from_std_path(&literal_prefix, path_style).ok()?,
                         relative.to_string_lossy().to_string(),
                     ))
                 }
@@ -3300,7 +3300,7 @@ impl LocalLspStore {
                     literal_prefix.push(glob_literal_prefix(Path::new(&rp.pattern)));
                     Some((
                         worktree.clone(),
-                        RelPath::from_std_path(&literal_prefix, path_style)?,
+                        RelPath::from_std_path(&literal_prefix, path_style).ok()?,
                         rp.pattern.clone(),
                     ))
                 }
@@ -3593,8 +3593,10 @@ pub enum SymbolLocation {
 impl SymbolLocation {
     fn file_name(&self) -> Option<&RelPath> {
         match self {
-            Self::InProject(path) => RelPath::new(path.path.file_name()?),
-            Self::OutsideProject { abs_path, .. } => RelPath::new(abs_path.file_name()?.to_str()?),
+            Self::InProject(path) => RelPath::new(path.path.file_name()?).ok(),
+            Self::OutsideProject { abs_path, .. } => {
+                RelPath::new(abs_path.file_name()?.to_str()?).ok()
+            }
         }
     }
 }
