@@ -647,10 +647,6 @@ impl Settings for ProjectSettings {
         }
 
         if let Some(b) = vscode.read_bool("git.blame.editorDecoration.enabled") {
-            // todo! get_or_insert_default is risky considering defaults probably don't correspond
-            // to default.json,
-            // probably need to pass in "defaults" for this type as additional arg, and
-            // use unwrap on those keys
             current
                 .git
                 .get_or_insert_default()
