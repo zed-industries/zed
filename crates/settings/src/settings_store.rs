@@ -487,6 +487,17 @@ impl SettingsStore {
         Ok(())
     }
 
+    /// Replaces current settings with the values from the given JSON.
+    pub fn set_raw_server_settings(
+        &mut self,
+        new_settings: Option<Value>,
+        cx: &mut App,
+    ) -> Result<()> {
+        self.raw_server_settings = new_settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
+    }
+
     /// Get the configured settings profile names.
     pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
         self.raw_user_settings
