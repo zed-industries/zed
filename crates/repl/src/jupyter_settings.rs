@@ -25,13 +25,4 @@ impl Settings for JupyterSettings {
             kernel_selections: jupyter.kernel_selections.unwrap_or_default(),
         }
     }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(jupyter) = content.editor.jupyter.as_ref() else {
-            return;
-        };
-        if let Some(kernel_selections) = jupyter.kernel_selections.clone() {
-            self.kernel_selections.extend(kernel_selections)
-        }
-    }
 }

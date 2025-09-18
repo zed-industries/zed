@@ -13,7 +13,6 @@ use settings::{
 };
 use task::Shell;
 use theme::FontFamilyName;
-use util::MergeFrom;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Toolbar {
@@ -112,71 +111,6 @@ impl settings::Settings for TerminalSettings {
             },
             minimum_contrast: content.minimum_contrast.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(content) = &content.terminal else {
-            return;
-        };
-        self.shell
-            .merge_from(&content.shell.clone().map(settings_shell_to_task_shell));
-        self.working_directory
-            .merge_from(&content.working_directory);
-        if let Some(font_size) = content.font_size.map(px) {
-            self.font_size = Some(font_size)
-        }
-        if let Some(font_family) = content.font_family.clone() {
-            self.font_family = Some(font_family);
-        }
-        if let Some(fallbacks) = content.font_fallbacks.clone() {
-            self.font_fallbacks = Some(FontFallbacks::from_fonts(
-                fallbacks
-                    .into_iter()
-                    .map(|family| family.0.to_string())
-                    .collect(),
-            ))
-        }
-        if let Some(font_features) = content.font_features.clone() {
-            self.font_features = Some(font_features)
-        }
-        if let Some(font_weight) = content.font_weight {
-            self.font_weight = Some(FontWeight(font_weight));
-        }
-        self.line_height.merge_from(&content.line_height);
-        if let Some(env) = &content.env {
-            for (key, value) in env {
-                self.env.insert(key.clone(), value.clone());
-            }
-        }
-        if let Some(cursor_shape) = content.cursor_shape {
-            self.cursor_shape = Some(cursor_shape.into())
-        }
-        self.blinking.merge_from(&content.blinking);
-        self.alternate_scroll.merge_from(&content.alternate_scroll);
-        self.option_as_meta.merge_from(&content.option_as_meta);
-        self.copy_on_select.merge_from(&content.copy_on_select);
-        self.keep_selection_on_copy
-            .merge_from(&content.keep_selection_on_copy);
-        self.button.merge_from(&content.button);
-        self.dock.merge_from(&content.dock);
-        self.default_width
-            .merge_from(&content.default_width.map(px));
-        self.default_height
-            .merge_from(&content.default_height.map(px));
-        self.detect_venv.merge_from(&content.detect_venv);
-        if let Some(max_scroll_history_lines) = content.max_scroll_history_lines {
-            self.max_scroll_history_lines = Some(max_scroll_history_lines)
-        }
-        self.toolbar.breadcrumbs.merge_from(
-            &content
-                .toolbar
-                .as_ref()
-                .and_then(|toolbar| toolbar.breadcrumbs),
-        );
-        self.scrollbar
-            .show
-            .merge_from(&content.scrollbar.as_ref().map(|scrollbar| scrollbar.show));
-        self.minimum_contrast.merge_from(&content.minimum_contrast);
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, content: &mut SettingsContent) {

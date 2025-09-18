@@ -50,7 +50,7 @@ use telemetry::Telemetry;
 use thiserror::Error;
 use tokio::net::TcpStream;
 use url::Url;
-use util::{ConnectionResult, MergeFrom, ResultExt};
+use util::{ConnectionResult, ResultExt};
 
 pub use rpc::*;
 pub use telemetry_events::Event;
@@ -112,17 +112,6 @@ impl Settings for ClientSettings {
             server_url: content.server_url.clone().unwrap(),
         }
     }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
-        if ZED_SERVER_URL.is_some() {
-            return;
-        }
-        if let Some(server_url) = content.server_url.clone() {
-            self.server_url = server_url;
-        }
-    }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }
 
 #[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
@@ -154,12 +143,6 @@ impl Settings for ProxySettings {
     fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
             proxy: content.proxy.clone(),
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
-        if let Some(proxy) = content.proxy.clone() {
-            self.proxy = Some(proxy)
         }
     }
 
@@ -548,14 +531,6 @@ impl settings::Settings for TelemetrySettings {
             diagnostics: content.telemetry.as_ref().unwrap().diagnostics.unwrap(),
             metrics: content.telemetry.as_ref().unwrap().metrics.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
-        let Some(telemetry) = &content.telemetry else {
-            return;
-        };
-        self.diagnostics.merge_from(&telemetry.diagnostics);
-        self.metrics.merge_from(&telemetry.metrics);
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {

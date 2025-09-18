@@ -1,7 +1,6 @@
 use dap_types::SteppingGranularity;
 use gpui::App;
 use settings::{Settings, SettingsContent};
-use util::MergeFrom;
 
 pub struct DebuggerSettings {
     /// Determines the stepping granularity.
@@ -49,27 +48,6 @@ impl Settings for DebuggerSettings {
             dock: content.dock.unwrap(),
         }
     }
-
-    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
-        let Some(content) = &content.debugger else {
-            return;
-        };
-        self.stepping_granularity.merge_from(
-            &content
-                .stepping_granularity
-                .map(dap_granularity_from_settings),
-        );
-        self.save_breakpoints.merge_from(&content.save_breakpoints);
-        self.button.merge_from(&content.button);
-        self.timeout.merge_from(&content.timeout);
-        self.log_dap_communications
-            .merge_from(&content.log_dap_communications);
-        self.format_dap_log_messages
-            .merge_from(&content.format_dap_log_messages);
-        self.dock.merge_from(&content.dock);
-    }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }
 
 fn dap_granularity_from_settings(

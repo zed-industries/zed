@@ -1,7 +1,7 @@
 mod base_keymap_setting;
 mod editable_setting_control;
 mod keymap_file;
-mod merge_from;
+pub mod merge_from;
 mod settings_content;
 mod settings_file;
 mod settings_json;

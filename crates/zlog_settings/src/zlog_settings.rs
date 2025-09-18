@@ -30,11 +30,5 @@ impl Settings for ZlogSettings {
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
-        if let Some(log) = &content.log {
-            self.scopes.extend(log.clone());
-        }
-    }
-
     fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut settings::SettingsContent) {}
 }

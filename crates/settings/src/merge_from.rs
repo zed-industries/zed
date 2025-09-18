@@ -4,6 +4,10 @@ use std::rc::Rc;
 ///
 /// This trait allows settings objects to be merged from optional sources,
 /// where `None` values are ignored and `Some` values override existing values.
+///
+/// HashMaps, structs and similar types are merged by combining their contents key-wise,
+/// but all other types (including Vecs) are last-write-wins.
+/// (Though see also ExtendingVec and SaturatingBool)
 #[allow(unused)]
 pub trait MergeFrom {
     /// Merge from an optional source of the same type.

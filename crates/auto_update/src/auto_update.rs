@@ -9,7 +9,7 @@ use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use paths::remote_servers_dir;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsContent, SettingsStore};
+use settings::{Settings, SettingsStore};
 use smol::{fs, io::AsyncReadExt};
 use smol::{fs::File, process::Command};
 use std::{
@@ -120,19 +120,7 @@ struct AutoUpdateSetting(bool);
 /// Default: true
 impl Settings for AutoUpdateSetting {
     fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
-        debug_assert_eq!(content.auto_update.unwrap(), true);
         Self(content.auto_update.unwrap())
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        if let Some(auto_update) = content.auto_update {
-            self.0 = auto_update;
-        }
-    }
-
-    fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut SettingsContent) {
-        // We could match on vscode's update.mode here, but
-        // I think it's more important to have more people updating zed by default.
     }
 }
 

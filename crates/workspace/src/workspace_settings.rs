@@ -10,7 +10,6 @@ pub use settings::{
     BottomDockLayout, PaneSplitDirectionHorizontal, PaneSplitDirectionVertical,
     RestoreOnStartupBehavior,
 };
-use util::MergeFrom as _;
 
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
@@ -111,65 +110,6 @@ impl Settings for WorkspaceSettings {
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let workspace = &content.workspace;
-        if let Some(border_size) = workspace
-            .active_pane_modifiers
-            .and_then(|modifier| modifier.border_size)
-        {
-            self.active_pane_modifiers.border_size = Some(border_size);
-        }
-
-        if let Some(inactive_opacity) = workspace
-            .active_pane_modifiers
-            .and_then(|modifier| modifier.inactive_opacity)
-        {
-            self.active_pane_modifiers.inactive_opacity = Some(inactive_opacity);
-        }
-
-        self.bottom_dock_layout
-            .merge_from(&workspace.bottom_dock_layout);
-        self.pane_split_direction_horizontal
-            .merge_from(&workspace.pane_split_direction_horizontal);
-        self.pane_split_direction_vertical
-            .merge_from(&workspace.pane_split_direction_vertical);
-        self.centered_layout.merge_from(&workspace.centered_layout);
-        self.confirm_quit.merge_from(&workspace.confirm_quit);
-        self.show_call_status_icon
-            .merge_from(&workspace.show_call_status_icon);
-        self.autosave.merge_from(&workspace.autosave);
-        self.restore_on_startup
-            .merge_from(&workspace.restore_on_startup);
-        self.restore_on_file_reopen
-            .merge_from(&workspace.restore_on_file_reopen);
-        self.drop_target_size
-            .merge_from(&workspace.drop_target_size);
-        self.use_system_path_prompts
-            .merge_from(&workspace.use_system_path_prompts);
-        self.use_system_prompts
-            .merge_from(&workspace.use_system_prompts);
-        self.command_aliases
-            .extend(workspace.command_aliases.clone());
-        if let Some(max_tabs) = workspace.max_tabs {
-            self.max_tabs = Some(max_tabs);
-        }
-        self.when_closing_with_no_tabs
-            .merge_from(&workspace.when_closing_with_no_tabs);
-        self.on_last_window_closed
-            .merge_from(&workspace.on_last_window_closed);
-        self.resize_all_panels_in_dock.merge_from(
-            &workspace
-                .resize_all_panels_in_dock
-                .as_ref()
-                .map(|resize| resize.clone().into_iter().map(Into::into).collect()),
-        );
-        self.close_on_file_delete
-            .merge_from(&workspace.close_on_file_delete);
-        self.use_system_window_tabs
-            .merge_from(&workspace.use_system_window_tabs);
-        self.zoomed_padding.merge_from(&workspace.zoomed_padding);
-    }
-
     fn import_from_vscode(
         vscode: &settings::VsCodeSettings,
         current: &mut settings::SettingsContent,
@@ -264,17 +204,6 @@ impl Settings for TabBarSettings {
             show_nav_history_buttons: tab_bar.show_nav_history_buttons.unwrap(),
             show_tab_bar_buttons: tab_bar.show_tab_bar_buttons.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(tab_bar) = &content.tab_bar else {
-            return;
-        };
-        self.show.merge_from(&tab_bar.show);
-        self.show_nav_history_buttons
-            .merge_from(&tab_bar.show_nav_history_buttons);
-        self.show_tab_bar_buttons
-            .merge_from(&tab_bar.show_tab_bar_buttons);
     }
 
     fn import_from_vscode(

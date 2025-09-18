@@ -45,7 +45,6 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
-use util::MergeFrom;
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
@@ -1856,30 +1855,5 @@ impl Settings for VimSettings {
             highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
             cursor_shape: vim.cursor_shape.unwrap().into(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(vim) = content.vim.as_ref() else {
-            return;
-        };
-        self.default_mode
-            .merge_from(&vim.default_mode.map(Into::into));
-        self.toggle_relative_line_numbers
-            .merge_from(&vim.toggle_relative_line_numbers);
-        self.use_system_clipboard
-            .merge_from(&vim.use_system_clipboard);
-        self.use_smartcase_find.merge_from(&vim.use_smartcase_find);
-        self.custom_digraphs.merge_from(&vim.custom_digraphs);
-        self.highlight_on_yank_duration
-            .merge_from(&vim.highlight_on_yank_duration);
-        self.cursor_shape
-            .merge_from(&vim.cursor_shape.map(Into::into));
-    }
-
-    fn import_from_vscode(
-        _vscode: &settings::VsCodeSettings,
-        _current: &mut settings::SettingsContent,
-    ) {
-        // TODO: translate vim extension settings
     }
 }

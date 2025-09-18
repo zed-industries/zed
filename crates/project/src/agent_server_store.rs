@@ -1076,20 +1076,5 @@ impl settings::Settings for AllAgentServersSettings {
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(content) = &content.agent_servers else {
-            return;
-        };
-        if let Some(gemini) = content.gemini.clone() {
-            self.gemini = Some(gemini.into())
-        };
-        if let Some(claude) = content.claude.clone() {
-            self.claude = Some(claude.into());
-        }
-        for (name, config) in content.custom.clone() {
-            self.custom.insert(name, config.into());
-        }
-    }
-
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }

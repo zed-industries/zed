@@ -827,11 +827,8 @@ impl SettingsStore {
         let mut project_settings_stack = Vec::<SettingsContent>::new();
         let mut paths_stack = Vec::<Option<(WorktreeId, &Path)>>::new();
 
-        dbg!(self.default_settings.auto_update);
-
         if changed_local_path.is_none() {
             let mut merged = self.default_settings.as_ref().clone();
-            dbg!(merged.auto_update);
             merged.merge_from(self.extension_settings.as_deref());
             merged.merge_from(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
@@ -841,7 +838,6 @@ impl SettingsStore {
                 merged.merge_from(user_settings.for_profile(cx));
             }
             merged.merge_from(self.server_settings.as_deref());
-            dbg!(merged.auto_update);
             self.merged_settings = Rc::new(merged);
 
             for setting_value in self.setting_values.values_mut() {
@@ -865,15 +861,11 @@ impl SettingsStore {
 
             paths_stack.push(Some((*root_id, directory_path.as_ref())));
             let mut merged_local_settings = if let Some(deepest) = project_settings_stack.last() {
-                dbg!(deepest.auto_update);
                 (*deepest).clone()
             } else {
-                dbg!(self.merged_settings.auto_update);
                 self.merged_settings.as_ref().clone()
             };
-            dbg!(merged_local_settings.auto_update);
             merged_local_settings.merge_from(Some(local_settings));
-            dbg!(merged_local_settings.auto_update);
 
             project_settings_stack.push(merged_local_settings);
 

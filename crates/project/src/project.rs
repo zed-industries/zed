@@ -979,13 +979,8 @@ pub struct DisableAiSettings {
 impl settings::Settings for DisableAiSettings {
     fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
-            disable_ai: content.disable_ai.unwrap(),
+            disable_ai: content.disable_ai.unwrap().0,
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        // If disable_ai is true *in any file*, it is disabled.
-        self.disable_ai = self.disable_ai || content.disable_ai.unwrap_or(false);
     }
 
     fn import_from_vscode(

@@ -25,11 +25,10 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use std::collections::BTreeSet;
 use std::env;
-use std::rc::Rc;
 use std::sync::Arc;
 pub use util::serde::default_true;
 
-use crate::ActiveSettingsProfileName;
+use crate::{ActiveSettingsProfileName, merge_from};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Default, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -38,7 +37,7 @@ pub struct SettingsContent {
     pub project: ProjectSettingsContent,
 
     #[serde(flatten)]
-    pub theme: Rc<ThemeSettingsContent>,
+    pub theme: Box<ThemeSettingsContent>,
 
     #[serde(flatten)]
     pub extension: ExtensionSettingsContent,
@@ -155,7 +154,7 @@ pub struct SettingsContent {
     /// Whether to disable all AI features in Zed.
     ///
     /// Default: false
-    pub disable_ai: Option<bool>,
+    pub disable_ai: Option<SaturatingBool>,
 
     /// Settings related to Vim mode in Zed.
     pub vim: Option<VimSettingsContent>,
@@ -825,4 +824,43 @@ pub struct ReplSettingsContent {
     ///
     /// Default: 128
     pub max_columns: Option<usize>,
+}
+
+#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ExtendingVec<T>(pub Vec<T>);
+
+impl<T> Into<Vec<T>> for ExtendingVec<T> {
+    fn into(self) -> Vec<T> {
+        self.0
+    }
+}
+impl<T> From<Vec<T>> for ExtendingVec<T> {
+    fn from(vec: Vec<T>) -> Self {
+        ExtendingVec(vec)
+    }
+}
+
+impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
+    fn merge_from(&mut self, other: Option<&Self>) {
+        if let Some(other) = other {
+            self.0.extend_from_slice(other.0.as_slice());
+        }
+    }
+}
+
+#[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct SaturatingBool(pub bool);
+
+impl From<bool> for SaturatingBool {
+    fn from(value: bool) -> Self {
+        SaturatingBool(value)
+    }
+}
+
+impl merge_from::MergeFrom for SaturatingBool {
+    fn merge_from(&mut self, other: Option<&Self>) {
+        if let Some(other) = other {
+            self.0 |= other.0
+        }
+    }
 }

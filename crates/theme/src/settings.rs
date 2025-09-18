@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeMode, ThemeName};
 use settings::{ParameterizedJsonSchema, Settings, SettingsContent};
 use std::sync::Arc;
+use util::ResultExt as _;
 use util::schemars::replace_subschema;
-use util::{MergeFrom, ResultExt as _};
 
 const MIN_FONT_SIZE: Pixels = px(6.0);
 const MAX_FONT_SIZE: Pixels = px(100.0);
@@ -814,13 +814,13 @@ impl settings::Settings for ThemeSettings {
         let system_appearance = SystemAppearance::default_global(cx);
         let theme_selection: ThemeSelection = content.theme.clone().unwrap().into();
         let icon_theme_selection: IconThemeSelection = content.icon_theme.clone().unwrap().into();
-        Self {
-            ui_font_size: content.ui_font_size.unwrap().into(),
+        let mut this = Self {
+            ui_font_size: clamp_font_size(content.ui_font_size.unwrap().into()),
             ui_font: Font {
                 family: content.ui_font_family.as_ref().unwrap().0.clone().into(),
                 features: content.ui_font_features.clone().unwrap(),
                 fallbacks: font_fallbacks_from_settings(content.ui_font_fallbacks.clone()),
-                weight: content.ui_font_weight.map(FontWeight).unwrap(),
+                weight: clamp_font_weight(content.ui_font_weight.unwrap()),
                 style: Default::default(),
             },
             buffer_font: Font {
@@ -833,10 +833,10 @@ impl settings::Settings for ThemeSettings {
                     .into(),
                 features: content.buffer_font_features.clone().unwrap(),
                 fallbacks: font_fallbacks_from_settings(content.buffer_font_fallbacks.clone()),
-                weight: content.buffer_font_weight.map(FontWeight).unwrap(),
+                weight: clamp_font_weight(content.buffer_font_weight.unwrap()),
                 style: FontStyle::default(),
             },
-            buffer_font_size: content.buffer_font_size.unwrap().into(),
+            buffer_font_size: clamp_font_size(content.buffer_font_size.unwrap().into()),
             buffer_line_height: content.buffer_line_height.unwrap().into(),
             agent_font_size: content.agent_font_size.map(Into::into),
             active_theme: themes
@@ -852,108 +852,10 @@ impl settings::Settings for ThemeSettings {
                 .unwrap(),
             icon_theme_selection: Some(icon_theme_selection),
             ui_density: content.ui_density.unwrap_or_default().into(),
-            unnecessary_code_fade: content.unnecessary_code_fade.unwrap(),
-        }
-    }
-
-    fn refine(&mut self, content: &SettingsContent, cx: &mut App) {
-        let value = &content.theme;
-
-        let themes = ThemeRegistry::default_global(cx);
-        let system_appearance = SystemAppearance::default_global(cx);
-
-        self.ui_density
-            .merge_from(&value.ui_density.map(Into::into));
-
-        if let Some(value) = value.buffer_font_family.clone() {
-            self.buffer_font.family = value.0.into();
-        }
-        if let Some(value) = value.buffer_font_features.clone() {
-            self.buffer_font.features = value;
-        }
-        if let Some(value) = value.buffer_font_fallbacks.clone() {
-            self.buffer_font.fallbacks = font_fallbacks_from_settings(Some(value));
-        }
-        if let Some(value) = value.buffer_font_weight {
-            self.buffer_font.weight = clamp_font_weight(value);
-        }
-
-        if let Some(value) = value.ui_font_family.clone() {
-            self.ui_font.family = value.0.into();
-        }
-        if let Some(value) = value.ui_font_features.clone() {
-            self.ui_font.features = value;
-        }
-        if let Some(value) = value.ui_font_fallbacks.clone() {
-            self.ui_font.fallbacks = font_fallbacks_from_settings(Some(value));
-        }
-        if let Some(value) = value.ui_font_weight {
-            self.ui_font.weight = clamp_font_weight(value);
-        }
-
-        if let Some(value) = &value.theme {
-            self.theme_selection = Some(value.clone().into());
-
-            let theme_name = self
-                .theme_selection
-                .as_ref()
-                .unwrap()
-                .theme(*system_appearance);
-
-            match themes.get(theme_name) {
-                Ok(theme) => {
-                    self.active_theme = theme;
-                }
-                Err(err @ ThemeNotFoundError(_)) => {
-                    if themes.extensions_loaded() {
-                        log::error!("{err}");
-                    }
-                }
-            }
-        }
-
-        self.experimental_theme_overrides
-            .clone_from(&value.experimental_theme_overrides);
-        self.theme_overrides.clone_from(&value.theme_overrides);
-
-        self.apply_theme_overrides();
-
-        if let Some(value) = &value.icon_theme {
-            self.icon_theme_selection = Some(value.clone().into());
-
-            let icon_theme_name = self
-                .icon_theme_selection
-                .as_ref()
-                .unwrap()
-                .icon_theme(*system_appearance);
-
-            match themes.get_icon_theme(icon_theme_name) {
-                Ok(icon_theme) => {
-                    self.active_icon_theme = icon_theme;
-                }
-                Err(err @ IconThemeNotFoundError(_)) => {
-                    if themes.extensions_loaded() {
-                        log::error!("{err}");
-                    }
-                }
-            }
-        }
-
-        self.ui_font_size
-            .merge_from(&value.ui_font_size.map(Into::into).map(clamp_font_size));
-        self.buffer_font_size
-            .merge_from(&value.buffer_font_size.map(Into::into).map(clamp_font_size));
-        if let Some(agent_font_size) = self.agent_font_size {
-            self.agent_font_size = Some(clamp_font_size(agent_font_size.into()))
-        }
-
-        self.buffer_line_height
-            .merge_from(&value.buffer_line_height.map(Into::into));
-
-        // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.
-        self.unnecessary_code_fade
-            .merge_from(&value.unnecessary_code_fade);
-        self.unnecessary_code_fade = self.unnecessary_code_fade.clamp(0.0, 0.9);
+            unnecessary_code_fade: content.unnecessary_code_fade.unwrap().clamp(0.0, 0.9),
+        };
+        this.apply_theme_overrides();
+        this
     }
 
     fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {

@@ -7,7 +7,7 @@ use serde_with::skip_serializing_none;
 use settings_macros::MergeFrom;
 use util::serde::default_true;
 
-use crate::{AllLanguageSettingsContent, SlashCommandSettings};
+use crate::{AllLanguageSettingsContent, ExtendingVec, SlashCommandSettings};
 
 #[skip_serializing_none]
 #[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
@@ -44,7 +44,7 @@ pub struct ProjectSettingsContent {
     pub slash_commands: Option<SlashCommandSettings>,
 
     /// The list of custom Git hosting providers.
-    pub git_hosting_providers: Option<Vec<GitHostingProviderConfig>>,
+    pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 }
 
 #[skip_serializing_none]
@@ -82,7 +82,7 @@ pub struct WorktreeSettingsContent {
 
     /// Treat the files matching these globs as `.env` files.
     /// Default: ["**/.env*", "**/*.pem", "**/*.key", "**/*.cert", "**/*.crt", "**/secrets.yml"]
-    pub private_files: Option<Vec<String>>,
+    pub private_files: Option<ExtendingVec<String>>,
 }
 
 #[skip_serializing_none]

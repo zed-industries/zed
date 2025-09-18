@@ -11,7 +11,6 @@ use settings::{
     DefaultAgentView, DockPosition, LanguageModelParameters, LanguageModelSelection,
     NotifyWhenAgentWaiting, Settings, SettingsContent,
 };
-use util::MergeFrom;
 
 pub use crate::agent_profile::*;
 
@@ -180,66 +179,6 @@ impl Settings for AgentSettings {
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
             message_editor_min_lines: agent.message_editor_min_lines.unwrap(),
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
-        let Some(value) = &content.agent else { return };
-        self.enabled.merge_from(&value.enabled);
-        self.button.merge_from(&value.button);
-        self.dock.merge_from(&value.dock);
-        self.default_width
-            .merge_from(&value.default_width.map(Into::into));
-        self.default_height
-            .merge_from(&value.default_height.map(Into::into));
-        self.default_model = value.default_model.clone().or(self.default_model.take());
-
-        self.inline_assistant_model = value
-            .inline_assistant_model
-            .clone()
-            .or(self.inline_assistant_model.take());
-        self.commit_message_model = value
-            .clone()
-            .commit_message_model
-            .or(self.commit_message_model.take());
-        self.thread_summary_model = value
-            .clone()
-            .thread_summary_model
-            .or(self.thread_summary_model.take());
-        self.inline_alternatives
-            .merge_from(&value.inline_alternatives.clone());
-        self.default_profile
-            .merge_from(&value.default_profile.clone().map(AgentProfileId));
-        self.default_view.merge_from(&value.default_view);
-        self.always_allow_tool_actions
-            .merge_from(&value.always_allow_tool_actions);
-        self.notify_when_agent_waiting
-            .merge_from(&value.notify_when_agent_waiting);
-        self.play_sound_when_agent_done
-            .merge_from(&value.play_sound_when_agent_done);
-        self.stream_edits.merge_from(&value.stream_edits);
-        self.single_file_review
-            .merge_from(&value.single_file_review);
-        self.preferred_completion_mode
-            .merge_from(&value.preferred_completion_mode.map(Into::into));
-        self.enable_feedback.merge_from(&value.enable_feedback);
-        self.expand_edit_card.merge_from(&value.expand_edit_card);
-        self.expand_terminal_card
-            .merge_from(&value.expand_terminal_card);
-        self.use_modifier_to_send
-            .merge_from(&value.use_modifier_to_send);
-
-        self.model_parameters
-            .extend_from_slice(&value.model_parameters);
-        self.message_editor_min_lines
-            .merge_from(&value.message_editor_min_lines);
-
-        if let Some(profiles) = value.profiles.as_ref() {
-            self.profiles.extend(
-                profiles
-                    .into_iter()
-                    .map(|(id, profile)| (AgentProfileId(id.clone()), profile.clone().into())),
-            );
         }
     }
 

@@ -20,12 +20,6 @@ impl Settings for VimModeSetting {
         Self(content.vim_mode.unwrap())
     }
 
-    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
-        if let Some(vim_mode) = content.vim_mode {
-            self.0 = vim_mode;
-        }
-    }
-
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _content: &mut SettingsContent) {
         // TODO: could possibly check if any of the `vim.<foo>` keys are set?
     }
@@ -36,12 +30,6 @@ pub struct HelixModeSetting(pub bool);
 impl Settings for HelixModeSetting {
     fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
         Self(content.helix_mode.unwrap())
-    }
-
-    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
-        if let Some(helix_mode) = content.helix_mode {
-            self.0 = helix_mode;
-        }
     }
 
     fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}

@@ -35,7 +35,7 @@ impl Settings for WorktreeSettings {
         let worktree = content.project.worktree.clone();
         let file_scan_exclusions = worktree.file_scan_exclusions.unwrap();
         let file_scan_inclusions = worktree.file_scan_inclusions.unwrap();
-        let private_files = worktree.private_files.unwrap();
+        let private_files = worktree.private_files.unwrap().0;
         let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
             .iter()
             .flat_map(|glob| {
@@ -49,54 +49,16 @@ impl Settings for WorktreeSettings {
         Self {
             project_name: None,
             file_scan_exclusions: path_matchers(file_scan_exclusions, "file_scan_exclusions")
-                .unwrap(),
+                .log_err()
+                .unwrap_or_default(),
             file_scan_inclusions: path_matchers(
                 parsed_file_scan_inclusions,
                 "file_scan_inclusions",
             )
             .unwrap(),
-            private_files: path_matchers(private_files, "private_files").unwrap(),
-        }
-    }
-
-    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
-        let worktree = &content.project.worktree;
-
-        if let Some(project_name) = worktree.project_name.clone() {
-            self.project_name = Some(project_name);
-        }
-
-        if let Some(mut private_files) = worktree.private_files.clone() {
-            let sources = self.private_files.sources();
-            private_files.extend_from_slice(sources);
-            if let Some(matchers) = path_matchers(private_files, "private_files").log_err() {
-                self.private_files = matchers;
-            }
-        }
-
-        if let Some(file_scan_exclusions) = worktree.file_scan_exclusions.clone() {
-            if let Some(matchers) =
-                path_matchers(file_scan_exclusions, "file_scan_exclusions").log_err()
-            {
-                self.file_scan_exclusions = matchers
-            }
-        }
-
-        if let Some(file_scan_inclusions) = worktree.file_scan_inclusions.clone() {
-            let parsed_file_scan_inclusions: Vec<String> = file_scan_inclusions
-                .iter()
-                .flat_map(|glob| {
-                    Path::new(glob)
-                        .ancestors()
-                        .map(|a| a.to_string_lossy().into())
-                })
-                .filter(|p: &String| !p.is_empty())
-                .collect();
-            if let Some(matchers) =
-                path_matchers(parsed_file_scan_inclusions, "file_scan_inclusions").log_err()
-            {
-                self.file_scan_inclusions = matchers
-            }
+            private_files: path_matchers(private_files, "private_files")
+                .log_err()
+                .unwrap_or_default(),
         }
     }
 

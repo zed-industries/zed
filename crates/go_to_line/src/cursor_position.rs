@@ -7,7 +7,7 @@ use ui::{
     Button, ButtonCommon, Clickable, Context, FluentBuilder, IntoElement, LabelSize, ParentElement,
     Render, Tooltip, Window, div,
 };
-use util::{MergeFrom, paths::FILE_ROW_COLUMN_DELIMITER};
+use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{StatusItemView, Workspace, item::ItemHandle};
 
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
@@ -309,9 +309,5 @@ impl From<settings::LineIndicatorFormat> for LineIndicatorFormat {
 impl Settings for LineIndicatorFormat {
     fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         content.line_indicator_format.unwrap().into()
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        self.merge_from(&content.line_indicator_format.map(Into::into));
     }
 }

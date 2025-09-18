@@ -3,7 +3,6 @@ use std::sync::Arc;
 use collections::HashMap;
 use gpui::App;
 use settings::Settings;
-use util::MergeFrom;
 
 use crate::provider::{
     anthropic::AnthropicSettings, bedrock::AmazonBedrockSettings, cloud::ZedDotDevSettings,
@@ -116,115 +115,6 @@ impl settings::Settings for AllLanguageModelSettings {
             zed_dot_dev: ZedDotDevSettings {
                 available_models: zed_dot_dev.available_models.unwrap_or_default(),
             },
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(models) = content.language_models.as_ref() else {
-            return;
-        };
-
-        if let Some(anthropic) = models.anthropic.as_ref() {
-            self.anthropic
-                .available_models
-                .merge_from(&anthropic.available_models);
-            self.anthropic.api_url.merge_from(&anthropic.api_url);
-        }
-
-        if let Some(bedrock) = models.bedrock.clone() {
-            self.bedrock
-                .available_models
-                .merge_from(&bedrock.available_models);
-
-            if let Some(endpoint_url) = bedrock.endpoint_url {
-                self.bedrock.endpoint = Some(endpoint_url)
-            }
-
-            if let Some(region) = bedrock.region {
-                self.bedrock.region = Some(region)
-            }
-
-            if let Some(profile_name) = bedrock.profile {
-                self.bedrock.profile_name = Some(profile_name);
-            }
-
-            if let Some(auth_method) = bedrock.authentication_method {
-                self.bedrock.authentication_method = Some(auth_method.into());
-            }
-        }
-
-        if let Some(deepseek) = models.deepseek.as_ref() {
-            self.deepseek
-                .available_models
-                .merge_from(&deepseek.available_models);
-            self.deepseek.api_url.merge_from(&deepseek.api_url);
-        }
-
-        if let Some(google) = models.google.as_ref() {
-            self.google
-                .available_models
-                .merge_from(&google.available_models);
-            self.google.api_url.merge_from(&google.api_url);
-        }
-
-        if let Some(lmstudio) = models.lmstudio.as_ref() {
-            self.lmstudio
-                .available_models
-                .merge_from(&lmstudio.available_models);
-            self.lmstudio.api_url.merge_from(&lmstudio.api_url);
-        }
-
-        if let Some(mistral) = models.mistral.as_ref() {
-            self.mistral
-                .available_models
-                .merge_from(&mistral.available_models);
-            self.mistral.api_url.merge_from(&mistral.api_url);
-        }
-        if let Some(ollama) = models.ollama.as_ref() {
-            self.ollama
-                .available_models
-                .merge_from(&ollama.available_models);
-            self.ollama.api_url.merge_from(&ollama.api_url);
-        }
-        if let Some(open_router) = models.open_router.as_ref() {
-            self.open_router
-                .available_models
-                .merge_from(&open_router.available_models);
-            self.open_router.api_url.merge_from(&open_router.api_url);
-        }
-        if let Some(openai) = models.openai.as_ref() {
-            self.openai
-                .available_models
-                .merge_from(&openai.available_models);
-            self.openai.api_url.merge_from(&openai.api_url);
-        }
-        if let Some(openai_compatible) = models.openai_compatible.clone() {
-            for (name, value) in openai_compatible {
-                self.openai_compatible.insert(
-                    name,
-                    OpenAiCompatibleSettings {
-                        api_url: value.api_url,
-                        available_models: value.available_models,
-                    },
-                );
-            }
-        }
-        if let Some(vercel) = models.vercel.as_ref() {
-            self.vercel
-                .available_models
-                .merge_from(&vercel.available_models);
-            self.vercel.api_url.merge_from(&vercel.api_url);
-        }
-        if let Some(x_ai) = models.x_ai.as_ref() {
-            self.x_ai
-                .available_models
-                .merge_from(&x_ai.available_models);
-            self.x_ai.api_url.merge_from(&x_ai.api_url);
-        }
-        if let Some(zed_dot_dev) = models.zed_dot_dev.as_ref() {
-            self.zed_dot_dev
-                .available_models
-                .merge_from(&zed_dot_dev.available_models);
         }
     }
 }

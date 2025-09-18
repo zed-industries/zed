@@ -19,29 +19,28 @@ use remote::{
     SshConnectionOptions,
 };
 pub use settings::SshConnection;
-use settings::{Settings, WslConnection};
+use settings::{ExtendingVec, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
     IntoElement, Label, LabelCommon, Styled, Window, prelude::*,
 };
-use util::MergeFrom;
 use workspace::{AppState, ModalView, Workspace};
 
 pub struct SshSettings {
-    pub ssh_connections: Vec<SshConnection>,
-    pub wsl_connections: Vec<WslConnection>,
+    pub ssh_connections: ExtendingVec<SshConnection>,
+    pub wsl_connections: ExtendingVec<WslConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
     pub read_ssh_config: bool,
 }
 
 impl SshSettings {
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
-        self.ssh_connections.clone().into_iter()
+        self.ssh_connections.clone().0.into_iter()
     }
 
     pub fn wsl_connections(&self) -> impl Iterator<Item = WslConnection> + use<> {
-        self.wsl_connections.clone().into_iter()
+        self.wsl_connections.clone().0.into_iter()
     }
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
@@ -107,21 +106,10 @@ impl Settings for SshSettings {
     fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let remote = &content.remote;
         Self {
-            ssh_connections: remote.ssh_connections.clone().unwrap_or_default(),
-            wsl_connections: remote.wsl_connections.clone().unwrap_or_default(),
+            ssh_connections: remote.ssh_connections.clone().unwrap_or_default().into(),
+            wsl_connections: remote.wsl_connections.clone().unwrap_or_default().into(),
             read_ssh_config: remote.read_ssh_config.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        if let Some(ssh_connections) = content.remote.ssh_connections.clone() {
-            self.ssh_connections.extend(ssh_connections)
-        }
-        if let Some(wsl_connections) = content.remote.wsl_connections.clone() {
-            self.wsl_connections.extend(wsl_connections)
-        }
-        self.read_ssh_config
-            .merge_from(&content.remote.read_ssh_config);
     }
 }
 

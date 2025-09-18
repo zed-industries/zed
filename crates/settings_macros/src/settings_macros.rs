@@ -12,7 +12,7 @@ use syn::{Data, DeriveInput, Fields, Type, parse_macro_input};
 /// # Example
 ///
 /// ```ignore
-/// #[derive(MergeFrom)]
+/// #[derive(Clone, MergeFrom)]
 /// struct MySettings {
 ///     field1: Option<String>,
 ///     field2: SomeOtherSettings,

@@ -1,7 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use util::MergeFrom;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct FileFinderSettings {
@@ -19,22 +18,8 @@ impl Settings for FileFinderSettings {
             file_icons: file_finder.file_icons.unwrap(),
             modal_max_width: file_finder.modal_max_width.unwrap().into(),
             skip_focus_for_active_in_search: file_finder.skip_focus_for_active_in_search.unwrap(),
-            include_ignored: file_finder.include_ignored.flatten(),
+            include_ignored: file_finder.include_ignored.clone(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut ui::App) {
-        let Some(file_finder) = content.file_finder.as_ref() else {
-            return;
-        };
-
-        self.file_icons.merge_from(&file_finder.file_icons);
-        self.modal_max_width
-            .merge_from(&file_finder.modal_max_width.map(Into::into));
-        self.skip_focus_for_active_in_search
-            .merge_from(&file_finder.skip_focus_for_active_in_search);
-        self.include_ignored
-            .merge_from(&file_finder.include_ignored);
     }
 }
 

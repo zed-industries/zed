@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::App;
 use settings::{Settings, SettingsStore};
-use util::MergeFrom as _;
 
 #[derive(Clone, Debug)]
 pub struct AudioSettings {
@@ -30,17 +29,6 @@ impl Settings for AudioSettings {
             control_output_volume: audio.control_output_volume.unwrap(),
             rodio_audio: audio.rodio_audio.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(audio) = content.audio.as_ref() else {
-            return;
-        };
-        self.control_input_volume
-            .merge_from(&audio.control_input_volume);
-        self.control_output_volume
-            .merge_from(&audio.control_output_volume);
-        self.rodio_audio.merge_from(&audio.rodio_audio);
     }
 
     fn import_from_vscode(
