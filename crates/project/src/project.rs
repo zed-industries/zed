@@ -38,7 +38,7 @@ use dap::inline_value::{InlineValueLocation, VariableLookupKind, VariableScope};
 use crate::{
     agent_server_store::{AgentServerStore, AllAgentServersSettings},
     git_store::GitStore,
-    lsp_store::log_store::LogKind,
+    lsp_store::{SymbolLocation, log_store::LogKind},
 };
 pub use git_store::{
     ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate,
@@ -79,7 +79,7 @@ use gpui::{
 };
 use language::{
     Buffer, BufferEvent, Capability, CodeLabel, CursorShape, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
+    LanguageRegistry, PointUtf16, SymbolPath, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
     ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
 };
@@ -748,12 +748,11 @@ pub struct Symbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
     pub source_language_server_id: LanguageServerId,
-    pub path: ProjectPath,
+    pub path: SymbolLocation,
     pub label: CodeLabel,
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
-    pub signature: [u8; 32],
 }
 
 #[derive(Clone, Debug)]
@@ -2190,7 +2189,7 @@ impl Project {
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        new_path: impl Into<Arc<Path>>,
+        new_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<CreatedEntry>> {
         let worktree_store = self.worktree_store.clone();
@@ -5432,35 +5431,6 @@ impl<P: Into<Arc<RelPath>>> From<(WorktreeId, P)> for ProjectPath {
             path: path.into(),
         }
     }
-}
-
-pub fn relativize_path(base: &Path, path: &Path) -> PathBuf {
-    let mut path_components = path.components();
-    let mut base_components = base.components();
-    let mut components: Vec<Component> = Vec::new();
-    loop {
-        match (path_components.next(), base_components.next()) {
-            (None, None) => break,
-            (Some(a), None) => {
-                components.push(a);
-                components.extend(path_components.by_ref());
-                break;
-            }
-            (None, _) => components.push(Component::ParentDir),
-            (Some(a), Some(b)) if components.is_empty() && a == b => (),
-            (Some(a), Some(Component::CurDir)) => components.push(a),
-            (Some(a), Some(_)) => {
-                components.push(Component::ParentDir);
-                for _ in base_components {
-                    components.push(Component::ParentDir);
-                }
-                components.push(a);
-                components.extend(path_components.by_ref());
-                break;
-            }
-        }
-    }
-    components.iter().map(|c| c.as_os_str()).collect()
 }
 
 fn resolve_path(base: &Path, path: &Path) -> PathBuf {

@@ -821,17 +821,17 @@ impl Worktree {
         }
     }
 
-    pub fn rename_entry(
-        &mut self,
-        entry_id: ProjectEntryId,
-        new_path: Arc<RelPath>,
-        cx: &Context<Self>,
-    ) -> Task<Result<CreatedEntry>> {
-        match self {
-            Worktree::Local(this) => this.rename_entry(entry_id, new_path, cx),
-            Worktree::Remote(this) => this.rename_entry(entry_id, new_path, cx),
-        }
-    }
+    // pub fn rename_entry(
+    //     &mut self,
+    //     entry_id: ProjectEntryId,
+    //     new_path: Arc<RelPath>,
+    //     cx: &Context<Self>,
+    // ) -> Task<Result<CreatedEntry>> {
+    //     match self {
+    //         Worktree::Local(this) => this.rename_entry(entry_id, new_path, cx),
+    //         Worktree::Remote(this) => this.rename_entry(entry_id, new_path, cx),
+    //     }
+    // }
 
     pub fn copy_external_entries(
         &mut self,
@@ -977,32 +977,6 @@ impl Worktree {
         })
     }
 
-    pub async fn handle_rename_entry(
-        this: Entity<Self>,
-        request: proto::RenameProjectEntry,
-        mut cx: AsyncApp,
-    ) -> Result<proto::ProjectEntryResponse> {
-        let (scan_id, task) = this.update(&mut cx, |this, cx| {
-            anyhow::Ok((
-                this.scan_id(),
-                this.rename_entry(
-                    ProjectEntryId::from_proto(request.entry_id),
-                    RelPath::from_proto(&request.new_path).with_context(|| {
-                        format!("received invalid relative path {:?}", &request.new_path)
-                    })?,
-                    cx,
-                ),
-            ))
-        })??;
-        Ok(proto::ProjectEntryResponse {
-            entry: match &task.await? {
-                CreatedEntry::Included(entry) => Some(entry.into()),
-                CreatedEntry::Excluded { .. } => None,
-            },
-            worktree_scan_id: scan_id as u64,
-        })
-    }
-
     pub fn is_single_file(&self) -> bool {
         self.root_dir().is_none()
     }
@@ -1040,6 +1014,10 @@ impl LocalWorktree {
 
     pub fn is_path_private(&self, path: &RelPath) -> bool {
         !self.share_private_files && self.settings.is_path_private(path)
+    }
+
+    pub fn fs_is_case_sensitive(&self) -> bool {
+        self.fs_case_sensitive
     }
 
     fn restart_background_scanners(&mut self, cx: &Context<Worktree>) {
@@ -1774,7 +1752,7 @@ impl LocalWorktree {
         }))
     }
 
-    fn refresh_entries_for_paths(&self, paths: Vec<Arc<RelPath>>) -> barrier::Receiver {
+    pub fn refresh_entries_for_paths(&self, paths: Vec<Arc<RelPath>>) -> barrier::Receiver {
         let (tx, rx) = barrier::channel();
         self.scan_requests_tx
             .try_send(ScanRequest {
@@ -1890,7 +1868,7 @@ impl LocalWorktree {
         self.restart_background_scanners(cx);
     }
 
-    fn update_abs_path_and_refresh(
+    pub fn update_abs_path_and_refresh(
         &mut self,
         new_path: Option<Arc<SanitizedPath>>,
         cx: &Context<Worktree>,
@@ -2044,39 +2022,40 @@ impl RemoteWorktree {
         }))
     }
 
-    fn rename_entry(
-        &self,
-        entry_id: ProjectEntryId,
-        new_path: impl Into<Arc<RelPath>>,
-        cx: &Context<Worktree>,
-    ) -> Task<Result<CreatedEntry>> {
-        let new_path: Arc<RelPath> = new_path.into();
-        let response = self.client.request(proto::RenameProjectEntry {
-            project_id: self.project_id,
-            entry_id: entry_id.to_proto(),
-            new_path: new_path.as_ref().to_proto(),
-        });
-        cx.spawn(async move |this, cx| {
-            let response = response.await?;
-            match response.entry {
-                Some(entry) => this
-                    .update(cx, |this, cx| {
-                        this.as_remote_mut().unwrap().insert_entry(
-                            entry,
-                            response.worktree_scan_id as usize,
-                            cx,
-                        )
-                    })?
-                    .await
-                    .map(CreatedEntry::Included),
-                None => {
-                    let abs_path =
-                        this.read_with(cx, |worktree, _| worktree.absolutize(&new_path))?;
-                    Ok(CreatedEntry::Excluded { abs_path })
-                }
-            }
-        })
-    }
+    // fn rename_entry(
+    //     &self,
+    //     entry_id: ProjectEntryId,
+    //     new_path: impl Into<Arc<RelPath>>,
+    //     cx: &Context<Worktree>,
+    // ) -> Task<Result<CreatedEntry>> {
+    //     let new_path: Arc<RelPath> = new_path.into();
+    //     let response = self.client.request(proto::RenameProjectEntry {
+    //         project_id: self.project_id,
+    //         entry_id: entry_id.to_proto(),
+    //         new_worktree_id: new_path.worktree_id,
+    //         new_path: new_path.as_ref().to_proto(),
+    //     });
+    //     cx.spawn(async move |this, cx| {
+    //         let response = response.await?;
+    //         match response.entry {
+    //             Some(entry) => this
+    //                 .update(cx, |this, cx| {
+    //                     this.as_remote_mut().unwrap().insert_entry(
+    //                         entry,
+    //                         response.worktree_scan_id as usize,
+    //                         cx,
+    //                     )
+    //                 })?
+    //                 .await
+    //                 .map(CreatedEntry::Included),
+    //             None => {
+    //                 let abs_path =
+    //                     this.read_with(cx, |worktree, _| worktree.absolutize(&new_path))?;
+    //                 Ok(CreatedEntry::Excluded { abs_path })
+    //             }
+    //         }
+    //     })
+    // }
 
     fn copy_external_entries(
         &self,

@@ -404,7 +404,7 @@ impl language::LocalLanguageToolchainStore for LocalStore {
     fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
-        path: &Arc<Path>,
+        path: &Arc<RelPath>,
         language_name: LanguageName,
         cx: &mut AsyncApp,
     ) -> Option<Toolchain> {
@@ -439,7 +439,7 @@ impl language::LocalLanguageToolchainStore for EmptyToolchainStore {
     fn active_toolchain(
         self: Arc<Self>,
         _: WorktreeId,
-        _: &Arc<Path>,
+        _: &Arc<RelPath>,
         _: LanguageName,
         _: &mut AsyncApp,
     ) -> Option<Toolchain> {

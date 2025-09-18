@@ -31,8 +31,8 @@ use util::{
     rel_path::RelPath,
 };
 use worktree::{
-    Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId,
-    WorktreeSettings,
+    CreatedEntry, Entry, ProjectEntryId, UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree,
+    WorktreeId, WorktreeSettings,
 };
 
 use crate::{ProjectPath, search::SearchQuery};
@@ -299,7 +299,7 @@ impl WorktreeStore {
         entry_id: ProjectEntryId,
         new_project_path: ProjectPath,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Option<Entry>>> {
+    ) -> Task<Result<CreatedEntry>> {
         let Some(old_worktree) = self.worktree_for_entry(entry_id, cx) else {
             return Task::ready(Err(anyhow!("no such worktree")));
         };
@@ -312,25 +312,106 @@ impl WorktreeStore {
 
         match &self.state {
             WorktreeStoreState::Local { fs } => {
-                let old_abs_path = old_worktree.read(cx).absolutize(&old_entry.path);
-                let new_abs_path = new_worktree.read(cx).absolutize(&new_project_path.path);
+                let abs_old_path = old_worktree.read(cx).absolutize(&old_entry.path);
+                let new_worktree_ref = new_worktree.read(cx);
+                let is_root_entry = new_worktree_ref
+                    .root_entry()
+                    .is_some_and(|e| e.id == entry_id);
+                let abs_new_path = if is_root_entry {
+                    let Some(root_parent_path) = new_worktree_ref.abs_path().parent() else {
+                        return Task::ready(Err(anyhow!("no parent for path {:?}", self.abs_path)));
+                    };
+                    root_parent_path.join(new_project_path.path.as_std_path())
+                } else {
+                    new_worktree_ref.absolutize(&new_project_path.path)
+                };
+
                 let fs = fs.clone();
-                let rename = cx.background_spawn(async move {
-                    fs.rename(&old_abs_path, &new_abs_path, Default::default())
+                let case_sensitive = new_worktree
+                    .read(cx)
+                    .as_local()
+                    .unwrap()
+                    .fs_is_case_sensitive();
+
+                let do_rename =
+                    async move |fs: &dyn Fs, old_path: &Path, new_path: &Path, overwrite| {
+                        fs.rename(
+                            &old_path,
+                            &new_path,
+                            fs::RenameOptions {
+                                overwrite,
+                                ..fs::RenameOptions::default()
+                            },
+                        )
                         .await
+                        .with_context(|| format!("renaming {old_path:?} into {new_path:?}"))
+                    };
+
+                let rename = cx.background_spawn(async move {
+                    // If we're on a case-insensitive FS and we're doing a case-only rename (i.e. `foobar` to `FOOBAR`)
+                    // we want to overwrite, because otherwise we run into a file-already-exists error.
+                    let overwrite = !case_sensitive
+                        && abs_old_path != abs_new_path
+                        && abs_old_path.to_str().map(|p| p.to_lowercase())
+                            == abs_new_path.to_str().map(|p| p.to_lowercase());
+
+                    // The directory we're renaming into might not exist yet
+                    if let Err(e) =
+                        do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite).await
+                    {
+                        if let Some(err) = e.downcast_ref::<std::io::Error>()
+                            && err.kind() == std::io::ErrorKind::NotFound
+                        {
+                            if let Some(parent) = abs_new_path.parent() {
+                                fs.create_dir(parent).await.with_context(|| {
+                                    format!("creating parent directory {parent:?}")
+                                })?;
+                                return do_rename(
+                                    fs.as_ref(),
+                                    &abs_old_path,
+                                    &abs_new_path,
+                                    overwrite,
+                                )
+                                .await;
+                            }
+                        }
+                        return Err(e);
+                    }
+                    Ok(())
                 });
 
                 cx.spawn(async move |_, cx| {
                     rename.await?;
-                    new_worktree
+                    Ok(new_worktree
                         .update(cx, |this, cx| {
-                            this.as_local_mut().unwrap().refresh_entry(
-                                new_project_path.path,
-                                None,
-                                cx,
-                            )
+                            let local = this.as_local_mut().unwrap();
+                            if is_root_entry {
+                                // We eagerly update `abs_path` and refresh this worktree.
+                                // Otherwise, the FS watcher would do it on the `RootUpdated` event,
+                                // but with a noticeable delay, so we handle it proactively.
+                                local.update_abs_path_and_refresh(
+                                    Some(SanitizedPath::new_arc(&abs_new_path)),
+                                    cx,
+                                );
+                                Task::ready(Ok(this.root_entry().cloned()))
+                            } else {
+                                // First refresh the parent directory (in case it was newly created)
+                                if let Some(parent) = new_project_path.path.parent() {
+                                    let _ = local.refresh_entries_for_paths(vec![parent.into()]);
+                                }
+                                // Then refresh the new path
+                                local.refresh_entry(
+                                    new_project_path.path.clone(),
+                                    Some(old_entry.path),
+                                    cx,
+                                )
+                            }
                         })?
-                        .await
+                        .await?
+                        .map(CreatedEntry::Included)
+                        .unwrap_or_else(|| CreatedEntry::Excluded {
+                            abs_path: abs_new_path,
+                        }))
                 })
             }
             WorktreeStoreState::Remote {
@@ -1127,6 +1208,35 @@ impl WorktreeStore {
                 .context("worktree not found")
         })??;
         Worktree::handle_delete_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_rename_project_entry(
+        this: Entity<Self>,
+        request: proto::RenameProjectEntry,
+        mut cx: AsyncApp,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(request.entry_id);
+        let new_worktree_id = WorktreeId::from_proto(request.new_worktree_id);
+        let rel_path = RelPath::from_proto(&request.new_path)
+            .with_context(|| format!("received invalid relative path {:?}", &request.new_path))?;
+
+        let (scan_id, task) = this.update(&mut cx, |this, cx| {
+            let worktree = this
+                .worktree_for_entry(entry_id, cx)
+                .context("no such worktree")?;
+            let scan_id = worktree.read(cx).scan_id();
+            anyhow::Ok((
+                scan_id,
+                this.rename_entry(entry_id, (new_worktree_id, rel_path).into(), cx),
+            ))
+        })??;
+        Ok(proto::ProjectEntryResponse {
+            entry: match &task.await? {
+                CreatedEntry::Included(entry) => Some(entry.into()),
+                CreatedEntry::Excluded { .. } => None,
+            },
+            worktree_scan_id: scan_id as u64,
+        })
     }
 
     pub async fn handle_expand_project_entry(

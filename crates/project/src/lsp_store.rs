@@ -33,7 +33,7 @@ use crate::{
     },
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
-    relativize_path, resolve_path,
+    resolve_path,
     toolchain_store::{LocalToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
@@ -116,9 +116,7 @@ use text::{Anchor, BufferId, LineEnding, OffsetRangeExt, ToPoint as _};
 
 use util::{
     ConnectionResult, ResultExt as _, debug_panic, defer, maybe, merge_json_value_into,
-    paths::{PathExt, SanitizedPath},
-    post_inc,
-    rel_path::RelPath,
+    paths::SanitizedPath, post_inc, rel_path::RelPath,
 };
 
 pub use fs::*;
@@ -3576,11 +3574,19 @@ struct CoreSymbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
     pub source_language_server_id: LanguageServerId,
-    pub path: ProjectPath,
+    pub path: SymbolLocation,
     pub name: String,
     pub kind: lsp::SymbolKind,
     pub range: Range<Unclipped<PointUtf16>>,
-    pub signature: [u8; 32],
+}
+
+#[derive(Clone, Debug)]
+pub enum SymbolLocation {
+    InProject(ProjectPath),
+    OutsideProject {
+        abs_path: Arc<Path>,
+        signature: [u8; 32],
+    },
 }
 
 impl LspStore {
@@ -7074,33 +7080,29 @@ impl LspStore {
                                 let source_worktree = result.worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
 
-                                let path;
-                                let worktree;
-                                if let Some((tree, rel_path)) =
+                                let path = if let Some((tree, rel_path)) =
                                     this.worktree_store.read(cx).find_worktree(&abs_path, cx)
                                 {
-                                    worktree = tree;
-                                    path = rel_path;
+                                    let worktree_id = tree.read(cx).id();
+                                    SymbolLocation::InProject(ProjectPath {
+                                        worktree_id,
+                                        path: rel_path.into(),
+                                    })
                                 } else {
-                                    worktree = source_worktree;
-                                    path = relativize_path(&result.worktree_abs_path, &abs_path);
-                                }
-
-                                let worktree_id = worktree.read(cx).id();
-                                let project_path = ProjectPath {
-                                    worktree_id,
-                                    path: path.into(),
+                                    SymbolLocation::OutsideProject {
+                                        signature: this.symbol_signature(&abs_path),
+                                        abs_path: abs_path.into(),
+                                    }
                                 };
-                                let signature = this.symbol_signature(&project_path);
+
                                 Some(CoreSymbol {
                                     source_language_server_id: result.server_id,
                                     language_server_name: result.lsp_adapter.name.clone(),
                                     source_worktree_id,
-                                    path: project_path,
+                                    path,
                                     kind: symbol_kind,
                                     name: symbol_name,
                                     range: range_from_lsp(symbol_location.range),
-                                    signature,
                                 })
                             })
                             .collect()
@@ -7740,7 +7742,7 @@ impl LspStore {
         &mut self,
         worktree_id: WorktreeId,
         server_id: LanguageServerId,
-        path_in_worktree: Arc<Path>,
+        path_in_worktree: Arc<RelPath>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         _: &mut Context<Worktree>,
     ) -> Result<ControlFlow<(), Option<(u64, proto::DiagnosticSummary)>>> {
@@ -8331,43 +8333,56 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let (worktree_id, worktree, old_path, is_dir) = this
+        let new_worktree_id = WorktreeId::from_proto(envelope.payload.new_worktree_id);
+        let new_path =
+            RelPath::from_proto(&envelope.payload.new_path).context("invalid relative path")?;
+
+        let (worktree_store, old_worktree, new_worktree, old_entry) = this
             .update(&mut cx, |this, cx| {
-                this.worktree_store
+                let (worktree, entry) = this
+                    .worktree_store
                     .read(cx)
-                    .worktree_and_entry_for_id(entry_id, cx)
-                    .map(|(worktree, entry)| {
-                        (
-                            worktree.read(cx).id(),
-                            worktree,
-                            entry.path.clone(),
-                            entry.is_dir(),
-                        )
-                    })
+                    .worktree_and_entry_for_id(entry_id, cx)?;
+                let new_worktree = this
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(new_worktree_id, cx)?;
+                Some((
+                    this.worktree_store.clone(),
+                    worktree,
+                    new_worktree,
+                    entry.clone(),
+                ))
             })?
             .context("worktree not found")?;
-        let (old_abs_path, new_abs_path) = worktree.read_with(&cx, |worktree, _| {
-            Ok((
-                worktree.absolutize(&old_path),
-                worktree.absolutize(
-                    &RelPath::from_proto(&envelope.payload.new_path)
-                        .context("invalid relative path")?,
-                ),
-            ))
+        let (old_abs_path, old_worktree_id) = old_worktree.read_with(&cx, |worktree, _| {
+            (worktree.absolutize(&old_entry.path), worktree.id())
         })?;
+        let new_abs_path =
+            new_worktree.read_with(&cx, |worktree, _| worktree.absolutize(&new_path))?;
 
         let _transaction = Self::will_rename_entry(
             this.downgrade(),
-            worktree_id,
+            old_worktree_id,
             &old_abs_path,
             &new_abs_path,
-            is_dir,
+            old_entry.is_dir(),
             cx.clone(),
         )
         .await;
-        let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
+        let response = WorktreeStore::handle_rename_project_entry(
+            worktree_store,
+            envelope.payload,
+            cx.clone(),
+        )
+        .await;
         this.read_with(&cx, |this, _| {
-            this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
+            this.did_rename_entry(
+                old_worktree_id,
+                &old_abs_path,
+                &new_abs_path,
+                old_entry.is_dir(),
+            );
         })
         .ok();
         response
@@ -9446,12 +9461,18 @@ impl LspStore {
     ) -> Result<proto::OpenBufferForSymbolResponse> {
         let peer_id = envelope.original_sender_id().unwrap_or_default();
         let symbol = envelope.payload.symbol.context("invalid symbol")?;
-        let symbol = Self::deserialize_symbol(symbol)?;
-        let symbol = this.read_with(&cx, |this, _| {
-            let signature = this.symbol_signature(&symbol.path);
-            anyhow::ensure!(signature == symbol.signature, "invalid symbol signature");
-            Ok(symbol)
-        })??;
+        let mut symbol = Self::deserialize_symbol(symbol)?;
+        this.read_with(&cx, |this, _| {
+            if let SymbolLocation::OutsideProject {
+                abs_path,
+                signature,
+            } = &symbol.path
+            {
+                let new_signature = this.symbol_signature(&abs_path);
+                anyhow::ensure!(new_signature == signature, "invalid symbol signature");
+            }
+            Ok(())
+        })?;
         let buffer = this
             .update(&mut cx, |this, cx| {
                 this.open_buffer_for_symbol(
@@ -9463,7 +9484,6 @@ impl LspStore {
                         name: symbol.name,
                         kind: symbol.kind,
                         range: symbol.range,
-                        signature: symbol.signature,
                         label: CodeLabel {
                             text: Default::default(),
                             runs: Default::default(),
@@ -9495,10 +9515,9 @@ impl LspStore {
         })?
     }
 
-    fn symbol_signature(&self, project_path: &ProjectPath) -> [u8; 32] {
+    fn symbol_signature(&self, abs_path: &Path) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(project_path.worktree_id.to_proto().to_be_bytes());
-        hasher.update(project_path.path.to_string_lossy().as_bytes());
+        hasher.update(abs_path.to_string_lossy().as_bytes());
         hasher.update(self.nonce.to_be_bytes());
         hasher.finalize().as_slice().try_into().unwrap()
     }
@@ -10890,12 +10909,10 @@ impl LspStore {
     }
 
     fn serialize_symbol(symbol: &Symbol) -> proto::Symbol {
-        proto::Symbol {
+        let mut result = proto::Symbol {
             language_server_name: symbol.language_server_name.0.to_string(),
             source_worktree_id: symbol.source_worktree_id.to_proto(),
             language_server_id: symbol.source_language_server_id.to_proto(),
-            worktree_id: symbol.path.worktree_id.to_proto(),
-            path: symbol.path.path.as_ref().to_proto(),
             name: symbol.name.clone(),
             kind: unsafe { mem::transmute::<lsp::SymbolKind, i32>(symbol.kind) },
             start: Some(proto::PointUtf16 {
@@ -10906,17 +10923,45 @@ impl LspStore {
                 row: symbol.range.end.0.row,
                 column: symbol.range.end.0.column,
             }),
-            signature: symbol.signature.to_vec(),
+            worktree_id: Default::default(),
+            path: Default::default(),
+            signature: Default::default(),
+        };
+        match &symbol.path {
+            SymbolLocation::InProject(path) => {
+                result.worktree_id = path.worktree_id.to_proto();
+                result.path = path.path.to_proto();
+            }
+            SymbolLocation::OutsideProject {
+                abs_path,
+                signature,
+            } => {
+                result.path = abs_path.to_proto();
+                result.signature = signature.to_vec();
+            }
         }
+        result
     }
 
     fn deserialize_symbol(serialized_symbol: proto::Symbol) -> Result<CoreSymbol> {
         let source_worktree_id = WorktreeId::from_proto(serialized_symbol.source_worktree_id);
         let worktree_id = WorktreeId::from_proto(serialized_symbol.worktree_id);
         let kind = unsafe { mem::transmute::<i32, lsp::SymbolKind>(serialized_symbol.kind) };
-        let path = ProjectPath {
-            worktree_id,
-            path: Arc::<Path>::from_proto(serialized_symbol.path),
+
+        let path = if serialized_symbol.signature.is_empty() {
+            SymbolLocation::InProject(ProjectPath {
+                worktree_id,
+                path: RelPath::from_proto(&serialized_symbol.path)
+                    .context("invalid symbol path")?,
+            })
+        } else {
+            SymbolLocation::OutsideProject {
+                abs_path: PathBuf::from_proto(serialized_symbol.path),
+                signature: serialized_symbol
+                    .signature
+                    .try_into()
+                    .map_err(|_| anyhow!("invalid signature"))?,
+            }
         };
 
         let start = serialized_symbol.start.context("invalid start")?;
@@ -10932,10 +10977,6 @@ impl LspStore {
             range: Unclipped(PointUtf16::new(start.row, start.column))
                 ..Unclipped(PointUtf16::new(end.row, end.column)),
             kind,
-            signature: serialized_symbol
-                .signature
-                .try_into()
-                .map_err(|_| anyhow!("invalid signature"))?,
         })
     }
 
