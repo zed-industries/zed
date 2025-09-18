@@ -1843,17 +1843,19 @@ impl LocalLspStore {
                             }
 
                             if !project_transaction_command.0.is_empty() {
-                                let extra_buffers = project_transaction_command
-                                    .0
-                                    .keys()
-                                    .filter_map(|buffer_handle| {
-                                        buffer_handle
-                                            .read_with(cx, |b, cx| b.project_path(cx))
-                                            .ok()
-                                            .flatten()
-                                    })
-                                    .map(|p| p.path.as_str())
-                                    .join(", ");
+                                let mut extra_buffers = String::new();
+                                for buffer in project_transaction_command.0.keys() {
+                                    buffer
+                                        .read_with(cx, |b, cx| {
+                                            if let Some(path) = b.project_path(cx) {
+                                                if !extra_buffers.is_empty() {
+                                                    extra_buffers.push_str(", ");
+                                                }
+                                                extra_buffers.push_str(path.path.as_str());
+                                            }
+                                        })
+                                        .ok();
+                                }
                                 zlog::warn!(
                                     logger =>
                                     "Unexpected edits to buffers other than the buffer actively being formatted due to command {}. Impacted buffers: [{}].",
@@ -2404,8 +2406,7 @@ impl LocalLspStore {
                     let path = &disposition.path;
 
                     {
-                        let uri =
-                            Uri::from_file_path(worktree.read(cx).abs_path().join(&path.path));
+                        let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
 
                         let server_id = self.get_or_insert_language_server(
                             &worktree,
@@ -3269,10 +3270,11 @@ impl LocalLspStore {
         worktrees: &[Entity<Worktree>],
         watcher: &FileSystemWatcher,
         cx: &App,
-    ) -> Option<(Entity<Worktree>, PathBuf, String)> {
+    ) -> Option<(Entity<Worktree>, Arc<RelPath>, String)> {
         worktrees.iter().find_map(|worktree| {
             let tree = worktree.read(cx);
             let worktree_root_path = tree.abs_path();
+            let path_style = tree.path_style();
             match &watcher.glob_pattern {
                 lsp::GlobPattern::String(s) => {
                     let watcher_path = SanitizedPath::new(s);
@@ -3283,7 +3285,7 @@ impl LocalLspStore {
                     let literal_prefix = glob_literal_prefix(relative);
                     Some((
                         worktree.clone(),
-                        literal_prefix,
+                        RelPath::from_std_path(&literal_prefix, path_style)?,
                         relative.to_string_lossy().to_string(),
                     ))
                 }
@@ -3297,7 +3299,11 @@ impl LocalLspStore {
                     let relative = base_uri.strip_prefix(&worktree_root_path).ok()?;
                     let mut literal_prefix = relative.to_owned();
                     literal_prefix.push(glob_literal_prefix(Path::new(&rp.pattern)));
-                    Some((worktree.clone(), literal_prefix, rp.pattern.clone()))
+                    Some((
+                        worktree.clone(),
+                        RelPath::from_std_path(&literal_prefix, path_style)?,
+                        rp.pattern.clone(),
+                    ))
                 }
             }
         })
@@ -4354,7 +4360,7 @@ impl LspStore {
             let mut summaries = diangostic_summaries.iter().flat_map(|(path, summaries)| {
                 summaries
                     .iter()
-                    .map(|(server_id, summary)| summary.to_proto(*server_id, path))
+                    .map(|(server_id, summary)| summary.to_proto(*server_id, path.as_ref()))
             });
             if let Some(summary) = summaries.next() {
                 client
@@ -4656,7 +4662,6 @@ impl LspStore {
                         .unwrap_or_else(|| file.path().clone());
                     let worktree_path = ProjectPath { worktree_id, path };
                     let abs_path = file.abs_path(cx);
-                    let worktree_root = worktree.read(cx).abs_path();
                     let nodes = rebase
                         .walk(
                             worktree_path,
@@ -4669,7 +4674,7 @@ impl LspStore {
                     for node in nodes {
                         let server_id = node.server_id_or_init(|disposition| {
                             let path = &disposition.path;
-                            let uri = Uri::from_file_path(worktree_root.join(&path.path));
+                            let uri = Uri::from_file_path(worktree.read(cx).absolutize(&path.path));
                             let key = LanguageServerSeed {
                                 worktree_id,
                                 name: disposition.server_name.clone(),
@@ -8341,11 +8346,15 @@ impl LspStore {
                     })
             })?
             .context("worktree not found")?;
-        let (old_abs_path, new_abs_path) = {
-            let root_path = worktree.read_with(&cx, |this, _| this.abs_path())?;
-            let new_path = PathBuf::from_proto(envelope.payload.new_path.clone());
-            (root_path.join(&old_path), root_path.join(&new_path))
-        };
+        let (old_abs_path, new_abs_path) = worktree.read_with(&cx, |worktree, _| {
+            Ok((
+                worktree.absolutize(&old_path),
+                worktree.absolutize(
+                    &RelPath::from_proto(&envelope.payload.new_path)
+                        .context("invalid relative path")?,
+                ),
+            ))
+        })?;
 
         let _transaction = Self::will_rename_entry(
             this.downgrade(),
@@ -8381,7 +8390,9 @@ impl LspStore {
             {
                 let project_path = ProjectPath {
                     worktree_id,
-                    path: Arc::<Path>::from_proto(message_summary.path),
+                    path: RelPath::from_proto(&message_summary.path)
+                        .context("invalid path")?
+                        .into(),
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message_summary.language_server_id as usize);
@@ -12484,7 +12495,7 @@ impl DiagnosticSummary {
     pub fn to_proto(
         self,
         language_server_id: LanguageServerId,
-        path: &Path,
+        path: &RelPath,
     ) -> proto::DiagnosticSummary {
         proto::DiagnosticSummary {
             path: path.to_proto(),

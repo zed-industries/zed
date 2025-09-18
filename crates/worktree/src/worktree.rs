@@ -833,46 +833,6 @@ impl Worktree {
         }
     }
 
-    pub fn copy_entry(
-        &mut self,
-        entry_id: ProjectEntryId,
-        relative_worktree_source_path: Option<Arc<RelPath>>,
-        new_path: Arc<RelPath>,
-        cx: &Context<Self>,
-    ) -> Task<Result<Option<Entry>>> {
-        match self {
-            Worktree::Local(this) => {
-                this.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
-            }
-            Worktree::Remote(this) => {
-                let relative_worktree_source_path = relative_worktree_source_path
-                    .map(|relative_worktree_source_path| relative_worktree_source_path.to_proto());
-                let response = this.client.request(proto::CopyProjectEntry {
-                    project_id: this.project_id,
-                    entry_id: entry_id.to_proto(),
-                    relative_worktree_source_path,
-                    new_path: new_path.to_proto(),
-                });
-                cx.spawn(async move |this, cx| {
-                    let response = response.await?;
-                    match response.entry {
-                        Some(entry) => this
-                            .update(cx, |worktree, cx| {
-                                worktree.as_remote_mut().unwrap().insert_entry(
-                                    entry,
-                                    response.worktree_scan_id as usize,
-                                    cx,
-                                )
-                            })?
-                            .await
-                            .map(Some),
-                        None => Ok(None),
-                    }
-                })
-            }
-        }
-    }
-
     pub fn copy_external_entries(
         &mut self,
         target_directory: Arc<RelPath>,
@@ -1039,33 +999,6 @@ impl Worktree {
                 CreatedEntry::Included(entry) => Some(entry.into()),
                 CreatedEntry::Excluded { .. } => None,
             },
-            worktree_scan_id: scan_id as u64,
-        })
-    }
-
-    pub async fn handle_copy_entry(
-        this: Entity<Self>,
-        request: proto::CopyProjectEntry,
-        mut cx: AsyncApp,
-    ) -> Result<proto::ProjectEntryResponse> {
-        let new_path = RelPath::from_proto(&request.new_path).context("invalid new path")?;
-        let (scan_id, task) = this.update(&mut cx, |this, cx| {
-            let relative_worktree_source_path = request
-                .relative_worktree_source_path
-                .as_deref()
-                .and_then(RelPath::from_proto);
-            (
-                this.scan_id(),
-                this.copy_entry(
-                    ProjectEntryId::from_proto(request.entry_id),
-                    relative_worktree_source_path,
-                    new_path,
-                    cx,
-                ),
-            )
-        })?;
-        Ok(proto::ProjectEntryResponse {
-            entry: task.await?.as_ref().map(|e| e.into()),
             worktree_scan_id: scan_id as u64,
         })
     }
@@ -1731,47 +1664,6 @@ impl LocalWorktree {
         })
     }
 
-    fn copy_entry(
-        &self,
-        entry_id: ProjectEntryId,
-        relative_worktree_source_path: Option<Arc<RelPath>>,
-        new_path: Arc<RelPath>,
-        cx: &Context<Worktree>,
-    ) -> Task<Result<Option<Entry>>> {
-        let old_path = match self.entry_for_id(entry_id) {
-            Some(entry) => entry.path.clone(),
-            None => return Task::ready(Ok(None)),
-        };
-        let abs_old_path =
-            if let Some(relative_worktree_source_path) = relative_worktree_source_path {
-                self.abs_path()
-                    .join(relative_worktree_source_path.as_std_path())
-            } else {
-                self.absolutize(&old_path)
-            };
-        let abs_new_path = self.absolutize(&new_path);
-        let fs = self.fs.clone();
-        let copy = cx.background_spawn(async move {
-            copy_recursive(
-                fs.as_ref(),
-                &abs_old_path,
-                &abs_new_path,
-                Default::default(),
-            )
-            .await
-        });
-
-        cx.spawn(async move |this, cx| {
-            copy.await?;
-            this.update(cx, |this, cx| {
-                this.as_local_mut()
-                    .unwrap()
-                    .refresh_entry(new_path.clone(), None, cx)
-            })?
-            .await
-        })
-    }
-
     pub fn copy_external_entries(
         &self,
         target_directory: Arc<RelPath>,
@@ -1912,7 +1804,7 @@ impl LocalWorktree {
         rx
     }
 
-    fn refresh_entry(
+    pub fn refresh_entry(
         &self,
         path: Arc<RelPath>,
         old_path: Option<Arc<RelPath>>,
@@ -2104,7 +1996,7 @@ impl RemoteWorktree {
         }
     }
 
-    fn insert_entry(
+    pub fn insert_entry(
         &mut self,
         entry: proto::Entry,
         scan_id: usize,

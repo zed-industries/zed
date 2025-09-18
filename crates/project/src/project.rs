@@ -2175,16 +2175,12 @@ impl Project {
     pub fn copy_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        relative_worktree_source_path: Option<Arc<RelPath>>,
-        new_path: impl Into<Arc<Path>>,
+        new_project_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<Option<Entry>>> {
-        let Some(worktree) = self.worktree_for_entry(entry_id, cx) else {
-            return Task::ready(Ok(None));
-        };
-        worktree.update(cx, |worktree, cx| {
-            worktree.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
-        })
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.copy_entry(entry_id, new_project_path, cx)
+        });
     }
 
     /// Renames the project entry with given `entry_id`.
@@ -2197,9 +2193,10 @@ impl Project {
         new_path: impl Into<Arc<Path>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<CreatedEntry>> {
-        let worktree_store = self.worktree_store.read(cx);
+        let worktree_store = self.worktree_store.clone();
         let new_path = new_path.into();
         let Some((worktree, old_path, is_dir)) = worktree_store
+            .read(cx)
             .worktree_and_entry_for_id(entry_id, cx)
             .map(|(worktree, entry)| (worktree, entry.path.clone(), entry.is_dir()))
         else {
@@ -2230,9 +2227,9 @@ impl Project {
             )
             .await;
 
-            let entry = worktree
-                .update(cx, |worktree, cx| {
-                    worktree.rename_entry(entry_id, new_path.clone(), cx)
+            let entry = worktree_store
+                .update(cx, |worktree_store, cx| {
+                    worktree_store.rename_entry(entry_id, new_path.clone(), cx)
                 })?
                 .await?;
 

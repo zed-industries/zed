@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context as _, Result, anyhow};
 use collections::{HashMap, HashSet};
-use fs::Fs;
+use fs::{Fs, copy_recursive};
 use futures::{
     FutureExt, SinkExt,
     future::{BoxFuture, Shared},
@@ -172,11 +172,11 @@ impl WorktreeStore {
         let worktree = self.worktree_for_id(project_path.worktree_id, cx)?;
         Some(worktree.read(cx).absolutize(&project_path.path))
     }
-    
+
     pub fn path_style(&self) -> PathStyle {
         match &self.state {
             WorktreeStoreState::Local { .. } => PathStyle::current(),
-            WorktreeStoreState::Remote { path_style, .. } => path_style,
+            WorktreeStoreState::Remote { path_style, .. } => *path_style,
         }
     }
 
@@ -219,6 +219,150 @@ impl WorktreeStore {
             .entry_for_path(&path.path)
     }
 
+    pub fn copy_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        new_project_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Entry>>> {
+        let Some(old_worktree) = self.worktree_for_entry(entry_id, cx) else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
+        let Some(old_entry) = old_worktree.read(cx).entry_for_id(entry_id) else {
+            return Task::ready(Err(anyhow!("no such entry")));
+        };
+        let Some(new_worktree) = self.worktree_for_id(new_project_path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
+
+        match &self.state {
+            WorktreeStoreState::Local { fs } => {
+                let old_abs_path = old_worktree.read(cx).absolutize(&old_entry.path);
+                let new_abs_path = new_worktree.read(cx).absolutize(&new_project_path.path);
+                let fs = fs.clone();
+                let copy = cx.background_spawn(async move {
+                    copy_recursive(
+                        fs.as_ref(),
+                        &old_abs_path,
+                        &new_abs_path,
+                        Default::default(),
+                    )
+                    .await
+                });
+
+                cx.spawn(async move |_, cx| {
+                    copy.await?;
+                    new_worktree
+                        .update(cx, |this, cx| {
+                            this.as_local_mut().unwrap().refresh_entry(
+                                new_project_path.path,
+                                None,
+                                cx,
+                            )
+                        })?
+                        .await
+                })
+            }
+            WorktreeStoreState::Remote {
+                upstream_client,
+                upstream_project_id,
+                ..
+            } => {
+                let response = upstream_client.request(proto::CopyProjectEntry {
+                    project_id: *upstream_project_id,
+                    entry_id: entry_id.to_proto(),
+                    new_path: new_project_path.path.to_proto(),
+                    new_worktree_id: new_project_path.worktree_id.to_proto(),
+                });
+                cx.spawn(async move |_, cx| {
+                    let response = response.await?;
+                    match response.entry {
+                        Some(entry) => new_worktree
+                            .update(cx, |worktree, cx| {
+                                worktree.as_remote_mut().unwrap().insert_entry(
+                                    entry,
+                                    response.worktree_scan_id as usize,
+                                    cx,
+                                )
+                            })?
+                            .await
+                            .map(Some),
+                        None => Ok(None),
+                    }
+                })
+            }
+        }
+    }
+
+    pub fn rename_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        new_project_path: ProjectPath,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Entry>>> {
+        let Some(old_worktree) = self.worktree_for_entry(entry_id, cx) else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
+        let Some(old_entry) = old_worktree.read(cx).entry_for_id(entry_id) else {
+            return Task::ready(Err(anyhow!("no such entry")));
+        };
+        let Some(new_worktree) = self.worktree_for_id(new_project_path.worktree_id, cx) else {
+            return Task::ready(Err(anyhow!("no such worktree")));
+        };
+
+        match &self.state {
+            WorktreeStoreState::Local { fs } => {
+                let old_abs_path = old_worktree.read(cx).absolutize(&old_entry.path);
+                let new_abs_path = new_worktree.read(cx).absolutize(&new_project_path.path);
+                let fs = fs.clone();
+                let rename = cx.background_spawn(async move {
+                    fs.rename(&old_abs_path, &new_abs_path, Default::default())
+                        .await
+                });
+
+                cx.spawn(async move |_, cx| {
+                    rename.await?;
+                    new_worktree
+                        .update(cx, |this, cx| {
+                            this.as_local_mut().unwrap().refresh_entry(
+                                new_project_path.path,
+                                None,
+                                cx,
+                            )
+                        })?
+                        .await
+                })
+            }
+            WorktreeStoreState::Remote {
+                upstream_client,
+                upstream_project_id,
+                ..
+            } => {
+                let response = upstream_client.request(proto::RenameProjectEntry {
+                    project_id: *upstream_project_id,
+                    entry_id: entry_id.to_proto(),
+                    new_path: new_project_path.path.to_proto(),
+                    new_worktree_id: new_project_path.worktree_id.to_proto(),
+                });
+                cx.spawn(async move |_, cx| {
+                    let response = response.await?;
+                    match response.entry {
+                        Some(entry) => new_worktree
+                            .update(cx, |worktree, cx| {
+                                worktree.as_remote_mut().unwrap().insert_entry(
+                                    entry,
+                                    response.worktree_scan_id as usize,
+                                    cx,
+                                )
+                            })?
+                            .await
+                            .map(Some),
+                        None => Ok(None),
+                    }
+                })
+            }
+        }
+    }
     pub fn create_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
@@ -954,11 +1098,22 @@ impl WorktreeStore {
         mut cx: AsyncApp,
     ) -> Result<proto::ProjectEntryResponse> {
         let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let worktree = this.update(&mut cx, |this, cx| {
-            this.worktree_for_entry(entry_id, cx)
-                .context("worktree not found")
-        })??;
-        Worktree::handle_copy_entry(worktree, envelope.payload, cx).await
+        let new_worktree_id = WorktreeId::from_proto(envelope.payload.new_worktree_id);
+        let new_project_path = (
+            new_worktree_id,
+            RelPath::from_proto(&envelope.payload.new_path)?,
+        )
+            .into();
+        let (scan_id, entry) = this.update(&mut cx, |this, cx| {
+            let new_worktree = this.worktree_for_id(new_worktree_id, cx)?;
+            let scan_id = new_worktree.read(cx).scan_id();
+            (scan_id, this.copy_entry(entry_id, new_project_path, cx))
+        })?;
+        let entry = entry.await?;
+        Ok(proto::ProjectEntryResponse {
+            entry: entry.map(|entry| entry.to_proto()),
+            worktree_scan_id: scan_id as u64,
+        })
     }
 
     pub async fn handle_delete_project_entry(
