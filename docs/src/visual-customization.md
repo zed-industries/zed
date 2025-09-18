@@ -109,7 +109,6 @@ To disable this behavior use:
   // Control which items are shown/hidden in the title bar
   "title_bar": {
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
-    "show_branch_status": false,    // Show/hide branch status indicator
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
     "show_onboarding_banner": true, // Show/hide onboarding banners

@@ -4107,7 +4107,6 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 ```json
 "title_bar": {
   "show_branch_icon": false,
-  "show_branch_status": false,
   "show_branch_name": true,
   "show_project_items": true,
   "show_onboarding_banner": true,
@@ -4120,7 +4119,6 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 **Options**
 
 - `show_branch_icon`: Whether to show the branch icon beside branch switcher in the titlebar
-- `show_branch_status`: Whether to show the git status indicator in the titlebar
 - `show_branch_name`: Whether to show the branch name button in the titlebar
 - `show_project_items`: Whether to show the project host and name in the titlebar
 - `show_onboarding_banner`: Whether to show onboarding banners in the titlebar

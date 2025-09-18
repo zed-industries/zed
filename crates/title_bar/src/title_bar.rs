@@ -501,34 +501,21 @@ impl TitleBar {
         let settings = TitleBarSettings::get_global(cx);
         let repository = self.project.read(cx).active_repository(cx)?;
         let workspace = self.workspace.upgrade()?;
-        let branch_name = {
-            let repo = repository.read(cx);
-            repo.branch
-                .as_ref()
-                .map(|branch| branch.name())
-                .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
-                .or_else(|| {
-                    repo.head_commit.as_ref().map(|commit| {
-                        commit
-                            .sha
-                            .chars()
-                            .take(MAX_SHORT_SHA_LENGTH)
-                            .collect::<String>()
-                    })
+        let repo = repository.read(cx);
+        let branch_name = repo
+            .branch
+            .as_ref()
+            .map(|branch| branch.name())
+            .map(|name| util::truncate_and_trailoff(name, MAX_BRANCH_NAME_LENGTH))
+            .or_else(|| {
+                repo.head_commit.as_ref().map(|commit| {
+                    commit
+                        .sha
+                        .chars()
+                        .take(MAX_SHORT_SHA_LENGTH)
+                        .collect::<String>()
                 })
-                .map(|name| {
-                    if !settings.show_branch_status || repo.cached_status().next().is_none() {
-                        name
-                    } else if repo
-                        .cached_status()
-                        .all(|entry| entry.status.staging().is_fully_staged())
-                    {
-                        format!("{}+", name)
-                    } else {
-                        format!("{}*", name)
-                    }
-                })
-        }?;
+            })?;
 
         Some(
             Button::new("project_branch_trigger", branch_name)
@@ -551,10 +538,26 @@ impl TitleBar {
                     });
                 })
                 .when(settings.show_branch_icon, |branch_button| {
+                    let (icon, icon_color) = {
+                        let status = repo.status_summary();
+                        let tracked = status.index + status.worktree;
+                        if status.conflict > 0 {
+                            (IconName::Warning, Color::VersionControlConflict)
+                        } else if tracked.modified > 0 {
+                            (IconName::SquareDot, Color::VersionControlModified)
+                        } else if tracked.added > 0 || status.untracked > 0 {
+                            (IconName::SquarePlus, Color::VersionControlAdded)
+                        } else if tracked.deleted > 0 {
+                            (IconName::SquareMinus, Color::VersionControlDeleted)
+                        } else {
+                            (IconName::GitBranch, Color::Muted)
+                        }
+                    };
+
                     branch_button
-                        .icon(IconName::GitBranch)
+                        .icon(icon)
                         .icon_position(IconPosition::Start)
-                        .icon_color(Color::Muted)
+                        .icon_color(icon_color)
                         .icon_size(IconSize::Indicator)
                 }),
         )

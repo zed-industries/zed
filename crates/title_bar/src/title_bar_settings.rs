@@ -6,7 +6,6 @@ use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
 #[derive(Copy, Clone, Deserialize, Debug)]
 pub struct TitleBarSettings {
     pub show_branch_icon: bool,
-    pub show_branch_status: bool,
     pub show_onboarding_banner: bool,
     pub show_user_picture: bool,
     pub show_branch_name: bool,
@@ -25,10 +24,6 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_branch_icon: Option<bool>,
-    /// Whether to show the git status indicator in the title bar.
-    ///
-    /// Default: false
-    pub show_branch_status: Option<bool>,
     /// Whether to show onboarding banners in the title bar.
     ///
     /// Default: true
