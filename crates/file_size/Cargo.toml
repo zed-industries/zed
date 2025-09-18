@@ -1,0 +1,36 @@
+[package]
+name = "file_size"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/file_size.rs"
+doctest = false
+
+[dependencies]
+anyhow.workspace = true
+editor.workspace = true
+gpui.workspace = true
+language.workspace = true
+schemars.workspace = true
+serde.workspace = true
+settings.workspace = true
+text.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+workspace-hack.workspace = true
+
+[dev-dependencies]
+editor = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

@@ -13,6 +13,7 @@ use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
+use file_size;
 use fs::{Fs, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
@@ -586,6 +587,7 @@ pub fn main() {
         ui_prompt::init(cx);
 
         go_to_line::init(cx);
+        file_size::init(cx);
         file_finder::init(cx);
         tab_switcher::init(cx);
         outline::init(cx);

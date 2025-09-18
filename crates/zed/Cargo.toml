@@ -59,6 +59,7 @@ extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
+file_size.workspace = true
 system_specs.workspace = true
 fs.workspace = true
 futures.workspace = true
