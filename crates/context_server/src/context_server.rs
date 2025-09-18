@@ -138,7 +138,7 @@ impl ContextServerCommand {
                 (path.clone(), args.clone(), env.clone())
             }
             ContextServerCommand::Http { url, headers, .. } => {
-                let mut args = vec!["mcp-remote".to_string()];
+                let mut args = vec!["-y".to_string(), "mcp-remote".to_string()];
                 
                 // Add headers as --header flags if provided
                 if let Some(headers) = headers {
@@ -378,6 +378,7 @@ mod tests {
         let (path, args, env) = cmd.effective_command();
         assert_eq!(path, PathBuf::from("npx"));
         assert_eq!(args, vec![
+            "-y",
             "mcp-remote",
             "--header",
             "Authorization: Bearer token",
@@ -398,7 +399,7 @@ mod tests {
         let cmd: ContextServerCommand = serde_json::from_str(remote_format_json).unwrap();
         let (path, args, env) = cmd.effective_command();
         assert_eq!(path, PathBuf::from("npx"));
-        assert_eq!(args, vec!["mcp-remote", "https://mcp.example.com/sse"]);
+        assert_eq!(args, vec!["-y", "mcp-remote", "https://mcp.example.com/sse"]);
         assert!(env.is_none());
     }
 }

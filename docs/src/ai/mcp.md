@@ -93,12 +93,6 @@ When you configure a remote server this way, Zed automatically:
 2. Converts any headers to environment variables (e.g., `Authorization` → `MCP_HEADER_AUTHORIZATION`)
 3. Handles the HTTP/SSE transport layer
 
-Note: Remote MCP servers require `mcp-remote` to be available. You can install it via:
-
-```bash
-npm install -g mcp-remote
-```
-
 #### Backward Compatibility
 
 Existing configurations without a `type` field are automatically treated as local servers:
