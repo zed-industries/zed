@@ -7,11 +7,11 @@ use crate::{
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-    App, Context, Font, FontFallbacks, FontStyle, FontWeight, Global, Pixels, SharedString,
-    Subscription, Window, px,
+    App, Context, Font, FontFallbacks, FontStyle, FontWeight, Global, Pixels, Subscription, Window,
+    px,
 };
 use refineable::Refineable;
-use schemars::{JsonSchema, json_schema};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 pub use settings::{FontFamilyName, IconThemeName, ThemeMode, ThemeName};
 use settings::{Settings, SettingsContent};

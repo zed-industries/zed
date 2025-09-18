@@ -11,7 +11,7 @@ use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGl
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
-use serde_json::{Value, json};
+use serde_json::Value;
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId, type_name},
