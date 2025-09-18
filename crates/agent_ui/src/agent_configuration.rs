@@ -588,48 +588,41 @@ impl AgentConfiguration {
                 }
             })
             .child(
-                h_flex()
-                    .justify_between()
-                    .gap_1p5()
+                v_flex()
+                    .gap_2()
                     .child(
-                        h_flex().w_full().child(
-                            Button::new("add-context-server", "Add Custom Server")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .full_width()
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
-                                .on_click(|_event, window, cx| {
-                                    window.dispatch_action(AddContextServer.boxed_clone(), cx)
-                                }),
-                        ),
-                    )
-                    .child(
-                        h_flex().w_full().child(
-                            Button::new(
-                                "install-context-server-extensions",
-                                "Install MCP Extensions",
-                            )
+                        Button::new("add-context-server", "Add Custom Server")
                             .style(ButtonStyle::Filled)
                             .layer(ElevationIndex::ModalSurface)
                             .full_width()
-                            .icon(IconName::ToolHammer)
+                            .icon(IconName::Plus)
                             .icon_size(IconSize::Small)
                             .icon_position(IconPosition::Start)
                             .on_click(|_event, window, cx| {
-                                window.dispatch_action(
-                                    zed_actions::Extensions {
-                                        category_filter: Some(
-                                            ExtensionCategoryFilter::ContextServers,
-                                        ),
-                                        id: None,
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                )
+                                window.dispatch_action(AddContextServer.boxed_clone(), cx)
                             }),
-                        ),
+                    )
+                    .child(
+                        Button::new(
+                            "install-context-server-extensions",
+                            "Install MCP Extensions",
+                        )
+                        .style(ButtonStyle::Filled)
+                        .layer(ElevationIndex::ModalSurface)
+                        .full_width()
+                        .icon(IconName::ToolHammer)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .on_click(|_event, window, cx| {
+                            window.dispatch_action(
+                                zed_actions::Extensions {
+                                    category_filter: Some(ExtensionCategoryFilter::ContextServers),
+                                    id: None,
+                                }
+                                .boxed_clone(),
+                                cx,
+                            )
+                        }),
                     ),
             )
     }
