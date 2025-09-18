@@ -137,7 +137,6 @@ pub struct GlobalLspSettingsContent {
     pub button: Option<bool>,
 }
 
-// todo! binary is actually just required, shouldn't be an option
 #[skip_serializing_none]
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
