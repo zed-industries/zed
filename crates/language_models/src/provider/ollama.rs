@@ -1,7 +1,8 @@
 use anyhow::{Result, anyhow};
+use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
-use gpui::{AnyView, App, AsyncApp, Context, Subscription, Task};
+use gpui::{AnyView, App, AsyncApp, Context, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
@@ -10,20 +11,25 @@ use language_model::{
     LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
     LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
+use menu;
 use ollama::{
-    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OllamaFunctionCall,
-    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
+    ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, KeepAlive, OLLAMA_API_URL,
+    OllamaFunctionCall, OllamaFunctionTool, OllamaToolCall, get_models, show_model,
+    stream_chat_completion,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Arc};
-use ui::{ButtonLike, Indicator, List, prelude::*};
-use util::ResultExt;
+use ui::{ButtonLike, ElevationIndex, List, Tooltip, prelude::*};
+use ui_input::SingleLineInput;
+use zed_env_vars::{EnvVar, env_var};
 
 use crate::AllLanguageModelSettings;
+use crate::api_key::ApiKeyState;
 use crate::ui::InstructionListItem;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
@@ -32,6 +38,9 @@ const OLLAMA_SITE: &str = "https://ollama.com/";
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("ollama");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("Ollama");
+
+const API_KEY_ENV_VAR_NAME: &str = "OLLAMA_API_KEY";
+static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct OllamaSettings {
@@ -63,25 +72,61 @@ pub struct OllamaLanguageModelProvider {
 }
 
 pub struct State {
+    api_key_state: ApiKeyState,
     http_client: Arc<dyn HttpClient>,
-    available_models: Vec<ollama::Model>,
+    fetched_models: Vec<ollama::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
-    _subscription: Subscription,
 }
 
 impl State {
     fn is_authenticated(&self) -> bool {
-        !self.available_models.is_empty()
+        !self.fetched_models.is_empty()
+    }
+
+    fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
+        let api_url = OllamaLanguageModelProvider::api_url(cx);
+        let task = self
+            .api_key_state
+            .store(api_url, api_key, |this| &mut this.api_key_state, cx);
+
+        self.fetched_models.clear();
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                .ok();
+            result
+        })
+    }
+
+    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
+        let api_url = OllamaLanguageModelProvider::api_url(cx);
+        let task = self.api_key_state.load_if_needed(
+            api_url,
+            &API_KEY_ENV_VAR,
+            |this| &mut this.api_key_state,
+            cx,
+        );
+
+        // Always try to fetch models - if no API key is needed (local Ollama), it will work
+        // If API key is needed and provided, it will work
+        // If API key is needed and not provided, it will fail gracefully
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                .ok();
+            result
+        })
     }
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
-        let settings = &AllLanguageModelSettings::get_global(cx).ollama;
         let http_client = Arc::clone(&self.http_client);
-        let api_url = settings.api_url.clone();
+        let api_url = OllamaLanguageModelProvider::api_url(cx);
+        let api_key = self.api_key_state.key(&api_url);
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, None).await?;
+            let models =
+                get_models(http_client.as_ref(), &api_url, api_key.as_deref(), None).await?;
 
             let tasks = models
                 .into_iter()
@@ -92,9 +137,12 @@ impl State {
                 .map(|model| {
                     let http_client = Arc::clone(&http_client);
                     let api_url = api_url.clone();
+                    let api_key = api_key.clone();
                     async move {
                         let name = model.name.as_str();
-                        let capabilities = show_model(http_client.as_ref(), &api_url, name).await?;
+                        let capabilities =
+                            show_model(http_client.as_ref(), &api_url, api_key.as_deref(), name)
+                                .await?;
                         let ollama_model = ollama::Model::new(
                             name,
                             None,
@@ -119,7 +167,7 @@ impl State {
             ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
             this.update(cx, |this, cx| {
-                this.available_models = ollama_models;
+                this.fetched_models = ollama_models;
                 cx.notify();
             })
         })
@@ -129,15 +177,6 @@ impl State {
         let task = self.fetch_models(cx);
         self.fetch_model_task.replace(task);
     }
-
-    fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
-        if self.is_authenticated() {
-            return Task::ready(Ok(()));
-        }
-
-        let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(async move |_this, _cx| Ok(fetch_models_task.await?))
-    }
 }
 
 impl OllamaLanguageModelProvider {
@@ -145,29 +184,46 @@ impl OllamaLanguageModelProvider {
         let this = Self {
             http_client: http_client.clone(),
             state: cx.new(|cx| {
-                let subscription = cx.observe_global::<SettingsStore>({
-                    let mut settings = AllLanguageModelSettings::get_global(cx).ollama.clone();
+                cx.observe_global::<SettingsStore>({
+                    let mut last_settings = OllamaLanguageModelProvider::settings(cx).clone();
                     move |this: &mut State, cx| {
-                        let new_settings = &AllLanguageModelSettings::get_global(cx).ollama;
-                        if &settings != new_settings {
-                            settings = new_settings.clone();
-                            this.restart_fetch_models_task(cx);
+                        let current_settings = OllamaLanguageModelProvider::settings(cx);
+                        let settings_changed = current_settings != &last_settings;
+                        if settings_changed {
+                            let url_changed = last_settings.api_url != current_settings.api_url;
+                            last_settings = current_settings.clone();
+                            if url_changed {
+                                this.fetched_models.clear();
+                                this.authenticate(cx).detach();
+                            }
                             cx.notify();
                         }
                     }
-                });
+                })
+                .detach();
 
                 State {
                     http_client,
-                    available_models: Default::default(),
+                    fetched_models: Default::default(),
                     fetch_model_task: None,
-                    _subscription: subscription,
+                    api_key_state: ApiKeyState::new(Self::api_url(cx)),
                 }
             }),
         };
-        this.state
-            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
         this
+    }
+
+    fn settings(cx: &App) -> &OllamaSettings {
+        &AllLanguageModelSettings::get_global(cx).ollama
+    }
+
+    fn api_url(cx: &App) -> SharedString {
+        let api_url = &Self::settings(cx).api_url;
+        if api_url.is_empty() {
+            OLLAMA_API_URL.into()
+        } else {
+            SharedString::new(api_url.as_str())
+        }
     }
 }
 
@@ -208,16 +264,12 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         let mut models: HashMap<String, ollama::Model> = HashMap::new();
 
         // Add models from the Ollama API
-        for model in self.state.read(cx).available_models.iter() {
+        for model in self.state.read(cx).fetched_models.iter() {
             models.insert(model.name.clone(), model.clone());
         }
 
         // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .ollama
-            .available_models
-            .iter()
-        {
+        for model in &OllamaLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
                 ollama::Model {
@@ -240,6 +292,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                     model,
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
+                    state: self.state.clone(),
                 }) as Arc<dyn LanguageModel>
             })
             .collect::<Vec<_>>();
@@ -267,7 +320,8 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.fetch_models(cx))
+        self.state
+            .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 }
 
@@ -276,6 +330,7 @@ pub struct OllamaLanguageModel {
     model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
+    state: gpui::Entity<State>,
 }
 
 impl OllamaLanguageModel {
@@ -454,15 +509,17 @@ impl LanguageModel for OllamaLanguageModel {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let Ok(api_url) = cx.update(|cx| {
-            let settings = &AllLanguageModelSettings::get_global(cx).ollama;
-            settings.api_url.clone()
+        let Ok((api_key, api_url)) = self.state.read_with(cx, |state, cx| {
+            let api_url = OllamaLanguageModelProvider::api_url(cx);
+            (state.api_key_state.key(&api_url), api_url)
         }) else {
             return futures::future::ready(Err(anyhow!("App state dropped").into())).boxed();
         };
 
         let future = self.request_limiter.stream(async move {
-            let stream = stream_chat_completion(http_client.as_ref(), &api_url, request).await?;
+            let stream =
+                stream_chat_completion(http_client.as_ref(), &api_url, api_key.as_deref(), request)
+                    .await?;
             let stream = map_to_language_model_completion_events(stream);
             Ok(stream)
         });
@@ -574,39 +631,221 @@ fn map_to_language_model_completion_events(
 }
 
 struct ConfigurationView {
+    api_key_editor: gpui::Entity<SingleLineInput>,
+    api_url_editor: gpui::Entity<SingleLineInput>,
     state: gpui::Entity<State>,
-    loading_models_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
     pub fn new(state: gpui::Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let loading_models_task = Some(cx.spawn_in(window, {
-            let state = state.clone();
-            async move |this, cx| {
-                if let Some(task) = state
-                    .update(cx, |state, cx| state.authenticate(cx))
-                    .log_err()
-                {
-                    task.await.log_err();
-                }
-                this.update(cx, |this, cx| {
-                    this.loading_models_task = None;
-                    cx.notify();
-                })
-                .log_err();
-            }
-        }));
+        let api_key_editor =
+            cx.new(|cx| SingleLineInput::new(window, cx, "63e02e...").label("API key"));
+
+        let api_url_editor = cx.new(|cx| {
+            let input = SingleLineInput::new(window, cx, OLLAMA_API_URL).label("API URL");
+            input.set_text(OllamaLanguageModelProvider::api_url(cx), window, cx);
+            input
+        });
+
+        cx.observe(&state, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
 
         Self {
+            api_key_editor,
+            api_url_editor,
             state,
-            loading_models_task,
         }
     }
 
     fn retry_connection(&self, cx: &mut App) {
         self.state
-            .update(cx, |state, cx| state.fetch_models(cx))
-            .detach_and_log_err(cx);
+            .update(cx, |state, cx| state.restart_fetch_models_task(cx));
+    }
+
+    fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        let api_key = self.api_key_editor.read(cx).text(cx).trim().to_string();
+        if api_key.is_empty() {
+            return;
+        }
+
+        // url changes can cause the editor to be displayed again
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
+
+        let state = self.state.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            state
+                .update(cx, |state, cx| state.set_api_key(Some(api_key), cx))?
+                .await
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn reset_api_key(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_key_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
+
+        let state = self.state.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            state
+                .update(cx, |state, cx| state.set_api_key(None, cx))?
+                .await
+        })
+        .detach_and_log_err(cx);
+
+        cx.notify();
+    }
+
+    fn save_api_url(&mut self, cx: &mut Context<Self>) {
+        let api_url = self.api_url_editor.read(cx).text(cx).trim().to_string();
+        let current_url = OllamaLanguageModelProvider::api_url(cx);
+        if !api_url.is_empty() && &api_url != &current_url {
+            let fs = <dyn Fs>::global(cx);
+            update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
+                if let Some(settings) = settings.ollama.as_mut() {
+                    settings.api_url = Some(api_url);
+                } else {
+                    settings.ollama = Some(crate::settings::OllamaSettingsContent {
+                        api_url: Some(api_url),
+                        available_models: None,
+                    });
+                }
+            });
+        }
+    }
+
+    fn reset_api_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.api_url_editor
+            .update(cx, |input, cx| input.set_text("", window, cx));
+        let fs = <dyn Fs>::global(cx);
+        update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
+            if let Some(settings) = settings.ollama.as_mut() {
+                settings.api_url = Some(OLLAMA_API_URL.into());
+            }
+        });
+        cx.notify();
+    }
+
+    fn render_instructions() -> Div {
+        v_flex()
+            .gap_2()
+            .child(Label::new(
+                "Run LLMs locally on your machine with Ollama, or connect to an Ollama server. \
+                Can provide access to Llama, Mistral, Gemma, and hundreds of other models.",
+            ))
+            .child(Label::new("To use local Ollama:"))
+            .child(
+                List::new()
+                    .child(InstructionListItem::new(
+                        "Download and install Ollama from",
+                        Some("ollama.com"),
+                        Some("https://ollama.com/download"),
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Start Ollama and download a model: `ollama run gpt-oss:20b`",
+                    ))
+                    .child(InstructionListItem::text_only(
+                        "Click 'Connect' below to start using Ollama in Zed",
+                    )),
+            )
+            .child(Label::new(
+                "Alternatively, you can connect to an Ollama server by specifying its \
+                URL and API key (may not be required):",
+            ))
+    }
+
+    fn render_api_key_editor(&self, cx: &Context<Self>) -> Div {
+        let state = self.state.read(cx);
+        let env_var_set = state.api_key_state.is_from_env_var();
+
+        if !state.api_key_state.has_key() {
+            v_flex()
+              .on_action(cx.listener(Self::save_api_key))
+              .child(self.api_key_editor.clone())
+              .child(
+                  Label::new(
+                      format!("You can also assign the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed.")
+                  )
+                  .size(LabelSize::Small)
+                  .color(Color::Muted),
+              )
+        } else {
+            h_flex()
+                .p_3()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().elevated_surface_background)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(
+                            Label::new(
+                                if env_var_set {
+                                    format!("API key set in {API_KEY_ENV_VAR_NAME} environment variable.")
+                                } else {
+                                    "API key configured".to_string()
+                                }
+                            )
+                        )
+                )
+                .child(
+                    Button::new("reset-api-key", "Reset API Key")
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .layer(ElevationIndex::ModalSurface)
+                        .when(env_var_set, |this| {
+                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable.")))
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
+                )
+        }
+    }
+
+    fn render_api_url_editor(&self, cx: &Context<Self>) -> Div {
+        let api_url = OllamaLanguageModelProvider::api_url(cx);
+        let custom_api_url_set = api_url != OLLAMA_API_URL;
+
+        if custom_api_url_set {
+            h_flex()
+                .p_3()
+                .justify_between()
+                .rounded_md()
+                .border_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().elevated_surface_background)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Icon::new(IconName::Check).color(Color::Success))
+                        .child(v_flex().gap_1().child(Label::new(api_url))),
+                )
+                .child(
+                    Button::new("reset-api-url", "Reset API URL")
+                        .label_size(LabelSize::Small)
+                        .icon(IconName::Undo)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .layer(ElevationIndex::ModalSurface)
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
+                        ),
+                )
+        } else {
+            v_flex()
+                .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                    this.save_api_url(cx);
+                    cx.notify();
+                }))
+                .gap_2()
+                .child(self.api_url_editor.clone())
+        }
     }
 }
 
@@ -614,98 +853,83 @@ impl Render for ConfigurationView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        let ollama_intro =
-            "Get up & running with Llama 3.3, Mistral, Gemma 2, and other LLMs with Ollama.";
-
-        if self.loading_models_task.is_some() {
-            div().child(Label::new("Loading models...")).into_any()
-        } else {
-            v_flex()
-                .gap_2()
-                .child(
-                    v_flex().gap_1().child(Label::new(ollama_intro)).child(
-                        List::new()
-                            .child(InstructionListItem::text_only("Ollama must be running with at least one model installed to use it in the assistant."))
-                            .child(InstructionListItem::text_only(
-                                "Once installed, try `ollama run llama3.2`",
-                            )),
-                    ),
-                )
-                .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .gap_2()
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .gap_2()
-                                .map(|this| {
-                                    if is_authenticated {
-                                        this.child(
-                                            Button::new("ollama-site", "Ollama")
-                                                .style(ButtonStyle::Subtle)
-                                                .icon(IconName::ArrowUpRight)
-                                                .icon_size(IconSize::Small)
-                                                .icon_color(Color::Muted)
-                                                .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
-                                                .into_any_element(),
-                                        )
-                                    } else {
-                                        this.child(
-                                            Button::new(
-                                                "download_ollama_button",
-                                                "Download Ollama",
-                                            )
+        v_flex()
+            .gap_2()
+            .child(Self::render_instructions())
+            .child(self.render_api_url_editor(cx))
+            .child(self.render_api_key_editor(cx))
+            .child(
+                h_flex()
+                    .w_full()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .map(|this| {
+                                if is_authenticated {
+                                    this.child(
+                                        Button::new("ollama-site", "Ollama")
                                             .style(ButtonStyle::Subtle)
                                             .icon(IconName::ArrowUpRight)
-                                            .icon_size(IconSize::Small)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
+                                            .into_any_element(),
+                                    )
+                                } else {
+                                    this.child(
+                                        Button::new("download_ollama_button", "Download Ollama")
+                                            .style(ButtonStyle::Subtle)
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .on_click(move |_, _, cx| {
                                                 cx.open_url(OLLAMA_DOWNLOAD_URL)
                                             })
                                             .into_any_element(),
-                                        )
-                                    }
-                                })
-                                .child(
-                                    Button::new("view-models", "View All Models")
-                                        .style(ButtonStyle::Subtle)
-                                        .icon(IconName::ArrowUpRight)
-                                        .icon_size(IconSize::Small)
-                                        .icon_color(Color::Muted)
-                                        .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
-                                ),
-                        )
-                        .map(|this| {
-                            if is_authenticated {
-                                this.child(
-                                    ButtonLike::new("connected")
-                                        .disabled(true)
-                                        .cursor_style(gpui::CursorStyle::Arrow)
-                                        .child(
-                                            h_flex()
-                                                .gap_2()
-                                                .child(Indicator::dot().color(Color::Success))
-                                                .child(Label::new("Connected"))
-                                                .into_any_element(),
-                                        ),
-                                )
-                            } else {
-                                this.child(
-                                    Button::new("retry_ollama_models", "Connect")
-                                        .icon_position(IconPosition::Start)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon(IconName::PlayFilled)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                    )
+                                }
+                            })
+                            .child(
+                                Button::new("view-models", "View All Models")
+                                    .style(ButtonStyle::Subtle)
+                                    .icon(IconName::ArrowUpRight)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon_color(Color::Muted)
+                                    .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
+                            ),
+                    )
+                    .map(|this| {
+                        if is_authenticated {
+                            this.child(
+                                ButtonLike::new("connected")
+                                    .disabled(true)
+                                    .cursor_style(gpui::CursorStyle::Arrow)
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(Icon::new(IconName::Check).color(Color::Success))
+                                            .child(Label::new("Connected"))
+                                            .into_any_element(),
+                                    ),
+                            )
+                        } else {
+                            this.child(
+                                Button::new("retry_ollama_models", "Connect")
+                                    .icon_position(IconPosition::Start)
+                                    .icon_size(IconSize::XSmall)
+                                    .icon(IconName::PlayOutlined)
+                                    .on_click(
+                                        cx.listener(move |this, _, _, cx| {
                                             this.retry_connection(cx)
-                                        })),
-                                )
-                            }
-                        })
-                )
-                .into_any()
-        }
+                                        }),
+                                    ),
+                            )
+                        }
+                    }),
+            )
     }
 }
 

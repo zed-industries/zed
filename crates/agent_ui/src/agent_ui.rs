@@ -1,5 +1,4 @@
 mod acp;
-mod active_thread;
 mod agent_configuration;
 mod agent_diff;
 mod agent_model_selector;
@@ -8,7 +7,6 @@ mod buffer_codegen;
 mod context_picker;
 mod context_server_configuration;
 mod context_strip;
-mod debug;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod language_model_selector;
@@ -16,18 +14,15 @@ mod message_editor;
 mod profile_selector;
 mod slash_command;
 mod slash_command_picker;
-mod slash_command_settings;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod text_thread_editor;
-mod thread_history;
-mod tool_compatibility;
 mod ui;
 
 use std::rc::Rc;
 use std::sync::Arc;
 
-use agent::{Thread, ThreadId};
+use agent::ThreadId;
 use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
@@ -47,14 +42,11 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings as _, SettingsStore};
 use std::any::TypeId;
 
-pub use crate::active_thread::ActiveThread;
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
 pub use crate::agent_panel::{AgentPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
-use crate::slash_command_settings::SlashCommandSettings;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
 pub use text_thread_editor::{AgentPanelDelegate, TextThreadEditor};
-pub use ui::preview::{all_agent_previews, get_agent_preview};
 use zed_actions;
 
 actions!(
@@ -235,14 +227,12 @@ impl ManageProfiles {
 
 #[derive(Clone)]
 pub(crate) enum ModelUsageContext {
-    Thread(Entity<Thread>),
     InlineAssistant,
 }
 
 impl ModelUsageContext {
     pub fn configured_model(&self, cx: &App) -> Option<ConfiguredModel> {
         match self {
-            Self::Thread(thread) => thread.read(cx).configured_model(),
             Self::InlineAssistant => {
                 LanguageModelRegistry::read_global(cx).inline_assistant_model()
             }
@@ -265,7 +255,6 @@ pub fn init(
     cx: &mut App,
 ) {
     AgentSettings::register(cx);
-    SlashCommandSettings::register(cx);
 
     assistant_context::init(client.clone(), cx);
     rules_library::init(cx);
@@ -421,8 +410,6 @@ fn register_slash_commands(cx: &mut App) {
     slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
-    slash_command_registry
-        .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
     slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
@@ -442,21 +429,4 @@ fn register_slash_commands(cx: &mut App) {
         }
     })
     .detach();
-
-    update_slash_commands_from_settings(cx);
-    cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
-        .detach();
-}
-
-fn update_slash_commands_from_settings(cx: &mut App) {
-    let slash_command_registry = SlashCommandRegistry::global(cx);
-    let settings = SlashCommandSettings::get_global(cx);
-
-    if settings.cargo_workspace.enabled {
-        slash_command_registry
-            .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
-    } else {
-        slash_command_registry
-            .unregister_command(assistant_slash_commands::CargoWorkspaceSlashCommand);
-    }
 }

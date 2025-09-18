@@ -20,6 +20,7 @@ futures.workspace = true
 fs.workspace = true
 gpui.workspace = true
 language.workspace = true
+log.workspace = true
 lsp.workspace = true
 project.workspace = true
 serde.workspace = true

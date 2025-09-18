@@ -9,7 +9,8 @@ use std::{
 use crossbeam::queue::ArrayQueue;
 use rodio::{ChannelCount, Sample, SampleRate, Source};
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("Replay duration is too short must be >= 100ms")]
 pub struct ReplayDurationTooShort;
 
 pub trait RodioExt: Source + Sized {
@@ -56,7 +57,7 @@ impl<S: Source> RodioExt for S {
     /// replay is being read
     ///
     /// # Errors
-    /// If duration is smaller then 100ms
+    /// If duration is smaller than 100ms
     fn replayable(
         self,
         duration: Duration,
@@ -150,7 +151,7 @@ impl<S: Source> Source for TakeSamples<S> {
 struct ReplayQueue {
     inner: ArrayQueue<Vec<Sample>>,
     normal_chunk_len: usize,
-    /// The last chunk in the queue may be smaller then
+    /// The last chunk in the queue may be smaller than
     /// the normal chunk size. This is always equal to the
     /// size of the last element in the queue.
     /// (so normally chunk_size)
@@ -338,6 +339,7 @@ impl<S: Source> Iterator for Replayable<S> {
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(sample) = self.inner.next() {
             self.buffer.push(sample);
+            // If the buffer is full send it
             if self.buffer.len() == self.chunk_size {
                 self.tx.push_normal(std::mem::take(&mut self.buffer));
             }
@@ -422,6 +424,9 @@ impl Iterator for Replay {
                 return None;
             }
 
+            // The queue does not support blocking on a next item. We want this queue as it
+            // is quite fast and provides a fixed size. We know how many samples are in a
+            // buffer so if we do not get one now we must be getting one after `sleep_duration`.
             std::thread::sleep(self.sleep_duration);
         }
     }
@@ -530,7 +535,7 @@ mod tests {
 
             let (mut replay, mut source) = input
                 .replayable(Duration::from_secs(3))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             source.by_ref().take(3).count();
             let yielded: Vec<Sample> = replay.by_ref().take(3).collect();
@@ -547,7 +552,7 @@ mod tests {
 
             let (mut replay, mut source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             source.by_ref().take(5).count(); // get all items but do not end the source
             let yielded: Vec<Sample> = replay.by_ref().take(2).collect();
@@ -562,7 +567,7 @@ mod tests {
 
             let (replay, mut source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             // exhaust but do not yet end source
             source.by_ref().take(40_000).count();
@@ -581,7 +586,7 @@ mod tests {
             let input = StaticSamplesBuffer::new(nz!(1), nz!(16_000), &[0.0; 40_000]);
             let (mut replay, source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
             assert_eq!(replay.by_ref().samples_ready(), 0);
 
             source.take(8000).count(); // half a second

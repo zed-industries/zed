@@ -135,6 +135,7 @@ impl Project {
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
         cx.spawn(async move |project, cx| {
+            let shell_kind = ShellKind::new(&shell);
             let activation_script = maybe!(async {
                 for toolchain in toolchains {
                     let Some(toolchain) = toolchain.await else {
@@ -147,7 +148,7 @@ impl Project {
                     let lister = language?.toolchain_lister();
                     return Some(
                         lister?
-                            .activation_script(&toolchain, ShellKind::new(&shell), fs.as_ref())
+                            .activation_script(&toolchain, shell_kind, fs.as_ref())
                             .await,
                     );
                 }
@@ -157,29 +158,45 @@ impl Project {
             .unwrap_or_default();
 
             project.update(cx, move |this, cx| {
-                let shell = {
+                let format_to_run = || {
+                    if let Some(command) = &spawn_task.command {
+                        let mut command: Option<Cow<str>> = shlex::try_quote(command).ok();
+                        if let Some(command) = &mut command
+                            && command.starts_with('"')
+                            && let Some(prefix) = shell_kind.command_prefix()
+                        {
+                            *command = Cow::Owned(format!("{prefix}{command}"));
+                        }
+
+                        let args = spawn_task
+                            .args
+                            .iter()
+                            .filter_map(|arg| shlex::try_quote(arg).ok());
+                        command.into_iter().chain(args).join(" ")
+                    } else {
+                        // todo: this breaks for remotes to windows
+                        format!("exec {shell} -l")
+                    }
+                };
+
+                let (shell, env) = {
                     env.extend(spawn_task.env);
                     match remote_client {
                         Some(remote_client) => match activation_script.clone() {
                             activation_script if !activation_script.is_empty() => {
                                 let activation_script = activation_script.join("; ");
-                                let to_run = if let Some(command) = spawn_task.command {
-                                    let command: Option<Cow<str>> = shlex::try_quote(&command).ok();
-                                    let args = spawn_task
-                                        .args
-                                        .iter()
-                                        .filter_map(|arg| shlex::try_quote(arg).ok());
-                                    command.into_iter().chain(args).join(" ")
-                                } else {
-                                    format!("exec {shell} -l")
-                                };
-                                let args = vec![
-                                    "-c".to_owned(),
-                                    format!("{activation_script}; {to_run}",),
-                                ];
+                                let to_run = format_to_run();
+                                let args =
+                                    vec!["-c".to_owned(), format!("{activation_script}; {to_run}")];
                                 create_remote_shell(
-                                    Some((&shell, &args)),
-                                    &mut env,
+                                    Some((
+                                        &remote_client
+                                            .read(cx)
+                                            .shell()
+                                            .unwrap_or_else(get_default_system_shell),
+                                        &args,
+                                    )),
+                                    env,
                                     path,
                                     remote_client,
                                     cx,
@@ -190,36 +207,35 @@ impl Project {
                                     .command
                                     .as_ref()
                                     .map(|command| (command, &spawn_task.args)),
-                                &mut env,
+                                env,
                                 path,
                                 remote_client,
                                 cx,
                             )?,
                         },
                         None => match activation_script.clone() {
-                            #[cfg(not(target_os = "windows"))]
                             activation_script if !activation_script.is_empty() => {
                                 let activation_script = activation_script.join("; ");
-                                let to_run = if let Some(command) = spawn_task.command {
-                                    let command: Option<Cow<str>> = shlex::try_quote(&command).ok();
-                                    let args = spawn_task
-                                        .args
-                                        .iter()
-                                        .filter_map(|arg| shlex::try_quote(arg).ok());
-                                    command.into_iter().chain(args).join(" ")
-                                } else {
-                                    format!("exec {shell} -l")
-                                };
-                                Shell::WithArguments {
-                                    program: shell,
-                                    args: vec![
-                                        "-c".to_owned(),
-                                        format!("{activation_script}; {to_run}",),
-                                    ],
-                                    title_override: None,
-                                }
+                                let to_run = format_to_run();
+
+                                // todo(lw): Alacritty uses `CreateProcessW` on windows with the entire command and arg sequence merged into a single string,
+                                // without quoting the arguments
+                                #[cfg(windows)]
+                                let arg =
+                                    quote_arg(&format!("{activation_script}; {to_run}"), true);
+                                #[cfg(not(windows))]
+                                let arg = format!("{activation_script}; {to_run}");
+
+                                (
+                                    Shell::WithArguments {
+                                        program: shell,
+                                        args: vec!["-c".to_owned(), arg],
+                                        title_override: None,
+                                    },
+                                    env,
+                                )
                             }
-                            _ => {
+                            _ => (
                                 if let Some(program) = spawn_task.command {
                                     Shell::WithArguments {
                                         program,
@@ -228,8 +244,9 @@ impl Project {
                                     }
                                 } else {
                                     Shell::System
-                                }
-                            }
+                                },
+                                env,
+                            ),
                         },
                     }
                 };
@@ -323,7 +340,7 @@ impl Project {
             .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
             .collect::<Vec<_>>();
         let remote_client = self.remote_client.clone();
-        let shell = match &remote_client {
+        let shell_kind = ShellKind::new(&match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
                 .shell()
@@ -337,7 +354,7 @@ impl Project {
                 } => program.clone(),
                 Shell::System => get_system_shell(),
             },
-        };
+        });
 
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
@@ -354,7 +371,7 @@ impl Project {
                     let lister = language?.toolchain_lister();
                     return Some(
                         lister?
-                            .activation_script(&toolchain, ShellKind::new(&shell), fs.as_ref())
+                            .activation_script(&toolchain, shell_kind, fs.as_ref())
                             .await,
                     );
                 }
@@ -363,12 +380,12 @@ impl Project {
             .await
             .unwrap_or_default();
             project.update(cx, move |this, cx| {
-                let shell = {
+                let (shell, env) = {
                     match remote_client {
                         Some(remote_client) => {
-                            create_remote_shell(None, &mut env, path, remote_client, cx)?
+                            create_remote_shell(None, env, path, remote_client, cx)?
                         }
-                        None => settings.shell,
+                        None => (settings.shell, env),
                     }
                 };
                 TerminalBuilder::new(
@@ -505,13 +522,44 @@ impl Project {
     }
 }
 
+/// We're not using shlex for windows as it is overly eager with escaping some of the special characters (^) we need for nu. Hence, we took
+/// that quote impl straight from Rust stdlib (Command API).
+#[cfg(windows)]
+fn quote_arg(argument: &str, quote: bool) -> String {
+    let mut arg = String::new();
+    if quote {
+        arg.push('"');
+    }
+
+    let mut backslashes: usize = 0;
+    for x in argument.chars() {
+        if x == '\\' {
+            backslashes += 1;
+        } else {
+            if x == '"' {
+                // Add n+1 backslashes to total 2n+1 before internal '"'.
+                arg.extend((0..=backslashes).map(|_| '\\'));
+            }
+            backslashes = 0;
+        }
+        arg.push(x);
+    }
+
+    if quote {
+        // Add n backslashes to total 2n before ending '"'.
+        arg.extend((0..backslashes).map(|_| '\\'));
+        arg.push('"');
+    }
+    arg
+}
+
 fn create_remote_shell(
     spawn_command: Option<(&String, &Vec<String>)>,
-    env: &mut HashMap<String, String>,
+    mut env: HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
-) -> Result<Shell> {
+) -> Result<(Shell, HashMap<String, String>)> {
     // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
     // to properly display colors.
     // We do not have the luxury of assuming the host has it installed,
@@ -527,18 +575,20 @@ fn create_remote_shell(
     let command = remote_client.read(cx).build_command(
         program,
         args.as_slice(),
-        env,
+        &env,
         working_directory.map(|path| path.display().to_string()),
         None,
     )?;
-    *env = command.env;
 
     log::debug!("Connecting to a remote server: {:?}", command.program);
     let host = remote_client.read(cx).connection_options().display_name();
 
-    Ok(Shell::WithArguments {
-        program: command.program,
-        args: command.args,
-        title_override: Some(format!("{} — Terminal", host).into()),
-    })
+    Ok((
+        Shell::WithArguments {
+            program: command.program,
+            args: command.args,
+            title_override: Some(format!("{} — Terminal", host).into()),
+        },
+        command.env,
+    ))
 }

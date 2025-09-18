@@ -145,7 +145,7 @@ struct BufferBranchState {
 /// state of a buffer.
 pub struct BufferSnapshot {
     pub text: text::BufferSnapshot,
-    pub(crate) syntax: SyntaxSnapshot,
+    pub syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
@@ -660,7 +660,10 @@ impl HighlightedTextBuilder {
         syntax_snapshot: &'a SyntaxSnapshot,
     ) -> BufferChunks<'a> {
         let captures = syntax_snapshot.captures(range.clone(), snapshot, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
         });
 
         let highlight_maps = captures
@@ -3246,7 +3249,10 @@ impl BufferSnapshot {
 
     fn get_highlights(&self, range: Range<usize>) -> (SyntaxMapCaptures<'_>, Vec<HighlightMap>) {
         let captures = self.syntax.captures(range, &self.text, |grammar| {
-            grammar.highlights_query.as_ref()
+            grammar
+                .highlights_config
+                .as_ref()
+                .map(|config| &config.query)
         });
         let highlight_maps = captures
             .grammars()
@@ -3310,16 +3316,23 @@ impl BufferSnapshot {
 
     /// Iterates over every [`SyntaxLayer`] in the buffer.
     pub fn syntax_layers(&self) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
-        self.syntax
-            .layers_for_range(0..self.len(), &self.text, true)
+        self.syntax_layers_for_range(0..self.len(), true)
     }
 
     pub fn syntax_layer_at<D: ToOffset>(&self, position: D) -> Option<SyntaxLayer<'_>> {
         let offset = position.to_offset(self);
-        self.syntax
-            .layers_for_range(offset..offset, &self.text, false)
+        self.syntax_layers_for_range(offset..offset, false)
             .filter(|l| l.node().end_byte() > offset)
             .last()
+    }
+
+    pub fn syntax_layers_for_range<D: ToOffset>(
+        &self,
+        range: Range<D>,
+        include_hidden: bool,
+    ) -> impl Iterator<Item = SyntaxLayer<'_>> + '_ {
+        self.syntax
+            .layers_for_range(range, &self.text, include_hidden)
     }
 
     pub fn smallest_syntax_layer_containing<D: ToOffset>(
@@ -3463,46 +3476,53 @@ impl BufferSnapshot {
         (start..end, word_kind)
     }
 
-    /// Returns the closest syntax node enclosing the given range.
-    /// Positions a tree cursor at the leaf node that contains or touches the given range.
-    /// This is shared logic used by syntax navigation methods.
-    fn position_cursor_at_range(cursor: &mut tree_sitter::TreeCursor, range: &Range<usize>) {
-        // Descend to the first leaf that touches the start of the range.
-        //
-        // If the range is non-empty and the current node ends exactly at the start,
-        // move to the next sibling to find a node that extends beyond the start.
-        //
-        // If the range is empty and the current node starts after the range position,
-        // move to the previous sibling to find the node that contains the position.
-        while cursor.goto_first_child_for_byte(range.start).is_some() {
-            if !range.is_empty() && cursor.node().end_byte() == range.start {
-                cursor.goto_next_sibling();
-            }
-            if range.is_empty() && cursor.node().start_byte() > range.start {
-                cursor.goto_previous_sibling();
-            }
-        }
-    }
-
-    /// Moves the cursor to find a node that contains the given range.
-    /// Returns true if such a node is found, false otherwise.
-    /// This is shared logic used by syntax navigation methods.
-    fn find_containing_node(
+    /// Moves the TreeCursor to the smallest descendant or ancestor syntax node enclosing the given
+    /// range. When `require_larger` is true, the node found must be larger than the query range.
+    ///
+    /// Returns true if a node was found, and false otherwise. In the `false` case the cursor will
+    /// be moved to the root of the tree.
+    fn goto_node_enclosing_range(
         cursor: &mut tree_sitter::TreeCursor,
-        range: &Range<usize>,
-        strict: bool,
+        query_range: &Range<usize>,
+        require_larger: bool,
     ) -> bool {
+        let mut ascending = false;
         loop {
-            let node_range = cursor.node().byte_range();
+            let mut range = cursor.node().byte_range();
+            if query_range.is_empty() {
+                // When the query range is empty and the current node starts after it, move to the
+                // previous sibling to find the node the containing node.
+                if range.start > query_range.start {
+                    cursor.goto_previous_sibling();
+                    range = cursor.node().byte_range();
+                }
+            } else {
+                // When the query range is non-empty and the current node ends exactly at the start,
+                // move to the next sibling to find a node that extends beyond the start.
+                if range.end == query_range.start {
+                    cursor.goto_next_sibling();
+                    range = cursor.node().byte_range();
+                }
+            }
 
-            if node_range.start <= range.start
-                && node_range.end >= range.end
-                && (!strict || node_range.len() > range.len())
-            {
+            let encloses = range.contains_inclusive(query_range)
+                && (!require_larger || range.len() > query_range.len());
+            if !encloses {
+                ascending = true;
+                if !cursor.goto_parent() {
+                    return false;
+                }
+                continue;
+            } else if ascending {
                 return true;
             }
-            if !cursor.goto_parent() {
-                return false;
+
+            // Descend into the current node.
+            if cursor
+                .goto_first_child_for_byte(query_range.start)
+                .is_none()
+            {
+                return true;
             }
         }
     }
@@ -3519,10 +3539,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
-            // Ascend to the smallest ancestor that strictly contains the range.
-            if !Self::find_containing_node(&mut cursor, &range, true) {
+            // Find the node that both contains the range and is larger than it.
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, true) {
                 continue;
             }
 
@@ -3588,10 +3606,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
             // Find the node that contains the range
-            if !Self::find_containing_node(&mut cursor, &range, false) {
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, false) {
                 continue;
             }
 
@@ -3641,10 +3657,8 @@ impl BufferSnapshot {
         {
             let mut cursor = layer.node().walk();
 
-            Self::position_cursor_at_range(&mut cursor, &range);
-
             // Find the node that contains the range
-            if !Self::find_containing_node(&mut cursor, &range, false) {
+            if !Self::goto_node_enclosing_range(&mut cursor, &range, false) {
                 continue;
             }
 
@@ -3858,9 +3872,12 @@ impl BufferSnapshot {
                 text: item.text,
                 highlight_ranges: item.highlight_ranges,
                 name_ranges: item.name_ranges,
-                body_range: item.body_range.map(|body_range| {
-                    self.anchor_after(body_range.start)..self.anchor_before(body_range.end)
-                }),
+                signature_range: item
+                    .signature_range
+                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
+                body_range: item
+                    .body_range
+                    .map(|r| self.anchor_after(r.start)..self.anchor_before(r.end)),
                 annotation_range: annotation_row_range.map(|annotation_range| {
                     self.anchor_after(Point::new(annotation_range.start, 0))
                         ..self.anchor_before(Point::new(
@@ -3900,38 +3917,51 @@ impl BufferSnapshot {
 
         let mut open_point = None;
         let mut close_point = None;
-        let mut buffer_ranges = Vec::new();
-        for capture in mat.captures {
-            let node_is_name;
-            if capture.index == config.name_capture_ix {
-                node_is_name = true;
-            } else if Some(capture.index) == config.context_capture_ix
-                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
-            {
-                node_is_name = false;
-            } else {
-                if Some(capture.index) == config.open_capture_ix {
-                    open_point = Some(Point::from_ts_point(capture.node.end_position()));
-                } else if Some(capture.index) == config.close_capture_ix {
-                    close_point = Some(Point::from_ts_point(capture.node.start_position()));
-                }
 
-                continue;
+        let mut signature_start = None;
+        let mut signature_end = None;
+        let mut extend_signature_range = |node: tree_sitter::Node| {
+            if signature_start.is_none() {
+                signature_start = Some(Point::from_ts_point(node.start_position()));
             }
+            signature_end = Some(Point::from_ts_point(node.end_position()));
+        };
 
-            let mut range = capture.node.start_byte()..capture.node.end_byte();
-            let start = capture.node.start_position();
-            if capture.node.end_position().row > start.row {
+        let mut buffer_ranges = Vec::new();
+        let mut add_to_buffer_ranges = |node: tree_sitter::Node, node_is_name| {
+            let mut range = node.start_byte()..node.end_byte();
+            let start = node.start_position();
+            if node.end_position().row > start.row {
                 range.end = range.start + self.line_len(start.row as u32) as usize - start.column;
             }
 
             if !range.is_empty() {
                 buffer_ranges.push((range, node_is_name));
             }
+        };
+
+        for capture in mat.captures {
+            if capture.index == config.name_capture_ix {
+                add_to_buffer_ranges(capture.node, true);
+                extend_signature_range(capture.node);
+            } else if Some(capture.index) == config.context_capture_ix
+                || (Some(capture.index) == config.extra_context_capture_ix && include_extra_context)
+            {
+                add_to_buffer_ranges(capture.node, false);
+                extend_signature_range(capture.node);
+            } else {
+                if Some(capture.index) == config.open_capture_ix {
+                    open_point = Some(Point::from_ts_point(capture.node.end_position()));
+                } else if Some(capture.index) == config.close_capture_ix {
+                    close_point = Some(Point::from_ts_point(capture.node.start_position()));
+                }
+            }
         }
+
         if buffer_ranges.is_empty() {
             return None;
         }
+
         let mut text = String::new();
         let mut highlight_ranges = Vec::new();
         let mut name_ranges = Vec::new();
@@ -3940,7 +3970,6 @@ impl BufferSnapshot {
             true,
         );
         let mut last_buffer_range_end = 0;
-
         for (buffer_range, is_name) in buffer_ranges {
             let space_added = !text.is_empty() && buffer_range.start > last_buffer_range_end;
             if space_added {
@@ -3982,12 +4011,17 @@ impl BufferSnapshot {
             last_buffer_range_end = buffer_range.end;
         }
 
+        let signature_range = signature_start
+            .zip(signature_end)
+            .map(|(start, end)| start..end);
+
         Some(OutlineItem {
             depth: 0, // We'll calculate the depth later
             range: item_point_range,
             text,
             highlight_ranges,
             name_ranges,
+            signature_range,
             body_range: open_point.zip(close_point).map(|(start, end)| start..end),
             annotation_range: None,
         })

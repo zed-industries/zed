@@ -1,24 +1,26 @@
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::{App, AsyncApp, BackgroundExecutor, BorrowAppContext, Global};
-use libwebrtc::native::apm;
-use log::info;
-use parking_lot::Mutex;
+use gpui::{App, BackgroundExecutor, BorrowAppContext, Global};
+
+#[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
+mod non_windows_and_freebsd_deps {
+    pub(super) use gpui::AsyncApp;
+    pub(super) use libwebrtc::native::apm;
+    pub(super) use log::info;
+    pub(super) use parking_lot::Mutex;
+    pub(super) use rodio::cpal::Sample;
+    pub(super) use rodio::source::{LimitSettings, UniformSourceIterator};
+    pub(super) use std::sync::Arc;
+}
+
+#[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
+use non_windows_and_freebsd_deps::*;
+
 use rodio::{
-    Decoder, OutputStream, OutputStreamBuilder, Source,
-    cpal::Sample,
-    mixer::Mixer,
-    nz,
-    source::{Buffered, LimitSettings, UniformSourceIterator},
+    Decoder, OutputStream, OutputStreamBuilder, Source, mixer::Mixer, nz, source::Buffered,
 };
 use settings::Settings;
-use std::{
-    io::Cursor,
-    num::NonZero,
-    path::PathBuf,
-    sync::{Arc, atomic::Ordering},
-    time::Duration,
-};
+use std::{io::Cursor, num::NonZero, path::PathBuf, sync::atomic::Ordering, time::Duration};
 use util::ResultExt;
 
 mod audio_settings;
@@ -76,6 +78,7 @@ impl Sound {
 pub struct Audio {
     output_handle: Option<OutputStream>,
     output_mixer: Option<Mixer>,
+    #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
     pub echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
     source_cache: HashMap<Sound, Buffered<Decoder<Cursor<Vec<u8>>>>>,
     replays: replays::Replays,
@@ -86,6 +89,10 @@ impl Default for Audio {
         Self {
             output_handle: Default::default(),
             output_mixer: Default::default(),
+            #[cfg(not(any(
+                all(target_os = "windows", target_env = "gnu"),
+                target_os = "freebsd"
+            )))]
             echo_canceller: Arc::new(Mutex::new(apm::AudioProcessingModule::new(
                 true, false, false, false,
             ))),
@@ -110,7 +117,16 @@ impl Audio {
                 mixer.add(rodio::source::Zero::new(CHANNEL_COUNT, SAMPLE_RATE));
                 self.output_mixer = Some(mixer);
 
+                // The webrtc apm is not yet compiling for windows & freebsd
+                #[cfg(not(any(
+                    any(all(target_os = "windows", target_env = "gnu")),
+                    target_os = "freebsd"
+                )))]
                 let echo_canceller = Arc::clone(&self.echo_canceller);
+                #[cfg(not(any(
+                    any(all(target_os = "windows", target_env = "gnu")),
+                    target_os = "freebsd"
+                )))]
                 let source = source.inspect_buffer::<BUFFER_SIZE, _>(move |buffer| {
                     let mut buf: [i16; _] = buffer.map(|s| s.to_sample());
                     echo_canceller
@@ -139,12 +155,13 @@ impl Audio {
         self.replays.replays_to_tar(executor)
     }
 
+    #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
     pub fn open_microphone(voip_parts: VoipParts) -> anyhow::Result<impl Source> {
         let stream = rodio::microphone::MicrophoneBuilder::new()
             .default_device()?
             .default_config()?
             .prefer_sample_rates([SAMPLE_RATE, SAMPLE_RATE.saturating_mul(nz!(2))])
-            .prefer_channel_counts([nz!(1), nz!(2)])
+            // .prefer_channel_counts([nz!(1), nz!(2)])
             .prefer_buffer_sizes(512..)
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
@@ -174,8 +191,7 @@ impl Audio {
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
             })
-            .replayable(REPLAY_DURATION)
-            .expect("REPLAY_DURATION is longer then 100ms");
+            .replayable(REPLAY_DURATION)?;
 
         voip_parts
             .replays
@@ -195,7 +211,7 @@ impl Audio {
                 agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
             })
             .replayable(REPLAY_DURATION)
-            .expect("REPLAY_DURATION is longer then 100ms");
+            .expect("REPLAY_DURATION is longer than 100ms");
 
         cx.update_default_global(|this: &mut Self, _cx| {
             let output_mixer = this
@@ -249,11 +265,13 @@ impl Audio {
     }
 }
 
+#[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
 pub struct VoipParts {
     echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
     replays: replays::Replays,
 }
 
+#[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
 impl VoipParts {
     pub fn new(cx: &AsyncApp) -> anyhow::Result<Self> {
         let (apm, replays) = cx.try_read_default_global::<Audio, _>(|audio, _| {

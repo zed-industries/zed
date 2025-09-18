@@ -7,7 +7,7 @@ use dap::StackFrameId;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
     Action, AnyElement, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, ListState,
-    MouseButton, Stateful, Subscription, Task, WeakEntity, list,
+    Subscription, Task, WeakEntity, list,
 };
 use util::debug_panic;
 
@@ -16,7 +16,7 @@ use language::PointUtf16;
 use project::debugger::breakpoint_store::ActiveStackFrame;
 use project::debugger::session::{Session, SessionEvent, StackFrame, ThreadStatus};
 use project::{ProjectItem, ProjectPath};
-use ui::{Scrollbar, ScrollbarState, Tooltip, prelude::*};
+use ui::{Tooltip, WithScrollbar, prelude::*};
 use workspace::{ItemHandle, Workspace};
 
 use super::RunningState;
@@ -64,7 +64,6 @@ pub struct StackFrameList {
     workspace: WeakEntity<Workspace>,
     selected_ix: Option<usize>,
     opened_stack_frame_id: Option<StackFrameId>,
-    scrollbar_state: ScrollbarState,
     list_state: ListState,
     list_filter: StackFrameFilter,
     filter_entries_indices: Vec<usize>,
@@ -102,7 +101,6 @@ impl StackFrameList {
             });
 
         let list_state = ListState::new(0, gpui::ListAlignment::Top, px(1000.));
-        let scrollbar_state = ScrollbarState::new(list_state.clone());
 
         let list_filter = KEY_VALUE_STORE
             .read_kvp(&format!(
@@ -127,7 +125,6 @@ impl StackFrameList {
             opened_stack_frame_id: None,
             list_filter,
             list_state,
-            scrollbar_state,
             _refresh_task: Task::ready(()),
         };
         this.schedule_refresh(true, window, cx);
@@ -697,39 +694,6 @@ impl StackFrameList {
         }
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("stack-frame-list-vertical-scrollbar")
-            .on_mouse_move(cx.listener(|_, _, _, cx| {
-                cx.notify();
-                cx.stop_propagation()
-            }))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
-    }
-
     fn select_ix(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.selected_ix = ix;
         cx.notify();
@@ -941,7 +905,7 @@ impl Render for StackFrameList {
                 )
             })
             .child(self.render_list(window, cx))
-            .child(self.render_vertical_scrollbar(cx))
+            .vertical_scrollbar_for(self.list_state.clone(), window, cx)
     }
 }
 

@@ -546,9 +546,10 @@ mod tests {
         let (workspace, cx) =
             app_cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
+        let cwd = std::env::current_dir().expect("Failed to get working directory");
         let terminal = project
             .update(cx, |project: &mut Project, cx| {
-                project.create_terminal_shell(None, cx)
+                project.create_terminal_shell(Some(cwd), cx)
             })
             .await
             .expect("Failed to create a terminal");
