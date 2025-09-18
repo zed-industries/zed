@@ -753,6 +753,7 @@ impl LspAdapter for TypeScriptLspAdapter {
             (LanguageName::new("TypeScript"), "typescript".into()),
             (LanguageName::new("JavaScript"), "javascript".into()),
             (LanguageName::new("TSX"), "typescriptreact".into()),
+            (LanguageName::new("Vue.js"), "vue".into()),
         ])
     }
 }
