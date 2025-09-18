@@ -286,6 +286,15 @@ impl ContextServerStore {
         self.servers.keys().cloned().collect()
     }
 
+    pub fn all_registry_descriptor_ids(&self, cx: &App) -> Vec<ContextServerId> {
+        self.registry
+            .read(cx)
+            .context_server_descriptors()
+            .into_iter()
+            .map(|(id, _)| ContextServerId(id))
+            .collect()
+    }
+
     pub fn running_servers(&self) -> Vec<Arc<ContextServer>> {
         self.servers
             .values()

@@ -1,5 +1,6 @@
 mod add_llm_provider_modal;
 mod configure_context_server_modal;
+mod configure_context_server_tools_modal;
 mod manage_profiles_modal;
 mod tool_picker;
 
@@ -40,12 +41,12 @@ use workspace::{Workspace, create_and_open_local_file};
 use zed_actions::ExtensionCategoryFilter;
 
 pub(crate) use configure_context_server_modal::ConfigureContextServerModal;
+pub(crate) use configure_context_server_tools_modal::ConfigureContextServerToolsModal;
 pub(crate) use manage_profiles_modal::ManageProfilesModal;
 
 use crate::{
-    AddContextServer, ExternalAgent, NewExternalAgentThread,
+    AddContextServer,
     agent_configuration::add_llm_provider_modal::{AddLlmProviderModal, LlmCompatibleProvider},
-    placeholder_command,
 };
 
 pub struct AgentConfiguration {
@@ -198,9 +199,8 @@ impl AgentConfiguration {
             .when(is_expanded, |this| this.mb_2())
             .child(
                 div()
-                    .opacity(0.6)
                     .px_2()
-                    .child(Divider::horizontal().color(DividerColor::Border)),
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded)),
             )
             .child(
                 h_flex()
@@ -225,7 +225,7 @@ impl AgentConfiguration {
                             .child(
                                 h_flex()
                                     .w_full()
-                                    .gap_2()
+                                    .gap_1p5()
                                     .child(
                                         Icon::new(provider.icon())
                                             .size(IconSize::Small)
@@ -343,6 +343,8 @@ impl AgentConfiguration {
                                         PopoverMenu::new("add-provider-popover")
                                             .trigger(
                                                 Button::new("add-provider", "Add Provider")
+                                                    .style(ButtonStyle::Filled)
+                                                    .layer(ElevationIndex::ModalSurface)
                                                     .icon_position(IconPosition::Start)
                                                     .icon(IconName::Plus)
                                                     .icon_size(IconSize::Small)
@@ -534,10 +536,6 @@ impl AgentConfiguration {
         }
     }
 
-    fn card_item_bg_color(&self, cx: &mut Context<Self>) -> Hsla {
-        cx.theme().colors().background.opacity(0.25)
-    }
-
     fn card_item_border_color(&self, cx: &mut Context<Self>) -> Hsla {
         cx.theme().colors().border.opacity(0.6)
     }
@@ -547,7 +545,73 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let context_server_ids = self.context_server_store.read(cx).configured_server_ids();
+        let mut registry_descriptors = self
+            .context_server_store
+            .read(cx)
+            .all_registry_descriptor_ids(cx);
+        let server_count = registry_descriptors.len();
+
+        // Sort context servers: non-mcp-server ones first, then mcp-server ones
+        registry_descriptors.sort_by(|a, b| {
+            let has_mcp_prefix_a = a.0.starts_with("mcp-server-");
+            let has_mcp_prefix_b = b.0.starts_with("mcp-server-");
+
+            match (has_mcp_prefix_a, has_mcp_prefix_b) {
+                // If one has mcp-server- prefix and other doesn't, non-mcp comes first
+                (true, false) => std::cmp::Ordering::Greater,
+                (false, true) => std::cmp::Ordering::Less,
+                // If both have same prefix status, sort by appropriate key
+                _ => {
+                    let get_sort_key = |server_id: &str| -> String {
+                        if let Some(suffix) = server_id.strip_prefix("mcp-server-") {
+                            suffix.to_string()
+                        } else {
+                            server_id.to_string()
+                        }
+                    };
+
+                    let key_a = get_sort_key(&a.0);
+                    let key_b = get_sort_key(&b.0);
+                    key_a.cmp(&key_b)
+                }
+            }
+        });
+
+        let add_server_popover = PopoverMenu::new("add-server-popover")
+            .trigger(
+                Button::new("add-server", "Add Server")
+                    .style(ButtonStyle::Filled)
+                    .layer(ElevationIndex::ModalSurface)
+                    .icon_position(IconPosition::Start)
+                    .icon(IconName::Plus)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Muted)
+                    .label_size(LabelSize::Small),
+            )
+            .anchor(gpui::Corner::TopRight)
+            .menu({
+                move |window, cx| {
+                    Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
+                        menu.entry("Add Custom Server", None, {
+                            |window, cx| window.dispatch_action(AddContextServer.boxed_clone(), cx)
+                        })
+                        .entry("Install from Extensions", None, {
+                            |window, cx| {
+                                window.dispatch_action(
+                                    zed_actions::Extensions {
+                                        category_filter: Some(
+                                            ExtensionCategoryFilter::ContextServers,
+                                        ),
+                                        id: None,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                )
+                            }
+                        })
+                    }))
+                }
+            });
 
         v_flex()
             .p(DynamicSpacing::Base16.rems(cx))
@@ -556,18 +620,26 @@ impl AgentConfiguration {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(Headline::new("Model Context Protocol (MCP) Servers"))
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .justify_between()
+                    .gap_1()
                     .child(
-                        Label::new(
-                            "All context servers connected through the Model Context Protocol.",
-                        )
-                        .color(Color::Muted),
-                    ),
+                        v_flex()
+                            .gap_0p5()
+                            .child(Headline::new("Model Context Protocol (MCP) Servers"))
+                            .child(
+                                Label::new(
+                                    "All MCP servers connected directly or via a Zed extension.",
+                                )
+                                .color(Color::Muted),
+                            ),
+                    )
+                    .child(add_server_popover),
             )
-            .map(|parent| {
-                if context_server_ids.is_empty() {
+            .child(v_flex().w_full().gap_1().map(|parent| {
+                if registry_descriptors.is_empty() {
                     parent.child(
                         h_flex()
                             .p_4()
@@ -583,56 +655,28 @@ impl AgentConfiguration {
                             ),
                     )
                 } else {
-                    parent.children(context_server_ids.into_iter().map(|context_server_id| {
-                        self.render_context_server(context_server_id, window, cx)
-                    }))
+                    {
+                        parent.children(registry_descriptors.into_iter().enumerate().flat_map(
+                            |(index, context_server_id)| {
+                                let mut elements: Vec<AnyElement> = vec![
+                                    self.render_context_server(context_server_id, window, cx)
+                                        .into_any_element(),
+                                ];
+
+                                if index < server_count - 1 {
+                                    elements.push(
+                                        Divider::horizontal()
+                                            .color(DividerColor::BorderFaded)
+                                            .into_any_element(),
+                                    );
+                                }
+
+                                elements
+                            },
+                        ))
+                    }
                 }
-            })
-            .child(
-                h_flex()
-                    .justify_between()
-                    .gap_1p5()
-                    .child(
-                        h_flex().w_full().child(
-                            Button::new("add-context-server", "Add Custom Server")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .full_width()
-                                .icon(IconName::Plus)
-                                .icon_size(IconSize::Small)
-                                .icon_position(IconPosition::Start)
-                                .on_click(|_event, window, cx| {
-                                    window.dispatch_action(AddContextServer.boxed_clone(), cx)
-                                }),
-                        ),
-                    )
-                    .child(
-                        h_flex().w_full().child(
-                            Button::new(
-                                "install-context-server-extensions",
-                                "Install MCP Extensions",
-                            )
-                            .style(ButtonStyle::Filled)
-                            .layer(ElevationIndex::ModalSurface)
-                            .full_width()
-                            .icon(IconName::ToolHammer)
-                            .icon_size(IconSize::Small)
-                            .icon_position(IconPosition::Start)
-                            .on_click(|_event, window, cx| {
-                                window.dispatch_action(
-                                    zed_actions::Extensions {
-                                        category_filter: Some(
-                                            ExtensionCategoryFilter::ContextServers,
-                                        ),
-                                        id: None,
-                                    }
-                                    .boxed_clone(),
-                                    cx,
-                                )
-                            }),
-                        ),
-                    ),
-            )
+            }))
     }
 
     fn render_context_server(
@@ -725,7 +769,7 @@ impl AgentConfiguration {
                 IconButton::new("context-server-config-menu", IconName::Settings)
                     .icon_color(Color::Muted)
                     .icon_size(IconSize::Small),
-                Tooltip::text("Open MCP server options"),
+                Tooltip::text("Configure MCP Server"),
             )
             .anchor(Corner::TopRight)
             .menu({
@@ -734,6 +778,8 @@ impl AgentConfiguration {
                 let language_registry = self.language_registry.clone();
                 let context_server_store = self.context_server_store.clone();
                 let workspace = self.workspace.clone();
+                let tools = self.tools.clone();
+
                 move |window, cx| {
                     Some(ContextMenu::build(window, cx, |menu, _window, _cx| {
                         menu.entry("Configure Server", None, {
@@ -750,7 +796,28 @@ impl AgentConfiguration {
                                 )
                                 .detach_and_log_err(cx);
                             }
-                        })
+                        }).when(tool_count >= 1, |this| this.entry("View Tools", None, {
+                            let context_server_id = context_server_id.clone();
+                            let tools = tools.clone();
+                            let workspace = workspace.clone();
+
+                            move |window, cx| {
+                                let context_server_id = context_server_id.clone();
+                                let tools = tools.clone();
+                                let workspace = workspace.clone();
+
+                                workspace.update(cx, |workspace, cx| {
+                                    ConfigureContextServerToolsModal::toggle(
+                                        context_server_id,
+                                        tools,
+                                        workspace,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                            }
+                        }))
                         .separator()
                         .entry("Uninstall", None, {
                             let fs = fs.clone();
@@ -821,17 +888,11 @@ impl AgentConfiguration {
 
         v_flex()
             .id(item_id.clone())
-            .border_1()
-            .rounded_md()
-            .border_color(self.card_item_border_color(cx))
-            .bg(self.card_item_bg_color(cx))
-            .overflow_hidden()
             .child(
                 h_flex()
-                    .p_1()
                     .justify_between()
                     .when(
-                        error.is_some() || are_tools_expanded && tool_count >= 1,
+                        error.is_none() && are_tools_expanded && tool_count >= 1,
                         |element| {
                             element
                                 .border_b_1()
@@ -843,30 +904,11 @@ impl AgentConfiguration {
                             .flex_1()
                             .min_w_0()
                             .child(
-                                Disclosure::new(
-                                    "tool-list-disclosure",
-                                    are_tools_expanded || error.is_some(),
-                                )
-                                .disabled(tool_count == 0)
-                                .on_click(cx.listener({
-                                    let context_server_id = context_server_id.clone();
-                                    move |this, _event, _window, _cx| {
-                                        let is_open = this
-                                            .expanded_context_server_tools
-                                            .entry(context_server_id.clone())
-                                            .or_insert(false);
-
-                                        *is_open = !*is_open;
-                                    }
-                                })),
-                            )
-                            .child(
                                 h_flex()
                                     .id(SharedString::from(format!("tooltip-{}", item_id)))
                                     .h_full()
                                     .w_3()
-                                    .ml_1()
-                                    .mr_1p5()
+                                    .mr_2()
                                     .justify_center()
                                     .tooltip(Tooltip::text(tooltip_text))
                                     .child(status_indicator),
@@ -956,8 +998,8 @@ impl AgentConfiguration {
                 if let Some(error) = error {
                     return parent.child(
                         h_flex()
-                            .p_2()
                             .gap_2()
+                            .pr_4()
                             .items_start()
                             .child(
                                 h_flex()
@@ -985,37 +1027,11 @@ impl AgentConfiguration {
                     return parent;
                 }
 
-                parent.child(v_flex().py_1p5().px_1().gap_1().children(
-                    tools.iter().enumerate().map(|(ix, tool)| {
-                        h_flex()
-                            .id(("tool-item", ix))
-                            .px_1()
-                            .gap_2()
-                            .justify_between()
-                            .hover(|style| style.bg(cx.theme().colors().element_hover))
-                            .rounded_sm()
-                            .child(
-                                Label::new(tool.name())
-                                    .buffer_font(cx)
-                                    .size(LabelSize::Small),
-                            )
-                            .child(
-                                Icon::new(IconName::Info)
-                                    .size(IconSize::Small)
-                                    .color(Color::Ignored),
-                            )
-                            .tooltip(Tooltip::text(tool.description()))
-                    }),
-                ))
+                parent
             })
     }
 
     fn render_agent_servers_section(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let custom_settings = cx
-            .global::<SettingsStore>()
-            .get::<AllAgentServersSettings>(None)
-            .custom
-            .clone();
         let user_defined_agents = self
             .agent_server_store
             .read(cx)
@@ -1023,22 +1039,12 @@ impl AgentConfiguration {
             .filter(|name| name.0 != GEMINI_NAME && name.0 != CLAUDE_CODE_NAME)
             .cloned()
             .collect::<Vec<_>>();
+
         let user_defined_agents = user_defined_agents
             .into_iter()
             .map(|name| {
-                self.render_agent_server(
-                    IconName::Ai,
-                    name.clone(),
-                    ExternalAgent::Custom {
-                        name: name.clone().into(),
-                        command: custom_settings
-                            .get(&name.0)
-                            .map(|settings| settings.command.clone())
-                            .unwrap_or(placeholder_command()),
-                    },
-                    cx,
-                )
-                .into_any_element()
+                self.render_agent_server(IconName::Ai, name)
+                    .into_any_element()
             })
             .collect::<Vec<_>>();
 
@@ -1062,6 +1068,8 @@ impl AgentConfiguration {
                                     .child(Headline::new("External Agents"))
                                     .child(
                                         Button::new("add-agent", "Add Agent")
+                                            .style(ButtonStyle::Filled)
+                                            .layer(ElevationIndex::ModalSurface)
                                             .icon_position(IconPosition::Start)
                                             .icon(IconName::Plus)
                                             .icon_size(IconSize::Small)
@@ -1094,14 +1102,11 @@ impl AgentConfiguration {
                     .child(self.render_agent_server(
                         IconName::AiGemini,
                         "Gemini CLI",
-                        ExternalAgent::Gemini,
-                        cx,
                     ))
+                    .child(Divider::horizontal().color(DividerColor::BorderFaded))
                     .child(self.render_agent_server(
                         IconName::AiClaude,
                         "Claude Code",
-                        ExternalAgent::ClaudeCode,
-                        cx,
                     ))
                     .children(user_defined_agents),
             )
@@ -1111,47 +1116,18 @@ impl AgentConfiguration {
         &self,
         icon: IconName,
         name: impl Into<SharedString>,
-        agent: ExternalAgent,
-        cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let name = name.into();
-        h_flex()
-            .p_1()
-            .pl_2()
-            .gap_1p5()
-            .justify_between()
-            .border_1()
-            .rounded_md()
-            .border_color(self.card_item_border_color(cx))
-            .bg(self.card_item_bg_color(cx))
-            .overflow_hidden()
-            .child(
-                h_flex()
-                    .gap_1p5()
-                    .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
-                    .child(Label::new(name.clone())),
-            )
-            .child(
-                Button::new(
-                    SharedString::from(format!("start_acp_thread-{name}")),
-                    "Start New Thread",
-                )
-                .layer(ElevationIndex::ModalSurface)
-                .label_size(LabelSize::Small)
-                .icon(IconName::Thread)
-                .icon_position(IconPosition::Start)
-                .icon_size(IconSize::XSmall)
-                .icon_color(Color::Muted)
-                .on_click(move |_, window, cx| {
-                    window.dispatch_action(
-                        NewExternalAgentThread {
-                            agent: Some(agent.clone()),
-                        }
-                        .boxed_clone(),
-                        cx,
-                    );
-                }),
-            )
+        h_flex().gap_1p5().justify_between().child(
+            h_flex()
+                .gap_1p5()
+                .child(Icon::new(icon).size(IconSize::Small).color(Color::Muted))
+                .child(Label::new(name.into()))
+                .child(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Success),
+                ),
+        )
     }
 }
 
