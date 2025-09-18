@@ -32,7 +32,7 @@ actions!(
 );
 
 pub fn init(cx: &mut App) {
-    cx.observe_new(move |workspace: &mut Workspace, _, cx| {
+    cx.observe_new(move |workspace: &mut Workspace, _, _cx| {
         workspace.register_action(
             move |workspace, _: &OpenEditPredictionContext, window, cx| {
                 let workspace_entity = cx.entity();
