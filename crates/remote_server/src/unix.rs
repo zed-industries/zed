@@ -9,7 +9,7 @@ use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt, select, select_biased};
 use git::GitHostingProviderRegistry;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, SemanticVersion, UpdateGlobal as _};
+use gpui::{App, AppContext as _, Context, Entity, SemanticVersion, UpdateGlobal as _};
 use gpui_tokio::Tokio;
 use http_client::{Url, read_proxy_from_env};
 use iroh::endpoint::Connection;
@@ -283,64 +283,6 @@ impl ServerListeners {
 }
 
 fn start_server(
-    listeners: Option<ServerListeners>,
-    log_rx: Receiver<Vec<u8>>,
-    cx: &mut App,
-) -> AnyProtoClient {
-    log::info!("START SERVER");
-
-    if let Some(listeners) = listeners {
-        start_ssh_server(listeners, log_rx, cx)
-    } else {
-        start_p2p_server(log_rx, cx)
-    }
-}
-
-fn start_p2p_server(log_rx: Receiver<Vec<u8>>, cx: &mut App) -> AnyProtoClient {
-    log::info!("START P2P SERVER");
-
-    let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-    let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
-    let (app_quit_tx, mut app_quit_rx) = mpsc::unbounded::<()>();
-
-    cx.on_app_quit(move |_| {
-        let mut app_quit_tx = app_quit_tx.clone();
-        async move {
-            log::info!("app quitting. sending signal to server main loop");
-            app_quit_tx.send(()).await.ok();
-        }
-    })
-    .detach();
-
-    gpui_tokio::Tokio::spawn(cx, async move {
-        let iroh = remote::IrohZedListener::accept(incoming_tx, outgoing_rx, log_rx).await?;
-        log::info!("ADDR: iroh started {}", iroh.endpoint().node_id());
-
-        let home_relay = iroh.endpoint().home_relay().initialized().await;
-        log::info!("ADDR: home relay: {}", home_relay);
-
-        let ticket = iroh.ticket().await;
-        log::info!("TICKET: {}", ticket);
-
-        loop {
-            select! {
-                _ = app_quit_rx.next().fuse() => {
-                    iroh.shutdown().await;
-                    break;
-                }
-            }
-        }
-
-        log::info!("EXITING");
-
-        anyhow::Ok(())
-    })
-    .detach();
-
-    RemoteClient::proto_client_from_channels(incoming_rx, outgoing_tx, cx, "server")
-}
-
-fn start_ssh_server(
     listeners: ServerListeners,
     log_rx: Receiver<Vec<u8>>,
     cx: &mut App,
@@ -529,11 +471,7 @@ pub fn execute_run(
     write_pid_file(&pid_file)
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
-    // TODO: can we skip creating these in the p2p case? currently the proxy startup waits for them to be created
-    let server_listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
-
-    let p2p = true; // TODO: wire up as CLI option?
-    let listeners = if !p2p { Some(server_listeners) } else { None };
+    let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     app.run(move |cx| {
@@ -812,6 +750,13 @@ enum Im {
 
 pub(crate) fn execute_p2p() -> Result<()> {
     init_logging_p2p();
+
+    // Known bugs
+    // - process stops when a single project is closed
+    // - node id is regenerated everytime the process is started
+    // - logs are not captured
+    // - UI: can't use arrows
+    // - UI: list is not refreshed after successfully adding an iroh connection
 
     let app = gpui::Application::headless();
     let id = std::process::id().to_string();

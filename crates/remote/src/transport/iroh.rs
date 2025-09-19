@@ -8,21 +8,15 @@ use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
-    FutureExt, SinkExt, StreamExt as _, TryStreamExt,
+    SinkExt, StreamExt as _,
     channel::mpsc::{Sender, UnboundedReceiver, UnboundedSender},
-    lock::Mutex,
 };
 use gpui::{App, AppContext as _, AsyncApp, Task};
-use iroh::{
-    Endpoint, NodeAddr, NodeId, RelayUrl, Watcher,
-    endpoint::{Connection, RecvStream, SendStream},
-    protocol::{AcceptError, ProtocolHandler, Router},
-};
+use iroh::{Endpoint, NodeAddr, NodeId, RelayUrl, Watcher};
 use iroh_base::ticket::{self, ParseError, Ticket};
 use rpc::proto::Envelope;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use smol::channel::Receiver;
 use std::{
     collections::BTreeSet,
     fmt::{self, Display},
@@ -40,7 +34,7 @@ use util::paths::{PathStyle, RemotePathBuf};
 pub const ZED_ALPN: &[u8] = b"iroh/zed/remote/0";
 
 // max length of an RPC message in bytes
-pub const MAX_MESSAGE_SIZE: usize = 10000;
+pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct IrohZedRemote {
@@ -272,163 +266,6 @@ fn handle_rpc_messages(
     });
 
     Ok(task)
-}
-
-#[derive(Debug, Clone)]
-pub struct IrohZedListener {
-    endpoint: Endpoint,
-    router: Router,
-}
-
-impl IrohZedListener {
-    pub async fn shutdown(self) {
-        if let Err(err) = self.router.shutdown().await {
-            log::warn!("failed to shutdown iroh: {:?}", err);
-        }
-    }
-
-    pub async fn accept(
-        incoming_tx: UnboundedSender<Envelope>,
-        outgoing_rx: UnboundedReceiver<Envelope>,
-        log_rx: Receiver<Vec<u8>>,
-    ) -> Result<Self> {
-        let endpoint = Endpoint::builder()
-            .discovery_n0()
-            .alpns(vec![ZED_ALPN.to_vec()])
-            .bind()
-            .await?;
-
-        let router = Router::builder(endpoint.clone())
-            .accept(
-                ZED_ALPN,
-                IrohZedProtocolHandler::new(incoming_tx, outgoing_rx, log_rx),
-            )
-            .spawn();
-
-        Ok(Self { endpoint, router })
-    }
-
-    pub async fn ticket(&self) -> ZedIrohTicket {
-        let addr = self.endpoint.node_addr().initialized().await;
-        ZedIrohTicket::new(addr)
-    }
-
-    pub fn endpoint(&self) -> &Endpoint {
-        &self.endpoint
-    }
-}
-
-#[derive(Debug)]
-pub struct IrohZedProtocolHandler {
-    incoming_tx: UnboundedSender<Envelope>,
-    outgoing_rx: Arc<Mutex<UnboundedReceiver<Envelope>>>,
-    log_rx: Receiver<Vec<u8>>,
-}
-
-impl IrohZedProtocolHandler {
-    fn new(
-        incoming_tx: UnboundedSender<Envelope>,
-        outgoing_rx: UnboundedReceiver<Envelope>,
-        log_rx: Receiver<Vec<u8>>,
-    ) -> Self {
-        Self {
-            incoming_tx,
-            outgoing_rx: Arc::new(Mutex::new(outgoing_rx)),
-            log_rx,
-        }
-    }
-}
-
-impl ProtocolHandler for IrohZedProtocolHandler {
-    /// The `accept` method is called for each incoming connection for our ALPN.
-    ///
-    /// The returned future runs on a newly spawned tokio task, so it can run as long as
-    /// the connection lasts.
-    async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
-        // Our protocol is a simple request-response protocol, so we expect the
-        // connecting peer to open a single bi-directional stream.
-        let (send, recv) = connection.accept_bi().await?;
-        let mut codec = LengthDelimitedCodec::builder();
-        codec.max_frame_length(MAX_MESSAGE_SIZE);
-        let mut write = codec.new_write(send);
-        let mut read = codec.new_read(recv);
-
-        let outgoing_rx = self.outgoing_rx.clone();
-        let log_rx = self.log_rx.clone();
-
-        tokio::task::spawn(async move {
-            let mut out = outgoing_rx.lock().await;
-            tokio::pin!(log_rx);
-
-            loop {
-                tokio::select! {
-                    outgoing_message = out.next() => {
-                        if let Some(outgoing_message) = outgoing_message {
-                            let encoded = postcard::to_stdvec(&Message::Envelope(outgoing_message)).expect("invalid encoding");
-
-                            if let Err(error) = write.send(Bytes::from(encoded)).await {
-                                log::error!("failed to write outgoing message: {:?}", error);
-                                break;
-                            }
-                        }
-                    }
-                    log_message = log_rx.recv() => {
-                        if let Ok(log_message) = log_message {
-                            if let Ok(record) = serde_json::from_slice::<LogRecord>(&log_message) {
-                                let encoded = postcard::to_stdvec(&Message::Log(record)).expect("invalid encoding");
-                                if let Err(error) = write.send(Bytes::from(encoded)).await {
-                                    log::error!("failed to write outgoing message: {:?}", error);
-                                    break;
-                                }
-                            } else {
-                                eprintln!("(remote) {}", String::from_utf8_lossy(&log_message));
-                            }
-                        }
-                    }
-                }
-            }
-
-            log::warn!("exiting write task");
-        });
-
-        let incoming_tx = self.incoming_tx.clone();
-        tokio::task::spawn(async move {
-            while let Some(raw) = read.next().await {
-                let raw = match raw {
-                    Ok(raw) => raw,
-                    Err(error) => {
-                        log::error!("received in valid message: {error:?}");
-                        break;
-                    }
-                };
-                match postcard::from_bytes::<Message>(&raw) {
-                    Ok(message) => {
-                        log::info!("received message {:?}", message);
-                        match message {
-                            Message::Envelope(envelope) => {
-                                if let Err(error) = incoming_tx.unbounded_send(envelope) {
-                                    log::error!(
-                                        "failed to send message to application: {error:?}. exiting."
-                                    );
-                                    break;
-                                }
-                            }
-                            Message::Log(record) => record.log(log::logger()),
-                        }
-                    }
-                    Err(error) => {
-                        log::error!("received in valid message: {error:?}.");
-                    }
-                }
-            }
-        });
-
-        // // Wait until the remote closes the connection, which it does once it
-        // // received the response.
-        // connection.closed().await;
-
-        Ok(())
-    }
 }
 
 #[derive(Serialize, Deserialize)]
