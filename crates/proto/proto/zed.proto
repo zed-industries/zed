@@ -395,8 +395,6 @@ message Envelope {
 
         LspQuery lsp_query = 365;
         LspQueryResponse lsp_query_response = 366;
-
-
         ToggleLspLogs toggle_lsp_logs = 367;
 
         UpdateUserSettings update_user_settings = 368;
