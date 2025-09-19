@@ -15,6 +15,7 @@ use project::{
 };
 use settings::Settings;
 use std::ops::Range;
+use text::{self, Point};
 use theme::ActiveTheme as _;
 use util::{ResultExt, TryFutureExt as _, maybe};
 
@@ -121,13 +122,25 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let hovered_link_modifier = Editor::multi_cursor_modifier(false, &modifiers, cx);
-        if !hovered_link_modifier || self.has_pending_selection() {
+
+        // When you're dragging to select, and you release the drag to create the selection,
+        // if you happened to end over something hoverable (including an inlay hint), don't
+        // have the hovered link appear. That would be annoying, because all you're trying
+        // to do is to create a selection, not hover to see a hovered link.
+        if self.has_pending_selection() {
             self.hide_hovered_link(cx);
             return;
         }
 
         match point_for_position.as_valid() {
             Some(point) => {
+                // Hide the underline unless you're holding the modifier key on the keyboard
+                // which will perform a goto definition.
+                if !hovered_link_modifier {
+                    self.hide_hovered_link(cx);
+                    return;
+                }
+
                 let trigger_point = TriggerPoint::Text(
                     snapshot
                         .buffer_snapshot
@@ -323,6 +336,7 @@ pub fn update_inlay_link_and_hover_points(
             let inlay_hint_cache = editor.inlay_hint_cache();
             let excerpt_id = previous_valid_anchor.excerpt_id;
             if let Some(cached_hint) = inlay_hint_cache.hint_by_id(excerpt_id, hovered_hint.id) {
+                // Check if we should process this hint for hover
                 match cached_hint.resolve_state {
                     ResolveState::CanResolve(_, _) => {
                         if let Some(buffer_id) = snapshot
@@ -423,31 +437,46 @@ pub fn update_inlay_link_and_hover_points(
                                         );
                                         hover_updated = true;
                                     }
+
                                     if let Some((language_server_id, location)) =
                                         hovered_hint_part.location
-                                        && secondary_held
-                                        && !editor.has_pending_nonempty_selection()
                                     {
-                                        go_to_definition_updated = true;
-                                        show_link_definition(
-                                            shift_held,
-                                            editor,
-                                            TriggerPoint::InlayHint(
-                                                highlight,
-                                                location,
-                                                language_server_id,
-                                            ),
-                                            snapshot,
-                                            window,
-                                            cx,
-                                        );
+                                        // Now perform the "Go to Definition" flow to get hover documentation
+                                        if let Some(project) = editor.project.clone() {
+                                            let highlight = highlight.clone();
+                                            let hint_value = hovered_hint_part.value.clone();
+                                            let location = location.clone();
+
+                                            get_docs_then_show_hover(
+                                                editor, window, cx, highlight, hint_value,
+                                                location, project,
+                                            );
+                                        }
+
+                                        if secondary_held
+                                            && !editor.has_pending_nonempty_selection()
+                                        {
+                                            go_to_definition_updated = true;
+                                            show_link_definition(
+                                                shift_held,
+                                                editor,
+                                                TriggerPoint::InlayHint(
+                                                    highlight,
+                                                    location,
+                                                    language_server_id,
+                                                ),
+                                                snapshot,
+                                                window,
+                                                cx,
+                                            );
+                                        }
                                     }
                                 }
                             }
-                        };
+                        }
                     }
                     ResolveState::Resolving => {}
-                }
+                };
             }
         }
     }
@@ -458,6 +487,92 @@ pub fn update_inlay_link_and_hover_points(
     if !hover_updated {
         hover_popover::hover_at(editor, None, window, cx);
     }
+}
+
+/// todo dvdsk: This extracts doc comments and shows them, a fine fallback
+/// though maybe we should instead alsk the LSP for info on the type?. Lets figure
+/// out what normal hoverdocs do.
+///
+/// issue with Entity<Markdown>. Needs one more (expensive) step before rendering
+/// which we need to cache.
+///
+/// --- PLAN ---
+/// - use location to call hover_popover and extract the text
+/// - then use claude written 'existing' hover method to see if that works
+/// - try use or adapt InfoPopover to get scrollbar/nice rendering (note issue above)
+/// - get the unwraps and as_refs out of here
+fn get_docs_then_show_hover(
+    editor: &mut Editor,
+    window: &mut Window,
+    cx: &mut Context<'_, Editor>,
+    highlight: InlayHighlight,
+    hint_value: String,
+    location: lsp::Location,
+    project: Entity<Project>,
+) {
+    let provider = editor.semantics_provider.clone().unwrap();
+    cx.spawn_in(window, async move |editor, cx| {
+        async move {
+            // Convert LSP URL to file path
+            let file_path = location
+                .uri
+                .to_file_path()
+                .map_err(|_| anyhow::anyhow!("Invalid file URL"))?;
+            // Open the definition file
+            let definition_buffer = project
+                .update(cx, |project, cx| project.open_local_buffer(file_path, cx))?
+                .await?;
+            let location = Point::new(location.range.start.line, location.range.start.character);
+            let buffer_position = definition_buffer
+                .update(cx, |buffer, _| buffer.snapshot().anchor_after(location))
+                .unwrap();
+
+            // debounce the lsp request
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(50))
+                .await;
+            let hover_request =
+                cx.update(|_, cx| provider.hover(&definition_buffer, buffer_position, cx))?;
+            let hovers_response = if let Some(hover_request) = hover_request {
+                hover_request.await.unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            let text = hovers_response
+                .first()
+                .as_ref()
+                .unwrap()
+                .contents
+                .first()
+                .as_ref()
+                .unwrap()
+                .text
+                .clone();
+
+            editor
+                .update_in(cx, |editor, window, cx| {
+                    hover_popover::hover_at_inlay(
+                        editor,
+                        InlayHover {
+                            tooltip: HoverBlock {
+                                text,
+                                kind: HoverBlockKind::Markdown,
+                            },
+                            range: highlight,
+                        },
+                        window,
+                        cx,
+                    );
+                })
+                .log_err();
+
+            anyhow::Ok(())
+        }
+        .log_err()
+        .await
+    })
+    .detach();
 }
 
 pub fn show_link_definition(
