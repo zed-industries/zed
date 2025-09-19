@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
+use serde::{Deserialize, Serialize};
 
 use crate::paths::{PathStyle, SanitizedPath};
 
@@ -128,7 +129,7 @@ impl std::fmt::Display for AbsPath {
 }
 
 #[repr(transparent)]
-#[derive(PartialEq, Debug, Eq, PartialOrd, Ord, Hash)]
+#[derive(PartialEq, Debug, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct RelPath(str);
 
 impl AsRef<Path> for RelPath {
@@ -153,11 +154,6 @@ impl RelPath {
             bail!("invalid relative path: {:?}", &this.0);
         }
         Ok(this)
-    }
-
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_str<S: AsRef<str> + ?Sized>(s: &S) -> &Self {
-        Self::new(s.as_ref()).unwrap()
     }
 
     pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Arc<Self>> {
@@ -212,6 +208,17 @@ impl RelPath {
 
     pub fn starts_with(&self, other: &Self) -> bool {
         self.strip_prefix(other).is_ok()
+    }
+
+    pub fn ends_with(&self, other: &Self) -> bool {
+        if let Some(suffix) = self.0.strip_suffix(&other.0) {
+            if suffix.ends_with('/') {
+                return true;
+            } else if suffix.is_empty() {
+                return true;
+            }
+        }
+        false
     }
 
     pub fn strip_prefix(&self, other: &Self) -> Result<&Self, ()> {
@@ -283,10 +290,22 @@ impl From<&RelPath> for Arc<RelPath> {
     }
 }
 
+// FIXME remove this
 #[cfg(any(test, feature = "test-support"))]
 impl<'a> From<&'a str> for &'a RelPath {
     fn from(value: &'a str) -> Self {
         RelPath::new(value).unwrap()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn rel_path(path: &str) -> &RelPath {
+    RelPath::new(path).unwrap()
+}
+
+impl PartialEq<str> for RelPath {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == *other
     }
 }
 
@@ -373,13 +392,13 @@ mod tests {
         assert!(RelPath::from_std_path(Path::new("/foo/"), PathStyle::current()).is_err());
         assert_eq!(
             RelPath::from_std_path(&PathBuf::from_iter(["foo", ""]), PathStyle::current()).unwrap(),
-            Arc::from(RelPath::from_str("foo"))
+            Arc::from(rel_path("foo"))
         );
     }
 
     #[test]
     fn test_rel_path_components() {
-        let path = RelPath::from_str("foo/bar/baz");
+        let path = rel_path("foo/bar/baz");
         let mut components = path.components();
         assert_eq!(components.next(), Some("foo"));
         assert_eq!(components.next(), Some("bar"));
@@ -389,17 +408,17 @@ mod tests {
 
     #[test]
     fn test_rel_path_ancestors() {
-        let path = RelPath::from_str("foo/bar/baz");
+        let path = rel_path("foo/bar/baz");
         let mut components = path.ancestors();
-        assert_eq!(components.next(), Some(RelPath::from_str("foo/bar/baz")));
-        assert_eq!(components.next(), Some(RelPath::from_str("foo/bar")));
-        assert_eq!(components.next(), Some(RelPath::from_str("foo")));
-        assert_eq!(components.next(), Some(RelPath::from_str("")));
+        assert_eq!(components.next(), Some(rel_path("foo/bar/baz")));
+        assert_eq!(components.next(), Some(rel_path("foo/bar")));
+        assert_eq!(components.next(), Some(rel_path("foo")));
+        assert_eq!(components.next(), Some(rel_path("")));
         assert_eq!(components.next(), None);
 
-        let path = RelPath::from_str("foo");
+        let path = rel_path("foo");
         let mut components = path.ancestors();
-        assert_eq!(components.next(), Some(RelPath::from_str("foo")));
+        assert_eq!(components.next(), Some(rel_path("foo")));
         assert_eq!(components.next(), Some(RelPath::empty()));
         assert_eq!(components.next(), None);
 
@@ -412,11 +431,11 @@ mod tests {
     #[test]
     fn test_rel_path_parent() {
         assert_eq!(
-            RelPath::from_str("foo/bar/baz").parent(),
+            rel_path("foo/bar/baz").parent(),
             Some(RelPath::new("foo/bar").unwrap())
         );
-        assert_eq!(RelPath::from_str("foo").parent(), Some(RelPath::empty()));
-        assert_eq!(RelPath::from_str("").parent(), None);
+        assert_eq!(rel_path("foo").parent(), Some(RelPath::empty()));
+        assert_eq!(rel_path("").parent(), None);
     }
     #[test]
     fn test_rel_path_partial_ord_is_compatible_with_std() {

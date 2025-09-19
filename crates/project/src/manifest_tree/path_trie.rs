@@ -142,6 +142,8 @@ impl From<&RelPath> for TriePath {
 mod tests {
     use std::collections::BTreeSet;
 
+    use util::rel_path::rel_path;
+
     use super::*;
 
     #[test]
@@ -161,10 +163,7 @@ mod tests {
         let mut visited_paths = BTreeSet::new();
         trie.walk(&TriePath::new("a/b/c".into()), &mut |path, nodes| {
             if path.as_str() == "a/b/c" {
-                assert_eq!(
-                    visited_paths,
-                    BTreeSet::from_iter([RelPath::from_str("a").into()])
-                );
+                assert_eq!(visited_paths, BTreeSet::from_iter([rel_path("a").into()]));
                 assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
             } else if path.as_str() == "a" {
                 assert!(visited_paths.is_empty());
@@ -183,10 +182,7 @@ mod tests {
             &TriePath::new("a/b/c/d/e/f/g".into()),
             &mut |path, nodes| {
                 if path.as_str() == "a/b/c" {
-                    assert_eq!(
-                        visited_paths,
-                        BTreeSet::from_iter([RelPath::from_str("a").into()])
-                    );
+                    assert_eq!(visited_paths, BTreeSet::from_iter([rel_path("a").into()]));
                     assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
                 } else if path.as_str() == "a" {
                     assert!(visited_paths.is_empty());
@@ -234,7 +230,7 @@ mod tests {
         assert_eq!(visited_paths.len(), 1);
         assert_eq!(
             visited_paths.into_iter().next().unwrap(),
-            RelPath::from_str("a").into()
+            rel_path("a").into()
         );
     }
 

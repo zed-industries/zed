@@ -198,7 +198,9 @@ pub enum WorkDirectory {
 impl WorkDirectory {
     #[cfg(test)]
     fn in_project(path: &str) -> Self {
-        let path = RelPath::from_str(path);
+        use util::rel_path::rel_path;
+
+        let path = rel_path(path);
         Self::InProject {
             relative_path: path.into(),
         }
@@ -2196,7 +2198,14 @@ impl Snapshot {
 
     pub fn absolutize(&self, path: &RelPath) -> PathBuf {
         if path.file_name().is_some() {
-            path.append_to_abs_path(&self.abs_path.as_path())
+            let mut abs_path = self.abs_path.to_string();
+            for component in path.components() {
+                if !abs_path.ends_with(self.path_style.separator()) {
+                    abs_path.push_str(self.path_style.separator());
+                }
+                abs_path.push_str(component);
+            }
+            PathBuf::from(abs_path)
         } else {
             self.abs_path.as_path().to_path_buf()
         }
@@ -2468,10 +2477,6 @@ impl Snapshot {
     pub fn entry_for_id(&self, id: ProjectEntryId) -> Option<&Entry> {
         let entry = self.entries_by_id.get(&id, &())?;
         self.entry_for_path(&entry.path)
-    }
-
-    pub fn inode_for_path(&self, path: &RelPath) -> Option<u64> {
-        self.entry_for_path(path).map(|e| e.inode)
     }
 
     pub fn path_style(&self) -> PathStyle {
@@ -3146,12 +3151,7 @@ impl language::File for File {
 
 impl language::LocalFile for File {
     fn abs_path(&self, cx: &App) -> PathBuf {
-        let worktree_path = &self.worktree.read(cx).abs_path();
-        if self.path.is_empty() {
-            worktree_path.to_path_buf()
-        } else {
-            worktree_path.join(self.path.as_std_path())
-        }
+        self.worktree.read(cx).absolutize(&self.path)
     }
 
     fn load(&self, cx: &App) -> Task<Result<String>> {

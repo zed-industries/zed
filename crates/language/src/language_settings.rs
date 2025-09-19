@@ -1737,7 +1737,7 @@ pub struct JsxTagAutoCloseSettings {
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
-    use util::rel_path::RelPath;
+    use util::rel_path::{RelPath, rel_path};
 
     use super::*;
 
@@ -1821,7 +1821,7 @@ mod tests {
         const WORKTREE_NAME: &str = "project";
         let make_test_file = |segments: &[&str]| -> Arc<dyn File> {
             let path = segments.join("/");
-            let path = RelPath::from_str(&path);
+            let path = rel_path(&path);
 
             Arc::new(TestFile {
                 path: path.into(),
@@ -1877,7 +1877,7 @@ mod tests {
         assert!(!settings.enabled_for_file(&test_file, &cx));
 
         let test_file_root: Arc<dyn File> = Arc::new(TestFile {
-            path: RelPath::from_str("file.rs").into(),
+            path: rel_path("file.rs").into(),
             root_name: WORKTREE_NAME.to_string(),
             local_root: Some(PathBuf::from("/absolute/")),
         });

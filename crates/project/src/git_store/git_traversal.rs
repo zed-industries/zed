@@ -260,7 +260,7 @@ mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
         first_head: UnmergedStatusCode::Updated,
@@ -337,16 +337,13 @@ mod tests {
         pretty_assertions::assert_eq!(
             entries,
             [
-                (RelPath::from_str("x/x1.txt").into(), GitSummary::UNCHANGED),
-                (RelPath::from_str("x/x2.txt").into(), MODIFIED),
-                (RelPath::from_str("x/y/y1.txt").into(), GitSummary::CONFLICT),
-                (
-                    RelPath::from_str("x/y/y2.txt").into(),
-                    GitSummary::UNCHANGED
-                ),
-                (RelPath::from_str("x/z.txt").into(), ADDED),
-                (RelPath::from_str("z/z1.txt").into(), GitSummary::UNCHANGED),
-                (RelPath::from_str("z/z2.txt").into(), ADDED),
+                (rel_path("x/x1.txt").into(), GitSummary::UNCHANGED),
+                (rel_path("x/x2.txt").into(), MODIFIED),
+                (rel_path("x/y/y1.txt").into(), GitSummary::CONFLICT),
+                (rel_path("x/y/y2.txt").into(), GitSummary::UNCHANGED),
+                (rel_path("x/z.txt").into(), ADDED),
+                (rel_path("z/z1.txt").into(), GitSummary::UNCHANGED),
+                (rel_path("z/z2.txt").into(), ADDED),
             ]
         )
     }
@@ -784,7 +781,7 @@ mod tests {
             .iter()
             .map(|&(path, _)| {
                 let git_entry = traversal
-                    .find(|git_entry| git_entry.path.as_ref() == RelPath::from_str(path))
+                    .find(|git_entry| git_entry.path.as_ref() == rel_path(path))
                     .unwrap_or_else(|| panic!("Traversal has no entry for {path:?}"));
                 (path, git_entry.git_summary)
             })

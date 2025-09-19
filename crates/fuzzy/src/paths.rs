@@ -1,8 +1,6 @@
 use gpui::BackgroundExecutor;
 use std::{
-    borrow::Cow,
     cmp::{self, Ordering},
-    path::Path,
     sync::{
         Arc,
         atomic::{self, AtomicBool},

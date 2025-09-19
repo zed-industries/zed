@@ -19,7 +19,7 @@ use lsp::{
 };
 use serde::Serialize;
 use serde_json::Value;
-use util::{ResultExt, fs::make_file_executable, maybe};
+use util::{ResultExt, fs::make_file_executable, maybe, rel_path::RelPath};
 
 use crate::{LanguageServerRegistryProxy, LspAccess};
 

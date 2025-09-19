@@ -1602,6 +1602,7 @@ mod tests {
     use serde::Deserialize;
     use settings_ui_macros::{SettingsKey, SettingsUi};
     use unindent::Unindent;
+    use util::rel_path::rel_path;
 
     #[gpui::test]
     fn test_settings_store_basic(cx: &mut App) {
@@ -1664,7 +1665,7 @@ mod tests {
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                RelPath::from_str("root1").into(),
+                rel_path("root1").into(),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "staff": true } }"#),
                 cx,
@@ -1673,7 +1674,7 @@ mod tests {
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                RelPath::from_str("root1/subdir").into(),
+                rel_path("root1/subdir").into(),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "name": "Jane Doe" } }"#),
                 cx,
@@ -1683,7 +1684,7 @@ mod tests {
         store
             .set_local_settings(
                 WorktreeId::from_usize(1),
-                RelPath::from_str("root2").into(),
+                rel_path("root2").into(),
                 LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
                 cx,
@@ -1693,7 +1694,7 @@ mod tests {
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
-                path: RelPath::from_str("root1/something"),
+                path: rel_path("root1/something"),
             })),
             &UserSettings {
                 name: "John Doe".to_string(),
@@ -1704,7 +1705,7 @@ mod tests {
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
-                path: RelPath::from_str("root1/subdir/something"),
+                path: rel_path("root1/subdir/something"),
             })),
             &UserSettings {
                 name: "Jane Doe".to_string(),
@@ -1715,7 +1716,7 @@ mod tests {
         assert_eq!(
             store.get::<UserSettings>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
-                path: RelPath::from_str("root2/something"),
+                path: rel_path("root2/something"),
             })),
             &UserSettings {
                 name: "John Doe".to_string(),
@@ -1726,7 +1727,7 @@ mod tests {
         assert_eq!(
             store.get::<MultiKeySettings>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
-                path: RelPath::from_str("root2/something")
+                path: rel_path("root2/something")
             })),
             &MultiKeySettings {
                 key1: "a".to_string(),

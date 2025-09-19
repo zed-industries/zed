@@ -38,7 +38,7 @@ pub struct Toolchain {
 /// - Only in the subproject they're currently in.
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ToolchainScope {
-    Subproject(WorktreeId, Arc<Path>),
+    Subproject(WorktreeId, Arc<RelPath>),
     Project,
     /// Available in all projects on this box. It wouldn't make sense to show suggestions across machines.
     Global,

@@ -13,7 +13,7 @@ use fs::FakeFs;
 use futures::{StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
-    repository::RepoPath,
+    repository::{RepoPath, repo_path},
     status::{StatusCode, TrackedStatus},
 };
 use git2::RepositoryInitOptions;
@@ -44,6 +44,7 @@ use unindent::Unindent as _;
 use util::{
     TryFutureExt as _, assert_set_eq, maybe, path,
     paths::PathMatcher,
+    rel_path::rel_path,
     test::{TempTree, marked_text_offsets},
     uri,
 };
@@ -122,8 +123,10 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
         let tree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(tree.file_count(), 5);
         assert_eq!(
-            tree.inode_for_path("fennel/grape"),
-            tree.inode_for_path("finnochio/grape")
+            tree.entry_for_path(rel_path("fennel/grape")).unwrap().inode,
+            tree.entry_for_path(rel_path("finnochio/grape"))
+                .unwrap()
+                .inode
         );
     });
 }
@@ -343,7 +346,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
 
     let topmost_local_task_source_kind = TaskSourceKind::Worktree {
         id: worktree_id,
-        directory_in_worktree: PathBuf::from(".zed"),
+        directory_in_worktree: rel_path(".zed").into(),
         id_base: "local worktree tasks from directory \".zed\"".into(),
     };
 
@@ -385,7 +388,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: PathBuf::from(path!("b/.zed")),
+                    directory_in_worktree: rel_path(path!("b/.zed")).into(),
                     id_base: if cfg!(windows) {
                         "local worktree tasks from directory \"b\\\\.zed\"".into()
                     } else {
@@ -470,7 +473,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: PathBuf::from(path!("b/.zed")),
+                    directory_in_worktree: rel_path(path!("b/.zed")).into(),
                     id_base: if cfg!(windows) {
                         "local worktree tasks from directory \"b\\\\.zed\"".into()
                     } else {
@@ -585,7 +588,7 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         vec![(
             TaskSourceKind::Worktree {
                 id: worktree_id,
-                directory_in_worktree: PathBuf::from(path!(".zed")),
+                directory_in_worktree: rel_path(path!(".zed")).into(),
                 id_base: if cfg!(windows) {
                     "local worktree tasks from directory \".zed\"".into()
                 } else {
@@ -615,9 +618,9 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
                 depth,
                 delegate,
             }: ManifestQuery,
-        ) -> Option<Arc<Path>> {
+        ) -> Option<Arc<RelPath>> {
             for path in path.ancestors().take(depth) {
-                let p = path.join("pyproject.toml");
+                let p = path.join(RelPath::new("pyproject.toml").unwrap());
                 if delegate.exists(&p, Some(false)) {
                     return Some(path.into());
                 }
@@ -738,7 +741,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
             this.available_toolchains(
                 ProjectPath {
                     worktree_id,
-                    path: "project-b/source_file.py".into(),
+                    path: rel_path("project-b/source_file.py").into(),
                 },
                 LanguageName::new("Python"),
                 cx,
@@ -746,7 +749,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         })
         .await
         .expect("A toolchain to be discovered");
-    assert_eq!(root_path.as_ref(), Path::new("project-b"));
+    assert_eq!(root_path.as_ref(), RelPath::new("project-b").unwrap());
     assert_eq!(available_toolchains_for_b.toolchains().len(), 1);
     let currently_active_toolchain = project
         .update(cx, |this, cx| {
@@ -754,7 +757,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
             this.active_toolchain(
                 ProjectPath {
                     worktree_id,
-                    path: "project-b/source_file.py".into(),
+                    path: rel_path("project-b/source_file.py").into(),
                 },
                 LanguageName::new("Python"),
                 cx,
@@ -1294,16 +1297,16 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 .read(cx)
                 .snapshot()
                 .entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .map(|entry| (entry.path.as_str(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
-                (Path::new(""), false),
-                (Path::new(".gitignore"), false),
-                (Path::new("Cargo.lock"), false),
-                (Path::new("src"), false),
-                (Path::new("src/a.rs"), false),
-                (Path::new("src/b.rs"), false),
-                (Path::new("target"), true),
+                ("", false),
+                (".gitignore", false),
+                ("Cargo.lock", false),
+                ("src", false),
+                ("src/a.rs", false),
+                ("src/b.rs", false),
+                ("target", true),
             ]
         );
     });
@@ -1412,21 +1415,21 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 .read(cx)
                 .snapshot()
                 .entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .map(|entry| (entry.path.as_str(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
-                (Path::new(""), false),
-                (Path::new(".gitignore"), false),
-                (Path::new("Cargo.lock"), false),
-                (Path::new("src"), false),
-                (Path::new("src/a.rs"), false),
-                (Path::new("src/b.rs"), false),
-                (Path::new("target"), true),
-                (Path::new("target/x"), true),
-                (Path::new("target/y"), true),
-                (Path::new("target/y/out"), true),
-                (Path::new("target/y/out/y.rs"), true),
-                (Path::new("target/z"), true),
+                ("", false),
+                (".gitignore", false),
+                ("Cargo.lock", false),
+                ("src", false),
+                ("src/a.rs", false),
+                ("src/b.rs", false),
+                ("target", true),
+                ("target/x", true),
+                ("target/y", true),
+                ("target/y/out", true),
+                ("target/y/out/y.rs", true),
+                ("target/z", true),
             ]
         );
     });
@@ -1694,7 +1697,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let main_ignored_buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((main_worktree_id, "b.rs"), cx)
+            project.open_buffer((main_worktree_id, rel_path("b.rs")), cx)
         })
         .await
         .unwrap();
@@ -1715,7 +1718,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     });
     let other_buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((other_worktree_id, ""), cx)
+            project.open_buffer((other_worktree_id, rel_path("")), cx)
         })
         .await
         .unwrap();
@@ -1742,7 +1745,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
             vec![(
                 ProjectPath {
                     worktree_id: main_worktree_id,
-                    path: Arc::from(Path::new("b.rs")),
+                    path: rel_path("b.rs").into(),
                 },
                 server_id,
                 DiagnosticSummary {
@@ -1832,7 +1835,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
             language_server_id: LanguageServerId(0),
-            paths: vec![(worktree_id, Path::new("a.rs")).into()],
+            paths: vec![(worktree_id, rel_path("a.rs")).into()],
         }
     );
 
@@ -1880,7 +1883,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::DiagnosticsUpdated {
             language_server_id: LanguageServerId(0),
-            paths: vec![(worktree_id, Path::new("a.rs")).into()],
+            paths: vec![(worktree_id, rel_path("a.rs")).into()],
         }
     );
 
@@ -3828,21 +3831,17 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
         let worktree = project.worktrees(cx).next().unwrap();
         let entry_id = worktree
             .read(cx)
-            .entry_for_path(RelPath::from_str("test.txt"))
+            .entry_for_path(rel_path("test.txt"))
             .unwrap()
             .id;
         (worktree, entry_id)
     });
-    let worktree_id = worktree.read_with(cx, |worktree, cx| worktree.id());
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
     let _result = project
         .update(cx, |project, cx| {
             project.rename_entry(
                 entry_id,
-                (
-                    worktree_id,
-                    RelPath::from_str("dir1/dir2/dir3/test.txt").into(),
-                )
-                    .into(),
+                (worktree_id, rel_path("dir1/dir2/dir3/test.txt")),
                 cx,
             )
         })
@@ -3850,14 +3849,12 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
         .unwrap();
     worktree.read_with(cx, |worktree, _| {
         assert!(
-            worktree
-                .entry_for_path(RelPath::from_str("test.txt"))
-                .is_none(),
+            worktree.entry_for_path(rel_path("test.txt")).is_none(),
             "Old file should have been removed"
         );
         assert!(
             worktree
-                .entry_for_path(RelPath::from_str("dir1/dir2/dir3/test.txt"))
+                .entry_for_path(rel_path("dir1/dir2/dir3/test.txt"))
                 .is_some(),
             "Whole directory hierarchy and the new file should have been created"
         );
@@ -3865,7 +3862,7 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         worktree
             .update(cx, |worktree, cx| {
-                worktree.load_file(RelPath::from_str("dir1/dir2/dir3/test.txt"), cx)
+                worktree.load_file(rel_path("dir1/dir2/dir3/test.txt"), cx)
             })
             .await
             .unwrap()
@@ -3876,37 +3873,31 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
 
     let entry_id = worktree.read_with(cx, |worktree, _| {
         worktree
-            .entry_for_path(RelPath::from_str("dir1/dir2/dir3/test.txt"))
+            .entry_for_path(rel_path("dir1/dir2/dir3/test.txt"))
             .unwrap()
             .id
     });
 
     let _result = project
         .update(cx, |project, cx| {
-            project.rename_entry(
-                entry_id,
-                (worktree_id, "dir1/dir2/test.txt".into()).into(),
-                cx,
-            )
+            project.rename_entry(entry_id, (worktree_id, rel_path("dir1/dir2/test.txt")), cx)
         })
         .await
         .unwrap();
     worktree.read_with(cx, |worktree, _| {
         assert!(
-            worktree
-                .entry_for_path(RelPath::from_str("test.txt"))
-                .is_none(),
+            worktree.entry_for_path(rel_path("test.txt")).is_none(),
             "First file should not reappear"
         );
         assert!(
             worktree
-                .entry_for_path(RelPath::from_str("dir1/dir2/dir3/test.txt"))
+                .entry_for_path(rel_path("dir1/dir2/dir3/test.txt"))
                 .is_none(),
             "Old file should have been removed"
         );
         assert!(
             worktree
-                .entry_for_path(RelPath::from_str("dir1/dir2/test.txt"))
+                .entry_for_path(rel_path("dir1/dir2/test.txt"))
                 .is_some(),
             "No error should have occurred after moving into existing directory"
         );
@@ -3914,7 +3905,7 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
     assert_eq!(
         worktree
             .update(cx, |worktree, cx| {
-                worktree.load_file(RelPath::from_str("dir1/dir2/test.txt"), cx)
+                worktree.load_file(rel_path("dir1/dir2/test.txt"), cx)
             })
             .await
             .unwrap()
@@ -4011,7 +4002,7 @@ async fn test_save_file_spawns_language_server(cx: &mut gpui::TestAppContext) {
                 buffer.clone(),
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from("file.rs".as_ref()),
+                    path: rel_path("file.rs").into(),
                 },
                 cx,
             )
@@ -4220,7 +4211,7 @@ async fn test_save_as(cx: &mut gpui::TestAppContext) {
             let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
             let path = ProjectPath {
                 worktree_id,
-                path: Arc::from(Path::new("file1.rs")),
+                path: rel_path("file1.rs").into(),
             };
             project.save_buffer_as(buffer.clone(), path, cx)
         })
@@ -4279,7 +4270,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         project.update(cx, |project, cx| {
             let tree = project.worktrees(cx).next().unwrap();
             tree.read(cx)
-                .entry_for_path(path)
+                .entry_for_path(rel_path(path))
                 .unwrap_or_else(|| panic!("no entry for path {}", path))
                 .id
         })
@@ -4313,7 +4304,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
             1,
             metadata,
             project.read(cx).client().into(),
-            project.read(cx).path_style(),
+            project.read(cx).path_style(cx),
             cx,
         )
     });
@@ -4339,7 +4330,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             tree.read(app)
                 .paths()
-                .map(|p| p.to_str().unwrap())
+                .map(|p| p.as_str())
                 .collect::<Vec<_>>(),
             vec![
                 "a",
@@ -4360,19 +4351,19 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         assert_eq!(
             buffer2.read(cx).file().unwrap().path().as_ref(),
-            Path::new("a/file2.new")
+            rel_path("a/file2.new")
         );
         assert_eq!(
             buffer3.read(cx).file().unwrap().path().as_ref(),
-            Path::new("d/file3")
+            rel_path("d/file3")
         );
         assert_eq!(
             buffer4.read(cx).file().unwrap().path().as_ref(),
-            Path::new("d/file4")
+            rel_path("d/file4")
         );
         assert_eq!(
             buffer5.read(cx).file().unwrap().path().as_ref(),
-            Path::new("b/c/file5")
+            rel_path("b/c/file5")
         );
 
         assert_matches!(
@@ -4405,10 +4396,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
     remote.update(cx, |remote, _| {
         assert_eq!(
-            remote
-                .paths()
-                .map(|p| p.to_str().unwrap())
-                .collect::<Vec<_>>(),
+            remote.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             vec![
                 "a",
                 path!("a/file1"),
@@ -4445,7 +4433,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
         project.update(cx, |project, cx| {
             let tree = project.worktrees(cx).next().unwrap();
             tree.read(cx)
-                .entry_for_path(path)
+                .entry_for_path(rel_path(path))
                 .unwrap_or_else(|| panic!("no entry for path {}", path))
                 .id
         })
@@ -4454,14 +4442,16 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
     let dir_id = id_for_path("a", cx);
     let file_id = id_for_path("a/file1", cx);
     let buffer = project
-        .update(cx, |p, cx| p.open_buffer((tree_id, "a/file1"), cx))
+        .update(cx, |p, cx| {
+            p.open_buffer((tree_id, rel_path("a/file1")), cx)
+        })
         .await
         .unwrap();
     buffer.update(cx, |buffer, _| assert!(!buffer.is_dirty()));
 
     project
         .update(cx, |project, cx| {
-            project.rename_entry(dir_id, Path::new("b"), cx)
+            project.rename_entry(dir_id, (tree_id, rel_path("b")), cx)
         })
         .unwrap()
         .await
@@ -5175,8 +5165,11 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
     let response = project.update(cx, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap();
-        let entry = worktree.read(cx).entry_for_path("one.rs").unwrap();
-        project.rename_entry(entry.id, "three.rs".as_ref(), cx)
+        let entry = worktree
+            .read(cx)
+            .entry_for_path(rel_path("one.rs"))
+            .unwrap();
+        project.rename_entry(entry.id, (worktree.read(cx).id(), rel_path("three.rs")), cx)
     });
     let expected_edit = lsp::WorkspaceEdit {
         changes: None,
@@ -5400,8 +5393,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Default::default(),
-                Default::default(),
+                PathMatcher::empty(PathStyle::current()),
+                PathMatcher::empty(PathStyle::current()),
                 false,
                 None
             )
@@ -5435,8 +5428,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                Default::default(),
-                Default::default(),
+                PathMatcher::empty(PathStyle::current()),
+                PathMatcher::empty(PathStyle::current()),
                 false,
                 None,
             )
@@ -5471,7 +5464,6 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
     )
     .await;
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let path_style = project.read_with(cx, |project, cx| project.path_style());
 
     assert!(
         search(
@@ -5481,8 +5473,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::new(&["*.odd".to_owned()], path_style).unwrap(),
-                Default::default(),
+                PathMatcher::new(&["*.odd".to_owned()], PathStyle::current()).unwrap(),
+                PathMatcher::empty(PathStyle::current()),
                 false,
                 None
             )
@@ -5503,8 +5495,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::new(&["*.rs".to_owned()], path_style).unwrap(),
-                Default::default(),
+                PathMatcher::new(&["*.rs".to_owned()], PathStyle::current()).unwrap(),
+                PathMatcher::empty(PathStyle::current()),
                 false,
                 None
             )
@@ -5528,8 +5520,12 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], path_style).unwrap(),
-                PathMatcher::empty(path_style),
+                PathMatcher::new(
+                    &["*.ts".to_owned(), "*.odd".to_owned()],
+                    PathStyle::current()
+                )
+                .unwrap(),
+                PathMatcher::empty(PathStyle::current()),
                 false,
                 None,
             )
@@ -5555,10 +5551,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(
                     &["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()],
-                    path_style
+                    PathStyle::current()
                 )
                 .unwrap(),
-                PathMatcher::empty(path_style),
+                PathMatcher::empty(PathStyle::current()),
                 false,
                 None,
             )
@@ -5595,7 +5591,6 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
     )
     .await;
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let path_style = project.read_with(cx, |project, cx| project.path_style());
 
     assert_eq!(
         search(
@@ -5605,8 +5600,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(path_style),
-                PathMatcher::new(&["*.odd".to_owned()], path_style).unwrap(),
+                PathMatcher::empty(PathStyle::current()),
+                PathMatcher::new(&["*.odd".to_owned()], PathStyle::current()).unwrap(),
                 false,
                 None,
             )
@@ -5632,8 +5627,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(path_style),
-                PathMatcher::new(&["*.rs".to_owned()], path_style).unwrap(),
+                PathMatcher::empty(PathStyle::current()),
+                PathMatcher::new(&["*.rs".to_owned()], PathStyle::current()).unwrap(),
                 false,
                 None,
             )
@@ -5657,8 +5652,12 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(path_style),
-                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], path_style).unwrap(),
+                PathMatcher::empty(PathStyle::current()),
+                PathMatcher::new(
+                    &["*.ts".to_owned(), "*.odd".to_owned()],
+                    PathStyle::current()
+                )
+                .unwrap(),
                 false,
                 None,
             )
@@ -5682,10 +5681,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(path_style),
+                PathMatcher::empty(PathStyle::current()),
                 PathMatcher::new(
                     &["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()],
-                    path_style
+                    PathStyle::current(),
                 )
                 .unwrap(),
                 false,
@@ -5720,7 +5719,7 @@ async fn test_search_with_buffer_exclusions(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let path_style = project.read_with(cx, |project, cx| project.path_style());
+    let path_style = PathStyle::current();
     let _buffer = project.update(cx, |project, cx| {
         project.create_local_buffer("file", None, false, cx)
     });
@@ -5847,7 +5846,6 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
     )
     .await;
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let path_style = project.read_with(cx, |project, _| project.path_style());
     assert!(
         search(
             &project,
@@ -5856,8 +5854,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                PathMatcher::new(&["*.odd".to_owned()], path_style).unwrap(),
-                PathMatcher::new(&["*.odd".to_owned()], path_style).unwrap(),
+                PathMatcher::new(&["*.odd".to_owned()], PathStyle::current()).unwrap(),
+                PathMatcher::new(&["*.odd".to_owned()], PathStyle::current()).unwrap(),
                 false,
                 None,
             )
@@ -5878,8 +5876,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                PathMatcher::new(&["*.ts".to_owned()], path_style).unwrap(),
-                PathMatcher::new(&["*.ts".to_owned()], path_style).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned()], PathStyle::current()).unwrap(),
+                PathMatcher::new(&["*.ts".to_owned()], PathStyle::current()).unwrap(),
                 false,
                 None,
             )
@@ -5900,8 +5898,16 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], path_style).unwrap(),
-                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], path_style).unwrap(),
+                PathMatcher::new(
+                    &["*.ts".to_owned(), "*.odd".to_owned()],
+                    PathStyle::current()
+                )
+                .unwrap(),
+                PathMatcher::new(
+                    &["*.ts".to_owned(), "*.odd".to_owned()],
+                    PathStyle::current()
+                )
+                .unwrap(),
                 false,
                 None,
             )
@@ -5922,8 +5928,16 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], path_style).unwrap(),
-                PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()], path_style).unwrap(),
+                PathMatcher::new(
+                    &["*.ts".to_owned(), "*.odd".to_owned()],
+                    PathStyle::current()
+                )
+                .unwrap(),
+                PathMatcher::new(
+                    &["*.rs".to_owned(), "*.odd".to_owned()],
+                    PathStyle::current()
+                )
+                .unwrap(),
                 false,
                 None,
             )
@@ -5962,13 +5976,14 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
     )
     .await;
 
+    let path_style = PathStyle::current();
     let project = Project::test(
         fs.clone(),
         [path!("/worktree-a").as_ref(), path!("/worktree-b").as_ref()],
         cx,
     )
     .await;
-    let path_style = project.read_with(cx, |project, cx| project.path_style());
+
     assert_eq!(
         search(
             &project,
@@ -6091,7 +6106,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
     );
 
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let path_style = project.read_with(cx, |project, cx| project.path_style());
+    let path_style = PathStyle::current();
     assert_eq!(
         search(
             &project,
@@ -6178,7 +6193,7 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     )
     .await;
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let path_style = project.read_with(cx, |project, _| project.path_style());
+    let path_style = PathStyle::current();
     let unicode_case_sensitive_query = SearchQuery::text(
         "привет",
         false,
@@ -6268,7 +6283,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     project
         .update(cx, |project, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((id, "b.."), true, cx)
+            project.create_entry((id, rel_path("b..")), true, cx)
         })
         .await
         .unwrap()
@@ -6279,7 +6294,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     let result = project
         .update(cx, |project, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((id, "../../boop"), true, cx)
+            project.create_entry((id, rel_path("../../boop")), true, cx)
         })
         .await;
     assert!(result.is_err());
@@ -6288,7 +6303,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     let result = project
         .update(cx, |project, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((id, "four/../beep"), true, cx)
+            project.create_entry((id, rel_path("four/../beep")), true, cx)
         })
         .await;
     assert!(result.is_err());
@@ -6311,7 +6326,7 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
     let result = project
         .update(cx, |project, cx| {
             let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.open_buffer((id, "../c.rs"), cx)
+            project.open_buffer((id, rel_path("../c.rs")), cx)
         })
         .await;
     assert!(result.is_err())
@@ -7898,7 +7913,9 @@ async fn test_staging_random_hunks(
 
     log::info!(
         "index text:\n{}",
-        repo.load_index_text("file.txt".into()).await.unwrap()
+        repo.load_index_text(rel_path("file.txt").into())
+            .await
+            .unwrap()
     );
 
     uncommitted_diff.update(cx, |diff, cx| {
@@ -8041,7 +8058,7 @@ async fn test_repository_and_path_for_project_path(
                 (
                     path,
                     result.map(|(repo, repo_path)| {
-                        (Path::new(repo).into(), RepoPath::from(repo_path))
+                        (Path::new(repo).into(), RepoPath::new(repo_path).unwrap())
                     }),
                 )
             })
@@ -8049,7 +8066,7 @@ async fn test_repository_and_path_for_project_path(
         let actual = pairs
             .iter()
             .map(|(path, _)| {
-                let project_path = (tree_id, Path::new(path)).into();
+                let project_path = (tree_id, rel_path(path)).into();
                 let result = maybe!({
                     let (repo, repo_path) =
                         git_store.repository_and_path_for_project_path(&project_path, cx)?;
@@ -8070,7 +8087,7 @@ async fn test_repository_and_path_for_project_path(
         let git_store = project.git_store().read(cx);
         assert_eq!(
             git_store.repository_and_path_for_project_path(
-                &(tree_id, Path::new("dir1/src/b.txt")).into(),
+                &(tree_id, rel_path("dir1/src/b.txt")).into(),
                 cx
             ),
             None
@@ -8107,7 +8124,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         let containing = project
             .git_store()
             .read(cx)
-            .repository_and_path_for_project_path(&(tree_id, "a.txt").into(), cx);
+            .repository_and_path_for_project_path(&(tree_id, rel_path("a.txt")).into(), cx);
         assert!(containing.is_none());
     });
 
@@ -8123,7 +8140,7 @@ async fn test_home_dir_as_git_repository(cx: &mut gpui::TestAppContext) {
         let containing = project
             .git_store()
             .read(cx)
-            .repository_and_path_for_project_path(&(tree_id, "project/a.txt").into(), cx);
+            .repository_and_path_for_project_path(&(tree_id, rel_path("project/a.txt")).into(), cx);
         assert_eq!(
             containing
                 .unwrap()
@@ -8185,15 +8202,15 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
             entries,
             [
                 StatusEntry {
-                    repo_path: "a.txt".into(),
+                    repo_path: repo_path("a.txt"),
                     status: StatusCode::Modified.worktree(),
                 },
                 StatusEntry {
-                    repo_path: "b.txt".into(),
+                    repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                 },
                 StatusEntry {
-                    repo_path: "d.txt".into(),
+                    repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                 },
             ]
@@ -8214,19 +8231,19 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
             entries,
             [
                 StatusEntry {
-                    repo_path: "a.txt".into(),
+                    repo_path: repo_path("a.txt"),
                     status: StatusCode::Modified.worktree(),
                 },
                 StatusEntry {
-                    repo_path: "b.txt".into(),
+                    repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                 },
                 StatusEntry {
-                    repo_path: "c.txt".into(),
+                    repo_path: repo_path("c.txt"),
                     status: StatusCode::Modified.worktree(),
                 },
                 StatusEntry {
-                    repo_path: "d.txt".into(),
+                    repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                 },
             ]
@@ -8259,7 +8276,7 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             entries,
             [StatusEntry {
-                repo_path: "a.txt".into(),
+                repo_path: repo_path("a.txt"),
                 status: StatusCode::Deleted.worktree(),
             }]
         );
@@ -8318,7 +8335,7 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
         assert_eq!(
             entries,
             [StatusEntry {
-                repo_path: "a.txt".into(),
+                repo_path: repo_path("a.txt"),
                 status: TrackedStatus {
                     index_status: StatusCode::Deleted,
                     worktree_status: StatusCode::Added
@@ -8387,9 +8404,12 @@ async fn test_repository_subfolder_git_status(
             Path::new(path!("/root/my-repo")).into()
         );
 
-        assert_eq!(repository.status_for_path(&C_TXT.into()), None);
+        assert_eq!(repository.status_for_path(&repo_path(C_TXT)), None);
         assert_eq!(
-            repository.status_for_path(&E_TXT.into()).unwrap().status,
+            repository
+                .status_for_path(&repo_path(E_TXT))
+                .unwrap()
+                .status,
             FileStatus::Untracked
         );
     });
@@ -8401,8 +8421,8 @@ async fn test_repository_subfolder_git_status(
     cx.run_until_parked();
 
     repository.read_with(cx, |repository, _cx| {
-        assert_eq!(repository.status_for_path(&C_TXT.into()), None);
-        assert_eq!(repository.status_for_path(&E_TXT.into()), None);
+        assert_eq!(repository.status_for_path(&repo_path(C_TXT)), None);
+        assert_eq!(repository.status_for_path(&repo_path(E_TXT)), None);
     });
 }
 
@@ -8603,13 +8623,13 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
         );
         assert_eq!(
             repository
-                .status_for_path(&"a".into())
+                .status_for_path(&repo_path("a"))
                 .map(|entry| entry.status),
             Some(StatusCode::Modified.worktree()),
         );
         assert_eq!(
             repository
-                .status_for_path(&"b".into())
+                .status_for_path(&repo_path("b"))
                 .map(|entry| entry.status),
             Some(FileStatus::Untracked),
         );
@@ -8628,11 +8648,11 @@ async fn test_rename_work_directory(cx: &mut gpui::TestAppContext) {
             root_path.join("projects/project2").as_path()
         );
         assert_eq!(
-            repository.status_for_path(&"a".into()).unwrap().status,
+            repository.status_for_path(&repo_path("a")).unwrap().status,
             StatusCode::Modified.worktree(),
         );
         assert_eq!(
-            repository.status_for_path(&"b".into()).unwrap().status,
+            repository.status_for_path(&repo_path("b")).unwrap().status,
             FileStatus::Untracked,
         );
     });
@@ -8705,11 +8725,17 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
         );
 
         assert_eq!(
-            repository.status_for_path(&B_TXT.into()).unwrap().status,
+            repository
+                .status_for_path(&repo_path(B_TXT))
+                .unwrap()
+                .status,
             FileStatus::Untracked,
         );
         assert_eq!(
-            repository.status_for_path(&F_TXT.into()).unwrap().status,
+            repository
+                .status_for_path(&repo_path(F_TXT))
+                .unwrap()
+                .status,
             FileStatus::Untracked,
         );
     });
@@ -8725,7 +8751,10 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     // The worktree detects that the file's git status has changed.
     repository.read_with(cx, |repository, _| {
         assert_eq!(
-            repository.status_for_path(&A_TXT.into()).unwrap().status,
+            repository
+                .status_for_path(&repo_path(A_TXT))
+                .unwrap()
+                .status,
             StatusCode::Modified.worktree(),
         );
     });
@@ -8743,11 +8772,14 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     // The worktree detects that the files' git status have changed.
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
-            repository.status_for_path(&F_TXT.into()).unwrap().status,
+            repository
+                .status_for_path(&repo_path(F_TXT))
+                .unwrap()
+                .status,
             FileStatus::Untracked,
         );
-        assert_eq!(repository.status_for_path(&B_TXT.into()), None);
-        assert_eq!(repository.status_for_path(&A_TXT.into()), None);
+        assert_eq!(repository.status_for_path(&repo_path(B_TXT)), None);
+        assert_eq!(repository.status_for_path(&repo_path(A_TXT)), None);
     });
 
     // Modify files in the working copy and perform git operations on other files.
@@ -8764,13 +8796,19 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 
     // Check that more complex repo changes are tracked
     repository.read_with(cx, |repository, _cx| {
-        assert_eq!(repository.status_for_path(&A_TXT.into()), None);
+        assert_eq!(repository.status_for_path(&repo_path(A_TXT)), None);
         assert_eq!(
-            repository.status_for_path(&B_TXT.into()).unwrap().status,
+            repository
+                .status_for_path(&repo_path(B_TXT))
+                .unwrap()
+                .status,
             FileStatus::Untracked,
         );
         assert_eq!(
-            repository.status_for_path(&E_TXT.into()).unwrap().status,
+            repository
+                .status_for_path(&repo_path(E_TXT))
+                .unwrap()
+                .status,
             StatusCode::Modified.worktree(),
         );
     });
@@ -8808,7 +8846,11 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
             repository
-                .status_for_path(&Path::new(renamed_dir_name).join(RENAMED_FILE).into())
+                .status_for_path(
+                    &rel_path(renamed_dir_name)
+                        .join(rel_path(RENAMED_FILE))
+                        .into()
+                )
                 .unwrap()
                 .status,
             FileStatus::Untracked,
@@ -8832,7 +8874,11 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
             repository
-                .status_for_path(&Path::new(renamed_dir_name).join(RENAMED_FILE).into())
+                .status_for_path(
+                    &rel_path(renamed_dir_name)
+                        .join(rel_path(RENAMED_FILE))
+                        .into()
+                )
                 .unwrap()
                 .status,
             FileStatus::Untracked,
@@ -8955,7 +9001,7 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     tree.read_with(cx, |tree, _| {
         tree.as_local()
             .unwrap()
-            .manually_refresh_entries_for_paths(vec![Path::new("ignored-dir").into()])
+            .manually_refresh_entries_for_paths(vec![rel_path("ignored-dir").into()])
     })
     .recv()
     .await;
@@ -9034,7 +9080,12 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
             None,
             true,
         );
-        assert!(tree.read(cx).entry_for_path(".git").unwrap().is_ignored);
+        assert!(
+            tree.read(cx)
+                .entry_for_path(&rel_path(".git"))
+                .unwrap()
+                .is_ignored
+        );
     });
 }
 
@@ -9112,10 +9163,10 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         |state| {
             state
                 .head_contents
-                .insert("src/b.txt".into(), "b".to_owned());
+                .insert(repo_path("src/b.txt"), "b".to_owned());
             state
                 .index_contents
-                .insert("src/b.txt".into(), "b".to_owned());
+                .insert(repo_path("src/b.txt"), "b".to_owned());
         },
     )
     .unwrap();
@@ -9143,7 +9194,9 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     barrier.await.unwrap();
     worktree_repo.update(cx, |repo, _| {
         pretty_assertions::assert_eq!(
-            repo.status_for_path(&"src/b.txt".into()).unwrap().status,
+            repo.status_for_path(&repo_path("src/b.txt"))
+                .unwrap()
+                .status,
             StatusCode::Modified.worktree(),
         );
     });
@@ -9153,8 +9206,12 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         path!("/project/subdir/some-submodule/.git").as_ref(),
         true,
         |state| {
-            state.head_contents.insert("c.txt".into(), "c".to_owned());
-            state.index_contents.insert("c.txt".into(), "c".to_owned());
+            state
+                .head_contents
+                .insert(repo_path("c.txt"), "c".to_owned());
+            state
+                .index_contents
+                .insert(repo_path("c.txt"), "c".to_owned());
         },
     )
     .unwrap();
@@ -9182,7 +9239,7 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
     barrier.await.unwrap();
     submodule_repo.update(cx, |repo, _| {
         pretty_assertions::assert_eq!(
-            repo.status_for_path(&"c.txt".into()).unwrap().status,
+            repo.status_for_path(&repo_path("c.txt")).unwrap().status,
             StatusCode::Modified.worktree(),
         );
     });
@@ -9335,10 +9392,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             _: Option<HashMap<String, String>>,
         ) -> ToolchainList {
             // This lister will always return a path .venv directories within ancestors
-            let ancestors = subroot_relative_path
-                .ancestors()
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>();
+            let ancestors = subroot_relative_path.ancestors().collect::<Vec<_>>();
             let mut toolchains = vec![];
             for ancestor in ancestors {
                 let venv_path = worktree_root.join(ancestor).join(".venv");
@@ -9453,10 +9507,10 @@ fn assert_entry_git_state(
 ) {
     assert_eq!(tree.abs_path(), repository.work_directory_abs_path);
     let entry = tree
-        .entry_for_path(path.into())
+        .entry_for_path(&rel_path(path))
         .unwrap_or_else(|| panic!("entry {path} not found"));
     let status = repository
-        .status_for_path(&path.into())
+        .status_for_path(&repo_path(path))
         .map(|entry| entry.status);
     let expected = index_status.map(|index_status| {
         TrackedStatus {
@@ -9638,17 +9692,17 @@ async fn test_find_project_path_abs(
         let abs_path = project1_abs_path.join("file1.txt");
         let found_path = project.find_project_path(abs_path, cx).unwrap();
         assert_eq!(found_path.worktree_id, project1_id);
-        assert_eq!(found_path.path.as_ref(), Path::new("file1.txt"));
+        assert_eq!(&*found_path.path, rel_path("file1.txt"));
 
         let abs_path = project1_abs_path.join("subdir").join("file2.txt");
         let found_path = project.find_project_path(abs_path, cx).unwrap();
         assert_eq!(found_path.worktree_id, project1_id);
-        assert_eq!(found_path.path.as_ref(), Path::new("subdir/file2.txt"));
+        assert_eq!(&*found_path.path, rel_path("subdir/file2.txt"));
 
         let abs_path = project2_abs_path.join("file3.txt");
         let found_path = project.find_project_path(abs_path, cx).unwrap();
         assert_eq!(found_path.worktree_id, project2_id);
-        assert_eq!(found_path.path.as_ref(), Path::new("file3.txt"));
+        assert_eq!(&*found_path.path, rel_path("file3.txt"));
 
         let abs_path = project1_abs_path.join("nonexistent.txt");
         let found_path = project.find_project_path(abs_path, cx);

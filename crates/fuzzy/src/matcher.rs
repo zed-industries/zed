@@ -1,5 +1,5 @@
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Borrow,
     collections::BTreeMap,
     sync::atomic::{self, AtomicBool},
 };
@@ -348,15 +348,12 @@ impl<'a> Matcher<'a> {
 
 #[cfg(test)]
 mod tests {
-    use util::rel_path::RelPath;
+    use util::rel_path::{RelPath, rel_path};
 
     use crate::{PathMatch, PathMatchCandidate};
 
     use super::*;
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-    };
+    use std::sync::Arc;
 
     #[test]
     fn test_get_last_positions() {
@@ -604,9 +601,9 @@ mod tests {
         let query = query.chars().collect::<Vec<_>>();
         let query_chars = CharBag::from(&lowercase_query[..]);
 
-        let path_arcs: Vec<Arc<Path>> = paths
+        let path_arcs: Vec<Arc<RelPath>> = paths
             .iter()
-            .map(|path| Arc::from(PathBuf::from(path)))
+            .map(|path| Arc::from(rel_path(path)))
             .collect::<Vec<_>>();
         let mut path_entries = Vec::new();
         for (i, path) in paths.iter().enumerate() {
@@ -649,7 +646,7 @@ mod tests {
                     paths
                         .iter()
                         .copied()
-                        .find(|p| result.path.as_ref() == Path::new(p))
+                        .find(|p| result.path.as_ref() == rel_path(p))
                         .unwrap(),
                     result.positions,
                 )

@@ -271,7 +271,10 @@ mod tests {
     use settings::Settings as _;
     use text::{Buffer, BufferId, Point, ToOffset as _};
     use unindent::Unindent as _;
-    use util::{path, rel_path::RelPath};
+    use util::{
+        path,
+        rel_path::{RelPath, rel_path},
+    };
     use worktree::WorktreeSettings;
 
     #[test]
@@ -624,7 +627,7 @@ mod tests {
         cx.run_until_parked();
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                RelPath::from_str("a.txt").into(),
+                rel_path("a.txt").into(),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

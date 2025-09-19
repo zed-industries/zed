@@ -29,7 +29,10 @@ use std::{
     sync::Arc,
 };
 use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
-use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
+use util::{
+    ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
+    rel_path::RelPath,
+};
 
 use crate::PackageJsonData;
 
@@ -51,8 +54,8 @@ impl ContextProvider for JsonTaskProvider {
         let Some(file) = project::File::from_dyn(file.as_ref()).cloned() else {
             return Task::ready(None);
         };
-        let is_package_json = file.path.ends_with("package.json");
-        let is_composer_json = file.path.ends_with("composer.json");
+        let is_package_json = file.path.ends_with(RelPath::new("package.json").unwrap());
+        let is_composer_json = file.path.ends_with(RelPath::new("composer.json").unwrap());
         if !is_package_json && !is_composer_json {
             return Task::ready(None);
         }

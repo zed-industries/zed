@@ -28,7 +28,7 @@ use sqlez::{
 };
 
 use ui::{App, SharedString, px};
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, rel_path::RelPath};
 use uuid::Uuid;
 
 use crate::{
@@ -1663,7 +1663,7 @@ impl WorkspaceDb {
     pub(crate) async fn toolchains(
         &self,
         workspace_id: WorkspaceId,
-    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<Path>)>> {
+    ) -> Result<Vec<(Toolchain, WorktreeId, Arc<RelPath>)>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
@@ -1679,10 +1679,12 @@ impl WorkspaceDb {
                 path: path.into(),
                 language_name: LanguageName::new(&language_name),
                 as_json: serde_json::Value::from_str(&raw_json).ok()?,
-            }, WorktreeId::from_proto(worktree_id), Arc::from(relative_worktree_path.as_ref())))).collect())
+
+            }, WorktreeId::from_proto(worktree_id), relative_worktree_path))).collect())
         })
         .await
     }
+
     pub async fn set_toolchain(
         &self,
         workspace_id: WorkspaceId,

@@ -4,7 +4,7 @@ use crate::{
 };
 use gpui::BackgroundExecutor;
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Borrow,
     cmp::{self, Ordering},
     iter,
     ops::Range,

@@ -727,7 +727,7 @@ mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::rel_path::RelPath;
+    use util::rel_path::{RelPath, rel_path};
 
     pub fn init_test(cx: &mut TestAppContext) {
         zlog::init_test();
@@ -766,7 +766,7 @@ mod tests {
 
         let project_path = ProjectPath {
             worktree_id,
-            path: RelPath::from_str("image_1.png").into(),
+            path: rel_path("image_1.png").into(),
         };
 
         let (task1, task2) = project.update(cx, |project, cx| {

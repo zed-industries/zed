@@ -303,7 +303,7 @@ impl WorktreeStore {
         let Some(old_worktree) = self.worktree_for_entry(entry_id, cx) else {
             return Task::ready(Err(anyhow!("no such worktree")));
         };
-        let Some(old_entry) = old_worktree.read(cx).entry_for_id(entry_id) else {
+        let Some(old_entry) = old_worktree.read(cx).entry_for_id(entry_id).cloned() else {
             return Task::ready(Err(anyhow!("no such entry")));
         };
         let Some(new_worktree) = self.worktree_for_id(new_project_path.worktree_id, cx) else {
@@ -348,37 +348,40 @@ impl WorktreeStore {
                         .with_context(|| format!("renaming {old_path:?} into {new_path:?}"))
                     };
 
-                let rename = cx.background_spawn(async move {
-                    // If we're on a case-insensitive FS and we're doing a case-only rename (i.e. `foobar` to `FOOBAR`)
-                    // we want to overwrite, because otherwise we run into a file-already-exists error.
-                    let overwrite = !case_sensitive
-                        && abs_old_path != abs_new_path
-                        && abs_old_path.to_str().map(|p| p.to_lowercase())
-                            == abs_new_path.to_str().map(|p| p.to_lowercase());
+                let rename = cx.background_spawn({
+                    let abs_new_path = abs_new_path.clone();
+                    async move {
+                        // If we're on a case-insensitive FS and we're doing a case-only rename (i.e. `foobar` to `FOOBAR`)
+                        // we want to overwrite, because otherwise we run into a file-already-exists error.
+                        let overwrite = !case_sensitive
+                            && abs_old_path != abs_new_path
+                            && abs_old_path.to_str().map(|p| p.to_lowercase())
+                                == abs_new_path.to_str().map(|p| p.to_lowercase());
 
-                    // The directory we're renaming into might not exist yet
-                    if let Err(e) =
-                        do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite).await
-                    {
-                        if let Some(err) = e.downcast_ref::<std::io::Error>()
-                            && err.kind() == std::io::ErrorKind::NotFound
+                        // The directory we're renaming into might not exist yet
+                        if let Err(e) =
+                            do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite).await
                         {
-                            if let Some(parent) = abs_new_path.parent() {
-                                fs.create_dir(parent).await.with_context(|| {
-                                    format!("creating parent directory {parent:?}")
-                                })?;
-                                return do_rename(
-                                    fs.as_ref(),
-                                    &abs_old_path,
-                                    &abs_new_path,
-                                    overwrite,
-                                )
-                                .await;
+                            if let Some(err) = e.downcast_ref::<std::io::Error>()
+                                && err.kind() == std::io::ErrorKind::NotFound
+                            {
+                                if let Some(parent) = abs_new_path.parent() {
+                                    fs.create_dir(parent).await.with_context(|| {
+                                        format!("creating parent directory {parent:?}")
+                                    })?;
+                                    return do_rename(
+                                        fs.as_ref(),
+                                        &abs_old_path,
+                                        &abs_new_path,
+                                        overwrite,
+                                    )
+                                    .await;
+                                }
                             }
+                            return Err(e);
                         }
-                        return Err(e);
+                        Ok(())
                     }
-                    Ok(())
                 });
 
                 cx.spawn(async move |_, cx| {
@@ -438,8 +441,13 @@ impl WorktreeStore {
                                 )
                             })?
                             .await
-                            .map(Some),
-                        None => Ok(None),
+                            .map(CreatedEntry::Included),
+                        None => {
+                            let abs_path = new_worktree.read_with(cx, |worktree, _| {
+                                worktree.absolutize(&new_project_path.path)
+                            })?;
+                            Ok(CreatedEntry::Excluded { abs_path })
+                        }
                     }
                 })
             }
@@ -1184,16 +1192,20 @@ impl WorktreeStore {
         let new_project_path = (
             new_worktree_id,
             RelPath::from_proto(&envelope.payload.new_path)?,
-        )
-            .into();
+        );
         let (scan_id, entry) = this.update(&mut cx, |this, cx| {
-            let new_worktree = this.worktree_for_id(new_worktree_id, cx)?;
+            let new_worktree = this
+                .worktree_for_id(new_worktree_id, cx)
+                .context("no such worktree")?;
             let scan_id = new_worktree.read(cx).scan_id();
-            (scan_id, this.copy_entry(entry_id, new_project_path, cx))
-        })?;
+            anyhow::Ok((
+                scan_id,
+                this.copy_entry(entry_id, new_project_path.into(), cx),
+            ))
+        })??;
         let entry = entry.await?;
         Ok(proto::ProjectEntryResponse {
-            entry: entry.map(|entry| entry.to_proto()),
+            entry: entry.as_ref().map(|entry| entry.into()),
             worktree_scan_id: scan_id as u64,
         })
     }

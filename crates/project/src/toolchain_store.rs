@@ -299,7 +299,11 @@ impl ToolchainStore {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);
                 let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
                 let path = RelPath::from_proto(envelope.payload.path.as_deref().unwrap_or(""))?;
-                Ok(this.list_toolchains(ProjectPath { worktree_id, path }, language_name, cx))
+                anyhow::Ok(this.list_toolchains(
+                    ProjectPath { worktree_id, path },
+                    language_name,
+                    cx,
+                ))
             })??
             .await;
         let has_values = toolchains.is_some();
@@ -337,14 +341,14 @@ impl ToolchainStore {
                 .collect::<Vec<_>>();
             (toolchains, relative_path)
         } else {
-            (vec![], Arc::from(Path::new("")))
+            (vec![], Arc::from(RelPath::empty()))
         };
 
         Ok(proto::ListToolchainsResponse {
             has_values,
             toolchains,
             groups,
-            relative_worktree_path: Some(relative_path.to_string_lossy().into_owned()),
+            relative_worktree_path: Some(relative_path.to_proto()),
         })
     }
 
@@ -612,7 +616,7 @@ impl RemoteToolchainStore {
                                 path: path.to_proto(),
                                 raw_json: toolchain.as_json.to_string(),
                             }),
-                            path: Some(project_path.path.to_string_lossy().into_owned()),
+                            path: Some(project_path.path.to_proto()),
                         })
                         .await
                         .log_err()?;
@@ -656,7 +660,7 @@ impl RemoteToolchainStore {
                     Some(Toolchain {
                         language_name: language_name.clone(),
                         name: toolchain.name.into(),
-                        path: RelPath::from_proto(toolchain.path)?,
+                        path: toolchain.path.into(),
                         as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                     })
                 })
@@ -668,12 +672,13 @@ impl RemoteToolchainStore {
                     Some((usize::try_from(group.start_index).ok()?, group.name.into()))
                 })
                 .collect();
-            let relative_path = Arc::from(Path::new(
+            let relative_path = RelPath::from_proto(
                 response
                     .relative_worktree_path
                     .as_deref()
                     .unwrap_or_default(),
-            ));
+            )
+            .log_err()?;
             Some((
                 ToolchainList {
                     toolchains,
@@ -698,7 +703,7 @@ impl RemoteToolchainStore {
                     project_id,
                     worktree_id: path.worktree_id.to_proto(),
                     language_name: language_name.clone().into(),
-                    path: Some(path.path.to_string_lossy().into_owned()),
+                    path: Some(path.path.to_proto()),
                 })
                 .await
                 .log_err()?;

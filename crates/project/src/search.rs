@@ -612,9 +612,10 @@ mod tests {
             "dir/[a-z].txt",
             "../dir/filé",
         ] {
-            let path_matcher = PathMatcher::new(&[valid_path.to_owned()], PathStyle::current()).unwrap_or_else(|e| {
-                panic!("Valid path {valid_path} should be accepted, but got: {e}")
-            });
+            let path_matcher = PathMatcher::new(&[valid_path.to_owned()], PathStyle::current())
+                .unwrap_or_else(|e| {
+                    panic!("Valid path {valid_path} should be accepted, but got: {e}")
+                });
             assert!(
                 path_matcher.is_match(valid_path),
                 "Path matcher for valid path {valid_path} should match itself"
@@ -654,8 +655,8 @@ mod tests {
             case_sensitive,
             false,
             false,
-            Default::default(),
-            Default::default(),
+            PathMatcher::empty(PathStyle::current()),
+            PathMatcher::empty(PathStyle::current()),
             false,
             None,
         )
@@ -674,8 +675,8 @@ mod tests {
             case_sensitive,
             false,
             false,
-            Default::default(),
-            Default::default(),
+            PathMatcher::empty(PathStyle::current()),
+            PathMatcher::empty(PathStyle::current()),
             false,
             None,
         )
@@ -694,8 +695,8 @@ mod tests {
             case_sensitive,
             false,
             false,
-            Default::default(),
-            Default::default(),
+            PathMatcher::empty(PathStyle::current()),
+            PathMatcher::empty(PathStyle::current()),
             false,
             None,
         )
@@ -714,8 +715,8 @@ mod tests {
             case_sensitive,
             false,
             false,
-            Default::default(),
-            Default::default(),
+            PathMatcher::empty(PathStyle::current()),
+            PathMatcher::empty(PathStyle::current()),
             false,
             None,
         )

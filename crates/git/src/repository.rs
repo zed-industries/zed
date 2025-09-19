@@ -2024,7 +2024,7 @@ impl RepoPath {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn from_str<S: AsRef<str> + ?Sized>(s: &S) -> Self {
-        Self(RelPath::from_str(s).into())
+        Self(RelPath::new(s).unwrap().into())
     }
 
     pub fn from_proto(proto: &str) -> Result<Self> {
@@ -2036,6 +2036,11 @@ impl RepoPath {
         let rel_path = RelPath::from_std_path(path, path_style)?;
         Ok(rel_path.into())
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
+    RepoPath(RelPath::new(s).unwrap().into())
 }
 
 impl From<&RelPath> for RepoPath {
