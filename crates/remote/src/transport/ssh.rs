@@ -65,7 +65,7 @@ impl From<settings::SshConnection> for SshConnectionOptions {
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
             port_forwards: val.port_forwards,
-            askpass_timeout: None,
+            askpass_timeout: val.askpass_timeout,
         }
     }
 }
