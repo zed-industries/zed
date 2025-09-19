@@ -10163,6 +10163,7 @@ dependencies = [
  "simplelog",
  "smallvec",
  "tokio-tungstenite 0.26.2",
+ "ui",
  "util",
  "workspace-hack",
 ]
