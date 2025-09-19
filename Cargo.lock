@@ -7107,6 +7107,7 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 2.0.12",
+ "tracy-client",
  "unicode-segmentation",
  "usvg",
  "util",
@@ -16890,6 +16891,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "tracy-client"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef54005d3d760186fd662dad4b7bb27ecd5531cdef54d1573ebd3f20a9205ed7"
+dependencies = [
+ "loom",
+ "once_cell",
+ "rustc-demangle",
+ "tracy-client-sys",
+]
+
+[[package]]
+name = "tracy-client-sys"
+version = "0.26.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "319c70195101a93f56db4c74733e272d720768e13471f400c78406a326b172b0"
+dependencies = [
+ "cc",
+ "windows-targets 0.52.6",
+]
+
+[[package]]
 name = "trait-variant"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -20335,6 +20358,7 @@ dependencies = [
  "time",
  "title_bar",
  "toolchain_selector",
+ "tracy-client",
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",

@@ -59,9 +59,19 @@ use zed::{
 
 use crate::zed::OpenRequestKind;
 
-#[cfg(feature = "mimalloc")]
+#[cfg(all(feature = "mimalloc", not(features = "tracy-memory")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(all(feature = "mimalloc", features = "tracy-memory"))]
+#[global_allocator]
+static GLOBAL: tracy_client::ProfiledAllocator<mimalloc::MiMalloc> =
+    tracy_client::ProfiledAllocator::new(mimalloc::MiMalloc, 100);
+
+#[cfg(all(not(feature = "mimalloc"), feature = "tracy-memory"))]
+#[global_allocator]
+static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
+    tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
 
 fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     let message = "Zed failed to launch";
@@ -165,6 +175,9 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
 }
 
 pub fn main() {
+    #[cfg(feature = "tracy")]
+    let _zone = tracy_client::span!();
+
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -371,6 +384,9 @@ pub fn main() {
     });
 
     app.run(move |cx| {
+        #[cfg(feature = "tracy")]
+        let _zone = tracy_client::span!();
+
         menu::init();
         zed_actions::init();
 

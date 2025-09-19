@@ -130,6 +130,9 @@ impl Application {
     /// Builds an app with the given asset source.
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
+        #[cfg(feature = "tracy")]
+        let _zone = tracy_client::span!();
+
         #[cfg(any(test, feature = "test-support"))]
         log::info!("GPUI was compiled in test mode");
 
@@ -175,6 +178,9 @@ impl Application {
     where
         F: 'static + FnOnce(&mut App),
     {
+        #[cfg(feature = "tracy")]
+        let _zone = tracy_client::span!();
+
         let this = self.0.clone();
         let platform = self.0.borrow().platform.clone();
         platform.run(Box::new(move || {

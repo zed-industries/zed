@@ -18,6 +18,10 @@ path = "src/zed-main.rs"
 name = "zed"
 path = "src/main.rs"
 
+[features]
+tracy = ["dep:tracy-client", "gpui/tracy"]
+tracy-memory = ["tracy"]
+
 [dependencies]
 acp_tools.workspace = true
 activity_indicator.workspace = true
@@ -146,6 +150,7 @@ theme_selector.workspace = true
 time.workspace = true
 title_bar.workspace = true
 toolchain_selector.workspace = true
+tracy-client = { workspace = true, optional = true }
 ui.workspace = true
 ui_input.workspace = true
 ui_prompt.workspace = true
