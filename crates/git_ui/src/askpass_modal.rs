@@ -2,10 +2,10 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
 use ui::{
-    ActiveTheme, AnyElement, App, Button, ButtonCommon, ButtonSize, Clickable, Color, Context,
-    DynamicSpacing, Headline, HeadlineSize, Icon, IconName, IconSize, InteractiveElement,
-    IntoElement, Label, LabelCommon, LabelSize, ParentElement, Render, SharedString, StyledExt,
-    StyledTypography, Window, div, h_flex, v_flex,
+    ActiveTheme, AnyElement, App, Button, Clickable, Color, Context, DynamicSpacing, Headline,
+    HeadlineSize, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon,
+    LabelSize, ParentElement, Render, SharedString, StyledExt, StyledTypography, Window, div,
+    h_flex, v_flex,
 };
 use workspace::ModalView;
 
