@@ -606,6 +606,14 @@ impl acp::Client for ClientDelegate {
         &self,
         args: acp::CreateTerminalRequest,
     ) -> Result<acp::CreateTerminalResponse, acp::Error> {
+        // Check if this is a display-only terminal from the metadata
+        let is_display_only = args
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get("display_only"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
         let terminal = self
             .session_thread(&args.session_id)?
             .update(&mut self.cx.clone(), |thread, cx| {
@@ -615,6 +623,7 @@ impl acp::Client for ClientDelegate {
                     args.env,
                     args.cwd,
                     args.output_byte_limit,
+                    is_display_only,
                     cx,
                 )
             })?

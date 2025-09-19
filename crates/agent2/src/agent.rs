@@ -1144,7 +1144,7 @@ impl ThreadEnvironment for AcpThreadEnvironment {
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>> {
         let task = self.acp_thread.update(cx, |thread, cx| {
-            thread.create_terminal(command, vec![], vec![], cwd, output_byte_limit, cx)
+            thread.create_terminal(command, vec![], vec![], cwd, output_byte_limit, false, cx)
         });
 
         let acp_thread = self.acp_thread.clone();

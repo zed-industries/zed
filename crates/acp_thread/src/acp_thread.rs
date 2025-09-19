@@ -1949,6 +1949,7 @@ impl AcpThread {
         extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
+        is_display_only: bool,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
@@ -1989,20 +1990,49 @@ impl AcpThread {
                 )
                 .redirect_stdin_to_dev_null()
                 .build(Some(command), &args);
-                let terminal = project
-                    .update(cx, |project, cx| {
-                        project.create_terminal_task(
-                            task::SpawnInTerminal {
-                                command: Some(command.clone()),
-                                args: args.clone(),
-                                cwd: cwd.clone(),
-                                env,
-                                ..Default::default()
-                            },
-                            cx,
-                        )
-                    })?
-                    .await?;
+
+                // For display-only terminals, create a terminal that doesn't actually execute
+                let terminal = if is_display_only {
+                    // Create a display-only terminal that just shows a header
+                    // The actual output will be streamed from the agent
+                    project
+                        .update(cx, |project, cx| {
+                            project.create_terminal_task(
+                                task::SpawnInTerminal {
+                                    // Use a simple command that shows the header and waits
+                                    // We use sleep to keep the terminal alive for output streaming
+                                    command: Some("sh".to_string()),
+                                    args: vec![
+                                        "-c".to_string(),
+                                        format!(
+                                            "echo '\\033[1;34m[Display Terminal]\\033[0m {}' && sleep 86400",
+                                            command
+                                        ),
+                                    ],
+                                    cwd: cwd.clone(),
+                                    env: Default::default(),  // Don't pass environment to avoid printing it
+                                    ..Default::default()
+                                },
+                                cx,
+                            )
+                        })?
+                        .await?
+                } else {
+                    project
+                        .update(cx, |project, cx| {
+                            project.create_terminal_task(
+                                task::SpawnInTerminal {
+                                    command: Some(command.clone()),
+                                    args: args.clone(),
+                                    cwd: cwd.clone(),
+                                    env,
+                                    ..Default::default()
+                                },
+                                cx,
+                            )
+                        })?
+                        .await?
+                };
 
                 cx.new(|cx| {
                     Terminal::new(
