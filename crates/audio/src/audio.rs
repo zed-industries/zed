@@ -217,7 +217,11 @@ impl Audio {
             .replays
             .add_voip_stream("local microphone".to_string(), replay);
 
-        let stream = stream.constant_params(LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE);
+        let stream = if voip_parts.legacy_audio_compatible {
+            stream.constant_params(LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE)
+        } else {
+            stream.constant_params(CHANNEL_COUNT, SAMPLE_RATE)
+        };
 
         Ok(stream)
     }
@@ -293,6 +297,7 @@ impl Audio {
 pub struct VoipParts {
     echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
     replays: replays::Replays,
+    legacy_audio_compatible: bool,
 }
 
 #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
@@ -301,8 +306,12 @@ impl VoipParts {
         let (apm, replays) = cx.try_read_default_global::<Audio, _>(|audio, _| {
             (Arc::clone(&audio.echo_canceller), audio.replays.clone())
         })?;
+        let legacy_audio_compatible =
+            AudioSettings::try_read_global(cx, |settings| settings.legacy_audio_compatible)
+                .unwrap_or_default();
 
         Ok(Self {
+            legacy_audio_compatible,
             echo_canceller: apm,
             replays,
         })
