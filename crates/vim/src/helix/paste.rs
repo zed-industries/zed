@@ -3,10 +3,7 @@ use gpui::{Action, Context, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use crate::{
-    Vim,
-    state::{Mode, Register},
-};
+use crate::{Vim, state::Mode};
 
 /// Pastes text from the specified register at the cursor position.
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -36,17 +33,14 @@ impl Vim {
 
                 let selected_register = vim.selected_register.take();
 
-                let Some(Register {
-                    text,
-                    clipboard_selections,
-                }) = Vim::update_globals(cx, |globals, cx| {
+                let Some((text, clipboard_selections)) = Vim::update_globals(cx, |globals, cx| {
                     globals.read_register(selected_register, Some(editor), cx)
                 })
-                .filter(|reg| !reg.text.is_empty())
-                else {
-                    return;
-                };
-                let Some(clipboard_selections) = clipboard_selections else {
+                .and_then(|reg| {
+                    (!reg.text.is_empty())
+                        .then_some(reg.text)
+                        .zip(reg.clipboard_selections)
+                }) else {
                     return;
                 };
 
