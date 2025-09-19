@@ -23774,6 +23774,28 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
     });
 }
 
+fn set_linked_edit_ranges(
+    opening: (Point, Point),
+    closing: (Point, Point),
+    editor: &mut Editor,
+    cx: &mut Context<Editor>,
+) {
+    let Some((buffer, _)) = editor
+        .buffer
+        .read(cx)
+        .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
+    else {
+        panic!("Failed to get buffer for selection position");
+    };
+    let buffer = buffer.read(cx);
+    let buffer_id = buffer.remote_id();
+    let opening_range = buffer.anchor_before(opening.0)..buffer.anchor_after(opening.1);
+    let closing_range = buffer.anchor_before(closing.0)..buffer.anchor_after(closing.1);
+    let mut linked_ranges = HashMap::default();
+    linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
+    editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+}
+
 #[gpui::test]
 async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -23852,22 +23874,12 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges([Point::new(0, 3)..Point::new(0, 3)]);
         });
-        let Some((buffer, _)) = editor
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
-        else {
-            panic!("Failed to get buffer for selection position");
-        };
-        let buffer = buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        let opening_range =
-            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 3));
-        let closing_range =
-            buffer.anchor_before(Point::new(0, 6))..buffer.anchor_after(Point::new(0, 8));
-        let mut linked_ranges = HashMap::default();
-        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
-        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 3)),
+            (Point::new(0, 6), Point::new(0, 8)),
+            editor,
+            cx,
+        );
     });
     let mut completion_handle =
         fake_server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
@@ -23938,36 +23950,19 @@ async fn test_linked_editing_with_non_word_characters(cx: &mut TestAppContext) {
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    // Set up linked editing ranges for HTML tags
     cx.set_state("<divˇ<div>Hello</div>");
 
-    // Simulate linked editing ranges being set up (as would happen from language server)
-    cx.update_editor(|editor, window, cx| {
-        let Some((buffer, _)) = editor
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
-        else {
-            panic!("Failed to get buffer for selection position");
-        };
-        let buffer = buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        let opening_range =
-            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 4));
-        let closing_range =
-            buffer.anchor_before(Point::new(0, 16))..buffer.anchor_after(Point::new(0, 19));
-        let mut linked_ranges = HashMap::default();
-        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
-        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 4)),
+            (Point::new(0, 16), Point::new(0, 19)),
+            editor,
+            cx,
+        );
     });
-
-    // Type '>' which is a non-word character
     cx.update_editor(|editor, window, cx| {
         editor.handle_input(">", window, cx);
     });
-
-    // The '>' should NOT be applied to the closing tag due to it being a non-word character
-    // It should only close the opening tag
     cx.assert_editor_state("<div>ˇ<div>Hello</div>");
 }
 
@@ -23999,64 +23994,32 @@ async fn test_linked_editing_with_non_word_characters_2(cx: &mut TestAppContext)
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    // Set up linked editing ranges for HTML tags
     cx.set_state("<Animatedˇ>Hello</Animated>");
 
-    // Simulate linked editing ranges being set up (as would happen from language server)
-    cx.update_editor(|editor, window, cx| {
-        let Some((buffer, _)) = editor
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
-        else {
-            panic!("Failed to get buffer for selection position");
-        };
-        let buffer = buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        // Opening tag "Animated" spans positions 1-8 (inclusive)
-        let opening_range =
-            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 9));
-        // Closing tag "Animated" spans positions 17-24 (inclusive)
-        let closing_range =
-            buffer.anchor_before(Point::new(0, 17))..buffer.anchor_after(Point::new(0, 25));
-        let mut linked_ranges = HashMap::default();
-        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
-        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 9)),
+            (Point::new(0, 17), Point::new(0, 25)),
+            editor,
+            cx,
+        );
     });
-
-    // Type '.' which is a non-word character
     cx.update_editor(|editor, window, cx| {
         editor.handle_input(".", window, cx);
     });
     cx.assert_editor_state("<Animated.ˇ>Hello</Animated.>");
 
-    // Update ranges for the new text length after typing "."
-    cx.update_editor(|editor, window, cx| {
-        let Some((buffer, _)) = editor
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
-        else {
-            panic!("Failed to get buffer for selection position");
-        };
-        let buffer = buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        // Opening tag "Animated." spans positions 1-9 (inclusive)
-        let opening_range =
-            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 10));
-        // Closing tag "Animated." spans positions 18-26 (inclusive)
-        let closing_range =
-            buffer.anchor_before(Point::new(0, 18))..buffer.anchor_after(Point::new(0, 26));
-        let mut linked_ranges = HashMap::default();
-        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
-        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 10)),
+            (Point::new(0, 18), Point::new(0, 26)),
+            editor,
+            cx,
+        );
     });
-
-    // Type 'V' which is a non-word character
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("V", window, cx);
     });
-
     cx.assert_editor_state("<Animated.Vˇ>Hello</Animated.V>");
 }
 
