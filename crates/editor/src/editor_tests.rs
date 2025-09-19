@@ -13,6 +13,7 @@ use crate::{
     },
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
+use collections::HashMap;
 use futures::StreamExt;
 use gpui::{
     BackgroundExecutor, DismissEvent, Rgba, SemanticVersion, TestAppContext, UpdateGlobal,
@@ -23908,6 +23909,66 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), "<head></head>");
     });
+}
+
+#[gpui::test]
+async fn test_linked_editing_with_non_word_characters(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "HTML".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["html".to_string()],
+                ..LanguageMatcher::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        Some(tree_sitter_html::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Set up linked editing ranges for HTML tags
+    cx.set_state("<divˇ<div>Hello</div>");
+
+    // Simulate linked editing ranges being set up (as would happen from language server)
+    cx.update_editor(|editor, window, cx| {
+        let Some((buffer, _)) = editor
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
+        else {
+            panic!("Failed to get buffer for selection position");
+        };
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        let opening_range =
+            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 4));
+        let closing_range =
+            buffer.anchor_before(Point::new(0, 16))..buffer.anchor_after(Point::new(0, 19));
+        let mut linked_ranges = HashMap::default();
+        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
+        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+    });
+
+    // Type '>' which is a non-word character
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(">", window, cx);
+    });
+
+    // The '>' should NOT be applied to the closing tag due to it being a non-word character
+    // It should only close the opening tag
+    cx.assert_editor_state("<div>ˇ<div>Hello</div>");
 }
 
 #[gpui::test]
