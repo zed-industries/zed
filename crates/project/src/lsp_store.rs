@@ -7942,7 +7942,7 @@ impl LspStore {
                 } else {
                     RelPath::from_std_path(
                         abs_path.strip_prefix(worktree_root)?,
-                        PathStyle::current(),
+                        PathStyle::local(),
                     )
                     .context("failed to create relative path")?
                 };

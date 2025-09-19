@@ -24,6 +24,7 @@ use crate::{LanguageName, ManifestName};
 pub struct Toolchain {
     /// User-facing label
     pub name: SharedString,
+    /// Absolute path
     pub path: SharedString,
     pub language_name: LanguageName,
     /// Full toolchain data (including language-specific details)

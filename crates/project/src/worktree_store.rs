@@ -175,7 +175,7 @@ impl WorktreeStore {
 
     pub fn path_style(&self) -> PathStyle {
         match &self.state {
-            WorktreeStoreState::Local { .. } => PathStyle::current(),
+            WorktreeStoreState::Local { .. } => PathStyle::local(),
             WorktreeStoreState::Remote { path_style, .. } => *path_style,
         }
     }

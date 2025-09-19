@@ -727,7 +727,7 @@ mod tests {
     use gpui::TestAppContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::rel_path::{RelPath, rel_path};
+    use util::rel_path::rel_path;
 
     pub fn init_test(cx: &mut TestAppContext) {
         zlog::init_test();

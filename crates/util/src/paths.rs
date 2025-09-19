@@ -237,12 +237,12 @@ pub enum PathStyle {
 
 impl PathStyle {
     #[cfg(target_os = "windows")]
-    pub const fn current() -> Self {
+    pub const fn local() -> Self {
         PathStyle::Windows
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub const fn current() -> Self {
+    pub const fn local() -> Self {
         PathStyle::Posix
     }
 

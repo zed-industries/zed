@@ -1014,7 +1014,7 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use unindent::Unindent;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     use crate::typescript::{
         PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
@@ -1164,7 +1164,7 @@ mod tests {
                 provider.combined_package_json_data(
                     fs.clone(),
                     path!("/root").as_ref(),
-                    "sub/file1.js".as_ref(),
+                    rel_path("sub/file1.js"),
                     cx,
                 )
             })

@@ -132,7 +132,7 @@ impl AddToolchainState {
             tx,
             DirectoryLister::Project(project),
             false,
-            PathStyle::current(),
+            PathStyle::local(),
         )
         .show_hidden()
         .with_footer(Arc::new(move |_, cx| {

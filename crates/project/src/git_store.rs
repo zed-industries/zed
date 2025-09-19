@@ -3014,7 +3014,7 @@ impl Repository {
         cx: &mut Context<Self>,
     ) -> Self {
         let snapshot =
-            RepositorySnapshot::empty(id, work_directory_abs_path.clone(), PathStyle::current());
+            RepositorySnapshot::empty(id, work_directory_abs_path.clone(), PathStyle::local());
         Repository {
             this: cx.weak_entity(),
             git_store,

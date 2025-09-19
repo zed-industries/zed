@@ -271,10 +271,7 @@ mod tests {
     use settings::Settings as _;
     use text::{Buffer, BufferId, Point, ToOffset as _};
     use unindent::Unindent as _;
-    use util::{
-        path,
-        rel_path::{RelPath, rel_path},
-    };
+    use util::{path, rel_path::rel_path};
     use worktree::WorktreeSettings;
 
     #[test]

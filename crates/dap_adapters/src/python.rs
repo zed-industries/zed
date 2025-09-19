@@ -731,7 +731,7 @@ impl DebugAdapter for PythonDebugAdapter {
                         .map(Path::new)?
                         .strip_prefix(delegate.worktree_root_path())
                         .ok()?,
-                    PathStyle::current(),
+                    PathStyle::local(),
                 )
                 .ok()
             })

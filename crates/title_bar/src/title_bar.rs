@@ -40,7 +40,7 @@ use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
 };
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenRecent, OpenRemote};
 
@@ -481,7 +481,7 @@ impl TitleBar {
                 let worktree = worktree.read(cx);
                 let settings_location = SettingsLocation {
                     worktree_id: worktree.id(),
-                    path: Path::new(""),
+                    path: RelPath::empty(),
                 };
 
                 let settings = WorktreeSettings::get(Some(settings_location), cx);

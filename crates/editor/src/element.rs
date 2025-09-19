@@ -3987,12 +3987,13 @@ impl EditorElement {
                         && let Some(worktree) =
                             project.read(cx).worktree_for_id(file.worktree_id(cx), cx)
                     {
+                        let path_style = file.path_style(cx);
                         let worktree = worktree.read(cx);
                         let relative_path = file.path();
                         let entry_for_path = worktree.entry_for_path(relative_path);
                         let abs_path = entry_for_path.map(|e| {
                             e.canonical_path.as_deref().map_or_else(
-                                || worktree.abs_path().join(relative_path),
+                                || worktree.absolutize(relative_path),
                                 Path::to_path_buf,
                             )
                         });
@@ -4028,7 +4029,7 @@ impl EditorElement {
                                     Some(Box::new(zed_actions::workspace::CopyRelativePath)),
                                     window.handler_for(&editor, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
-                                            relative_path.to_string_lossy().to_string(),
+                                            relative_path.display(path_style).to_string(),
                                         ));
                                     }),
                                 )

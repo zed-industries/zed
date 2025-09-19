@@ -90,7 +90,7 @@ impl AbsPath {
     }
 
     pub fn as_std_path(&self) -> Option<&Path> {
-        if self.style == PathStyle::current() {
+        if self.style == PathStyle::local() {
             Some(Path::new(&self.contents))
         } else {
             None
@@ -102,16 +102,13 @@ impl AbsPath {
     }
 
     pub fn from_sanitized_path(p: &SanitizedPath) -> Result<Self> {
-        Self::new(
-            &p.to_str().context("non-unicode path")?,
-            PathStyle::current(),
-        )
+        Self::new(&p.to_str().context("non-unicode path")?, PathStyle::local())
     }
 
     pub fn from_std_path(path: &Path) -> Result<Self> {
         let path = path.to_str().context("non-unicode path")?;
         // TODO strip trailing slash?
-        Self::new(&path, PathStyle::current())
+        Self::new(&path, PathStyle::local())
     }
 
     // this is a temporary escape hatch for places where we're handed a std::path::Path that semantically might not be a local path
@@ -194,6 +191,10 @@ impl RelPath {
 
     pub fn file_name(&self) -> Option<&str> {
         self.components().next_back()
+    }
+
+    pub fn file_stem(&self) -> Option<&str> {
+        Some(self.as_std_path().file_stem()?.to_str().unwrap())
     }
 
     pub fn extension(&self) -> Option<&str> {
@@ -387,11 +388,11 @@ mod tests {
         assert!(RelPath::new("./foo/bar").is_err());
         assert!(RelPath::new("..").is_err());
 
-        assert!(RelPath::from_std_path(Path::new("/"), PathStyle::current()).is_err());
-        assert!(RelPath::from_std_path(Path::new("//"), PathStyle::current()).is_err());
-        assert!(RelPath::from_std_path(Path::new("/foo/"), PathStyle::current()).is_err());
+        assert!(RelPath::from_std_path(Path::new("/"), PathStyle::local()).is_err());
+        assert!(RelPath::from_std_path(Path::new("//"), PathStyle::local()).is_err());
+        assert!(RelPath::from_std_path(Path::new("/foo/"), PathStyle::local()).is_err());
         assert_eq!(
-            RelPath::from_std_path(&PathBuf::from_iter(["foo", ""]), PathStyle::current()).unwrap(),
+            RelPath::from_std_path(&PathBuf::from_iter(["foo", ""]), PathStyle::local()).unwrap(),
             Arc::from(rel_path("foo"))
         );
     }

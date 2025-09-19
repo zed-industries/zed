@@ -5125,7 +5125,7 @@ impl File for TestFile {
     }
 
     fn path_style(&self, _cx: &App) -> PathStyle {
-        PathStyle::current()
+        PathStyle::local()
     }
 }
 

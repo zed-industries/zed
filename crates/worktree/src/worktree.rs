@@ -409,7 +409,7 @@ impl Worktree {
                         .file_name()
                         .map_or(String::new(), |f| f.to_string_lossy().to_string()),
                     abs_path.clone(),
-                    PathStyle::current(),
+                    PathStyle::local(),
                 ),
                 root_file_handle,
             };
@@ -1675,7 +1675,7 @@ impl LocalWorktree {
                 Some(
                     RelPath::from_std_path(
                         target.strip_prefix(&worktree_path).ok()?,
-                        PathStyle::current(),
+                        PathStyle::local(),
                     )
                     .ok()?,
                 )
@@ -2090,7 +2090,7 @@ impl RemoteWorktree {
                         .strip_prefix(&root_path_to_copy)
                         .map_err(|e| anyhow::Error::from(e))
                         .and_then(|relative_path| {
-                            RelPath::from_std_path(relative_path, PathStyle::current())
+                            RelPath::from_std_path(relative_path, PathStyle::local())
                         })
                         .log_err()
                     else {
@@ -2699,7 +2699,7 @@ impl LocalSnapshot {
                     ignore_parent_abs_path
                         .strip_prefix(self.abs_path.as_path())
                         .unwrap(),
-                    PathStyle::current(),
+                    PathStyle::local(),
                 )
                 .unwrap();
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
@@ -3644,7 +3644,7 @@ impl BackgroundScanner {
         let containing_git_repository = repo.and_then(|(ancestor_dot_git, work_directory)| {
             self.state.lock().insert_git_repository_for_path(
                 work_directory,
-                RelPath::from_std_path(&ancestor_dot_git, PathStyle::current()).unwrap(),
+                RelPath::from_std_path(&ancestor_dot_git, PathStyle::local()).unwrap(),
                 self.fs.as_ref(),
                 self.watcher.as_ref(),
             )?;
@@ -3903,7 +3903,7 @@ impl BackgroundScanner {
 
                 let relative_path: Arc<RelPath> = if let Ok(path) =
                     abs_path.strip_prefix(&root_canonical_path)
-                    && let Ok(path) = RelPath::from_std_path(path, PathStyle::current())
+                    && let Ok(path) = RelPath::from_std_path(path, PathStyle::local())
                 {
                     path
                 } else {
@@ -4476,7 +4476,7 @@ impl BackgroundScanner {
                         if let Some((ancestor_dot_git, work_directory)) = repo {
                             state.insert_git_repository_for_path(
                                 work_directory,
-                                RelPath::from_std_path(&ancestor_dot_git, PathStyle::current())
+                                RelPath::from_std_path(&ancestor_dot_git, PathStyle::local())
                                     .unwrap(),
                                 self.fs.as_ref(),
                                 self.watcher.as_ref(),
@@ -4574,7 +4574,7 @@ impl BackgroundScanner {
                 .retain(|parent_abs_path, (_, needs_update)| {
                     if let Ok(parent_path) = parent_abs_path.strip_prefix(abs_path.as_path())
                         && let Some(parent_path) =
-                            RelPath::from_std_path(&parent_path, PathStyle::current()).log_err()
+                            RelPath::from_std_path(&parent_path, PathStyle::local()).log_err()
                     {
                         if *needs_update {
                             *needs_update = false;
@@ -4631,7 +4631,7 @@ impl BackgroundScanner {
             .abs_path
             .strip_prefix(snapshot.abs_path.as_path())
             .unwrap();
-        let Some(path) = RelPath::from_std_path(&path, PathStyle::current()).log_err() else {
+        let Some(path) = RelPath::from_std_path(&path, PathStyle::local()).log_err() else {
             return;
         };
 
@@ -4735,7 +4735,7 @@ impl BackgroundScanner {
                     };
                     affected_repo_roots.push(dot_git_dir.parent().unwrap().into());
                     state.insert_git_repository(
-                        RelPath::from_std_path(relative, PathStyle::current()).unwrap(),
+                        RelPath::from_std_path(relative, PathStyle::local()).unwrap(),
                         self.fs.as_ref(),
                         self.watcher.as_ref(),
                     );

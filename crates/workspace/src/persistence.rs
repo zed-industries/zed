@@ -915,10 +915,13 @@ impl WorkspaceDb {
                     relative_worktree_path == String::default()
                 );
 
+                let Some(relative_path) = RelPath::new(&relative_worktree_path).log_err() else {
+                    continue;
+                };
                 if worktree_id != u64::MAX && relative_worktree_path != String::default() {
                     ToolchainScope::Subproject(
                         WorktreeId::from_usize(worktree_id as usize),
-                        Arc::from(relative_worktree_path.as_ref()),
+                        relative_path.into(),
                     )
                 } else {
                     ToolchainScope::Project
@@ -998,7 +1001,7 @@ impl WorkspaceDb {
                     for toolchain in toolchains {
                         let query = sql!(INSERT OR REPLACE INTO user_toolchains(remote_connection_id, workspace_id, worktree_id, relative_worktree_path, language_name, name, path, raw_json) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8));
                         let (workspace_id, worktree_id, relative_worktree_path) = match scope {
-                            ToolchainScope::Subproject(worktree_id, ref path) => (Some(workspace.id), Some(worktree_id), Some(path.to_string_lossy().into_owned())),
+                            ToolchainScope::Subproject(worktree_id, ref path) => (Some(workspace.id), Some(worktree_id), Some(path.as_str().to_owned())),
                             ToolchainScope::Project => (Some(workspace.id), None, None),
                             ToolchainScope::Global => (None, None, None),
                         };
@@ -1667,20 +1670,33 @@ impl WorkspaceDb {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path, worktree_id, relative_worktree_path, language_name, raw_json FROM toolchains WHERE workspace_id = ?
+                    SELECT
+                        name, path, worktree_id, relative_worktree_path, language_name, raw_json
+                    FROM toolchains
+                    WHERE workspace_id = ?
                 ))
                 .context("select toolchains")?;
 
             let toolchain: Vec<(String, String, u64, String, String, String)> =
                 select(workspace_id)?;
 
-            Ok(toolchain.into_iter().filter_map(|(name, path, worktree_id, relative_worktree_path, language_name, raw_json)| Some((Toolchain {
-                name: name.into(),
-                path: path.into(),
-                language_name: LanguageName::new(&language_name),
-                as_json: serde_json::Value::from_str(&raw_json).ok()?,
-
-            }, WorktreeId::from_proto(worktree_id), relative_worktree_path))).collect())
+            Ok(toolchain
+                .into_iter()
+                .filter_map(
+                    |(name, path, worktree_id, relative_worktree_path, language, json)| {
+                        Some((
+                            Toolchain {
+                                name: name.into(),
+                                path: path.into(),
+                                language_name: LanguageName::new(&language),
+                                as_json: serde_json::Value::from_str(&json).ok()?,
+                            },
+                            WorktreeId::from_proto(worktree_id),
+                            RelPath::from_proto(&relative_worktree_path).log_err()?,
+                        ))
+                    },
+                )
+                .collect())
         })
         .await
     }

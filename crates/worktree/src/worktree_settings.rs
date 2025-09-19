@@ -136,6 +136,6 @@ impl Settings for WorktreeSettings {
 
 fn path_matchers(values: &[String], context: &'static str) -> anyhow::Result<PathMatcher> {
     // TODO confirm that this is the right path style
-    PathMatcher::new(values, PathStyle::current())
+    PathMatcher::new(values, PathStyle::local())
         .with_context(|| format!("Failed to parse globs from {}", context))
 }

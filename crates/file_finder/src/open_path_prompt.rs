@@ -217,7 +217,7 @@ impl OpenPathPrompt {
     ) {
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate =
-                OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::current());
+                OpenPathDelegate::new(tx, lister.clone(), creating_path, PathStyle::local());
             let picker = Picker::uniform_list(delegate, window, cx).width(rems(34.));
             let query = lister.default_query(cx);
             picker.set_query(query, window, cx);

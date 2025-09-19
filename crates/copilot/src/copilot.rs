@@ -40,6 +40,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Dimensions;
+use util::rel_path::RelPath;
 use util::{ResultExt, fs::remove_matching};
 use workspace::Workspace;
 
@@ -963,8 +964,7 @@ impl Copilot {
         let hard_tabs = settings.hard_tabs;
         let relative_path = buffer
             .file()
-            .map(|file| file.path().to_path_buf())
-            .unwrap_or_default();
+            .map_or(RelPath::empty().into(), |file| file.path().clone());
 
         cx.background_spawn(async move {
             let (version, snapshot) = snapshot.await?;
@@ -975,7 +975,7 @@ impl Copilot {
                         tab_size: tab_size.into(),
                         indent_size: 1,
                         insert_spaces: !hard_tabs,
-                        relative_path: relative_path.to_string_lossy().into(),
+                        relative_path: relative_path.to_proto(),
                         position: point_to_lsp(position),
                         version: version.try_into().unwrap(),
                     },
@@ -1374,7 +1374,7 @@ mod tests {
         }
 
         fn path_style(&self, _: &App) -> PathStyle {
-            PathStyle::current()
+            PathStyle::local()
         }
 
         fn full_path(&self, _: &App) -> PathBuf {

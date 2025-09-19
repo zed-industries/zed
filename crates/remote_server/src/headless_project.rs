@@ -627,7 +627,7 @@ impl HeadlessProject {
         let message = envelope.payload;
         let query = SearchQuery::from_proto(
             message.query.context("missing query field")?,
-            PathStyle::current(),
+            PathStyle::local(),
         )?;
         let results = this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
