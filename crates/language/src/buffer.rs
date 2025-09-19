@@ -546,14 +546,20 @@ pub enum CharKind {
     Word,
 }
 
-/// Context for how character classification should be performed inside scope.
+/// Context for character classification within a specific scope.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ScopeContext {
-    /// Character classification for completion query.
-    /// Like '-' in case of taiwind classes "bg-yellow-100" or '.' in import paths like "foo.ts"
+    /// Character classification for completion queries.
+    /// 
+    /// This context treats certain characters as word constituents that would
+    /// normally be considered punctuation, such as '-' in Tailwind classes 
+    /// ("bg-yellow-100") or '.' in import paths ("foo.ts").
     Completion,
     /// Character classification for linked edits.
-    /// Like '.' in JSX tag <Animated.View>
+    /// 
+    /// This context handles characters that should be treated as part of
+    /// identifiers during linked editing operations, such as '.' in JSX
+    /// component names like `<Animated.View>`.
     LinkedEdits,
 }
 
