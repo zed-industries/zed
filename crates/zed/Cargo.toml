@@ -19,7 +19,7 @@ name = "zed"
 path = "src/main.rs"
 
 [features]
-tracy = ["dep:tracy-client", "gpui/tracy"]
+tracy = ["dep:tracy-client", "dep:tracing", "dep:tracing-subscriber", "dep:tracing-tracy", "gpui/tracy"]
 tracy-memory = ["tracy"]
 
 [dependencies]
@@ -150,6 +150,9 @@ theme_selector.workspace = true
 time.workspace = true
 title_bar.workspace = true
 toolchain_selector.workspace = true
+tracing = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+tracing-tracy = { workspace = true, optional = true }
 tracy-client = { workspace = true, optional = true }
 ui.workspace = true
 ui_input.workspace = true

@@ -667,6 +667,9 @@ tokio = { version = "1" }
 tokio-tungstenite = { version = "0.26", features = ["__rustls-tls"] }
 toml = "0.8"
 tower-http = "0.4.4"
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter", "json", "registry", "tracing-log"] } # workaround for https://github.com/tokio-rs/tracing/issues/2927
+tracing-tracy = { version = "0.11.4", default-features = false, features = ["enable"] }
 tracy-client = { version = "0.18.2", default-features = false, features = ["enable", "demangle"] }
 tree-sitter = { version = "0.25.10", features = ["wasm"] }
 tree-sitter-bash = "0.25.0"
