@@ -15,7 +15,6 @@ use gpui::{
     FocusHandle, Focusable, InteractiveElement, ParentElement, Render, Styled, Subscription,
     WeakEntity, Window, anchored, deferred, point,
 };
-use project::DisableAiSettings;
 use project::project_settings::DiagnosticSeverity;
 use search::{BufferSearchBar, buffer_search};
 use settings::{Settings, SettingsStore};
@@ -48,20 +47,15 @@ impl QuickActionBar {
         workspace: &Workspace,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled;
+        let mut was_agent_enabled = AgentSettings::get_global(cx).enabled(cx);
         let mut was_agent_button = AgentSettings::get_global(cx).button;
 
         let ai_settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-            let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
             let agent_settings = AgentSettings::get_global(cx);
+            let is_agent_enabled = agent_settings.enabled(cx);
 
-            if was_ai_disabled != is_ai_disabled
-                || was_agent_enabled != agent_settings.enabled
-                || was_agent_button != agent_settings.button
-            {
-                was_ai_disabled = is_ai_disabled;
-                was_agent_enabled = agent_settings.enabled;
+            if was_agent_enabled != is_agent_enabled || was_agent_button != agent_settings.button {
+                was_agent_enabled = is_agent_enabled;
                 was_agent_button = agent_settings.button;
                 cx.notify();
             }
@@ -597,9 +591,7 @@ impl Render for QuickActionBar {
             .children(self.render_preview_button(self.workspace.clone(), cx))
             .children(search_button)
             .when(
-                AgentSettings::get_global(cx).enabled
-                    && AgentSettings::get_global(cx).button
-                    && !DisableAiSettings::get_global(cx).disable_ai,
+                AgentSettings::get_global(cx).enabled(cx) && AgentSettings::get_global(cx).button,
                 |bar| bar.child(assistant_button),
             )
             .children(code_actions_dropdown)

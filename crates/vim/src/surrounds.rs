@@ -241,21 +241,15 @@ impl Vim {
                         },
                     };
 
-                    // Determines whether space should be added/removed after
+                    // Determines whether space should be added after
                     // and before the surround pairs.
-                    // For example, using `cs{[` will add a space before and
-                    // after the pair, while using `cs{]` will not, notice the
-                    // use of the closing bracket instead of the opening bracket
-                    // on the target object.
-                    // In the case of quotes, the opening and closing is the
-                    // same, so no space will ever be added or removed.
-                    let surround = match target {
-                        Object::Quotes
-                        | Object::BackQuotes
-                        | Object::AnyQuotes
-                        | Object::MiniQuotes
-                        | Object::DoubleQuotes => true,
-                        _ => pair.end != surround_alias((*text).as_ref()),
+                    // Space is only added in the following cases:
+                    // - new surround is not quote and is opening bracket (({[<)
+                    // - new surround is quote and original was also quote
+                    let surround = if pair.start != pair.end {
+                        pair.end != surround_alias((*text).as_ref())
+                    } else {
+                        will_replace_pair.start == will_replace_pair.end
                     };
 
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
@@ -1241,6 +1235,15 @@ mod test {
         "},
             Mode::Normal,
         );
+
+        // test quote to bracket spacing.
+        cx.set_state(indoc! {"'ˇfoobar'"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' {");
+        cx.assert_state(indoc! {"ˇ{ foobar }"}, Mode::Normal);
+
+        cx.set_state(indoc! {"'ˇfoobar'"}, Mode::Normal);
+        cx.simulate_keystrokes("c s ' }");
+        cx.assert_state(indoc! {"ˇ{foobar}"}, Mode::Normal);
     }
 
     #[gpui::test]

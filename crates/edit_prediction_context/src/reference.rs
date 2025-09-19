@@ -1,10 +1,11 @@
 use language::BufferSnapshot;
 use std::collections::HashMap;
 use std::ops::Range;
+use util::RangeExt;
 
 use crate::{
+    declaration::Identifier,
     excerpt::{EditPredictionExcerpt, EditPredictionExcerptText},
-    outline::Identifier,
 };
 
 #[derive(Debug)]
@@ -78,8 +79,8 @@ pub fn identifiers_in_range(
             .highlights_config
             .as_ref();
 
-        for capture in mat.captures {
-            if let Some(config) = config {
+        if let Some(config) = config {
+            for capture in mat.captures {
                 if config.identifier_capture_indices.contains(&capture.index) {
                     let node_range = capture.node.byte_range();
 
@@ -88,8 +89,13 @@ pub fn identifiers_in_range(
                         continue;
                     }
 
+                    if !range.contains_inclusive(&node_range) {
+                        continue;
+                    }
+
                     let identifier_text =
                         &range_text[node_range.start - range.start..node_range.end - range.start];
+
                     references.push(Reference {
                         identifier: Identifier {
                             name: identifier_text.into(),
@@ -106,4 +112,62 @@ pub fn identifiers_in_range(
         matches.advance();
     }
     references
+}
+
+#[cfg(test)]
+mod test {
+    use gpui::{TestAppContext, prelude::*};
+    use indoc::indoc;
+    use language::{BufferSnapshot, Language, LanguageConfig, LanguageMatcher, tree_sitter_rust};
+
+    use crate::reference::{ReferenceRegion, identifiers_in_range};
+
+    #[gpui::test]
+    fn test_identifier_node_truncated(cx: &mut TestAppContext) {
+        let code = indoc! { r#"
+            fn main() {
+                add(1, 2);
+            }
+
+            fn add(a: i32, b: i32) -> i32 {
+                a + b
+            }
+        "# };
+        let buffer = create_buffer(code, cx);
+
+        let range = 0..35;
+        let references = identifiers_in_range(
+            range.clone(),
+            &code[range],
+            ReferenceRegion::Breadcrumb,
+            &buffer,
+        );
+        assert_eq!(references.len(), 2);
+        assert_eq!(references[0].identifier.name.as_ref(), "main");
+        assert_eq!(references[1].identifier.name.as_ref(), "add");
+    }
+
+    fn create_buffer(text: &str, cx: &mut TestAppContext) -> BufferSnapshot {
+        let buffer =
+            cx.new(|cx| language::Buffer::local(text, cx).with_language(rust_lang().into(), cx));
+        buffer.read_with(cx, |buffer, _| buffer.snapshot())
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_highlights_query(include_str!("../../languages/src/rust/highlights.scm"))
+        .unwrap()
+        .with_outline_query(include_str!("../../languages/src/rust/outline.scm"))
+        .unwrap()
+    }
 }

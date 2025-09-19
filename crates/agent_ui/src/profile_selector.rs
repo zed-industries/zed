@@ -1,11 +1,10 @@
 use crate::{ManageProfiles, ToggleProfileSelector};
 use agent_settings::{
-    AgentDockPosition, AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles,
-    builtin_profiles,
+    AgentProfile, AgentProfileId, AgentSettings, AvailableProfiles, builtin_profiles,
 };
 use fs::Fs;
 use gpui::{Action, Entity, FocusHandle, Subscription, prelude::*};
-use settings::{Settings as _, SettingsStore, update_settings_file};
+use settings::{DockPosition, Settings as _, SettingsStore, update_settings_file};
 use std::sync::Arc;
 use ui::{
     ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, PopoverMenu,
@@ -142,10 +141,13 @@ impl ProfileSelector {
             let fs = self.fs.clone();
             let provider = self.provider.clone();
             move |_window, cx| {
-                update_settings_file::<AgentSettings>(fs.clone(), cx, {
+                update_settings_file(fs.clone(), cx, {
                     let profile_id = profile_id.clone();
                     move |settings, _cx| {
-                        settings.set_profile(profile_id);
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_profile(profile_id.0);
                     }
                 });
 
@@ -216,10 +218,10 @@ impl Render for ProfileSelector {
     }
 }
 
-fn documentation_side(position: AgentDockPosition) -> DocumentationSide {
+fn documentation_side(position: DockPosition) -> DocumentationSide {
     match position {
-        AgentDockPosition::Left => DocumentationSide::Right,
-        AgentDockPosition::Bottom => DocumentationSide::Left,
-        AgentDockPosition::Right => DocumentationSide::Left,
+        DockPosition::Left => DocumentationSide::Right,
+        DockPosition::Bottom => DocumentationSide::Left,
+        DockPosition::Right => DocumentationSide::Left,
     }
 }

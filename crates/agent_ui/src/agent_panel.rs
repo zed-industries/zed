@@ -1,4 +1,4 @@
-use std::ops::{Not, Range};
+use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -10,6 +10,9 @@ use project::agent_server_store::{
     AgentServerCommand, AllAgentServersSettings, CLAUDE_CODE_NAME, GEMINI_NAME,
 };
 use serde::{Deserialize, Serialize};
+use settings::{
+    DefaultAgentView as DefaultView, LanguageModelProviderSetting, LanguageModelSelection,
+};
 use zed_actions::OpenBrowser;
 use zed_actions::agent::{OpenClaudeCodeOnboardingModal, ReauthenticateAgent};
 
@@ -33,7 +36,7 @@ use agent::{
     history_store::{HistoryEntryId, HistoryStore},
     thread_store::{TextThreadStore, ThreadStore},
 };
-use agent_settings::{AgentDockPosition, AgentSettings, DefaultView};
+use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
 use anyhow::{Result, anyhow};
 use assistant_context::{AssistantContext, ContextEvent, ContextSummary};
@@ -659,6 +662,43 @@ impl AgentPanel {
             )
         });
 
+        let mut old_disable_ai = false;
+        cx.observe_global_in::<SettingsStore>(window, move |panel, window, cx| {
+            let disable_ai = DisableAiSettings::get_global(cx).disable_ai;
+            if old_disable_ai != disable_ai {
+                let agent_panel_id = cx.entity_id();
+                let agent_panel_visible = panel
+                    .workspace
+                    .update(cx, |workspace, cx| {
+                        let agent_dock_position = panel.position(window, cx);
+                        let agent_dock = workspace.dock_at_position(agent_dock_position);
+                        let agent_panel_focused = agent_dock
+                            .read(cx)
+                            .active_panel()
+                            .is_some_and(|panel| panel.panel_id() == agent_panel_id);
+
+                        let active_panel_visible = agent_dock
+                            .read(cx)
+                            .visible_panel()
+                            .is_some_and(|panel| panel.panel_id() == agent_panel_id);
+
+                        if agent_panel_focused {
+                            cx.dispatch_action(&ToggleFocus);
+                        }
+
+                        active_panel_visible
+                    })
+                    .unwrap_or_default();
+
+                if agent_panel_visible {
+                    cx.emit(PanelEvent::Close);
+                }
+
+                old_disable_ai = disable_ai;
+            }
+        })
+        .detach();
+
         Self {
             active_view,
             workspace,
@@ -671,11 +711,9 @@ impl AgentPanel {
             prompt_store,
             configuration: None,
             configuration_subscription: None,
-
             inline_assist_context_store,
             previous_view: None,
             history_store: history_store.clone(),
-
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             assistant_navigation_menu_handle: PopoverMenuHandle::default(),
@@ -700,7 +738,6 @@ impl AgentPanel {
         if workspace
             .panel::<Self>(cx)
             .is_some_and(|panel| panel.read(cx).enabled(cx))
-            && !DisableAiSettings::get_global(cx).disable_ai
         {
             workspace.toggle_panel_focus::<Self>(window, cx);
         }
@@ -1058,17 +1095,14 @@ impl AgentPanel {
         match self.active_view.which_font_size_used() {
             WhichFontSize::AgentFont => {
                 if persist {
-                    update_settings_file::<ThemeSettings>(
-                        self.fs.clone(),
-                        cx,
-                        move |settings, cx| {
-                            let agent_font_size =
-                                ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
-                            let _ = settings
-                                .agent_font_size
-                                .insert(Some(theme::clamp_font_size(agent_font_size).into()));
-                        },
-                    );
+                    update_settings_file(self.fs.clone(), cx, move |settings, cx| {
+                        let agent_font_size =
+                            ThemeSettings::get_global(cx).agent_font_size(cx) + delta;
+                        let _ = settings
+                            .theme
+                            .agent_font_size
+                            .insert(theme::clamp_font_size(agent_font_size).into());
+                    });
                 } else {
                     theme::adjust_agent_font_size(cx, |size| size + delta);
                 }
@@ -1089,8 +1123,8 @@ impl AgentPanel {
         cx: &mut Context<Self>,
     ) {
         if action.persist {
-            update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-                settings.agent_font_size = None;
+            update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                settings.theme.agent_font_size = None;
             });
         } else {
             theme::reset_agent_font_size(cx);
@@ -1175,11 +1209,17 @@ impl AgentPanel {
                     .is_none_or(|model| model.provider.id() != provider.id())
                     && let Some(model) = provider.default_model(cx)
                 {
-                    update_settings_file::<AgentSettings>(
-                        self.fs.clone(),
-                        cx,
-                        move |settings, _| settings.set_model(model),
-                    );
+                    update_settings_file(self.fs.clone(), cx, move |settings, _| {
+                        let provider = model.provider_id().0.to_string();
+                        let model = model.id().0.to_string();
+                        settings
+                            .agent
+                            .get_or_insert_default()
+                            .set_model(LanguageModelSelection {
+                                provider: LanguageModelProviderSetting(provider),
+                                model,
+                            })
+                    });
                 }
 
                 self.new_thread(&NewThread::default(), window, cx);
@@ -1424,11 +1464,7 @@ impl Focusable for AgentPanel {
 }
 
 fn agent_panel_dock_position(cx: &App) -> DockPosition {
-    match AgentSettings::get_global(cx).dock {
-        AgentDockPosition::Left => DockPosition::Left,
-        AgentDockPosition::Bottom => DockPosition::Bottom,
-        AgentDockPosition::Right => DockPosition::Right,
-    }
+    AgentSettings::get_global(cx).dock.into()
 }
 
 impl EventEmitter<PanelEvent> for AgentPanel {}
@@ -1447,13 +1483,11 @@ impl Panel for AgentPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<AgentSettings>(self.fs.clone(), cx, move |settings, _| {
-            let dock = match position {
-                DockPosition::Left => AgentDockPosition::Left,
-                DockPosition::Bottom => AgentDockPosition::Bottom,
-                DockPosition::Right => AgentDockPosition::Right,
-            };
-            settings.set_dock(dock);
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings
+                .agent
+                .get_or_insert_default()
+                .set_dock(position.into());
         });
     }
 
@@ -1499,7 +1533,7 @@ impl Panel for AgentPanel {
     }
 
     fn enabled(&self, cx: &App) -> bool {
-        DisableAiSettings::get_global(cx).disable_ai.not() && AgentSettings::get_global(cx).enabled
+        AgentSettings::get_global(cx).enabled(cx)
     }
 
     fn is_zoomed(&self, _window: &Window, _cx: &App) -> bool {

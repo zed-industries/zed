@@ -1161,6 +1161,13 @@
     }
   },
   {
+    "context": "ContextServerToolsModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
+    }
+  },
+  {
     "context": "OnboardingAiConfigurationModal",
     "use_key_equivalents": true,
     "bindings": {

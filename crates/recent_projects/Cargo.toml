@@ -31,7 +31,6 @@ picker.workspace = true
 project.workspace = true
 release_channel.workspace = true
 remote.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smol.workspace = true

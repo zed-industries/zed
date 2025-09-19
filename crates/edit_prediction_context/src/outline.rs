@@ -1,5 +1,7 @@
-use language::{BufferSnapshot, LanguageId, SyntaxMapMatches};
-use std::{cmp::Reverse, ops::Range, sync::Arc};
+use language::{BufferSnapshot, SyntaxMapMatches};
+use std::{cmp::Reverse, ops::Range};
+
+use crate::declaration::Identifier;
 
 // TODO:
 //
@@ -16,12 +18,6 @@ pub struct OutlineDeclaration {
     pub identifier: Identifier,
     pub item_range: Range<usize>,
     pub signature_range: Range<usize>,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub struct Identifier {
-    pub name: Arc<str>,
-    pub language_id: LanguageId,
 }
 
 pub fn declarations_in_buffer(buffer: &BufferSnapshot) -> Vec<OutlineDeclaration> {

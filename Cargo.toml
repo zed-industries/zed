@@ -58,6 +58,7 @@ members = [
     "crates/edit_prediction",
     "crates/edit_prediction_button",
     "crates/edit_prediction_context",
+    "crates/edit_prediction_tools",
     "crates/editor",
     "crates/eval",
     "crates/explorer_command_injector",
@@ -149,9 +150,8 @@ members = [
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
+    "crates/settings_macros",
     "crates/settings_profile_selector",
-    "crates/settings_ui",
-    "crates/settings_ui_macros",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -315,6 +315,7 @@ image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
 edit_prediction_context = { path = "crates/edit_prediction_context" }
+edit_prediction_tools = { path = "crates/edit_prediction_tools" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
@@ -382,7 +383,6 @@ semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_ui = { path = "crates/settings_ui" }
-settings_ui_macros = { path = "crates/settings_ui_macros" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
@@ -630,6 +630,7 @@ serde_json_lenient = { version = "0.2", features = [
 serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
+serde_with = "3.4.0"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"

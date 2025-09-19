@@ -144,8 +144,7 @@ impl InlineAssistant {
             let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
                 return;
             };
-            let enabled = !DisableAiSettings::get_global(cx).disable_ai
-                && AgentSettings::get_global(cx).enabled;
+            let enabled = AgentSettings::get_global(cx).enabled(cx);
             terminal_panel.update(cx, |terminal_panel, cx| {
                 terminal_panel.set_assistant_enabled(enabled, cx)
             });
@@ -257,8 +256,7 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let settings = AgentSettings::get_global(cx);
-        if !settings.enabled || DisableAiSettings::get_global(cx).disable_ai {
+        if !AgentSettings::get_global(cx).enabled(cx) {
             return;
         }
 
@@ -1788,7 +1786,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         _: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Vec<CodeAction>>> {
-        if !AgentSettings::get_global(cx).enabled {
+        if !AgentSettings::get_global(cx).enabled(cx) {
             return Task::ready(Ok(Vec::new()));
         }
 

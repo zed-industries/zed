@@ -35,14 +35,25 @@ pub mod scrollbars {
     pub enum ShowScrollbar {
         /// Show the scrollbar if there's important information or
         /// follow the system's configured behavior.
+        #[default]
         Auto,
         /// Match the system's configured behavior.
         System,
         /// Always show the scrollbar.
-        #[default]
         Always,
         /// Never show the scrollbar.
         Never,
+    }
+
+    impl From<settings::ShowScrollbar> for ShowScrollbar {
+        fn from(value: settings::ShowScrollbar) -> Self {
+            match value {
+                settings::ShowScrollbar::Auto => ShowScrollbar::Auto,
+                settings::ShowScrollbar::System => ShowScrollbar::System,
+                settings::ShowScrollbar::Always => ShowScrollbar::Always,
+                settings::ShowScrollbar::Never => ShowScrollbar::Never,
+            }
+        }
     }
 
     impl ShowScrollbar {
