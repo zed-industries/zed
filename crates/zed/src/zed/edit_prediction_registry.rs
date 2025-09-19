@@ -2,7 +2,6 @@ use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::Editor;
-use feature_flags::{EditPredictionV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use settings::SettingsStore;
@@ -204,7 +203,7 @@ fn assign_edit_prediction_provider(
                     }
                 }
 
-                if cx.has_flag::<EditPredictionV2FeatureFlag>() {
+                if std::env::var("ZED_ZETA2").is_ok() {
                     let provider = cx.new(|cx| {
                         zeta2::ZetaEditPredictionProvider::new(
                             editor.project(),
