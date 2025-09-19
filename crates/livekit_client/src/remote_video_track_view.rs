@@ -98,9 +98,10 @@ impl Render for RemoteVideoTrackView {
             }
             self.current_rendered_frame = Some(latest_frame.clone());
             use gpui::ParentElement;
-            return ui::h_flex().size_full().child(gpui::img(latest_frame.clone())
+            return ui::h_flex()
                 .size_full()
-               ) .into_any_element();
+                .child(gpui::img(latest_frame.clone()).size_full())
+                .into_any_element();
         }
 
         Empty.into_any_element()
