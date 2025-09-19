@@ -1,4 +1,5 @@
 use gpui::BackgroundExecutor;
+use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -9,10 +10,7 @@ use std::{
     },
 };
 
-use crate::{
-    CharBag,
-    matcher::{MatchCandidate, Matcher},
-};
+use crate::{CharBag, matcher};
 
 #[derive(Clone, Debug)]
 pub struct PathMatchCandidate<'a> {
@@ -43,16 +41,6 @@ pub trait PathMatchCandidateSet<'a>: Send + Sync {
     }
     fn prefix(&self) -> Arc<str>;
     fn candidates(&'a self, start: usize) -> Self::Candidates;
-}
-
-impl<'a> MatchCandidate for PathMatchCandidate<'a> {
-    fn has_chars(&self, bag: CharBag) -> bool {
-        self.char_bag.is_superset(bag)
-    }
-
-    fn to_string(&self) -> Cow<'a, str> {
-        self.path.to_string_lossy()
-    }
 }
 
 impl PartialEq for PathMatch {
@@ -91,29 +79,39 @@ pub fn match_fixed_path_set(
     smart_case: bool,
     max_results: usize,
 ) -> Vec<PathMatch> {
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
-    let query = query.chars().collect::<Vec<_>>();
-    let query_char_bag = CharBag::from(&lowercase_query[..]);
-
-    let mut matcher = Matcher::new(&query, &lowercase_query, query_char_bag, smart_case, true);
+    let mut matcher = matcher::get_matcher(nucleo::Config::DEFAULT);
+    let pattern = Pattern::new(
+        query,
+        if smart_case {
+            CaseMatching::Smart
+        } else {
+            CaseMatching::Ignore
+        },
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
 
     let mut results = Vec::new();
-    matcher.match_candidates(
-        &[],
-        &[],
-        candidates.into_iter(),
-        &mut results,
-        &AtomicBool::new(false),
-        |candidate, score, positions| PathMatch {
-            score,
-            worktree_id,
-            positions: positions.clone(),
-            is_dir: candidate.is_dir,
-            path: Arc::from(candidate.path),
-            path_prefix: Arc::default(),
-            distance_to_relative_ancestor: usize::MAX,
-        },
-    );
+    for c in candidates {
+        let mut indices = Vec::new();
+        let mut buf = Vec::new();
+        if let Some(score) = pattern.indices(
+            nucleo::Utf32Str::new(&c.path.to_string_lossy(), &mut buf),
+            &mut matcher,
+            &mut indices,
+        ) {
+            results.push(PathMatch {
+                score: score as f64,
+                positions: indices.into_iter().map(|n| n as usize).collect(),
+                worktree_id,
+                path: c.path.into(),
+                path_prefix: "".into(),
+                is_dir: c.is_dir,
+                distance_to_relative_ancestor: usize::MAX,
+            })
+        };
+    }
+    matcher::return_matcher(matcher);
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));
     results
 }
@@ -132,12 +130,16 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         return Vec::new();
     }
 
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
-    let query = query.chars().collect::<Vec<_>>();
-
-    let lowercase_query = &lowercase_query;
-    let query = &query;
-    let query_char_bag = CharBag::from(&lowercase_query[..]);
+    let pattern = Pattern::new(
+        query,
+        if smart_case {
+            CaseMatching::Smart
+        } else {
+            CaseMatching::Ignore
+        },
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
 
     let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);
@@ -145,59 +147,65 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
 
+    let mut matchers = matcher::get_matchers(num_cpus, nucleo::Config::DEFAULT);
+
+    // This runs num_cpu parallel searches. Each search is going through all candidate sets
+    // Each parallel search goes through one segment of the every candidate set. The segments are
+    // not overlapping.
+
     executor
         .scoped(|scope| {
-            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+            for (segment_idx, (results, matcher)) in segment_results
+                .iter_mut()
+                .zip(matchers.iter_mut())
+                .enumerate()
+            {
                 let relative_to = relative_to.clone();
+                let pattern = pattern.clone();
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
                     let segment_end = segment_start + segment_size;
-                    let mut matcher =
-                        Matcher::new(query, lowercase_query, query_char_bag, smart_case, true);
 
                     let mut tree_start = 0;
-                    for candidate_set in candidate_sets {
-                        if cancel_flag.load(atomic::Ordering::Relaxed) {
-                            break;
-                        }
-
+                    'outer: for candidate_set in candidate_sets {
                         let tree_end = tree_start + candidate_set.len();
 
-                        if tree_start < segment_end && segment_start < tree_end {
+                        if (segment_start..segment_end).contains(tree_start) { // tree_start < segment_end && segment_start < tree_end {
                             let start = cmp::max(tree_start, segment_start) - tree_start;
                             let end = cmp::min(tree_end, segment_end) - tree_start;
                             let candidates = candidate_set.candidates(start).take(end - start);
 
                             let worktree_id = candidate_set.id();
-                            let prefix = candidate_set.prefix().chars().collect::<Vec<_>>();
-                            let lowercase_prefix = prefix
-                                .iter()
-                                .map(|c| c.to_ascii_lowercase())
-                                .collect::<Vec<_>>();
-                            matcher.match_candidates(
-                                &prefix,
-                                &lowercase_prefix,
-                                candidates,
-                                results,
-                                cancel_flag,
-                                |candidate, score, positions| PathMatch {
-                                    score,
-                                    worktree_id,
-                                    positions: positions.clone(),
-                                    path: Arc::from(candidate.path),
-                                    is_dir: candidate.is_dir,
-                                    path_prefix: candidate_set.prefix(),
-                                    distance_to_relative_ancestor: relative_to.as_ref().map_or(
-                                        usize::MAX,
-                                        |relative_to| {
-                                            distance_between_paths(
-                                                candidate.path,
-                                                relative_to.as_ref(),
-                                            )
-                                        },
-                                    ),
-                                },
-                            );
+                            for c in candidates {
+                                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                    break 'outer;
+                                }
+                                let mut indices = Vec::new();
+                                let mut buf = Vec::new();
+                                if let Some(score) = pattern.indices(
+                                    nucleo::Utf32Str::new(&c.path.to_string_lossy(), &mut buf),
+                                    matcher,
+                                    &mut indices,
+                                ) {
+                                    results.push(PathMatch {
+                                        score: score as f64,
+                                        positions: indices
+                                            .into_iter()
+                                            .map(|n| n as usize)
+                                            .collect(),
+                                        worktree_id,
+                                        path: c.path.into(),
+                                        path_prefix: candidate_set.prefix(),
+                                        is_dir: c.is_dir,
+                                        distance_to_relative_ancestor: relative_to.as_ref().map_or(
+                                            usize::MAX,
+                                            |relative_to| {
+                                                distance_between_paths(c.path, relative_to.as_ref())
+                                            },
+                                        ),
+                                    })
+                                };
+                            }
                         }
                         if tree_end >= segment_end {
                             break;
@@ -212,6 +220,8 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     if cancel_flag.load(atomic::Ordering::Relaxed) {
         return Vec::new();
     }
+
+    matcher::return_matchers(matchers);
 
     let mut results = segment_results.concat();
     util::truncate_to_bottom_n_sorted_by(&mut results, max_results, &|a, b| b.cmp(a));

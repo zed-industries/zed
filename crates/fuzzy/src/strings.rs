@@ -1,14 +1,11 @@
-use crate::{
-    CharBag,
-    matcher::{MatchCandidate, Matcher},
-};
+use crate::{CharBag, matcher};
 use gpui::BackgroundExecutor;
+use nucleo::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use std::{
-    borrow::{Borrow, Cow},
-    cmp::{self, Ordering},
-    iter,
+    borrow::Borrow,
+    cmp, iter,
     ops::Range,
-    sync::atomic::{self, AtomicBool},
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 #[derive(Clone, Debug)]
@@ -25,16 +22,6 @@ impl StringMatchCandidate {
             string: string.into(),
             char_bag: string.into(),
         }
-    }
-}
-
-impl<'a> MatchCandidate for &'a StringMatchCandidate {
-    fn has_chars(&self, bag: CharBag) -> bool {
-        self.char_bag.is_superset(bag)
-    }
-
-    fn to_string(&self) -> Cow<'a, str> {
-        self.string.as_str().into()
     }
 }
 
@@ -99,16 +86,16 @@ impl PartialEq for StringMatch {
 impl Eq for StringMatch {}
 
 impl PartialOrd for StringMatch {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl Ord for StringMatch {
-    fn cmp(&self, other: &Self) -> Ordering {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
         self.score
             .partial_cmp(&other.score)
-            .unwrap_or(Ordering::Equal)
+            .unwrap_or(cmp::Ordering::Equal)
             .then_with(|| self.candidate_id.cmp(&other.candidate_id))
     }
 }
@@ -117,7 +104,7 @@ pub async fn match_strings<T>(
     candidates: &[T],
     query: &str,
     smart_case: bool,
-    penalize_length: bool,
+    prefer_prefix: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
     executor: BackgroundExecutor,
@@ -128,6 +115,16 @@ where
     if candidates.is_empty() || max_results == 0 {
         return Default::default();
     }
+    let pattern = Pattern::new(
+        query,
+        if smart_case {
+            CaseMatching::Smart
+        } else {
+            CaseMatching::Ignore
+        },
+        Normalization::Smart,
+        AtomKind::Fuzzy,
+    );
 
     if query.is_empty() {
         return candidates
@@ -141,55 +138,57 @@ where
             .collect();
     }
 
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
-    let query = query.chars().collect::<Vec<_>>();
-
-    let lowercase_query = &lowercase_query;
-    let query = &query;
-    let query_char_bag = CharBag::from(&lowercase_query[..]);
-
     let num_cpus = executor.num_cpus().min(candidates.len());
     let segment_size = candidates.len().div_ceil(num_cpus);
     let mut segment_results = (0..num_cpus)
-        .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
+        .map(|_| Vec::<StringMatch>::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
+
+    let mut config = nucleo::Config::DEFAULT;
+    config.prefer_prefix = prefer_prefix;
+    let mut matchers = matcher::get_matchers(num_cpus, config);
 
     executor
         .scoped(|scope| {
-            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+            for (segment_idx, (results, matcher)) in segment_results
+                .iter_mut()
+                .zip(matchers.iter_mut())
+                .enumerate()
+            {
                 let cancel_flag = &cancel_flag;
+                let pattern = pattern.clone();
                 scope.spawn(async move {
                     let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
                     let segment_end = cmp::min(segment_start + segment_size, candidates.len());
-                    let mut matcher = Matcher::new(
-                        query,
-                        lowercase_query,
-                        query_char_bag,
-                        smart_case,
-                        penalize_length,
-                    );
 
-                    matcher.match_candidates(
-                        &[],
-                        &[],
-                        candidates[segment_start..segment_end]
-                            .iter()
-                            .map(|c| c.borrow()),
-                        results,
-                        cancel_flag,
-                        |candidate: &&StringMatchCandidate, score, positions| StringMatch {
-                            candidate_id: candidate.id,
-                            score,
-                            positions: positions.clone(),
-                            string: candidate.string.to_string(),
-                        },
-                    );
+                    for c in candidates[segment_start..segment_end].iter() {
+                        if cancel_flag.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let candidate = c.borrow();
+                        let mut indices = Vec::new();
+                        let mut buf = Vec::new();
+                        if let Some(score) = pattern.indices(
+                            nucleo::Utf32Str::new(&candidate.string, &mut buf),
+                            matcher,
+                            &mut indices,
+                        ) {
+                            results.push(StringMatch {
+                                candidate_id: candidate.id,
+                                score: score as f64,
+                                positions: indices.into_iter().map(|n| n as usize).collect(),
+                                string: candidate.string.clone(),
+                            })
+                        };
+                    }
                 });
             }
         })
         .await;
 
-    if cancel_flag.load(atomic::Ordering::Relaxed) {
+    matcher::return_matchers(matchers);
+
+    if cancel_flag.load(Ordering::Relaxed) {
         return Vec::new();
     }
 
