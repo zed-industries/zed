@@ -131,7 +131,7 @@ impl TabIndexMap {
             .and_then(|order| self.focus_handle_for_order(order))
     }
 
-    pub fn reuse_paint(&mut self, nodes: &[TabIndexInsertion]) {
+    pub fn replay(&mut self, nodes: &[TabIndexOperation]) {
         for node in nodes {
             match node {
                 TabIndexInsertion::Element(focus_handle) => self.insert(focus_handle),
@@ -139,6 +139,10 @@ impl TabIndexMap {
                 TabIndexInsertion::GroupEnd => self.end_group(),
             }
         }
+    }
+
+    pub fn paint_index(&self) -> usize {
+        self.insertion_history.len()
     }
 
     fn focus_handle_for_order(&self, order: &TabIndexNode) -> Option<FocusHandle> {

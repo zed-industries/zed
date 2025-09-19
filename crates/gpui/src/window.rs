@@ -704,9 +704,7 @@ pub(crate) struct PaintIndex {
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
-    tab_handle_index: Option<()>, // todo! actual type
-    // self.tab_handles[start..end] -> A tree traversal, using that start and end to pick out a sub section
-    // For Range<PaintIndex>, range.start = index of tree traversal, range.end = index of tree traversal.
+    tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
 
@@ -2213,7 +2211,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
-            tab_handle_index: None, // todo! self.next_frame.tab_handles.nodes.len(),
+            tab_handle_index: self.next_frame.tab_handles.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2243,13 +2241,10 @@ impl Window {
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
-        // todo! impl
-        // self.next_frame.tab_handles.nodes.extend(
-        //     self.rendered_frame.tab_handles.nodes
-        //         [range.start.tab_handle_index..range.end.tab_handle_index]
-        //         .iter()
-        //         .cloned(),
-        // );
+        self.next_frame.tab_handles.replay(
+            &self.rendered_frame.tab_handles.insertion_history
+                [range.start.tab_handle_index..range.end.tab_handle_index],
+        );
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
