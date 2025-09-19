@@ -12,7 +12,7 @@ use gpui::{
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
-use project::{DirectoryLister, ProjectPath};
+use project::ProjectPath;
 use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
@@ -745,44 +745,37 @@ impl VimCommand {
             return Task::ready(Vec::new());
         };
 
-        if args.is_empty() {
-            return Task::ready(Vec::new());
-        }
-
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Vec::new());
         };
-        let workspace = workspace.read(cx);
-        let prefix = workspace
-            .project()
-            .read(cx)
-            .visible_worktrees(cx)
-            .find_map(|worktree| Some(worktree.read(cx).as_local()?.abs_path().to_path_buf()))
-            .or_else(std::env::home_dir)
-            .unwrap_or_else(|| PathBuf::from(""));
-        let path = prefix.join(&args);
 
-        let path = if path.is_dir() {
-            path
-        } else {
-            path.parent().unwrap_or(Path::new("")).to_path_buf()
-        };
+        let (task, args_path) = workspace.update(cx, |workspace, cx| {
+            let prefix = workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .find_map(|worktree| Some(worktree.read(cx).as_local()?.abs_path().to_path_buf()))
+                .or_else(std::env::home_dir)
+                .unwrap_or_else(|| PathBuf::from(""));
+            let path = prefix.join(&args);
 
-        let lister = if workspace.project().read(cx).is_local() {
-            DirectoryLister::Local(
-                workspace.project().clone(),
-                workspace.app_state().fs.clone(),
-            )
-        } else {
-            DirectoryLister::Project(workspace.project().clone())
-        };
+            let path = if args.ends_with(|c| matches!(c, '\\' | '/')) {
+                path
+            } else {
+                path.parent().unwrap_or(Path::new("")).to_path_buf()
+            };
 
-        let task = lister.list_directory(path.to_string_lossy().to_string(), cx);
+            let task = workspace.project().update(cx, |project, cx| {
+                project.list_directory(path.to_string_lossy().to_string(), cx)
+            });
 
-        let args_path = path
-            .strip_prefix(prefix)
-            .unwrap_or(Path::new(""))
-            .to_path_buf();
+            let args_path = path
+                .strip_prefix(prefix)
+                .unwrap_or(Path::new(""))
+                .to_path_buf();
+
+            (task, args_path)
+        });
 
         cx.background_spawn(async move {
             let directories = task.await.unwrap_or_default();
@@ -1514,31 +1507,35 @@ pub fn command_interceptor(
         }]);
     }
 
-    if let Some((command, mut results, filename_autocomplete)) =
-        commands(cx)
-            .iter()
-            .find_map(|command: &'static VimCommand| {
-                let action = command.parse(query, &range, cx)?;
+    if let Some((command, mut results, filename_autocomplete, positions)) = commands(cx)
+        .iter()
+        .find_map(|command: &'static VimCommand| {
+            let action = command.parse(query, &range, cx)?;
+            let (args, bang) = command.get_command_args_bang(query.into())?;
 
-                let command_string = range_prefix.clone() + command.prefix + command.suffix;
+            let command_string = range_prefix.clone() + command.prefix + command.suffix;
 
-                let mut display_string = ":".to_owned() + &command_string;
-                if query.contains('!') {
-                    display_string.push('!');
-                }
-                let positions =
-                    generate_positions(&display_string, &(range_prefix.clone() + query));
+            let mut display_string = ":".to_owned() + &command_string;
+            if query.contains('!') {
+                display_string.push('!');
+            }
+            let positions = generate_positions(&display_string, &(range_prefix.clone() + query));
 
-                let results = vec![CommandInterceptResult {
-                    action,
-                    string: display_string.clone(),
-                    positions,
-                }];
+            let results = vec![CommandInterceptResult {
+                action,
+                string: display_string.clone(),
+                positions: positions.clone(),
+            }];
 
-                let filename_autocomplete = command.has_filename && has_trailing_space;
+            // The following are valid autocomplete scenarios
+            // :w!filename.txt
+            // :w filename.txt
+            // :w[space]
+            let filename_autocomplete =
+                command.has_filename && (has_trailing_space || bang || !args.is_empty());
 
-                Some((command, results, filename_autocomplete))
-            })
+            Some((command, results, filename_autocomplete, positions))
+        })
     {
         if !filename_autocomplete {
             return Task::ready(results);
@@ -1557,35 +1554,41 @@ pub fn command_interceptor(
             else {
                 return results;
             };
-            for filename in filenames.await {
-                let action = match cx.update(|cx| {
-                    command.parse(&format!("{} {}", command_string, filename), &range, cx)
-                }) {
+
+            let filenames = filenames.await;
+            const MAX_RESULTS: usize = 100;
+            let executor = cx.background_executor().clone();
+            let mut candidates = Vec::with_capacity(filenames.len());
+
+            for (idx, filename) in filenames.iter().enumerate() {
+                candidates.push(fuzzy::StringMatchCandidate::new(idx, &filename));
+            }
+            let filenames = fuzzy::match_strings(
+                &candidates,
+                query,
+                false,
+                true,
+                MAX_RESULTS,
+                &Default::default(),
+                executor,
+            )
+            .await;
+
+            for fuzzy::StringMatch {
+                candidate_id,
+                score,
+                positions,
+                string,
+            } in filenames
+            {
+                let action = match cx.update(|cx| command.parse(&string, &range, cx)) {
                     Ok(Some(action)) => action,
                     _ => continue,
                 };
-
-                let completed_string = display_string.clone() + " " + &filename;
-                let query = range_prefix.clone() + query;
-
-                // skip files that are not similar to what has been typed
-                let mut chars = query.chars();
-                if completed_string
-                    .chars()
-                    .fold(chars.next(), |needle, haystack_char| match needle {
-                        Some(c) if c == haystack_char => chars.next(),
-                        _ => needle,
-                    })
-                    .is_some()
-                {
-                    continue;
-                }
-
-                let positions = generate_positions(&completed_string, &query);
-
+                let string = ":".to_string() + &string;
                 results.push(CommandInterceptResult {
                     action,
-                    string: completed_string,
+                    string,
                     positions,
                 });
             }
