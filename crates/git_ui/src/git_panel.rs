@@ -46,7 +46,7 @@ use panel::{
     panel_icon_button,
 };
 use project::{
-    DisableAiSettings, Fs, Project, ProjectPath,
+    Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId},
 };
 use serde::{Deserialize, Serialize};
@@ -405,15 +405,11 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
-            let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+            let mut was_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
             let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-                let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-                if assistant_enabled != AgentSettings::get_global(cx).enabled
-                    || was_ai_disabled != is_ai_disabled
-                {
-                    assistant_enabled = AgentSettings::get_global(cx).enabled;
-                    was_ai_disabled = is_ai_disabled;
+                let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+                if was_ai_enabled != is_ai_enabled {
+                    was_ai_enabled = is_ai_enabled;
                     cx.notify();
                 }
             });
@@ -1739,10 +1735,7 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit()
-            || DisableAiSettings::get_global(cx).disable_ai
-            || !agent_settings::AgentSettings::get_global(cx).enabled
-        {
+        if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
             return;
         }
 
@@ -2996,8 +2989,7 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if !agent_settings::AgentSettings::get_global(cx).enabled
-            || DisableAiSettings::get_global(cx).disable_ai
+        if !agent_settings::AgentSettings::get_global(cx).enabled(cx)
             || LanguageModelRegistry::read_global(cx)
                 .commit_message_model()
                 .is_none()
