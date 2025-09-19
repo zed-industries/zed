@@ -19,7 +19,7 @@ use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
     CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentGuideSettings,
     IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point,
-    PointUtf16, ScopeContext, Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _,
+    PointUtf16, CharScopeContext, Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _,
     TransactionId, TreeSitterOptions, Unclipped,
     language_settings::{LanguageSettings, language_settings},
 };
@@ -4207,7 +4207,7 @@ impl MultiBufferSnapshot {
     pub fn is_inside_word<T: ToOffset>(
         &self,
         position: T,
-        scope_context: Option<ScopeContext>,
+        scope_context: Option<CharScopeContext>,
     ) -> bool {
         let position = position.to_offset(self);
         let classifier = self
@@ -4224,7 +4224,7 @@ impl MultiBufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(
         &self,
         start: T,
-        scope_context: Option<ScopeContext>,
+        scope_context: Option<CharScopeContext>,
     ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
@@ -4260,7 +4260,7 @@ impl MultiBufferSnapshot {
     pub fn char_kind_before<T: ToOffset>(
         &self,
         start: T,
-        scope_context: Option<ScopeContext>,
+        scope_context: Option<CharScopeContext>,
     ) -> Option<CharKind> {
         let start = start.to_offset(self);
         let classifier = self.char_classifier_at(start).scope_context(scope_context);

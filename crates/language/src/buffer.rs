@@ -548,7 +548,7 @@ pub enum CharKind {
 
 /// Context for character classification within a specific scope.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum ScopeContext {
+pub enum CharScopeContext {
     /// Character classification for completion queries.
     ///
     /// This context treats certain characters as word constituents that would
@@ -3466,7 +3466,7 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(
         &self,
         start: T,
-        scope_context: Option<ScopeContext>,
+        scope_context: Option<CharScopeContext>,
     ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
@@ -5227,7 +5227,7 @@ pub(crate) fn contiguous_ranges(
 #[derive(Default, Debug)]
 pub struct CharClassifier {
     scope: Option<LanguageScope>,
-    scope_context: Option<ScopeContext>,
+    scope_context: Option<CharScopeContext>,
     ignore_punctuation: bool,
 }
 
@@ -5240,7 +5240,7 @@ impl CharClassifier {
         }
     }
 
-    pub fn scope_context(self, scope_context: Option<ScopeContext>) -> Self {
+    pub fn scope_context(self, scope_context: Option<CharScopeContext>) -> Self {
         Self {
             scope_context,
             ..self
@@ -5273,8 +5273,8 @@ impl CharClassifier {
 
         if let Some(scope) = &self.scope {
             let characters = match self.scope_context {
-                Some(ScopeContext::Completion) => scope.completion_query_characters(),
-                Some(ScopeContext::LinkedEdit) => scope.linked_edit_characters(),
+                Some(CharScopeContext::Completion) => scope.completion_query_characters(),
+                Some(CharScopeContext::LinkedEdit) => scope.linked_edit_characters(),
                 None => scope.word_characters(),
             };
             if let Some(characters) = characters
