@@ -52,6 +52,18 @@ pub enum EditPredictionProvider {
     Copilot,
     Supermaven,
     Zed,
+    Zed2,
+}
+
+impl EditPredictionProvider {
+    pub fn is_zed(&self) -> bool {
+        match self {
+            EditPredictionProvider::Zed | EditPredictionProvider::Zed2 => true,
+            EditPredictionProvider::None
+            | EditPredictionProvider::Copilot
+            | EditPredictionProvider::Supermaven => false,
+        }
+    }
 }
 
 /// The contents of the edit prediction settings.

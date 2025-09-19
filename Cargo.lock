@@ -21356,6 +21356,7 @@ dependencies = [
  "zed_actions",
  "zed_env_vars",
  "zeta",
+ "zeta2",
  "zlog",
  "zlog_settings",
 ]
@@ -21631,6 +21632,19 @@ dependencies = [
  "worktree",
  "zed_actions",
  "zlog",
+]
+
+[[package]]
+name = "zeta2"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "edit_prediction",
+ "gpui",
+ "language",
+ "project",
+ "util",
+ "workspace-hack",
 ]
 
 [[package]]

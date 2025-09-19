@@ -220,5 +220,10 @@ fn assign_edit_prediction_provider(
                 editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
+        EditPredictionProvider::Zed2 => {
+            let provider = cx.new(|_| zeta2::Zeta2EditPredictionProvider::new());
+
+            editor.set_edit_prediction_provider(Some(provider), window, cx);
+        }
     }
 }

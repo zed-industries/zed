@@ -163,6 +163,7 @@ workspace.workspace = true
 zed_actions.workspace = true
 zed_env_vars.workspace = true
 zeta.workspace = true
+zeta2.workspace = true
 zlog.workspace = true
 zlog_settings.workspace = true
 
