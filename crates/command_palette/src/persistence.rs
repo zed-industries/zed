@@ -10,6 +10,7 @@ use db::{
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) struct SerializedCommandInvocation {
     pub(crate) command_name: String,
@@ -39,6 +40,7 @@ impl Column for SerializedCommandUsage {
     }
 }
 
+#[cfg(test)]
 impl Column for SerializedCommandInvocation {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         let (command_name, next_index): (String, i32) = Column::column(statement, start_index)?;
