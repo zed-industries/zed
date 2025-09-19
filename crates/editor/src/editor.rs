@@ -23545,10 +23545,10 @@ impl EntityInputHandler for Editor {
             let mut ranges_to_replace = if let Some(mut marked_ranges) = this.marked_text_ranges(cx)
             {
                 let snapshot = this.buffer.read(cx).read(cx);
-                if let Some(relative) = range_utf16.as_ref() {
+                if let Some(relative_range_utf16) = range_utf16.as_ref() {
                     for marked_range in &mut marked_ranges {
-                        marked_range.end.0 = marked_range.start.0 + relative.end;
-                        marked_range.start.0 += relative.start;
+                        marked_range.end.0 = marked_range.start.0 + relative_range_utf16.end;
+                        marked_range.start.0 += relative_range_utf16.start;
                         marked_range.start =
                             snapshot.clip_offset_utf16(marked_range.start, Bias::Left);
                         marked_range.end =
@@ -23578,12 +23578,12 @@ impl EntityInputHandler for Editor {
                 }
             }
 
-            let range_to_replace = ranges_to_replace.as_ref().and_then(|to_replace| {
+            let range_to_replace = ranges_to_replace.as_ref().and_then(|ranges_to_replace| {
                 let newest_selection_id = this.selections.newest_anchor().id;
                 this.selections
                     .all::<OffsetUtf16>(cx)
                     .iter()
-                    .zip(to_replace.iter())
+                    .zip(ranges_to_replace.iter())
                     .find_map(|(selection, range)| {
                         if selection.id == newest_selection_id {
                             Some(
@@ -23602,8 +23602,8 @@ impl EntityInputHandler for Editor {
             });
 
             if let Some(ranges) = ranges_to_replace.take() {
-                this.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
-                    selections.select_ranges(ranges)
+                this.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                    s.select_ranges(ranges)
                 });
             }
 
@@ -23639,13 +23639,12 @@ impl EntityInputHandler for Editor {
                 }
             }
 
+            // Disable auto-closing when composing text (i.e. typing a `"` on a Brazilian keyboard)
             let use_autoclose = this.use_autoclose;
             let use_auto_surround = this.use_auto_surround;
             this.set_use_autoclose(false);
             this.set_use_auto_surround(false);
-
             this.handle_input(text, window, cx);
-
             this.set_use_autoclose(use_autoclose);
             this.set_use_auto_surround(use_auto_surround);
 
