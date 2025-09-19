@@ -9,22 +9,15 @@ use ec4rs::{
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::{App, Modifiers};
 use itertools::{Either, Itertools};
-use schemars::json_schema;
 
 pub use settings::{
     CompletionSettingsContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LspInsertMode,
     RewrapBehavior, SelectedFormatter, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
 };
-use settings::{
-    IndentGuideSettingsContent, LanguageTaskSettingsContent, ParameterizedJsonSchema,
-    PrettierSettingsContent, Settings, SettingsContent, SettingsLocation, SettingsStore,
-    SettingsUi,
-};
+use settings::{ExtendingVec, Settings, SettingsContent, SettingsLocation, SettingsStore};
 use shellexpand;
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
-use util::MergeFrom;
-use util::{ResultExt, schemars::replace_subschema};
 
 /// Initializes the language settings.
 pub fn init(cx: &mut App) {
@@ -64,7 +57,6 @@ pub struct AllLanguageSettings {
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
-    pub(crate) file_globs: FxHashMap<Arc<str>, Vec<String>>,
 }
 
 /// The settings for a particular language.
@@ -189,18 +181,6 @@ pub struct CompletionSettings {
     pub lsp_insert_mode: LspInsertMode,
 }
 
-impl CompletionSettings {
-    pub fn merge_from(&mut self, src: &Option<CompletionSettingsContent>) {
-        let Some(src) = src else { return };
-        self.words.merge_from(&src.words);
-        self.words_min_length.merge_from(&src.words_min_length);
-        self.lsp.merge_from(&src.lsp);
-        self.lsp_fetch_timeout_ms
-            .merge_from(&src.lsp_fetch_timeout_ms);
-        self.lsp_insert_mode.merge_from(&src.lsp_insert_mode);
-    }
-}
-
 /// The settings for indent guides.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IndentGuideSettings {
@@ -226,19 +206,6 @@ pub struct IndentGuideSettings {
     pub background_coloring: settings::IndentGuideBackgroundColoring,
 }
 
-impl IndentGuideSettings {
-    pub fn merge_from(&mut self, src: &Option<IndentGuideSettingsContent>) {
-        let Some(src) = src else { return };
-
-        self.enabled.merge_from(&src.enabled);
-        self.line_width.merge_from(&src.line_width);
-        self.active_line_width.merge_from(&src.active_line_width);
-        self.coloring.merge_from(&src.coloring);
-        self.background_coloring
-            .merge_from(&src.background_coloring);
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct LanguageTaskSettings {
     /// Extra task variables to set for a particular language.
@@ -252,17 +219,6 @@ pub struct LanguageTaskSettings {
     /// * Zed task from either of the task config file
     /// * Zed task from history (e.g. one-off task was spawned before)
     pub prefer_lsp: bool,
-}
-
-impl LanguageTaskSettings {
-    pub fn merge_from(&mut self, src: &Option<LanguageTaskSettingsContent>) {
-        let Some(src) = src.clone() else {
-            return;
-        };
-        self.variables.extend(src.variables);
-        self.enabled.merge_from(&src.enabled);
-        self.prefer_lsp.merge_from(&src.prefer_lsp);
-    }
 }
 
 /// Allows to enable/disable formatting with Prettier
@@ -283,16 +239,6 @@ pub struct PrettierSettings {
     /// Default Prettier options, in the format as in package.json section for Prettier.
     /// If project installs Prettier via its package.json, these options will be ignored.
     pub options: HashMap<String, serde_json::Value>,
-}
-
-impl PrettierSettings {
-    pub fn merge_from(&mut self, src: &Option<PrettierSettingsContent>) {
-        let Some(src) = src.clone() else { return };
-        self.allowed.merge_from(&src.allowed);
-        self.parser = src.parser.clone();
-        self.plugins.extend(src.plugins);
-        self.options.extend(src.options);
-    }
 }
 
 impl LanguageSettings {
@@ -413,14 +359,13 @@ impl InlayHintSettings {
 
 /// The settings for edit predictions, such as [GitHub Copilot](https://github.com/features/copilot)
 /// or [Supermaven](https://supermaven.com).
-#[derive(Clone, Debug, Default, SettingsUi)]
+#[derive(Clone, Debug, Default)]
 pub struct EditPredictionSettings {
     /// The provider that supplies edit predictions.
     pub provider: settings::EditPredictionProvider,
     /// A list of globs representing files that edit predictions should be disabled for.
     /// This list adds to a pre-existing, sensible default set of globs.
     /// Any additional ones you add are combined with them.
-    #[settings_ui(skip)]
     pub disabled_globs: Vec<DisabledGlob>,
     /// Configures how edit predictions are displayed in the buffer.
     pub mode: settings::EditPredictionsMode,
@@ -451,39 +396,14 @@ pub struct DisabledGlob {
     is_absolute: bool,
 }
 
-#[derive(Clone, Debug, Default, SettingsUi)]
+#[derive(Clone, Debug, Default)]
 pub struct CopilotSettings {
     /// HTTP/HTTPS proxy to use for Copilot.
-    #[settings_ui(skip)]
     pub proxy: Option<String>,
     /// Disable certificate verification for proxy (not recommended).
     pub proxy_no_verify: Option<bool>,
     /// Enterprise URI for Copilot.
-    #[settings_ui(skip)]
     pub enterprise_uri: Option<String>,
-}
-
-inventory::submit! {
-    ParameterizedJsonSchema {
-        add_and_get_ref: |generator, params, _cx| {
-            let language_settings_content_ref = generator
-                .subschema_for::<LanguageSettingsContent>()
-                .to_value();
-            replace_subschema::<settings::LanguageToSettingsMap>(generator, || json_schema!({
-                "type": "object",
-                "properties": params
-                    .language_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            name.clone(),
-                            language_settings_content_ref.clone(),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>()
-            }))
-        }
-    }
 }
 
 impl AllLanguageSettings {
@@ -574,93 +494,99 @@ fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigPr
 }
 
 impl settings::Settings for AllLanguageSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let all_languages = &content.project.all_languages;
-        let defaults = all_languages.defaults.clone();
-        let inlay_hints = defaults.inlay_hints.unwrap();
-        let completions = defaults.completions.unwrap();
-        let prettier = defaults.prettier.unwrap();
-        let indent_guides = defaults.indent_guides.unwrap();
-        let tasks = defaults.tasks.unwrap();
 
-        let default_language_settings = LanguageSettings {
-            tab_size: defaults.tab_size.unwrap(),
-            hard_tabs: defaults.hard_tabs.unwrap(),
-            soft_wrap: defaults.soft_wrap.unwrap(),
-            preferred_line_length: defaults.preferred_line_length.unwrap(),
-            show_wrap_guides: defaults.show_wrap_guides.unwrap(),
-            wrap_guides: defaults.wrap_guides.unwrap(),
-            indent_guides: IndentGuideSettings {
-                enabled: indent_guides.enabled.unwrap(),
-                line_width: indent_guides.line_width.unwrap(),
-                active_line_width: indent_guides.active_line_width.unwrap(),
-                coloring: indent_guides.coloring.unwrap(),
-                background_coloring: indent_guides.background_coloring.unwrap(),
-            },
-            format_on_save: defaults.format_on_save.unwrap(),
-            remove_trailing_whitespace_on_save: defaults
-                .remove_trailing_whitespace_on_save
-                .unwrap(),
-            ensure_final_newline_on_save: defaults.ensure_final_newline_on_save.unwrap(),
-            formatter: defaults.formatter.unwrap(),
-            prettier: PrettierSettings {
-                allowed: prettier.allowed.unwrap(),
-                parser: prettier.parser,
-                plugins: prettier.plugins,
-                options: prettier.options,
-            },
-            jsx_tag_auto_close: defaults.jsx_tag_auto_close.unwrap().enabled.unwrap(),
-            enable_language_server: defaults.enable_language_server.unwrap(),
-            language_servers: defaults.language_servers.unwrap(),
-            allow_rewrap: defaults.allow_rewrap.unwrap(),
-            show_edit_predictions: defaults.show_edit_predictions.unwrap(),
-            edit_predictions_disabled_in: defaults.edit_predictions_disabled_in.unwrap(),
-            show_whitespaces: defaults.show_whitespaces.unwrap(),
-            whitespace_map: defaults.whitespace_map.unwrap(),
-            extend_comment_on_newline: defaults.extend_comment_on_newline.unwrap(),
-            inlay_hints: InlayHintSettings {
-                enabled: inlay_hints.enabled.unwrap(),
-                show_value_hints: inlay_hints.show_value_hints.unwrap(),
-                show_type_hints: inlay_hints.show_type_hints.unwrap(),
-                show_parameter_hints: inlay_hints.show_parameter_hints.unwrap(),
-                show_other_hints: inlay_hints.show_other_hints.unwrap(),
-                show_background: inlay_hints.show_background.unwrap(),
-                edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
-                scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
-                toggle_on_modifiers_press: inlay_hints.toggle_on_modifiers_press,
-            },
-            use_autoclose: defaults.use_autoclose.unwrap(),
-            use_auto_surround: defaults.use_auto_surround.unwrap(),
-            use_on_type_format: defaults.use_on_type_format.unwrap(),
-            auto_indent: defaults.auto_indent.unwrap(),
-            auto_indent_on_paste: defaults.auto_indent_on_paste.unwrap(),
-            always_treat_brackets_as_autoclosed: defaults
-                .always_treat_brackets_as_autoclosed
-                .unwrap(),
-            code_actions_on_format: defaults.code_actions_on_format.unwrap(),
-            linked_edits: defaults.linked_edits.unwrap(),
-            tasks: LanguageTaskSettings {
-                variables: tasks.variables,
-                enabled: tasks.enabled.unwrap(),
-                prefer_lsp: tasks.prefer_lsp.unwrap(),
-            },
-            show_completions_on_input: defaults.show_completions_on_input.unwrap(),
-            show_completion_documentation: defaults.show_completion_documentation.unwrap(),
-            completions: CompletionSettings {
-                words: completions.words.unwrap(),
-                words_min_length: completions.words_min_length.unwrap(),
-                lsp: completions.lsp.unwrap(),
-                lsp_fetch_timeout_ms: completions.lsp_fetch_timeout_ms.unwrap(),
-                lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
-            },
-            debuggers: defaults.debuggers.unwrap(),
-        };
+        fn load_from_content(settings: LanguageSettingsContent) -> LanguageSettings {
+            let inlay_hints = settings.inlay_hints.unwrap();
+            let completions = settings.completions.unwrap();
+            let prettier = settings.prettier.unwrap();
+            let indent_guides = settings.indent_guides.unwrap();
+            let tasks = settings.tasks.unwrap();
+            LanguageSettings {
+                tab_size: settings.tab_size.unwrap(),
+                hard_tabs: settings.hard_tabs.unwrap(),
+                soft_wrap: settings.soft_wrap.unwrap(),
+                preferred_line_length: settings.preferred_line_length.unwrap(),
+                show_wrap_guides: settings.show_wrap_guides.unwrap(),
+                wrap_guides: settings.wrap_guides.unwrap(),
+                indent_guides: IndentGuideSettings {
+                    enabled: indent_guides.enabled.unwrap(),
+                    line_width: indent_guides.line_width.unwrap(),
+                    active_line_width: indent_guides.active_line_width.unwrap(),
+                    coloring: indent_guides.coloring.unwrap(),
+                    background_coloring: indent_guides.background_coloring.unwrap(),
+                },
+                format_on_save: settings.format_on_save.unwrap(),
+                remove_trailing_whitespace_on_save: settings
+                    .remove_trailing_whitespace_on_save
+                    .unwrap(),
+                ensure_final_newline_on_save: settings.ensure_final_newline_on_save.unwrap(),
+                formatter: settings.formatter.unwrap(),
+                prettier: PrettierSettings {
+                    allowed: prettier.allowed.unwrap(),
+                    parser: prettier.parser,
+                    plugins: prettier.plugins,
+                    options: prettier.options,
+                },
+                jsx_tag_auto_close: settings.jsx_tag_auto_close.unwrap().enabled.unwrap(),
+                enable_language_server: settings.enable_language_server.unwrap(),
+                language_servers: settings.language_servers.unwrap(),
+                allow_rewrap: settings.allow_rewrap.unwrap(),
+                show_edit_predictions: settings.show_edit_predictions.unwrap(),
+                edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
+                show_whitespaces: settings.show_whitespaces.unwrap(),
+                whitespace_map: settings.whitespace_map.unwrap(),
+                extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
+                inlay_hints: InlayHintSettings {
+                    enabled: inlay_hints.enabled.unwrap(),
+                    show_value_hints: inlay_hints.show_value_hints.unwrap(),
+                    show_type_hints: inlay_hints.show_type_hints.unwrap(),
+                    show_parameter_hints: inlay_hints.show_parameter_hints.unwrap(),
+                    show_other_hints: inlay_hints.show_other_hints.unwrap(),
+                    show_background: inlay_hints.show_background.unwrap(),
+                    edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
+                    scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
+                    toggle_on_modifiers_press: inlay_hints.toggle_on_modifiers_press,
+                },
+                use_autoclose: settings.use_autoclose.unwrap(),
+                use_auto_surround: settings.use_auto_surround.unwrap(),
+                use_on_type_format: settings.use_on_type_format.unwrap(),
+                auto_indent: settings.auto_indent.unwrap(),
+                auto_indent_on_paste: settings.auto_indent_on_paste.unwrap(),
+                always_treat_brackets_as_autoclosed: settings
+                    .always_treat_brackets_as_autoclosed
+                    .unwrap(),
+                code_actions_on_format: settings.code_actions_on_format.unwrap(),
+                linked_edits: settings.linked_edits.unwrap(),
+                tasks: LanguageTaskSettings {
+                    variables: tasks.variables,
+                    enabled: tasks.enabled.unwrap(),
+                    prefer_lsp: tasks.prefer_lsp.unwrap(),
+                },
+                show_completions_on_input: settings.show_completions_on_input.unwrap(),
+                show_completion_documentation: settings.show_completion_documentation.unwrap(),
+                completions: CompletionSettings {
+                    words: completions.words.unwrap(),
+                    words_min_length: completions.words_min_length.unwrap(),
+                    lsp: completions.lsp.unwrap(),
+                    lsp_fetch_timeout_ms: completions.lsp_fetch_timeout_ms.unwrap(),
+                    lsp_insert_mode: completions.lsp_insert_mode.unwrap(),
+                },
+                debuggers: settings.debuggers.unwrap(),
+            }
+        }
+
+        let default_language_settings = load_from_content(all_languages.defaults.clone());
 
         let mut languages = HashMap::default();
         for (language_name, settings) in &all_languages.languages.0 {
-            let mut language_settings = default_language_settings.clone();
-            merge_settings(&mut language_settings, settings);
-            languages.insert(LanguageName(language_name.clone()), language_settings);
+            let mut language_settings = all_languages.defaults.clone();
+            settings::merge_from::MergeFrom::merge_from(&mut language_settings, Some(settings));
+            languages.insert(
+                LanguageName(language_name.clone()),
+                load_from_content(language_settings),
+            );
         }
 
         let edit_prediction_provider = all_languages
@@ -688,17 +614,15 @@ impl settings::Settings for AllLanguageSettings {
         let enabled_in_text_threads = edit_predictions.enabled_in_text_threads.unwrap();
 
         let mut file_types: FxHashMap<Arc<str>, GlobSet> = FxHashMap::default();
-        let mut file_globs: FxHashMap<Arc<str>, Vec<String>> = FxHashMap::default();
 
         for (language, patterns) in &all_languages.file_types {
             let mut builder = GlobSetBuilder::new();
 
-            for pattern in patterns {
+            for pattern in &patterns.0 {
                 builder.add(Glob::new(pattern).unwrap());
             }
 
             file_types.insert(language.clone(), builder.build().unwrap());
-            file_globs.insert(language.clone(), patterns.clone());
         }
 
         Self {
@@ -725,110 +649,6 @@ impl settings::Settings for AllLanguageSettings {
             defaults: default_language_settings,
             languages,
             file_types,
-            file_globs,
-        }
-    }
-
-    fn refine(&mut self, content: &SettingsContent, _cx: &mut App) {
-        let all_languages = &content.project.all_languages;
-        if let Some(provider) = all_languages
-            .features
-            .as_ref()
-            .and_then(|f| f.edit_prediction_provider)
-        {
-            self.edit_predictions.provider = provider;
-        }
-
-        if let Some(edit_predictions) = all_languages.edit_predictions.as_ref() {
-            self.edit_predictions
-                .mode
-                .merge_from(&edit_predictions.mode);
-            self.edit_predictions
-                .enabled_in_text_threads
-                .merge_from(&edit_predictions.enabled_in_text_threads);
-
-            if let Some(disabled_globs) = edit_predictions.disabled_globs.as_ref() {
-                self.edit_predictions
-                    .disabled_globs
-                    .extend(disabled_globs.iter().filter_map(|g| {
-                        let expanded_g = shellexpand::tilde(g).into_owned();
-                        Some(DisabledGlob {
-                            matcher: globset::Glob::new(&expanded_g).ok()?.compile_matcher(),
-                            is_absolute: Path::new(&expanded_g).is_absolute(),
-                        })
-                    }));
-            }
-        }
-
-        if let Some(proxy) = all_languages
-            .edit_predictions
-            .as_ref()
-            .and_then(|settings| settings.copilot.as_ref()?.proxy.clone())
-        {
-            self.edit_predictions.copilot.proxy = Some(proxy);
-        }
-
-        if let Some(proxy_no_verify) = all_languages
-            .edit_predictions
-            .as_ref()
-            .and_then(|settings| settings.copilot.as_ref()?.proxy_no_verify)
-        {
-            self.edit_predictions.copilot.proxy_no_verify = Some(proxy_no_verify);
-        }
-
-        if let Some(enterprise_uri) = all_languages
-            .edit_predictions
-            .as_ref()
-            .and_then(|settings| settings.copilot.as_ref()?.enterprise_uri.clone())
-        {
-            self.edit_predictions.copilot.enterprise_uri = Some(enterprise_uri);
-        }
-
-        // A user's global settings override the default global settings and
-        // all default language-specific settings.
-        merge_settings(&mut self.defaults, &all_languages.defaults);
-        for language_settings in self.languages.values_mut() {
-            merge_settings(language_settings, &all_languages.defaults);
-        }
-
-        // A user's language-specific settings override default language-specific settings.
-        for (language_name, user_language_settings) in &all_languages.languages.0 {
-            merge_settings(
-                self.languages
-                    .entry(LanguageName(language_name.clone()))
-                    .or_insert_with(|| self.defaults.clone()),
-                user_language_settings,
-            );
-        }
-
-        for (language, patterns) in &all_languages.file_types {
-            let mut builder = GlobSetBuilder::new();
-
-            let default_value = self.file_globs.get(&language.clone());
-
-            // Merge the default value with the user's value.
-            if let Some(patterns) = default_value {
-                for pattern in patterns {
-                    if let Some(glob) = Glob::new(pattern).log_err() {
-                        builder.add(glob);
-                    }
-                }
-            }
-
-            for pattern in patterns {
-                if let Some(glob) = Glob::new(pattern).log_err() {
-                    builder.add(glob);
-                }
-            }
-
-            self.file_globs
-                .entry(language.clone())
-                .or_default()
-                .extend(patterns.clone());
-
-            if let Some(matcher) = builder.build().log_err() {
-                self.file_types.insert(language.clone(), matcher);
-            }
         }
     }
 
@@ -917,14 +737,14 @@ impl settings::Settings for AllLanguageSettings {
         // TODO: pull ^ out into helper and reuse for per-language settings
 
         // vscodes file association map is inverted from ours, so we flip the mapping before merging
-        let mut associations: HashMap<Arc<str>, Vec<String>> = HashMap::default();
+        let mut associations: HashMap<Arc<str>, ExtendingVec<String>> = HashMap::default();
         if let Some(map) = vscode
             .read_value("files.associations")
             .and_then(|v| v.as_object())
         {
             for (k, v) in map {
                 let Some(v) = v.as_str() else { continue };
-                associations.entry(v.into()).or_default().push(k.clone());
+                associations.entry(v.into()).or_default().0.push(k.clone());
             }
         }
 
@@ -957,121 +777,7 @@ impl settings::Settings for AllLanguageSettings {
     }
 }
 
-fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent) {
-    settings.tab_size.merge_from(&src.tab_size);
-    settings.tab_size = settings
-        .tab_size
-        .clamp(NonZeroU32::new(1).unwrap(), NonZeroU32::new(16).unwrap());
-
-    settings.hard_tabs.merge_from(&src.hard_tabs);
-    settings.soft_wrap.merge_from(&src.soft_wrap);
-    settings.use_autoclose.merge_from(&src.use_autoclose);
-    settings
-        .use_auto_surround
-        .merge_from(&src.use_auto_surround);
-    settings
-        .use_on_type_format
-        .merge_from(&src.use_on_type_format);
-    settings.auto_indent.merge_from(&src.auto_indent);
-    settings
-        .auto_indent_on_paste
-        .merge_from(&src.auto_indent_on_paste);
-    settings
-        .always_treat_brackets_as_autoclosed
-        .merge_from(&src.always_treat_brackets_as_autoclosed);
-    settings.show_wrap_guides.merge_from(&src.show_wrap_guides);
-    settings.wrap_guides.merge_from(&src.wrap_guides);
-    settings.indent_guides.merge_from(&src.indent_guides);
-    settings
-        .code_actions_on_format
-        .merge_from(&src.code_actions_on_format.clone());
-    settings.linked_edits.merge_from(&src.linked_edits);
-    settings.tasks.merge_from(&src.tasks);
-
-    settings
-        .preferred_line_length
-        .merge_from(&src.preferred_line_length);
-    settings.formatter.merge_from(&src.formatter.clone());
-    settings.prettier.merge_from(&src.prettier.clone());
-    settings
-        .jsx_tag_auto_close
-        .merge_from(&src.jsx_tag_auto_close.as_ref().and_then(|v| v.enabled));
-    settings
-        .format_on_save
-        .merge_from(&src.format_on_save.clone());
-    settings
-        .remove_trailing_whitespace_on_save
-        .merge_from(&src.remove_trailing_whitespace_on_save);
-    settings
-        .ensure_final_newline_on_save
-        .merge_from(&src.ensure_final_newline_on_save);
-    settings
-        .enable_language_server
-        .merge_from(&src.enable_language_server);
-    settings
-        .language_servers
-        .merge_from(&src.language_servers.clone());
-    settings.allow_rewrap.merge_from(&src.allow_rewrap);
-    settings
-        .show_edit_predictions
-        .merge_from(&src.show_edit_predictions);
-    settings
-        .edit_predictions_disabled_in
-        .merge_from(&src.edit_predictions_disabled_in.clone());
-    settings.show_whitespaces.merge_from(&src.show_whitespaces);
-    settings
-        .whitespace_map
-        .merge_from(&src.whitespace_map.clone());
-    settings
-        .extend_comment_on_newline
-        .merge_from(&src.extend_comment_on_newline);
-    if let Some(inlay_hints) = &src.inlay_hints {
-        settings
-            .inlay_hints
-            .enabled
-            .merge_from(&inlay_hints.enabled);
-        settings
-            .inlay_hints
-            .show_value_hints
-            .merge_from(&inlay_hints.show_value_hints);
-        settings
-            .inlay_hints
-            .show_type_hints
-            .merge_from(&inlay_hints.show_type_hints);
-        settings
-            .inlay_hints
-            .show_parameter_hints
-            .merge_from(&inlay_hints.show_parameter_hints);
-        settings
-            .inlay_hints
-            .show_other_hints
-            .merge_from(&inlay_hints.show_other_hints);
-        settings
-            .inlay_hints
-            .show_background
-            .merge_from(&inlay_hints.show_background);
-        settings
-            .inlay_hints
-            .edit_debounce_ms
-            .merge_from(&inlay_hints.edit_debounce_ms);
-        settings
-            .inlay_hints
-            .scroll_debounce_ms
-            .merge_from(&inlay_hints.scroll_debounce_ms);
-        if let Some(toggle_on_modifiers_press) = &inlay_hints.toggle_on_modifiers_press {
-            settings.inlay_hints.toggle_on_modifiers_press = Some(*toggle_on_modifiers_press);
-        }
-    }
-    settings
-        .show_completions_on_input
-        .merge_from(&src.show_completions_on_input);
-    settings
-        .show_completion_documentation
-        .merge_from(&src.show_completion_documentation);
-    settings.completions.merge_from(&src.completions);
-}
-
-#[derive(Default, Debug, Clone, PartialEq, Eq, SettingsUi)]
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
 pub struct JsxTagAutoCloseSettings {
     /// Enables or disables auto-closing of JSX tags.
     pub enabled: bool,

@@ -2,7 +2,6 @@ use editor::EditorSettings;
 use gpui::{App, Pixels};
 pub use settings::{DockSide, Settings, ShowIndentGuides};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
-use util::MergeFrom;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct OutlinePanelSettings {
@@ -42,7 +41,7 @@ impl ScrollbarVisibility for OutlinePanelSettings {
 }
 
 impl Settings for OutlinePanelSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let panel = content.outline_panel.as_ref().unwrap();
         Self {
             button: panel.button.unwrap(),
@@ -58,40 +57,12 @@ impl Settings for OutlinePanelSettings {
             auto_reveal_entries: panel.auto_reveal_entries.unwrap(),
             auto_fold_dirs: panel.auto_fold_dirs.unwrap(),
             scrollbar: ScrollbarSettings {
-                show: panel.scrollbar.unwrap().show.flatten().map(Into::into),
+                show: panel.scrollbar.unwrap().show.map(Into::into),
             },
             expand_outlines_with_depth: panel.expand_outlines_with_depth.unwrap(),
         }
     }
 
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(panel) = content.outline_panel.as_ref() else {
-            return;
-        };
-
-        self.button.merge_from(&panel.button);
-        self.default_width
-            .merge_from(&panel.default_width.map(Pixels::from));
-        self.dock.merge_from(&panel.dock);
-        self.file_icons.merge_from(&panel.file_icons);
-        self.folder_icons.merge_from(&panel.folder_icons);
-        self.git_status.merge_from(&panel.git_status);
-        self.indent_size.merge_from(&panel.indent_size);
-
-        if let Some(indent_guides) = panel.indent_guides.as_ref() {
-            self.indent_guides.show.merge_from(&indent_guides.show);
-        }
-
-        self.auto_reveal_entries
-            .merge_from(&panel.auto_reveal_entries);
-        self.auto_fold_dirs.merge_from(&panel.auto_fold_dirs);
-
-        if let Some(scrollbar) = panel.scrollbar.as_ref()
-            && let Some(show) = scrollbar.show.flatten()
-        {
-            self.scrollbar.show = Some(show.into())
-        }
-    }
     fn import_from_vscode(
         vscode: &settings::VsCodeSettings,
         current: &mut settings::SettingsContent,

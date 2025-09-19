@@ -9,7 +9,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::MergeFrom;
 use workspace::{AppState, OpenVisible, Workspace};
 
 actions!(
@@ -34,21 +33,13 @@ pub struct JournalSettings {
 }
 
 impl settings::Settings for JournalSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let journal = content.journal.clone().unwrap();
 
         Self {
             path: journal.path.unwrap(),
             hour_format: journal.hour_format.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(journal) = content.journal.as_ref() else {
-            return;
-        };
-        self.path.merge_from(&journal.path);
-        self.hour_format.merge_from(&journal.hour_format);
     }
 }
 

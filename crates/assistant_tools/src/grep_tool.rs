@@ -856,11 +856,14 @@ mod tests {
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
                     ]);
-                    settings.project.worktree.private_files = Some(vec![
-                        "**/.mysecrets".to_string(),
-                        "**/*.privatekey".to_string(),
-                        "**/*.mysensitive".to_string(),
-                    ]);
+                    settings.project.worktree.private_files = Some(
+                        vec![
+                            "**/.mysecrets".to_string(),
+                            "**/*.privatekey".to_string(),
+                            "**/*.mysensitive".to_string(),
+                        ]
+                        .into(),
+                    );
                 });
             });
         });
@@ -1160,7 +1163,8 @@ mod tests {
                 store.update_user_settings(cx, |settings| {
                     settings.project.worktree.file_scan_exclusions =
                         Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
-                    settings.project.worktree.private_files = Some(vec!["**/.env".to_string()]);
+                    settings.project.worktree.private_files =
+                        Some(vec!["**/.env".to_string()].into());
                 });
             });
         });

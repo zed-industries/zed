@@ -12,7 +12,6 @@ pub use settings::{
 };
 use settings::{Settings, SettingsContent};
 use ui::scrollbars::{ScrollbarVisibility, ShowScrollbar};
-use util::MergeFrom;
 
 /// Imports from the VSCode settings at
 /// https://code.visualstudio.com/docs/reference/default-settings
@@ -190,7 +189,7 @@ impl ScrollbarVisibility for EditorSettings {
 }
 
 impl Settings for EditorSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let editor = content.editor.clone();
         let scrollbar = editor.scrollbar.unwrap();
         let minimap = editor.minimap.unwrap();
@@ -238,7 +237,7 @@ impl Settings for EditorSettings {
                 display_in: minimap.display_in.unwrap(),
                 thumb: minimap.thumb.unwrap(),
                 thumb_border: minimap.thumb_border.unwrap(),
-                current_line_highlight: minimap.current_line_highlight.flatten(),
+                current_line_highlight: minimap.current_line_highlight,
                 max_width_columns: minimap.max_width_columns.unwrap(),
             },
             gutter: Gutter {
@@ -287,162 +286,6 @@ impl Settings for EditorSettings {
             },
             lsp_document_colors: editor.lsp_document_colors.unwrap(),
             minimum_contrast_for_highlights: editor.minimum_contrast_for_highlights.unwrap(),
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let editor = &content.editor;
-        self.cursor_blink.merge_from(&editor.cursor_blink);
-        if let Some(cursor_shape) = editor.cursor_shape {
-            self.cursor_shape = Some(cursor_shape.into())
-        }
-        self.current_line_highlight
-            .merge_from(&editor.current_line_highlight);
-        self.selection_highlight
-            .merge_from(&editor.selection_highlight);
-        self.rounded_selection.merge_from(&editor.rounded_selection);
-        self.lsp_highlight_debounce
-            .merge_from(&editor.lsp_highlight_debounce);
-        self.hover_popover_enabled
-            .merge_from(&editor.hover_popover_enabled);
-        self.hover_popover_delay
-            .merge_from(&editor.hover_popover_delay);
-        self.scroll_beyond_last_line
-            .merge_from(&editor.scroll_beyond_last_line);
-        self.vertical_scroll_margin
-            .merge_from(&editor.vertical_scroll_margin);
-        self.autoscroll_on_clicks
-            .merge_from(&editor.autoscroll_on_clicks);
-        self.horizontal_scroll_margin
-            .merge_from(&editor.horizontal_scroll_margin);
-        self.scroll_sensitivity
-            .merge_from(&editor.scroll_sensitivity);
-        self.fast_scroll_sensitivity
-            .merge_from(&editor.fast_scroll_sensitivity);
-        self.relative_line_numbers
-            .merge_from(&editor.relative_line_numbers);
-        self.seed_search_query_from_cursor
-            .merge_from(&editor.seed_search_query_from_cursor);
-        self.use_smartcase_search
-            .merge_from(&editor.use_smartcase_search);
-        self.multi_cursor_modifier
-            .merge_from(&editor.multi_cursor_modifier);
-        self.redact_private_values
-            .merge_from(&editor.redact_private_values);
-        self.expand_excerpt_lines
-            .merge_from(&editor.expand_excerpt_lines);
-        self.excerpt_context_lines
-            .merge_from(&editor.excerpt_context_lines);
-        self.middle_click_paste
-            .merge_from(&editor.middle_click_paste);
-        self.double_click_in_multibuffer
-            .merge_from(&editor.double_click_in_multibuffer);
-        self.search_wrap.merge_from(&editor.search_wrap);
-        self.auto_signature_help
-            .merge_from(&editor.auto_signature_help);
-        self.show_signature_help_after_edits
-            .merge_from(&editor.show_signature_help_after_edits);
-        self.go_to_definition_fallback
-            .merge_from(&editor.go_to_definition_fallback);
-        if let Some(hide_mouse) = editor.hide_mouse {
-            self.hide_mouse = Some(hide_mouse)
-        }
-        self.snippet_sort_order
-            .merge_from(&editor.snippet_sort_order);
-        if let Some(diagnostics_max_severity) = editor.diagnostics_max_severity {
-            self.diagnostics_max_severity = Some(diagnostics_max_severity.into());
-        }
-        self.inline_code_actions
-            .merge_from(&editor.inline_code_actions);
-        self.lsp_document_colors
-            .merge_from(&editor.lsp_document_colors);
-        self.minimum_contrast_for_highlights
-            .merge_from(&editor.minimum_contrast_for_highlights);
-
-        if let Some(status_bar) = &editor.status_bar {
-            self.status_bar
-                .active_language_button
-                .merge_from(&status_bar.active_language_button);
-            self.status_bar
-                .cursor_position_button
-                .merge_from(&status_bar.cursor_position_button);
-        }
-        if let Some(toolbar) = &editor.toolbar {
-            self.toolbar.breadcrumbs.merge_from(&toolbar.breadcrumbs);
-            self.toolbar
-                .quick_actions
-                .merge_from(&toolbar.quick_actions);
-            self.toolbar
-                .selections_menu
-                .merge_from(&toolbar.selections_menu);
-            self.toolbar.agent_review.merge_from(&toolbar.agent_review);
-            self.toolbar.code_actions.merge_from(&toolbar.code_actions);
-        }
-        if let Some(scrollbar) = &editor.scrollbar {
-            self.scrollbar
-                .show
-                .merge_from(&scrollbar.show.map(Into::into));
-            self.scrollbar.git_diff.merge_from(&scrollbar.git_diff);
-            self.scrollbar
-                .selected_text
-                .merge_from(&scrollbar.selected_text);
-            self.scrollbar
-                .selected_symbol
-                .merge_from(&scrollbar.selected_symbol);
-            self.scrollbar
-                .search_results
-                .merge_from(&scrollbar.search_results);
-            self.scrollbar
-                .diagnostics
-                .merge_from(&scrollbar.diagnostics);
-            self.scrollbar.cursors.merge_from(&scrollbar.cursors);
-            if let Some(axes) = &scrollbar.axes {
-                self.scrollbar.axes.horizontal.merge_from(&axes.horizontal);
-                self.scrollbar.axes.vertical.merge_from(&axes.vertical);
-            }
-        }
-        if let Some(minimap) = &editor.minimap {
-            self.minimap.show.merge_from(&minimap.show);
-            self.minimap.display_in.merge_from(&minimap.display_in);
-            self.minimap.thumb.merge_from(&minimap.thumb);
-            self.minimap.thumb_border.merge_from(&minimap.thumb_border);
-            self.minimap
-                .current_line_highlight
-                .merge_from(&minimap.current_line_highlight);
-            self.minimap
-                .max_width_columns
-                .merge_from(&minimap.max_width_columns);
-        }
-        if let Some(gutter) = &editor.gutter {
-            self.gutter
-                .min_line_number_digits
-                .merge_from(&gutter.min_line_number_digits);
-            self.gutter.line_numbers.merge_from(&gutter.line_numbers);
-            self.gutter.runnables.merge_from(&gutter.runnables);
-            self.gutter.breakpoints.merge_from(&gutter.breakpoints);
-            self.gutter.folds.merge_from(&gutter.folds);
-        }
-        if let Some(search) = &editor.search {
-            self.search.button.merge_from(&search.button);
-            self.search.whole_word.merge_from(&search.whole_word);
-            self.search
-                .case_sensitive
-                .merge_from(&search.case_sensitive);
-            self.search
-                .include_ignored
-                .merge_from(&search.include_ignored);
-            self.search.regex.merge_from(&search.regex);
-        }
-        if let Some(enabled) = editor.jupyter.as_ref().and_then(|jupyter| jupyter.enabled) {
-            self.jupyter.enabled = enabled;
-        }
-        if let Some(drag_and_drop_selection) = &editor.drag_and_drop_selection {
-            self.drag_and_drop_selection
-                .enabled
-                .merge_from(&drag_and_drop_selection.enabled);
-            self.drag_and_drop_selection
-                .delay
-                .merge_from(&drag_and_drop_selection.delay);
         }
     }
 

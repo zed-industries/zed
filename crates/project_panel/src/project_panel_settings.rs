@@ -10,7 +10,6 @@ use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
 };
-use util::MergeFrom;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
@@ -56,7 +55,7 @@ impl ScrollbarVisibility for ProjectPanelSettings {
 }
 
 impl Settings for ProjectPanelSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
         let project_panel = content.project_panel.clone().unwrap();
         Self {
             button: project_panel.button.unwrap(),
@@ -76,57 +75,11 @@ impl Settings for ProjectPanelSettings {
             auto_fold_dirs: project_panel.auto_fold_dirs.unwrap(),
             starts_open: project_panel.starts_open.unwrap(),
             scrollbar: ScrollbarSettings {
-                show: project_panel
-                    .scrollbar
-                    .unwrap()
-                    .show
-                    .flatten()
-                    .map(Into::into),
+                show: project_panel.scrollbar.unwrap().show.map(Into::into),
             },
             show_diagnostics: project_panel.show_diagnostics.unwrap(),
             hide_root: project_panel.hide_root.unwrap(),
             drag_and_drop: project_panel.drag_and_drop.unwrap(),
-        }
-    }
-
-    fn refine(&mut self, content: &SettingsContent, _cx: &mut ui::App) {
-        let Some(project_panel) = content.project_panel.as_ref() else {
-            return;
-        };
-        self.button.merge_from(&project_panel.button);
-        self.hide_gitignore
-            .merge_from(&project_panel.hide_gitignore);
-        self.default_width
-            .merge_from(&project_panel.default_width.map(px));
-        self.dock.merge_from(&project_panel.dock);
-        self.entry_spacing.merge_from(&project_panel.entry_spacing);
-        self.file_icons.merge_from(&project_panel.file_icons);
-        self.folder_icons.merge_from(&project_panel.folder_icons);
-        self.git_status.merge_from(&project_panel.git_status);
-        self.indent_size.merge_from(&project_panel.indent_size);
-        self.sticky_scroll.merge_from(&project_panel.sticky_scroll);
-        self.auto_reveal_entries
-            .merge_from(&project_panel.auto_reveal_entries);
-        self.auto_fold_dirs
-            .merge_from(&project_panel.auto_fold_dirs);
-        self.starts_open.merge_from(&project_panel.starts_open);
-        self.show_diagnostics
-            .merge_from(&project_panel.show_diagnostics);
-        self.hide_root.merge_from(&project_panel.hide_root);
-        self.drag_and_drop.merge_from(&project_panel.drag_and_drop);
-        if let Some(show) = project_panel
-            .indent_guides
-            .as_ref()
-            .and_then(|indent| indent.show)
-        {
-            self.indent_guides.show = show;
-        }
-        if let Some(show) = project_panel
-            .scrollbar
-            .as_ref()
-            .and_then(|scrollbar| scrollbar.show)
-        {
-            self.scrollbar.show = show.map(Into::into)
         }
     }
 

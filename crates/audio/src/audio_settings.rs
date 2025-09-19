@@ -2,7 +2,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::App;
 use settings::{Settings, SettingsStore};
-use util::MergeFrom as _;
 
 #[derive(Clone, Debug)]
 pub struct AudioSettings {
@@ -23,24 +22,13 @@ pub struct AudioSettings {
 
 /// Configuration of audio in Zed
 impl Settings for AudioSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let audio = &content.audio.as_ref().unwrap();
         AudioSettings {
             control_input_volume: audio.control_input_volume.unwrap(),
             control_output_volume: audio.control_output_volume.unwrap(),
             rodio_audio: audio.rodio_audio.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(audio) = content.audio.as_ref() else {
-            return;
-        };
-        self.control_input_volume
-            .merge_from(&audio.control_input_volume);
-        self.control_output_volume
-            .merge_from(&audio.control_output_volume);
-        self.rodio_audio.merge_from(&audio.rodio_audio);
     }
 
     fn import_from_vscode(

@@ -21,7 +21,7 @@ pub use settings::DirenvSettings;
 pub use settings::LspSettings;
 use settings::{
     DapSettingsContent, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
-    SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
+    SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{
     path::{Path, PathBuf},
@@ -29,7 +29,7 @@ use std::{
     time::Duration,
 };
 use task::{DebugTaskFile, TaskTemplates, VsCodeDebugTaskFile, VsCodeTaskFile};
-use util::{MergeFrom as _, ResultExt, serde::default_true};
+use util::{ResultExt, serde::default_true};
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
 use crate::{
@@ -189,20 +189,7 @@ impl ContextServerSettings {
     }
 }
 
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DiagnosticSeverity {
     // No diagnostics are shown.
     Off,
@@ -444,7 +431,7 @@ pub struct LspPullDiagnosticsSettings {
 }
 
 impl Settings for ProjectSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let project = &content.project.clone();
         let diagnostics = content.diagnostics.as_ref().unwrap();
         let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();
@@ -521,118 +508,6 @@ impl Settings for ProjectSettings {
                 restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
             },
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let project = &content.project;
-        self.context_servers.extend(
-            project
-                .context_servers
-                .clone()
-                .into_iter()
-                .map(|(key, value)| (key, value.into())),
-        );
-        self.dap.extend(
-            project
-                .dap
-                .clone()
-                .into_iter()
-                .map(|(key, value)| (DebugAdapterName(key.into()), DapSettings::from(value))),
-        );
-        if let Some(diagnostics) = content.diagnostics.as_ref() {
-            if let Some(inline) = &diagnostics.inline {
-                self.diagnostics.inline.enabled.merge_from(&inline.enabled);
-                self.diagnostics
-                    .inline
-                    .update_debounce_ms
-                    .merge_from(&inline.update_debounce_ms);
-                self.diagnostics.inline.padding.merge_from(&inline.padding);
-                self.diagnostics
-                    .inline
-                    .min_column
-                    .merge_from(&inline.min_column);
-                if let Some(max_severity) = inline.max_severity {
-                    self.diagnostics.inline.max_severity = Some(max_severity.into())
-                }
-            }
-
-            self.diagnostics.button.merge_from(&diagnostics.button);
-            self.diagnostics
-                .include_warnings
-                .merge_from(&diagnostics.include_warnings);
-            if let Some(pull_diagnostics) = &diagnostics.lsp_pull_diagnostics {
-                self.diagnostics
-                    .lsp_pull_diagnostics
-                    .enabled
-                    .merge_from(&pull_diagnostics.enabled);
-                self.diagnostics
-                    .lsp_pull_diagnostics
-                    .debounce_ms
-                    .merge_from(&pull_diagnostics.debounce_ms);
-            }
-        }
-        if let Some(git) = content.git.as_ref() {
-            if let Some(branch_picker) = git.branch_picker.as_ref() {
-                self.git
-                    .branch_picker
-                    .show_author_name
-                    .merge_from(&branch_picker.show_author_name);
-            }
-            if let Some(inline_blame) = git.inline_blame.as_ref() {
-                self.git
-                    .inline_blame
-                    .enabled
-                    .merge_from(&inline_blame.enabled);
-                self.git
-                    .inline_blame
-                    .delay_ms
-                    .merge_from(&inline_blame.delay_ms.map(std::time::Duration::from_millis));
-                self.git
-                    .inline_blame
-                    .padding
-                    .merge_from(&inline_blame.padding);
-                self.git
-                    .inline_blame
-                    .min_column
-                    .merge_from(&inline_blame.min_column);
-                self.git
-                    .inline_blame
-                    .show_commit_summary
-                    .merge_from(&inline_blame.show_commit_summary);
-            }
-            self.git.git_gutter.merge_from(&git.git_gutter);
-            self.git.hunk_style.merge_from(&git.hunk_style);
-            if let Some(debounce) = git.gutter_debounce {
-                self.git.gutter_debounce = Some(debounce);
-            }
-        }
-        self.global_lsp_settings.button.merge_from(
-            &content
-                .global_lsp_settings
-                .as_ref()
-                .and_then(|settings| settings.button),
-        );
-        self.load_direnv
-            .merge_from(&content.project.load_direnv.clone());
-
-        for (key, value) in content.project.lsp.clone() {
-            self.lsp.insert(LanguageServerName(key.into()), value);
-        }
-
-        if let Some(node) = content.node.as_ref() {
-            self.node
-                .ignore_system_version
-                .merge_from(&node.ignore_system_version);
-            if let Some(path) = node.path.clone() {
-                self.node.path = Some(path);
-            }
-            if let Some(npm_path) = node.npm_path.clone() {
-                self.node.npm_path = Some(npm_path);
-            }
-        }
-        self.session
-            .restore_unsaved_buffers
-            .merge_from(&content.session.and_then(|s| s.restore_unsaved_buffers));
     }
 
     fn import_from_vscode(

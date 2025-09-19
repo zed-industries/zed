@@ -24,15 +24,9 @@ pub struct ZlogSettings {
 }
 
 impl Settings for ZlogSettings {
-    fn from_defaults(content: &settings::SettingsContent, _: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _: &mut App) -> Self {
         ZlogSettings {
             scopes: content.log.clone().unwrap(),
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
-        if let Some(log) = &content.log {
-            self.scopes.extend(log.clone());
         }
     }
 

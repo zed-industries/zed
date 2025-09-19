@@ -30,7 +30,7 @@ use std::{
 };
 use theme::Theme;
 use ui::{Color, Icon, IntoElement, Label, LabelCommon};
-use util::{MergeFrom as _, ResultExt};
+use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 
@@ -65,7 +65,7 @@ pub struct PreviewTabsSettings {
 }
 
 impl Settings for ItemSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let tabs = content.tabs.as_ref().unwrap();
         Self {
             git_status: tabs.git_status.unwrap(),
@@ -75,18 +75,6 @@ impl Settings for ItemSettings {
             show_diagnostics: tabs.show_diagnostics.unwrap(),
             show_close_button: tabs.show_close_button.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(tabs) = content.tabs.as_ref() else {
-            return;
-        };
-        self.git_status.merge_from(&tabs.git_status);
-        self.close_position.merge_from(&tabs.close_position);
-        self.activate_on_close.merge_from(&tabs.activate_on_close);
-        self.file_icons.merge_from(&tabs.file_icons);
-        self.show_diagnostics.merge_from(&tabs.show_diagnostics);
-        self.show_close_button.merge_from(&tabs.show_close_button);
     }
 
     fn import_from_vscode(
@@ -125,7 +113,7 @@ impl Settings for ItemSettings {
 }
 
 impl Settings for PreviewTabsSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let preview_tabs = content.preview_tabs.as_ref().unwrap();
         Self {
             enabled: preview_tabs.enabled.unwrap(),
@@ -134,18 +122,6 @@ impl Settings for PreviewTabsSettings {
                 .enable_preview_from_code_navigation
                 .unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(preview_tabs) = content.preview_tabs.as_ref() else {
-            return;
-        };
-
-        self.enabled.merge_from(&preview_tabs.enabled);
-        self.enable_preview_from_file_finder
-            .merge_from(&preview_tabs.enable_preview_from_file_finder);
-        self.enable_preview_from_code_navigation
-            .merge_from(&preview_tabs.enable_preview_from_code_navigation);
     }
 
     fn import_from_vscode(
