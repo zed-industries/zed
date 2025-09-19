@@ -52,7 +52,7 @@ pub enum AppearanceContent {
 /// The background appearance of the window.
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-#[expect(dead_code)]
+#[allow(dead_code)]
 pub enum WindowBackgroundContent {
     Opaque,
     Transparent,
