@@ -55,6 +55,7 @@ pub struct SshConnectionOptions {
 
     pub nickname: Option<String>,
     pub upload_binary_over_ssh: bool,
+    pub askpass_timeout: Option<u64>,
 }
 
 impl From<settings::SshConnection> for SshConnectionOptions {
@@ -68,6 +69,7 @@ impl From<settings::SshConnection> for SshConnectionOptions {
             nickname: val.nickname,
             upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
             port_forwards: val.port_forwards,
+            askpass_timeout: val.askpass_timeout,
         }
     }
 }
@@ -274,8 +276,12 @@ impl SshRemoteConnection {
             move |prompt, tx, cx| delegate.ask_password(prompt, tx, cx)
         });
 
-        let mut askpass =
-            askpass::AskPassSession::new(cx.background_executor(), askpass_delegate, None).await?;
+        let mut askpass = askpass::AskPassSession::new(
+            cx.background_executor(),
+            askpass_delegate,
+            connection_options.askpass_timeout,
+        )
+        .await?;
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
@@ -971,6 +977,7 @@ impl SshConnectionOptions {
             password: None,
             nickname: None,
             upload_binary_over_ssh: false,
+            askpass_timeout: None,
         })
     }
 

@@ -783,6 +783,7 @@ pub struct SshConnection {
     pub upload_binary_over_ssh: Option<bool>,
 
     pub port_forwards: Option<Vec<SshPortForwardOption>>,
+    pub askpass_timeout: Option<u64>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Debug)]
