@@ -35,7 +35,7 @@ use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 7, 0);
 
 wasmtime::component::bindgen!({
     async: true,
