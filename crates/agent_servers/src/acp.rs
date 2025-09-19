@@ -78,13 +78,8 @@ impl AcpConnection {
         is_remote: bool,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
-        log::debug!(
-            "Spawning agent command: {:?} with args: {:?}",
-            command.path.to_string_lossy(),
-            command.args
-        );
         let command_path_str = command.path.to_string_lossy().to_string();
-        let command_args_debug = format!("{:?}", command.args);
+        let command_args = command.args.clone();
         let mut child = util::command::new_smol_command(command.path);
         child
             .args(command.args.iter().map(|arg| arg.as_str()))
@@ -95,15 +90,12 @@ impl AcpConnection {
         if !is_remote {
             child.current_dir(root_dir);
         }
-        let mut child = child
-            .spawn()
-            .with_context(|| {
-                format!(
-                    "Failed to spawn agent command: {} with args: {}",
-                    command_path_str,
-                    command_args_debug
-                )
-            })?;
+        let mut child = child.spawn().with_context(|| {
+            format!(
+                "Failed to spawn agent command: {} with args: {:?}",
+                command_path_str, command_args
+            )
+        })?;
 
         let stdout = child.stdout.take().context("Failed to take stdout")?;
         let stdin = child.stdin.take().context("Failed to take stdin")?;
