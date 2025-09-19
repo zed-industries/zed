@@ -546,6 +546,17 @@ pub enum CharKind {
     Word,
 }
 
+/// Context for how character classification should be performed inside scope.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum ScopeContext {
+    /// Character classification for completion query.
+    /// Like '-' in case of taiwind classes "bg-yellow-100" or '.' in import paths like "foo.ts"
+    Completion,
+    /// Character classification for linked edits.
+    /// Like '.' in JSX tag <Animated.View>
+    LinkedEdits,
+}
+
 /// A runnable is a set of data about a region that could be resolved into a task
 pub struct Runnable {
     pub tags: SmallVec<[RunnableTag; 1]>,
@@ -3449,16 +3460,14 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(
         &self,
         start: T,
-        for_completion: bool,
+        scope_context: Option<ScopeContext>,
     ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).take(128).peekable();
         let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
-        let classifier = self
-            .char_classifier_at(start)
-            .for_completion(for_completion);
+        let classifier = self.char_classifier_at(start).scope_context(scope_context);
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(|c| classifier.kind(c)),
             next_chars.peek().copied().map(|c| classifier.kind(c)),
@@ -5212,7 +5221,7 @@ pub(crate) fn contiguous_ranges(
 #[derive(Default, Debug)]
 pub struct CharClassifier {
     scope: Option<LanguageScope>,
-    for_completion: bool,
+    scope_context: Option<ScopeContext>,
     ignore_punctuation: bool,
 }
 
@@ -5220,14 +5229,14 @@ impl CharClassifier {
     pub fn new(scope: Option<LanguageScope>) -> Self {
         Self {
             scope,
-            for_completion: false,
+            scope_context: None,
             ignore_punctuation: false,
         }
     }
 
-    pub fn for_completion(self, for_completion: bool) -> Self {
+    pub fn scope_context(self, scope_context: Option<ScopeContext>) -> Self {
         Self {
-            for_completion,
+            scope_context,
             ..self
         }
     }
@@ -5257,10 +5266,10 @@ impl CharClassifier {
         }
 
         if let Some(scope) = &self.scope {
-            let characters = if self.for_completion {
-                scope.completion_query_characters()
-            } else {
-                scope.word_characters()
+            let characters = match self.scope_context {
+                Some(ScopeContext::Completion) => scope.completion_query_characters(),
+                Some(ScopeContext::LinkedEdits) => scope.word_characters(),
+                None => scope.word_characters(),
             };
             if let Some(characters) = characters
                 && characters.contains(&c)

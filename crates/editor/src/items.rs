@@ -17,7 +17,7 @@ use gpui::{
     ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, DiskState, LocalFile, Point, SelectionGoal,
+    Bias, Buffer, BufferRow, CharKind, DiskState, LocalFile, Point, ScopeContext, SelectionGoal,
     proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
@@ -1573,7 +1573,7 @@ impl SearchableItem for Editor {
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
-                let (range, kind) = snapshot.surrounding_word(selection.start, true);
+                let (range, kind) = snapshot.surrounding_word(selection.start, Some(ScopeContext::Completion));
                 if kind == Some(CharKind::Word) {
                     let text: String = snapshot.text_for_range(range).collect();
                     if !text.trim().is_empty() {

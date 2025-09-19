@@ -30,7 +30,7 @@ use gpui::{
     Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
+use language::{CharKind, CursorShape, Point, ScopeContext, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::search::SearchSubmit;
@@ -1347,7 +1347,7 @@ impl Vim {
             let selection = editor.selections.newest::<usize>(cx);
 
             let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
-            let (range, kind) = snapshot.surrounding_word(selection.start, true);
+            let (range, kind) = snapshot.surrounding_word(selection.start, Some(ScopeContext::Completion));
             if kind == Some(CharKind::Word) {
                 let text: String = snapshot.text_for_range(range).collect();
                 if !text.trim().is_empty() {
