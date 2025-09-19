@@ -651,9 +651,16 @@ fn get_or_npm_install_builtin_agent(
             agent_server_path.to_string_lossy()
         );
 
+        let agent_server_path_str = agent_server_path.to_string_lossy().to_string();
+        log::debug!(
+            "Creating AgentServerCommand with node: {:?}, script: {:?}",
+            node_path.to_string_lossy(),
+            agent_server_path_str
+        );
+
         anyhow::Ok(AgentServerCommand {
             path: node_path,
-            args: vec![agent_server_path.to_string_lossy().to_string()],
+            args: vec![agent_server_path_str],
             env: None,
         })
     })
@@ -921,18 +928,24 @@ impl ExternalAgentServer for LocalClaudeCode {
                     .and_then(|path| {
                         path.strip_suffix("/@zed-industries/claude-code-acp/dist/index.js")
                     })
-                    .map(|path_prefix| task::SpawnInTerminal {
-                        command: Some(command.path.clone().to_proto()),
-                        args: vec![
-                            Path::new(path_prefix)
-                                .join("@anthropic-ai/claude-code/cli.js")
-                                .to_string_lossy()
-                                .to_string(),
-                            "/login".into(),
-                        ],
-                        env: command.env.clone().unwrap_or_default(),
-                        label: "claude /login".into(),
-                        ..Default::default()
+                    .map(|path_prefix| {
+                        let login_script_path = Path::new(path_prefix)
+                            .join("@anthropic-ai/claude-code/cli.js")
+                            .to_string_lossy()
+                            .to_string();
+                        log::debug!(
+                            "Creating login command with path: {:?}, args: [{:?}, {:?}]",
+                            command.path.to_string_lossy(),
+                            login_script_path,
+                            "/login"
+                        );
+                        task::SpawnInTerminal {
+                            command: Some(command.path.clone().to_proto()),
+                            args: vec![login_script_path, "/login".into()],
+                            env: command.env.clone().unwrap_or_default(),
+                            label: "claude /login".into(),
+                            ..Default::default()
+                        }
                     });
                 (command, login)
             };
