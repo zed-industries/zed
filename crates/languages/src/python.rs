@@ -296,7 +296,7 @@ impl LspInstaller for TyLspAdapter {
         Ok(LanguageServerBinary {
             path: server_path,
             env: None,
-            arguments: Default::default(),
+            arguments: vec!["server".into()],
         })
     }
 
