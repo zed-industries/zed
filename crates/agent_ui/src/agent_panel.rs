@@ -408,6 +408,7 @@ impl ActiveView {
 
 pub struct AgentPanel {
     workspace: WeakEntity<Workspace>,
+    loading: bool,
     user_store: Entity<UserStore>,
     project: Entity<Project>,
     fs: Arc<dyn Fs>,
@@ -513,6 +514,7 @@ impl AgentPanel {
                         cx,
                     )
                 });
+                panel.as_mut(cx).loading = true;
                 if let Some(serialized_panel) = serialized_panel {
                     panel.update(cx, |panel, cx| {
                         panel.width = serialized_panel.width.map(|w| w.round());
@@ -527,6 +529,7 @@ impl AgentPanel {
                         panel.new_agent_thread(AgentType::NativeAgent, window, cx);
                     });
                 }
+                panel.as_mut(cx).loading = false;
                 panel
             })?;
 
@@ -726,6 +729,7 @@ impl AgentPanel {
             acp_history,
             acp_history_store,
             selected_agent: AgentType::default(),
+            loading: false,
         }
     }
 
@@ -857,6 +861,7 @@ impl AgentPanel {
             agent: crate::ExternalAgent,
         }
 
+        let loading = self.loading;
         let history = self.acp_history_store.clone();
 
         cx.spawn_in(window, async move |this, cx| {
@@ -898,7 +903,9 @@ impl AgentPanel {
                 }
             };
 
-            telemetry::event!("Agent Thread Started", agent = ext_agent.name());
+            if !loading {
+                telemetry::event!("Agent Thread Started", agent = ext_agent.name());
+            }
 
             let server = ext_agent.server(fs, history);
 
