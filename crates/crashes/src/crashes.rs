@@ -321,16 +321,19 @@ pub fn crash_server(socket: &Path) {
     let shutdown = Arc::new(AtomicBool::new(false));
     let has_connection = Arc::new(AtomicBool::new(false));
 
-    std::thread::spawn({
-        let shutdown = shutdown.clone();
-        let has_connection = has_connection.clone();
-        move || {
-            std::thread::sleep(CRASH_HANDLER_CONNECT_TIMEOUT);
-            if !has_connection.load(Ordering::SeqCst) {
-                shutdown.store(true, Ordering::SeqCst);
+    thread::Builder::new()
+        .name("CrashServerTimeout".to_owned())
+        .spawn({
+            let shutdown = shutdown.clone();
+            let has_connection = has_connection.clone();
+            move || {
+                std::thread::sleep(CRASH_HANDLER_CONNECT_TIMEOUT);
+                if !has_connection.load(Ordering::SeqCst) {
+                    shutdown.store(true, Ordering::SeqCst);
+                }
             }
-        }
-    });
+        })
+        .unwrap();
 
     server
         .run(

@@ -38,7 +38,6 @@ multi_buffer.workspace = true
 nbformat.workspace = true
 project.workspace = true
 runtimelib.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true

@@ -42,7 +42,7 @@ use language_model::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsStore};
+use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
 use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
@@ -83,15 +83,14 @@ pub enum BedrockAuthMethod {
     Automatic,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u64>,
-    pub default_temperature: Option<f32>,
-    pub mode: Option<ModelMode>,
+impl From<settings::BedrockAuthMethodContent> for BedrockAuthMethod {
+    fn from(value: settings::BedrockAuthMethodContent) -> Self {
+        match value {
+            settings::BedrockAuthMethodContent::SingleSignOn => BedrockAuthMethod::SingleSignOn,
+            settings::BedrockAuthMethodContent::Automatic => BedrockAuthMethod::Automatic,
+            settings::BedrockAuthMethodContent::NamedProfile => BedrockAuthMethod::NamedProfile,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]

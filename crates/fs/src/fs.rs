@@ -693,7 +693,7 @@ impl Fs for RealFs {
 
         Ok(Some(Metadata {
             inode,
-            mtime: MTime(metadata.modified().unwrap()),
+            mtime: MTime(metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH)),
             len: metadata.len(),
             is_symlink,
             is_dir: metadata.file_type().is_dir(),

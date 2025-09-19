@@ -916,7 +916,7 @@ impl Loader {
                                 if !found_non_static {
                                     found_non_static = true;
                                     eprintln!(
-                                        "Warning: Found non-static non-tree-sitter functions in the external scannner"
+                                        "Warning: Found non-static non-tree-sitter functions in the external scanner"
                                     );
                                 }
                                 eprintln!("  `{function_name}`");

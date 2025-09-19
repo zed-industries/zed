@@ -263,6 +263,7 @@ pub enum IconName {
     ZedPredictError,
     ZedPredictUp,
     ZedXCopilot,
+    Linux,
 }
 
 impl IconName {

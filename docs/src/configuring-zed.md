@@ -246,6 +246,8 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+Note that a save will be triggered when an unsaved tab is closed, even if this is earlier than the configured inactivity period.
+
 ## Autoscroll on Clicks
 
 - Description: Whether to scroll when clicking near the edge of the visible text area.
@@ -2624,6 +2626,7 @@ The following settings can be overridden for each specific language:
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
+- [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
 - [`use_autoclose`](#use-autoclose)
@@ -3346,6 +3349,20 @@ Positive integer values
 3. `none`
 4. `boundary`
 
+## Whitespace Map
+
+- Description: Specify the characters used to render whitespace when show_whitespaces is enabled.
+- Setting: `whitespace_map`
+- Default:
+
+```json
+{
+  "whitespace_map": {
+    "space": "•",
+    "tab": "→"
+  },
+```
+
 ## Soft Wrap
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
@@ -4026,6 +4043,23 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
+## REPL
+
+- Description: Repl settings.
+- Setting: `repl`
+- Default:
+
+```json
+"repl": {
+  // Maximum number of columns to keep in REPL's scrollback buffer.
+  // Clamped with [20, 512] range.
+  "max_columns": 128,
+  // Maximum number of lines to keep in REPL's scrollback buffer.
+  // Clamped with [4, 256] range.
+  "max_lines": 32
+},
+```
+
 ## Theme
 
 - Description: The theme setting can be specified in two forms - either as the name of a theme or as an object containing the `mode`, `dark`, and `light` themes for the Zed UI.
@@ -4106,6 +4140,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json
 "title_bar": {
+  "show": "always",
   "show_branch_icon": false,
   "show_branch_name": true,
   "show_project_items": true,

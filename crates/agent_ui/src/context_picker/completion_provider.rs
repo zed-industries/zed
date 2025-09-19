@@ -743,15 +743,15 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
-        let state = buffer.update(cx, |buffer, _cx| {
-            let position = buffer_position.to_point(buffer);
-            let line_start = Point::new(position.row, 0);
-            let offset_to_line = buffer.point_to_offset(line_start);
-            let mut lines = buffer.text_for_range(line_start..position).lines();
-            let line = lines.next()?;
-            MentionCompletion::try_parse(line, offset_to_line)
-        });
-        let Some(state) = state else {
+        let snapshot = buffer.read(cx).snapshot();
+        let position = buffer_position.to_point(&snapshot);
+        let line_start = Point::new(position.row, 0);
+        let offset_to_line = snapshot.point_to_offset(line_start);
+        let mut lines = snapshot.text_for_range(line_start..position).lines();
+        let Some(line) = lines.next() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+        let Some(state) = MentionCompletion::try_parse(line, offset_to_line) else {
             return Task::ready(Ok(Vec::new()));
         };
 
@@ -761,7 +761,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             return Task::ready(Ok(Vec::new()));
         };
 
-        let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
             ..snapshot.anchor_after(state.source_range.end);
 

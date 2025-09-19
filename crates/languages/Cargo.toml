@@ -45,6 +45,7 @@ dap.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
+itertools.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
@@ -56,6 +57,7 @@ pet-core.workspace = true
 pet-fs.workspace = true
 pet-poetry.workspace = true
 pet-reporter.workspace = true
+pet-virtualenv.workspace = true
 pet.workspace = true
 project.workspace = true
 regex.workspace = true
@@ -72,6 +74,7 @@ snippet_provider.workspace = true
 url.workspace = true
 task.workspace = true
 tempfile.workspace = true
+theme.workspace = true
 toml.workspace = true
 tree-sitter = { workspace = true, optional = true }
 tree-sitter-bash = { workspace = true, optional = true }

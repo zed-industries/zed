@@ -1,11 +1,9 @@
-use anyhow::Result;
 use chrono::{Datelike, Local, NaiveTime, Timelike};
 use editor::scroll::Autoscroll;
 use editor::{Editor, SelectionEffects};
 use gpui::{App, AppContext as _, Context, Window, actions};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+pub use settings::HourFormat;
+use settings::Settings;
 use std::{
     fs::OpenOptions,
     path::{Path, PathBuf},
@@ -22,44 +20,27 @@ actions!(
 );
 
 /// Settings specific to journaling
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(key = "journal")]
+#[derive(Clone, Debug)]
 pub struct JournalSettings {
     /// The path of the directory where journal entries are stored.
     ///
     /// Default: `~`
-    pub path: Option<String>,
+    pub path: String,
     /// What format to display the hours in.
     ///
     /// Default: hour12
-    pub hour_format: Option<HourFormat>,
-}
-
-impl Default for JournalSettings {
-    fn default() -> Self {
-        Self {
-            path: Some("~".into()),
-            hour_format: Some(Default::default()),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HourFormat {
-    #[default]
-    Hour12,
-    Hour24,
+    pub hour_format: HourFormat,
 }
 
 impl settings::Settings for JournalSettings {
-    type FileContent = Self;
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let journal = content.journal.clone().unwrap();
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+        Self {
+            path: journal.path.unwrap(),
+            hour_format: journal.hour_format.unwrap(),
+        }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 pub fn init(_: Arc<AppState>, cx: &mut App) {
@@ -77,7 +58,7 @@ pub fn init(_: Arc<AppState>, cx: &mut App) {
 
 pub fn new_journal_entry(workspace: &Workspace, window: &mut Window, cx: &mut App) {
     let settings = JournalSettings::get_global(cx);
-    let journal_dir = match journal_dir(settings.path.as_ref().unwrap()) {
+    let journal_dir = match journal_dir(&settings.path) {
         Some(journal_dir) => journal_dir,
         None => {
             log::error!("Can't determine journal directory");
@@ -199,13 +180,13 @@ fn journal_dir(path: &str) -> Option<PathBuf> {
         .map(|dir| Path::new(&dir.to_string()).to_path_buf().join("journal"))
 }
 
-fn heading_entry(now: NaiveTime, hour_format: &Option<HourFormat>) -> String {
+fn heading_entry(now: NaiveTime, hour_format: &HourFormat) -> String {
     match hour_format {
-        Some(HourFormat::Hour24) => {
+        HourFormat::Hour24 => {
             let hour = now.hour();
             format!("# {}:{:02}", hour, now.minute())
         }
-        _ => {
+        HourFormat::Hour12 => {
             let (pm, hour) = now.hour12();
             let am_or_pm = if pm { "PM" } else { "AM" };
             format!("# {}:{:02} {}", hour, now.minute(), am_or_pm)
@@ -221,7 +202,7 @@ mod tests {
         #[test]
         fn test_heading_entry_defaults_to_hour_12() {
             let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
-            let actual_heading_entry = heading_entry(naive_time, &None);
+            let actual_heading_entry = heading_entry(naive_time, &HourFormat::Hour12);
             let expected_heading_entry = "# 3:00 PM";
 
             assert_eq!(actual_heading_entry, expected_heading_entry);
@@ -230,7 +211,7 @@ mod tests {
         #[test]
         fn test_heading_entry_is_hour_12() {
             let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
-            let actual_heading_entry = heading_entry(naive_time, &Some(HourFormat::Hour12));
+            let actual_heading_entry = heading_entry(naive_time, &HourFormat::Hour12);
             let expected_heading_entry = "# 3:00 PM";
 
             assert_eq!(actual_heading_entry, expected_heading_entry);
@@ -239,7 +220,7 @@ mod tests {
         #[test]
         fn test_heading_entry_is_hour_24() {
             let naive_time = NaiveTime::from_hms_milli_opt(15, 0, 0, 0).unwrap();
-            let actual_heading_entry = heading_entry(naive_time, &Some(HourFormat::Hour24));
+            let actual_heading_entry = heading_entry(naive_time, &HourFormat::Hour24);
             let expected_heading_entry = "# 15:00";
 
             assert_eq!(actual_heading_entry, expected_heading_entry);

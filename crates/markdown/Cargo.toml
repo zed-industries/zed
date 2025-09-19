@@ -20,6 +20,7 @@ test-support = [
 
 [dependencies]
 base64.workspace = true
+collections.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true

@@ -107,13 +107,15 @@ impl ModeSelector {
                                         .text_sm()
                                         .text_color(Color::Muted.color(cx))
                                         .child("Hold")
-                                        .child(div().pt_0p5().children(ui::render_modifiers(
-                                            &gpui::Modifiers::secondary_key(),
-                                            PlatformStyle::platform(),
-                                            None,
-                                            Some(ui::TextSize::Default.rems(cx).into()),
-                                            true,
-                                        )))
+                                        .child(h_flex().flex_shrink_0().children(
+                                            ui::render_modifiers(
+                                                &gpui::Modifiers::secondary_key(),
+                                                PlatformStyle::platform(),
+                                                None,
+                                                Some(ui::TextSize::Default.rems(cx).into()),
+                                                true,
+                                            ),
+                                        ))
                                         .child(div().map(|this| {
                                             if is_default {
                                                 this.child("to also unset as default")

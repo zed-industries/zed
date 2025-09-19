@@ -115,6 +115,10 @@ pub struct ExampleToml {
     pub url: String,
     pub revision: String,
     pub language_extension: Option<String>,
+    #[expect(
+        unused,
+        reason = "This field was found to be unused with serde library bump; it's left as is due to insufficient context on PO's side, but it *may* be fine to remove"
+    )]
     pub insert_id: Option<String>,
     #[serde(default = "default_true")]
     pub require_lsp: bool,

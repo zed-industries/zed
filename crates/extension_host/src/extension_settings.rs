@@ -1,13 +1,9 @@
-use anyhow::Result;
 use collections::HashMap;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::Settings;
 use std::sync::Arc;
 
-#[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
+#[derive(Debug, Default, Clone)]
 pub struct ExtensionSettings {
     /// The extensions that should be automatically installed by Zed.
     ///
@@ -15,9 +11,7 @@ pub struct ExtensionSettings {
     /// available out-of-the-box.
     ///
     /// Default: { "html": true }
-    #[serde(default)]
     pub auto_install_extensions: HashMap<Arc<str>, bool>,
-    #[serde(default)]
     pub auto_update_extensions: HashMap<Arc<str>, bool>,
 }
 
@@ -39,20 +33,10 @@ impl ExtensionSettings {
 }
 
 impl Settings for ExtensionSettings {
-    type FileContent = Self;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut App) -> Result<Self> {
-        SettingsSources::<Self::FileContent>::json_merge_with(
-            [sources.default]
-                .into_iter()
-                .chain(sources.user)
-                .chain(sources.server),
-        )
-    }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
-        // settingsSync.ignoredExtensions controls autoupdate for vscode extensions, but we
-        // don't have a mapping to zed-extensions. there's also extensions.autoCheckUpdates
-        // and extensions.autoUpdate which are global switches, we don't support those yet
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            auto_install_extensions: content.extension.auto_install_extensions.clone(),
+            auto_update_extensions: content.extension.auto_update_extensions.clone(),
+        }
     }
 }

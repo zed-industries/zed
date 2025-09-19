@@ -34,13 +34,13 @@ fn write_show_mini_map(show: ShowMinimap, cx: &mut App) {
     curr_settings.minimap.show = show;
     EditorSettings::override_global(curr_settings, cx);
 
-    update_settings_file::<EditorSettings>(fs, cx, move |editor_settings, _| {
+    update_settings_file(fs, cx, move |settings, _| {
         telemetry::event!(
             "Welcome Minimap Clicked",
-            from = editor_settings.minimap.unwrap_or_default(),
+            from = settings.editor.minimap.clone().unwrap_or_default(),
             to = show
         );
-        editor_settings.minimap.get_or_insert_default().show = Some(show);
+        settings.editor.minimap.get_or_insert_default().show = Some(show);
     });
 }
 
@@ -58,86 +58,80 @@ fn write_inlay_hints(enabled: bool, cx: &mut App) {
     curr_settings.defaults.inlay_hints.enabled = enabled;
     AllLanguageSettings::override_global(curr_settings, cx);
 
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |all_language_settings, cx| {
-        all_language_settings
+    update_settings_file(fs, cx, move |settings, _cx| {
+        settings
+            .project
+            .all_languages
             .defaults
             .inlay_hints
-            .get_or_insert_with(|| {
-                AllLanguageSettings::get_global(cx)
-                    .clone()
-                    .defaults
-                    .inlay_hints
-            })
-            .enabled = enabled;
+            .get_or_insert_default()
+            .enabled = Some(enabled);
     });
 }
 
 fn read_git_blame(cx: &App) -> bool {
-    ProjectSettings::get_global(cx).git.inline_blame_enabled()
+    ProjectSettings::get_global(cx).git.inline_blame.enabled
 }
 
 fn write_git_blame(enabled: bool, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
     let mut curr_settings = ProjectSettings::get_global(cx).clone();
-    curr_settings
-        .git
-        .inline_blame
-        .get_or_insert_default()
-        .enabled = enabled;
+    curr_settings.git.inline_blame.enabled = enabled;
     ProjectSettings::override_global(curr_settings, cx);
 
-    update_settings_file::<ProjectSettings>(fs, cx, move |project_settings, _| {
-        project_settings
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
             .git
+            .get_or_insert_default()
             .inline_blame
             .get_or_insert_default()
-            .enabled = enabled;
+            .enabled = Some(enabled);
     });
 }
 
 fn write_ui_font_family(font: SharedString, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
-    update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
+    update_settings_file(fs, cx, move |settings, _| {
         telemetry::event!(
             "Welcome Font Changed",
             type = "ui font",
-            old = theme_settings.ui_font_family,
+            old = settings.theme.ui_font_family,
             new = font
         );
-        theme_settings.ui_font_family = Some(FontFamilyName(font.into()));
+        settings.theme.ui_font_family = Some(FontFamilyName(font.into()));
     });
 }
 
 fn write_ui_font_size(size: Pixels, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
-    update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
-        theme_settings.ui_font_size = Some(size.into());
+    update_settings_file(fs, cx, move |settings, _| {
+        settings.theme.ui_font_size = Some(size.into());
     });
 }
 
 fn write_buffer_font_size(size: Pixels, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
-    update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
-        theme_settings.buffer_font_size = Some(size.into());
+    update_settings_file(fs, cx, move |settings, _| {
+        settings.theme.buffer_font_size = Some(size.into());
     });
 }
 
 fn write_buffer_font_family(font_family: SharedString, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
-    update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
+    update_settings_file(fs, cx, move |settings, _| {
         telemetry::event!(
             "Welcome Font Changed",
             type = "editor font",
-            old = theme_settings.buffer_font_family,
+            old = settings.theme.buffer_font_family,
             new = font_family
         );
 
-        theme_settings.buffer_font_family = Some(FontFamilyName(font_family.into()));
+        settings.theme.buffer_font_family = Some(FontFamilyName(font_family.into()));
     });
 }
 
@@ -153,8 +147,9 @@ fn write_font_ligatures(enabled: bool, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
     let bit = if enabled { 1 } else { 0 };
 
-    update_settings_file::<ThemeSettings>(fs, cx, move |theme_settings, _| {
-        let mut features = theme_settings
+    update_settings_file(fs, cx, move |settings, _| {
+        let mut features = settings
+            .theme
             .buffer_font_features
             .as_mut()
             .map(|features| features.tag_value_list().to_vec())
@@ -166,7 +161,7 @@ fn write_font_ligatures(enabled: bool, cx: &mut App) {
             features.push(("calt".into(), bit));
         }
 
-        theme_settings.buffer_font_features = Some(FontFeatures(Arc::new(features)));
+        settings.theme.buffer_font_features = Some(FontFeatures(Arc::new(features)));
     });
 }
 
@@ -180,8 +175,8 @@ fn read_format_on_save(cx: &App) -> bool {
 fn write_format_on_save(format_on_save: bool, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
 
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |language_settings, _| {
-        language_settings.defaults.format_on_save = Some(match format_on_save {
+    update_settings_file(fs, cx, move |settings, _| {
+        settings.project.all_languages.defaults.format_on_save = Some(match format_on_save {
             true => FormatOnSave::On,
             false => FormatOnSave::Off,
         });

@@ -1,11 +1,8 @@
 use std::sync::Arc;
 
-use anyhow::Result;
 use git::GitHostingProviderRegistry;
 use gpui::App;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsStore, SettingsUi};
+use settings::{GitHostingProviderConfig, GitHostingProviderKind, Settings, SettingsStore};
 use url::Url;
 use util::ResultExt as _;
 
@@ -55,43 +52,20 @@ fn update_git_hosting_providers_from_settings(cx: &mut App) {
     provider_registry.set_setting_providers(iter);
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GitHostingProviderKind {
-    Github,
-    Gitlab,
-    Bitbucket,
-}
-
-/// A custom Git hosting provider.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct GitHostingProviderConfig {
-    /// The type of the provider.
-    ///
-    /// Must be one of `github`, `gitlab`, or `bitbucket`.
-    pub provider: GitHostingProviderKind,
-
-    /// The base URL for the provider (e.g., "https://code.corp.big.com").
-    pub base_url: String,
-
-    /// The display name for the provider (e.g., "BigCorp GitHub").
-    pub name: String,
-}
-
-#[derive(Default, Debug, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
+#[derive(Debug, Clone)]
 pub struct GitHostingProviderSettings {
-    /// The list of custom Git hosting providers.
-    #[serde(default)]
     pub git_hosting_providers: Vec<GitHostingProviderConfig>,
 }
 
 impl Settings for GitHostingProviderSettings {
-    type FileContent = Self;
-
-    fn load(sources: settings::SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            git_hosting_providers: content
+                .project
+                .git_hosting_providers
+                .clone()
+                .unwrap()
+                .into(),
+        }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }

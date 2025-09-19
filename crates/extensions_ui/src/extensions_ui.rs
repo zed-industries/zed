@@ -20,7 +20,7 @@ use gpui::{
 use num_format::{Locale, ToFormattedString};
 use project::DirectoryLister;
 use release_channel::ReleaseChannel;
-use settings::Settings;
+use settings::{Settings, SettingsContent};
 use strum::IntoEnumIterator as _;
 use theme::ThemeSettings;
 use ui::{
@@ -1269,17 +1269,17 @@ impl ExtensionsPage {
         Label::new(message)
     }
 
-    fn update_settings<T: Settings>(
+    fn update_settings(
         &mut self,
         selection: &ToggleState,
 
         cx: &mut Context<Self>,
-        callback: impl 'static + Send + Fn(&mut T::FileContent, bool),
+        callback: impl 'static + Send + Fn(&mut SettingsContent, bool),
     ) {
         if let Some(workspace) = self.workspace.upgrade() {
             let fs = workspace.read(cx).app_state().fs.clone();
             let selection = *selection;
-            settings::update_settings_file::<T>(fs, cx, move |settings, _| {
+            settings::update_settings_file(fs, cx, move |settings, _| {
                 let value = match selection {
                     ToggleState::Unselected => false,
                     ToggleState::Selected => true,
@@ -1340,11 +1340,9 @@ impl ExtensionsPage {
                         },
                         cx.listener(move |this, selection, _, cx| {
                             telemetry::event!("Vim Mode Toggled", source = "Feature Upsell");
-                            this.update_settings::<VimModeSetting>(
-                                selection,
-                                cx,
-                                |setting, value| setting.vim_mode = Some(value),
-                            );
+                            this.update_settings(selection, cx, |setting, value| {
+                                setting.vim_mode = Some(value)
+                            });
                         }),
                     )),
                 Feature::LanguageBash => FeatureUpsell::new("Shell support is built-in to Zed!")

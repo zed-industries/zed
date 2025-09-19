@@ -108,6 +108,7 @@ To disable this behavior use:
 ```json
   // Control which items are shown/hidden in the title bar
   "title_bar": {
+    "show": "always",               // When to show: always | never | hide_in_full_screen
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
@@ -184,6 +185,10 @@ TBD: Centered layout related settings
 
   // Visually show tabs and spaces  (none, all, selection, boundary, trailing)
   "show_whitespaces": "selection",
+  "whitespace_map": { // Which characters to show when `show_whitespaces` enabled
+    "space": "•",
+    "tab": "→"
+  },
 
   "unnecessary_code_fade": 0.3, // How much to fade out unused code.
 

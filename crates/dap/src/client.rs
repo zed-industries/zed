@@ -118,6 +118,7 @@ impl DebugAdapterClient {
             R::COMMAND,
             sequence_id
         );
+        log::debug!("  request: {request:?}");
 
         self.send_message(Message::Request(request)).await?;
 
@@ -130,6 +131,8 @@ impl DebugAdapterClient {
             command,
             sequence_id
         );
+        log::debug!("  response: {response:?}");
+
         match response.success {
             true => {
                 if let Some(json) = response.body {

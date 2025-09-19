@@ -39,7 +39,7 @@ pub const EDIT_PREDICTIONS_RESOURCE_HEADER_VALUE: &str = "edit_predictions";
 /// The name of the header used to indicate that the maximum number of consecutive tool uses has been reached.
 pub const TOOL_USE_LIMIT_REACHED_HEADER_NAME: &str = "x-zed-tool-use-limit-reached";
 
-/// The name of the header used to indicate the the minimum required Zed version.
+/// The name of the header used to indicate the minimum required Zed version.
 ///
 /// This can be used to force a Zed upgrade in order to continue communicating
 /// with the LLM service.
@@ -321,8 +321,8 @@ pub struct LanguageModel {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListModelsResponse {
     pub models: Vec<LanguageModel>,
-    pub default_model: LanguageModelId,
-    pub default_fast_model: LanguageModelId,
+    pub default_model: Option<LanguageModelId>,
+    pub default_fast_model: Option<LanguageModelId>,
     pub recommended_models: Vec<LanguageModelId>,
 }
 

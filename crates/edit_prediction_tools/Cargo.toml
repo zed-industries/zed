@@ -1,0 +1,41 @@
+[package]
+name = "edit_prediction_tools"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/edit_prediction_tools.rs"
+
+[dependencies]
+edit_prediction_context.workspace = true
+collections.workspace = true
+editor.workspace = true
+gpui.workspace = true
+language.workspace = true
+log.workspace = true
+project.workspace = true
+serde.workspace = true
+text.workspace = true
+ui.workspace = true
+ui_input.workspace = true
+workspace-hack.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+clap.workspace = true
+futures.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+indoc.workspace = true
+language = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
+project = {workspace= true, features = ["test-support"]}
+serde_json.workspace = true
+settings = {workspace= true, features = ["test-support"]}
+text = { workspace = true, features = ["test-support"] }
+util = { workspace = true, features = ["test-support"] }
+zlog.workspace = true

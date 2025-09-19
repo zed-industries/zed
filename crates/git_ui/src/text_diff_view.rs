@@ -416,7 +416,7 @@ impl Item for TextDiffView {
 pub fn selection_location_text(editor: &Editor, cx: &App) -> Option<String> {
     let buffer = editor.buffer().read(cx);
     let buffer_snapshot = buffer.snapshot(cx);
-    let first_selection = editor.selections.disjoint.first()?;
+    let first_selection = editor.selections.disjoint_anchors().first()?;
 
     let selection_start = first_selection.start.to_point(&buffer_snapshot);
     let selection_end = first_selection.end.to_point(&buffer_snapshot);

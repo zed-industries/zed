@@ -22,7 +22,6 @@ pub use vim_test_context::*;
 
 use indoc::indoc;
 use search::BufferSearchBar;
-use workspace::WorkspaceSettings;
 
 use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
 
@@ -1562,10 +1561,10 @@ async fn test_plus_minus(cx: &mut gpui::TestAppContext) {
 async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
     cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
+        store.update_user_settings(cx, |s| {
             let mut aliases = HashMap::default();
             aliases.insert("Q".to_string(), "upper".to_string());
-            s.command_aliases = Some(aliases)
+            s.workspace.command_aliases = aliases
         });
     });
 

@@ -1,7 +1,7 @@
 use gpui::{Action, actions};
 use gpui_macros::register_action;
 use schemars::JsonSchema;
-use serde_derive::Deserialize;
+use serde::Deserialize;
 
 #[test]
 fn test_action_macros() {
@@ -19,7 +19,7 @@ fn test_action_macros() {
     #[serde(deny_unknown_fields)]
     struct AnotherAction;
 
-    #[derive(PartialEq, Clone, gpui::private::serde_derive::Deserialize)]
+    #[derive(PartialEq, Clone, gpui::private::serde::Deserialize)]
     #[serde(deny_unknown_fields)]
     struct RegisterableAction {}
 

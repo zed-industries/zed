@@ -1529,12 +1529,11 @@ pub mod tests {
     use language::{
         Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
         LanguageMatcher,
-        language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
     };
     use lsp::LanguageServerId;
     use project::Project;
     use rand::{Rng, prelude::*};
-    use settings::SettingsStore;
+    use settings::{SettingsContent, SettingsStore};
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use text::PointUtf16;
@@ -1564,7 +1563,9 @@ pub mod tests {
         log::info!("wrap width: {:?}", wrap_width);
 
         cx.update(|cx| {
-            init_test(cx, |s| s.defaults.tab_size = NonZeroU32::new(tab_size));
+            init_test(cx, |s| {
+                s.project.all_languages.defaults.tab_size = NonZeroU32::new(tab_size)
+            });
         });
 
         let buffer = cx.update(|cx| {
@@ -1623,8 +1624,9 @@ pub mod tests {
                     log::info!("setting tab size to {:?}", tab_size);
                     cx.update(|cx| {
                         cx.update_global::<SettingsStore, _>(|store, cx| {
-                            store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                                s.defaults.tab_size = NonZeroU32::new(tab_size);
+                            store.update_user_settings(cx, |s| {
+                                s.project.all_languages.defaults.tab_size =
+                                    NonZeroU32::new(tab_size);
                             });
                         });
                     });
@@ -2084,7 +2086,11 @@ pub mod tests {
         );
         language.set_theme(&theme);
 
-        cx.update(|cx| init_test(cx, |s| s.defaults.tab_size = Some(2.try_into().unwrap())));
+        cx.update(|cx| {
+            init_test(cx, |s| {
+                s.project.all_languages.defaults.tab_size = Some(2.try_into().unwrap())
+            })
+        });
 
         let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
         cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
@@ -2910,7 +2916,7 @@ pub mod tests {
         chunks
     }
 
-    fn init_test(cx: &mut App, f: impl Fn(&mut AllLanguageSettingsContent)) {
+    fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
         workspace::init_settings(cx);
@@ -2919,7 +2925,7 @@ pub mod tests {
         Project::init_settings(cx);
         theme::init(LoadThemes::JustBase, cx);
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, f);
+            store.update_user_settings(cx, f);
         });
     }
 }

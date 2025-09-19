@@ -76,7 +76,7 @@ impl<'a> Matcher<'a> {
                 continue;
             }
 
-            if cancel_flag.load(atomic::Ordering::Relaxed) {
+            if cancel_flag.load(atomic::Ordering::Acquire) {
                 break;
             }
 

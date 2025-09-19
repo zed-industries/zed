@@ -483,7 +483,11 @@ impl Worktree {
             true
         });
 
-        let root_file_handle = fs.open_handle(&abs_path).await.log_err();
+        let root_file_handle = fs
+            .open_handle(&abs_path)
+            .await
+            .context("failed to open local worktree root")
+            .log_err();
 
         cx.new(move |cx: &mut Context<Worktree>| {
             let mut snapshot = LocalSnapshot {
@@ -605,8 +609,7 @@ impl Worktree {
                     {
                         let mut lock = background_snapshot.lock();
                         lock.0
-                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                            .log_err();
+                            .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
                         lock.1.push(update);
                     }
                     snapshot_updated_tx.send(()).await.ok();
@@ -2484,7 +2487,7 @@ impl Snapshot {
         &mut self,
         update: proto::UpdateWorktree,
         always_included_paths: &PathMatcher,
-    ) -> Result<()> {
+    ) {
         log::debug!(
             "applying remote worktree update. {} entries updated, {} removed",
             update.updated_entries.len(),
@@ -2507,7 +2510,7 @@ impl Snapshot {
         }
 
         for entry in update.updated_entries {
-            let entry = Entry::try_from((&self.root_char_bag, always_included_paths, entry))?;
+            let entry = Entry::from((&self.root_char_bag, always_included_paths, entry));
             if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, &()) {
                 entries_by_path_edits.push(Edit::Remove(PathKey(path.clone())));
             }
@@ -2532,8 +2535,6 @@ impl Snapshot {
         if update.is_last_update {
             self.completed_scan_id = update.scan_id as usize;
         }
-
-        Ok(())
     }
 
     pub fn entry_count(&self) -> usize {
@@ -3159,7 +3160,8 @@ impl BackgroundScannerState {
             dot_git_path,
             fs,
             watcher,
-        );
+        )
+        .log_err();
     }
 
     fn insert_git_repository_for_path(
@@ -3168,12 +3170,25 @@ impl BackgroundScannerState {
         dot_git_path: Arc<Path>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
-    ) -> Option<LocalRepositoryEntry> {
-        let work_dir_entry = self.snapshot.entry_for_path(work_directory.path_key().0)?;
+    ) -> Result<LocalRepositoryEntry> {
+        let work_dir_entry = self
+            .snapshot
+            .entry_for_path(work_directory.path_key().0)
+            .with_context(|| {
+                format!(
+                    "working directory `{}` not indexed",
+                    work_directory.path_key().0.display()
+                )
+            })?;
         let work_directory_abs_path = self
             .snapshot
             .work_directory_abs_path(&work_directory)
-            .log_err()?;
+            .with_context(|| {
+                format!(
+                    "invalid working directory: {}",
+                    work_directory.path_key().0.display()
+                )
+            })?;
 
         let dot_git_abs_path: Arc<Path> = self
             .snapshot
@@ -3185,9 +3200,15 @@ impl BackgroundScannerState {
 
         let (repository_dir_abs_path, common_dir_abs_path) =
             discover_git_paths(&dot_git_abs_path, fs);
-        watcher.add(&common_dir_abs_path).log_err();
+        watcher
+            .add(&common_dir_abs_path)
+            .context("failed to add common directory to watcher")
+            .log_err();
         if !repository_dir_abs_path.starts_with(&common_dir_abs_path) {
-            watcher.add(&repository_dir_abs_path).log_err();
+            watcher
+                .add(&repository_dir_abs_path)
+                .context("failed to add repository directory to watcher")
+                .log_err();
         }
 
         let work_directory_id = work_dir_entry.id;
@@ -3207,7 +3228,7 @@ impl BackgroundScannerState {
             .insert(work_directory_id, local_repository.clone());
 
         log::trace!("inserting new local git repository");
-        Some(local_repository)
+        Ok(local_repository)
     }
 }
 
@@ -3228,7 +3249,10 @@ async fn is_git_dir(path: &Path, fs: &dyn Fs) -> bool {
 }
 
 async fn build_gitignore(abs_path: &Path, fs: &dyn Fs) -> Result<Gitignore> {
-    let contents = fs.load(abs_path).await?;
+    let contents = fs
+        .load(abs_path)
+        .await
+        .with_context(|| format!("failed to load gitignore file at {}", abs_path.display()))?;
     let parent = abs_path.parent().unwrap_or_else(|| Path::new("/"));
     let mut builder = GitignoreBuilder::new(parent);
     for line in contents.lines() {
@@ -3850,12 +3874,15 @@ impl BackgroundScanner {
             .ignores_by_parent_abs_path
             .extend(ignores);
         let containing_git_repository = repo.and_then(|(ancestor_dot_git, work_directory)| {
-            self.state.lock().insert_git_repository_for_path(
-                work_directory,
-                ancestor_dot_git.as_path().into(),
-                self.fs.as_ref(),
-                self.watcher.as_ref(),
-            )?;
+            self.state
+                .lock()
+                .insert_git_repository_for_path(
+                    work_directory,
+                    ancestor_dot_git.as_path().into(),
+                    self.fs.as_ref(),
+                    self.watcher.as_ref(),
+                )
+                .log_err()?;
             Some(ancestor_dot_git)
         });
 
@@ -3866,7 +3893,7 @@ impl BackgroundScanner {
             if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
                 build_gitignore(global_gitignore_path, self.fs.as_ref())
                     .await
-                    .log_err()
+                    .ok()
                     .map(Arc::new)
             } else {
                 None
@@ -4661,12 +4688,14 @@ impl BackgroundScanner {
                         log::trace!("updating ancestor git repository");
                         state.snapshot.ignores_by_parent_abs_path.extend(ignores);
                         if let Some((ancestor_dot_git, work_directory)) = repo {
-                            state.insert_git_repository_for_path(
-                                work_directory,
-                                ancestor_dot_git.as_path().into(),
-                                self.fs.as_ref(),
-                                self.watcher.as_ref(),
-                            );
+                            state
+                                .insert_git_repository_for_path(
+                                    work_directory,
+                                    ancestor_dot_git.as_path().into(),
+                                    self.fs.as_ref(),
+                                    self.watcher.as_ref(),
+                                )
+                                .log_err();
                         }
                     }
                 }
@@ -5611,12 +5640,10 @@ impl<'a> From<&'a Entry> for proto::Entry {
     }
 }
 
-impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
-    type Error = anyhow::Error;
-
-    fn try_from(
-        (root_char_bag, always_included, entry): (&'a CharBag, &PathMatcher, proto::Entry),
-    ) -> Result<Self> {
+impl From<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
+    fn from(
+        (root_char_bag, always_included, entry): (&CharBag, &PathMatcher, proto::Entry),
+    ) -> Self {
         let kind = if entry.is_dir {
             EntryKind::Dir
         } else {
@@ -5626,7 +5653,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
         let path = Arc::<Path>::from_proto(entry.path);
         let char_bag = char_bag_for_path(*root_char_bag, &path);
         let is_always_included = always_included.is_match(path.as_ref());
-        Ok(Entry {
+        Entry {
             id: ProjectEntryId::from_proto(entry.id),
             kind,
             path,
@@ -5642,7 +5669,7 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
             is_private: false,
             char_bag,
             is_fifo: entry.is_fifo,
-        })
+        }
     }
 }
 

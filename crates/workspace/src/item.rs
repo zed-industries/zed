@@ -15,9 +15,9 @@ use gpui::{
     Focusable, Font, HighlightStyle, Pixels, Point, Render, SharedString, Task, WeakEntity, Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsLocation, SettingsSources, SettingsUi};
+pub use settings::{
+    ActivateOnClose, ClosePosition, Settings, SettingsLocation, ShowCloseButton, ShowDiagnostics,
+};
 use smallvec::SmallVec;
 use std::{
     any::{Any, TypeId},
@@ -49,7 +49,6 @@ impl Default for SaveOptions {
     }
 }
 
-#[derive(Deserialize)]
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
@@ -59,150 +58,95 @@ pub struct ItemSettings {
     pub show_close_button: ShowCloseButton,
 }
 
-#[derive(Deserialize)]
 pub struct PreviewTabsSettings {
     pub enabled: bool,
     pub enable_preview_from_file_finder: bool,
     pub enable_preview_from_code_navigation: bool,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ClosePosition {
-    Left,
-    #[default]
-    Right,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum ShowCloseButton {
-    Always,
-    #[default]
-    Hover,
-    Hidden,
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowDiagnostics {
-    #[default]
-    Off,
-    Errors,
-    All,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ActivateOnClose {
-    #[default]
-    History,
-    Neighbour,
-    LeftNeighbour,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(key = "tabs")]
-pub struct ItemSettingsContent {
-    /// Whether to show the Git file status on a tab item.
-    ///
-    /// Default: false
-    git_status: Option<bool>,
-    /// Position of the close button in a tab.
-    ///
-    /// Default: right
-    close_position: Option<ClosePosition>,
-    /// Whether to show the file icon for a tab.
-    ///
-    /// Default: false
-    file_icons: Option<bool>,
-    /// What to do after closing the current tab.
-    ///
-    /// Default: history
-    pub activate_on_close: Option<ActivateOnClose>,
-    /// Which files containing diagnostic errors/warnings to mark in the tabs.
-    /// This setting can take the following three values:
-    ///
-    /// Default: off
-    show_diagnostics: Option<ShowDiagnostics>,
-    /// Whether to always show the close button on tabs.
-    ///
-    /// Default: false
-    show_close_button: Option<ShowCloseButton>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(key = "preview_tabs")]
-pub struct PreviewTabsSettingsContent {
-    /// Whether to show opened editors as preview tabs.
-    /// Preview tabs do not stay open, are reused until explicitly set to be kept open opened (via double-click or editing) and show file names in italic.
-    ///
-    /// Default: true
-    enabled: Option<bool>,
-    /// Whether to open tabs in preview mode when selected from the file finder.
-    ///
-    /// Default: false
-    enable_preview_from_file_finder: Option<bool>,
-    /// Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
-    ///
-    /// Default: false
-    enable_preview_from_code_navigation: Option<bool>,
-}
-
 impl Settings for ItemSettings {
-    type FileContent = ItemSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let tabs = content.tabs.as_ref().unwrap();
+        Self {
+            git_status: tabs.git_status.unwrap(),
+            close_position: tabs.close_position.unwrap(),
+            activate_on_close: tabs.activate_on_close.unwrap(),
+            file_icons: tabs.file_icons.unwrap(),
+            show_diagnostics: tabs.show_diagnostics.unwrap(),
+            show_close_button: tabs.show_close_button.unwrap(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+    fn import_from_vscode(
+        vscode: &settings::VsCodeSettings,
+        current: &mut settings::SettingsContent,
+    ) {
         if let Some(b) = vscode.read_bool("workbench.editor.tabActionCloseVisibility") {
-            current.show_close_button = Some(if b {
+            current.tabs.get_or_insert_default().show_close_button = Some(if b {
                 ShowCloseButton::Always
             } else {
                 ShowCloseButton::Hidden
             })
         }
-        vscode.enum_setting(
-            "workbench.editor.tabActionLocation",
-            &mut current.close_position,
-            |s| match s {
-                "right" => Some(ClosePosition::Right),
-                "left" => Some(ClosePosition::Left),
-                _ => None,
-            },
-        );
+        if let Some(s) = vscode.read_enum("workbench.editor.tabActionLocation", |s| match s {
+            "right" => Some(ClosePosition::Right),
+            "left" => Some(ClosePosition::Left),
+            _ => None,
+        }) {
+            current.tabs.get_or_insert_default().close_position = Some(s)
+        }
         if let Some(b) = vscode.read_bool("workbench.editor.focusRecentEditorAfterClose") {
-            current.activate_on_close = Some(if b {
+            current.tabs.get_or_insert_default().activate_on_close = Some(if b {
                 ActivateOnClose::History
             } else {
                 ActivateOnClose::LeftNeighbour
             })
         }
 
-        vscode.bool_setting("workbench.editor.showIcons", &mut current.file_icons);
-        vscode.bool_setting("git.decorations.enabled", &mut current.git_status);
+        if let Some(b) = vscode.read_bool("workbench.editor.showIcons") {
+            current.tabs.get_or_insert_default().file_icons = Some(b);
+        };
+        if let Some(b) = vscode.read_bool("git.decorations.enabled") {
+            current.tabs.get_or_insert_default().git_status = Some(b);
+        }
     }
 }
 
 impl Settings for PreviewTabsSettings {
-    type FileContent = PreviewTabsSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let preview_tabs = content.preview_tabs.as_ref().unwrap();
+        Self {
+            enabled: preview_tabs.enabled.unwrap(),
+            enable_preview_from_file_finder: preview_tabs.enable_preview_from_file_finder.unwrap(),
+            enable_preview_from_code_navigation: preview_tabs
+                .enable_preview_from_code_navigation
+                .unwrap(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.bool_setting("workbench.editor.enablePreview", &mut current.enabled);
-        vscode.bool_setting(
-            "workbench.editor.enablePreviewFromCodeNavigation",
-            &mut current.enable_preview_from_code_navigation,
-        );
-        vscode.bool_setting(
-            "workbench.editor.enablePreviewFromQuickOpen",
-            &mut current.enable_preview_from_file_finder,
-        );
+    fn import_from_vscode(
+        vscode: &settings::VsCodeSettings,
+        current: &mut settings::SettingsContent,
+    ) {
+        if let Some(enabled) = vscode.read_bool("workbench.editor.enablePreview") {
+            current.preview_tabs.get_or_insert_default().enabled = Some(enabled);
+        }
+        if let Some(enable_preview_from_code_navigation) =
+            vscode.read_bool("workbench.editor.enablePreviewFromCodeNavigation")
+        {
+            current
+                .preview_tabs
+                .get_or_insert_default()
+                .enable_preview_from_code_navigation = Some(enable_preview_from_code_navigation)
+        }
+        if let Some(enable_preview_from_file_finder) =
+            vscode.read_bool("workbench.editor.enablePreviewFromQuickOpen")
+        {
+            current
+                .preview_tabs
+                .get_or_insert_default()
+                .enable_preview_from_file_finder = Some(enable_preview_from_file_finder)
+        }
     }
 }
 

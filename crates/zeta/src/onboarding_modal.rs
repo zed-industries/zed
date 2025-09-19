@@ -9,7 +9,7 @@ use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
 };
-use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
+use language::language_settings::EditPredictionProvider;
 use settings::update_settings_file;
 use ui::{Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
@@ -22,8 +22,10 @@ pub struct ZedPredictModal {
 
 pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _| {
+    update_settings_file(fs, cx, move |settings, _| {
         settings
+            .project
+            .all_languages
             .features
             .get_or_insert(Default::default())
             .edit_prediction_provider = Some(provider);

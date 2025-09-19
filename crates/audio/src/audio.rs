@@ -211,7 +211,7 @@ impl Audio {
                 agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
             })
             .replayable(REPLAY_DURATION)
-            .expect("REPLAY_DURATION is longer then 100ms");
+            .expect("REPLAY_DURATION is longer than 100ms");
 
         cx.update_default_global(|this: &mut Self, _cx| {
             let output_mixer = this

@@ -309,7 +309,14 @@ impl TryFrom<SpawnInTerminal> for ResolvedTask {
             command: value.command.context("missing command")?,
             args: value.args,
             env: value.env.into_iter().collect(),
-            cwd: value.cwd.map(|s| s.to_string_lossy().into_owned()),
+            cwd: value.cwd.map(|s| {
+                let s = s.to_string_lossy();
+                if cfg!(target_os = "windows") {
+                    s.replace('\\', "/")
+                } else {
+                    s.into_owned()
+                }
+            }),
         })
     }
 }

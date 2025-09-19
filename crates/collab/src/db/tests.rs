@@ -6,7 +6,6 @@ mod db_tests;
 #[cfg(target_os = "macos")]
 mod embedding_tests;
 mod extension_tests;
-mod feature_flag_tests;
 mod user_tests;
 
 use crate::migrations::run_database_migrations;

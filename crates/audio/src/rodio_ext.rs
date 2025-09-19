@@ -57,7 +57,7 @@ impl<S: Source> RodioExt for S {
     /// replay is being read
     ///
     /// # Errors
-    /// If duration is smaller then 100ms
+    /// If duration is smaller than 100ms
     fn replayable(
         self,
         duration: Duration,
@@ -151,7 +151,7 @@ impl<S: Source> Source for TakeSamples<S> {
 struct ReplayQueue {
     inner: ArrayQueue<Vec<Sample>>,
     normal_chunk_len: usize,
-    /// The last chunk in the queue may be smaller then
+    /// The last chunk in the queue may be smaller than
     /// the normal chunk size. This is always equal to the
     /// size of the last element in the queue.
     /// (so normally chunk_size)
@@ -535,7 +535,7 @@ mod tests {
 
             let (mut replay, mut source) = input
                 .replayable(Duration::from_secs(3))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             source.by_ref().take(3).count();
             let yielded: Vec<Sample> = replay.by_ref().take(3).collect();
@@ -552,7 +552,7 @@ mod tests {
 
             let (mut replay, mut source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             source.by_ref().take(5).count(); // get all items but do not end the source
             let yielded: Vec<Sample> = replay.by_ref().take(2).collect();
@@ -567,7 +567,7 @@ mod tests {
 
             let (replay, mut source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
 
             // exhaust but do not yet end source
             source.by_ref().take(40_000).count();
@@ -586,7 +586,7 @@ mod tests {
             let input = StaticSamplesBuffer::new(nz!(1), nz!(16_000), &[0.0; 40_000]);
             let (mut replay, source) = input
                 .replayable(Duration::from_secs(2))
-                .expect("longer then 100ms");
+                .expect("longer than 100ms");
             assert_eq!(replay.by_ref().samples_ready(), 0);
 
             source.take(8000).count(); // half a second

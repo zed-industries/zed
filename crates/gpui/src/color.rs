@@ -151,9 +151,9 @@ impl From<Hsla> for Rgba {
         };
 
         Rgba {
-            r,
-            g,
-            b,
+            r: r.clamp(0., 1.),
+            g: g.clamp(0., 1.),
+            b: b.clamp(0., 1.),
             a: color.a,
         }
     }

@@ -179,7 +179,7 @@ impl Project {
                     }
                 };
 
-                let shell = {
+                let (shell, env) = {
                     env.extend(spawn_task.env);
                     match remote_client {
                         Some(remote_client) => match activation_script.clone() {
@@ -189,8 +189,14 @@ impl Project {
                                 let args =
                                     vec!["-c".to_owned(), format!("{activation_script}; {to_run}")];
                                 create_remote_shell(
-                                    Some((&shell, &args)),
-                                    &mut env,
+                                    Some((
+                                        &remote_client
+                                            .read(cx)
+                                            .shell()
+                                            .unwrap_or_else(get_default_system_shell),
+                                        &args,
+                                    )),
+                                    env,
                                     path,
                                     remote_client,
                                     cx,
@@ -201,7 +207,7 @@ impl Project {
                                     .command
                                     .as_ref()
                                     .map(|command| (command, &spawn_task.args)),
-                                &mut env,
+                                env,
                                 path,
                                 remote_client,
                                 cx,
@@ -220,13 +226,16 @@ impl Project {
                                 #[cfg(not(windows))]
                                 let arg = format!("{activation_script}; {to_run}");
 
-                                Shell::WithArguments {
-                                    program: shell,
-                                    args: vec!["-c".to_owned(), arg],
-                                    title_override: None,
-                                }
+                                (
+                                    Shell::WithArguments {
+                                        program: shell,
+                                        args: vec!["-c".to_owned(), arg],
+                                        title_override: None,
+                                    },
+                                    env,
+                                )
                             }
-                            _ => {
+                            _ => (
                                 if let Some(program) = spawn_task.command {
                                     Shell::WithArguments {
                                         program,
@@ -235,8 +244,9 @@ impl Project {
                                     }
                                 } else {
                                     Shell::System
-                                }
-                            }
+                                },
+                                env,
+                            ),
                         },
                     }
                 };
@@ -330,7 +340,7 @@ impl Project {
             .map(|p| self.active_toolchain(p, LanguageName::new("Python"), cx))
             .collect::<Vec<_>>();
         let remote_client = self.remote_client.clone();
-        let shell = match &remote_client {
+        let shell_kind = ShellKind::new(&match &remote_client {
             Some(remote_client) => remote_client
                 .read(cx)
                 .shell()
@@ -344,7 +354,7 @@ impl Project {
                 } => program.clone(),
                 Shell::System => get_system_shell(),
             },
-        };
+        });
 
         let lang_registry = self.languages.clone();
         let fs = self.fs.clone();
@@ -361,7 +371,7 @@ impl Project {
                     let lister = language?.toolchain_lister();
                     return Some(
                         lister?
-                            .activation_script(&toolchain, ShellKind::new(&shell), fs.as_ref())
+                            .activation_script(&toolchain, shell_kind, fs.as_ref())
                             .await,
                     );
                 }
@@ -370,12 +380,12 @@ impl Project {
             .await
             .unwrap_or_default();
             project.update(cx, move |this, cx| {
-                let shell = {
+                let (shell, env) = {
                     match remote_client {
                         Some(remote_client) => {
-                            create_remote_shell(None, &mut env, path, remote_client, cx)?
+                            create_remote_shell(None, env, path, remote_client, cx)?
                         }
-                        None => settings.shell,
+                        None => (settings.shell, env),
                     }
                 };
                 TerminalBuilder::new(
@@ -545,11 +555,11 @@ fn quote_arg(argument: &str, quote: bool) -> String {
 
 fn create_remote_shell(
     spawn_command: Option<(&String, &Vec<String>)>,
-    env: &mut HashMap<String, String>,
+    mut env: HashMap<String, String>,
     working_directory: Option<Arc<Path>>,
     remote_client: Entity<RemoteClient>,
     cx: &mut App,
-) -> Result<Shell> {
+) -> Result<(Shell, HashMap<String, String>)> {
     // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
     // to properly display colors.
     // We do not have the luxury of assuming the host has it installed,
@@ -565,18 +575,20 @@ fn create_remote_shell(
     let command = remote_client.read(cx).build_command(
         program,
         args.as_slice(),
-        env,
+        &env,
         working_directory.map(|path| path.display().to_string()),
         None,
     )?;
-    *env = command.env;
 
     log::debug!("Connecting to a remote server: {:?}", command.program);
     let host = remote_client.read(cx).connection_options().display_name();
 
-    Ok(Shell::WithArguments {
-        program: command.program,
-        args: command.args,
-        title_override: Some(format!("{} — Terminal", host).into()),
-    })
+    Ok((
+        Shell::WithArguments {
+            program: command.program,
+            args: command.args,
+            title_override: Some(format!("{} — Terminal", host).into()),
+        },
+        command.env,
+    ))
 }

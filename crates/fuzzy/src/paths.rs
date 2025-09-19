@@ -121,7 +121,7 @@ pub fn match_fixed_path_set(
 pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     candidate_sets: &'a [Set],
     query: &str,
-    relative_to: Option<Arc<Path>>,
+    relative_to: &Option<Arc<Path>>,
     smart_case: bool,
     max_results: usize,
     cancel_flag: &AtomicBool,
@@ -148,7 +148,6 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     executor
         .scoped(|scope| {
             for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-                let relative_to = relative_to.clone();
                 scope.spawn(async move {
                     let segment_start = segment_idx * segment_size;
                     let segment_end = segment_start + segment_size;
@@ -157,7 +156,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
 
                     let mut tree_start = 0;
                     for candidate_set in candidate_sets {
-                        if cancel_flag.load(atomic::Ordering::Relaxed) {
+                        if cancel_flag.load(atomic::Ordering::Acquire) {
                             break;
                         }
 
@@ -209,7 +208,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         })
         .await;
 
-    if cancel_flag.load(atomic::Ordering::Relaxed) {
+    if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();
     }
 
