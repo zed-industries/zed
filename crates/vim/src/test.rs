@@ -7,8 +7,8 @@ use std::time::Duration;
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
-    code_context_menus::CodeContextMenu, display_map::DisplayRow,
+    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, SelectionEffects,
+    actions::DeleteLine, code_context_menus::CodeContextMenu, display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
@@ -16,6 +16,7 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
+use text::SelectionGoal;
 use ui::Pixels;
 use util::test::marked_text_ranges;
 pub use vim_test_context::*;
@@ -2183,6 +2184,55 @@ async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
         wow wow wow
 
         woˇw woˇw woˇw
+        "
+        },
+        Mode::Normal,
+    );
+}
+
+#[gpui::test]
+async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(
+        indoc! {
+        "
+        ˇverylongline
+        andsomelinebelow
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("v e");
+    cx.assert_state(
+        indoc! {
+        "
+        «verylonglineˇ»
+        andsomelinebelow
+        "
+        },
+        Mode::Visual,
+    );
+
+    let mut pixel_position = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let current_head = editor.selections.newest_display(cx).end;
+        editor.last_bounds().unwrap().origin
+            + editor
+                .display_to_pixel_point(current_head, &snapshot, window)
+                .unwrap()
+    });
+    pixel_position.x += px(100.);
+    // click beyond end of the line
+    cx.simulate_click(pixel_position, Modifiers::default());
+    cx.run_until_parked();
+
+    cx.assert_state(
+        indoc! {
+        "
+        verylonglinˇe
+        andsomelinebelow
         "
         },
         Mode::Normal,

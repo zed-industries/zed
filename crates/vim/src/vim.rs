@@ -1090,6 +1090,8 @@ impl Vim {
                         let mut point = selection.head();
                         if !selection.reversed && !selection.is_empty() {
                             point = movement::left(map, selection.head());
+                        } else if selection.is_empty() {
+                            point = map.clip_point(point, Bias::Left);
                         }
                         selection.collapse_to(point, selection.goal)
                     } else if !last_mode.is_visual() && mode.is_visual() && selection.is_empty() {
@@ -1605,7 +1607,7 @@ impl Vim {
             && !is_multicursor
             && [Mode::Visual, Mode::VisualLine, Mode::VisualBlock].contains(&self.mode)
         {
-            self.switch_mode(Mode::Normal, true, window, cx);
+            self.switch_mode(Mode::Normal, false, window, cx);
         }
     }
 
