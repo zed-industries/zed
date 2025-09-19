@@ -1,4 +1,5 @@
 mod icon_theme_selector;
+mod theme_preview;
 
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -16,6 +17,7 @@ use workspace::{ModalView, Workspace, ui::HighlightedLabel, with_active_or_new_w
 use zed_actions::{ExtensionCategoryFilter, Extensions};
 
 use crate::icon_theme_selector::{IconThemeSelector, IconThemeSelectorDelegate};
+use crate::theme_preview::ThemePreview;
 
 actions!(
     theme_selector,
@@ -94,7 +96,7 @@ impl Render for ThemeSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("ThemeSelector")
-            .w(rems(34.))
+            .w(rems(50.))
             .child(self.picker.clone())
     }
 }
@@ -342,20 +344,39 @@ impl PickerDelegate for ThemeSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let theme_match = &self.matches.get(ix)?;
+
+        // Get the theme for preview
+        let registry = ThemeRegistry::global(cx);
+        let theme_preview = registry.get(&theme_match.string).ok().map(|theme| {
+            cx.new(|cx| ThemePreview::new(theme, window, cx))
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
-                .spacing(ListItemSpacing::Sparse)
+                .spacing(ListItemSpacing::Dense)
                 .toggle_state(selected)
-                .child(HighlightedLabel::new(
-                    theme_match.string.clone(),
-                    theme_match.positions.clone(),
-                )),
+                .child(
+                    h_flex()
+                        .gap_4()
+                        .items_start()
+                        .py_2()
+                        .child(
+                            v_flex()
+                                .flex_1()
+                                .child(HighlightedLabel::new(
+                                    theme_match.string.clone(),
+                                    theme_match.positions.clone(),
+                                ))
+                        )
+                        .when_some(theme_preview, |this, preview| {
+                            this.child(preview)
+                        })
+                ),
         )
     }
 
