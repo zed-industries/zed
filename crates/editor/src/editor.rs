@@ -9944,6 +9944,12 @@ impl Editor {
             return;
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
+
+        // If hollow, allow deletion on the right side.
+        if self.cursor_shape == CursorShape::Hollow {
+            self.set_clip_at_line_ends(false, cx);
+        }
+
         self.transact(window, cx, |this, window, cx| {
             this.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
@@ -9958,6 +9964,18 @@ impl Editor {
             this.insert("", window, cx);
             this.refresh_edit_prediction(true, false, window, cx);
         });
+
+        // Fixup cursor position after the deletion
+        if self.cursor_shape == CursorShape::Hollow {
+            self.set_clip_at_line_ends(true, cx);
+            self.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(|map, selection| {
+                    let mut cursor = selection.head();
+                    cursor = map.clip_point(cursor, Bias::Left);
+                    selection.collapse_to(cursor, selection.goal)
+                });
+            });
+        }
     }
 
     pub fn backtab(&mut self, _: &Backtab, window: &mut Window, cx: &mut Context<Self>) {
