@@ -1565,7 +1565,7 @@ fn get_scale_factor(native_window: id) -> f32 {
     let factor = unsafe {
         let screen: id = msg_send![native_window, screen];
         if screen.is_null() {
-            return 1.0;
+            return 2.0;
         }
         NSScreen::backingScaleFactor(screen) as f32
     };
