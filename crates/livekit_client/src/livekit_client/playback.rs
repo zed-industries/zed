@@ -155,7 +155,7 @@ impl AudioStack {
     ) -> Result<(crate::LocalAudioTrack, AudioStream)> {
         let legacy_audio_compatible =
             AudioSettings::try_read_global(cx, |setting| setting.legacy_audio_compatible)
-                .unwrap_or_default();
+                .unwrap_or(true);
 
         let source = if legacy_audio_compatible {
             NativeAudioSource::new(
@@ -175,12 +175,14 @@ impl AudioStack {
             )
         };
 
-        let track_name = serde_urlencoded::to_string(Speaker {
+        let speaker = Speaker {
             name: user_name,
             is_staff,
             legacy_audio_compatible,
-        })
-        .context("Could not encode user information in track name")?;
+        };
+        log::info!("Microphone speaker: {speaker:?}");
+        let track_name = serde_urlencoded::to_string(speaker)
+            .context("Could not encode user information in track name")?;
 
         let track = track::LocalAudioTrack::create_audio_track(
             &track_name,
@@ -414,7 +416,7 @@ impl AudioStack {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Speaker {
     pub name: String,
     pub is_staff: bool,

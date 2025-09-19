@@ -308,7 +308,7 @@ impl VoipParts {
         })?;
         let legacy_audio_compatible =
             AudioSettings::try_read_global(cx, |settings| settings.legacy_audio_compatible)
-                .unwrap_or_default();
+                .unwrap_or(true);
 
         Ok(Self {
             legacy_audio_compatible,
