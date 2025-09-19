@@ -1405,6 +1405,7 @@ dependencies = [
  "async-tar",
  "collections",
  "crossbeam",
+ "denoise",
  "gpui",
  "libwebrtc",
  "log",
