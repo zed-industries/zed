@@ -13,6 +13,7 @@ use crate::{
     },
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
+use collections::HashMap;
 use futures::StreamExt;
 use gpui::{
     BackgroundExecutor, DismissEvent, Rgba, SemanticVersion, TestAppContext, UpdateGlobal,
@@ -23773,6 +23774,28 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
     });
 }
 
+fn set_linked_edit_ranges(
+    opening: (Point, Point),
+    closing: (Point, Point),
+    editor: &mut Editor,
+    cx: &mut Context<Editor>,
+) {
+    let Some((buffer, _)) = editor
+        .buffer
+        .read(cx)
+        .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
+    else {
+        panic!("Failed to get buffer for selection position");
+    };
+    let buffer = buffer.read(cx);
+    let buffer_id = buffer.remote_id();
+    let opening_range = buffer.anchor_before(opening.0)..buffer.anchor_after(opening.1);
+    let closing_range = buffer.anchor_before(closing.0)..buffer.anchor_after(closing.1);
+    let mut linked_ranges = HashMap::default();
+    linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
+    editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+}
+
 #[gpui::test]
 async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -23851,22 +23874,12 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges([Point::new(0, 3)..Point::new(0, 3)]);
         });
-        let Some((buffer, _)) = editor
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
-        else {
-            panic!("Failed to get buffer for selection position");
-        };
-        let buffer = buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        let opening_range =
-            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 3));
-        let closing_range =
-            buffer.anchor_before(Point::new(0, 6))..buffer.anchor_after(Point::new(0, 8));
-        let mut linked_ranges = HashMap::default();
-        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
-        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 3)),
+            (Point::new(0, 6), Point::new(0, 8)),
+            editor,
+            cx,
+        );
     });
     let mut completion_handle =
         fake_server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
@@ -23908,6 +23921,77 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), "<head></head>");
     });
+}
+
+#[gpui::test]
+async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "TSX".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["tsx".to_string()],
+                ..LanguageMatcher::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            linked_edit_characters: HashSet::from_iter(['.']),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Test typing > does not extend linked pair
+    cx.set_state("<divˇ<div></div>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 4)),
+            (Point::new(0, 11), Point::new(0, 14)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(">", window, cx);
+    });
+    cx.assert_editor_state("<div>ˇ<div></div>");
+
+    // Test typing . do extend linked pair
+    cx.set_state("<Animatedˇ></Animated>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 9)),
+            (Point::new(0, 12), Point::new(0, 20)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(".", window, cx);
+    });
+    cx.assert_editor_state("<Animated.ˇ></Animated.>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 10)),
+            (Point::new(0, 13), Point::new(0, 21)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("V", window, cx);
+    });
+    cx.assert_editor_state("<Animated.Vˇ></Animated.V>");
 }
 
 #[gpui::test]

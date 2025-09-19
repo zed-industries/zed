@@ -627,7 +627,7 @@ pub fn show_link_definition(
                                 TriggerPoint::Text(trigger_anchor) => {
                                     // If no symbol range returned from language server, use the surrounding word.
                                     let (offset_range, _) =
-                                        snapshot.surrounding_word(*trigger_anchor, false);
+                                        snapshot.surrounding_word(*trigger_anchor, None);
                                     RangeInEditor::Text(
                                         snapshot.anchor_before(offset_range.start)
                                             ..snapshot.anchor_after(offset_range.end),
