@@ -754,15 +754,15 @@ impl VimCommand {
                 .project()
                 .read(cx)
                 .visible_worktrees(cx)
-                .find_map(|worktree| Some(worktree.read(cx).as_local()?.abs_path().to_path_buf()))
+                .find_map(|worktree| Some(worktree.read(cx).abs_path().to_path_buf()))
                 .or_else(std::env::home_dir)
                 .unwrap_or_else(|| PathBuf::from(""));
             let path = prefix.join(&args);
 
             let path = if args.ends_with(|c| matches!(c, '\\' | '/')) {
-                path
+                prefix.join(&args)
             } else {
-                path.parent().unwrap_or(Path::new("")).to_path_buf()
+                prefix.join(PathBuf::from(args).parent().unwrap_or(Path::new("")))
             };
 
             let task = workspace.project().update(cx, |project, cx| {
@@ -1507,48 +1507,43 @@ pub fn command_interceptor(
         }]);
     }
 
-    if let Some((command, mut results, filename_autocomplete, positions)) = commands(cx)
-        .iter()
-        .find_map(|command: &'static VimCommand| {
-            let action = command.parse(query, &range, cx)?;
-            let (args, bang) = command.get_command_args_bang(query.into())?;
-
-            let command_string = range_prefix.clone() + command.prefix + command.suffix;
-
-            let mut display_string = ":".to_owned() + &command_string;
-            if query.contains('!') {
-                display_string.push('!');
-            }
-            let positions = generate_positions(&display_string, &(range_prefix.clone() + query));
-
-            let results = vec![CommandInterceptResult {
-                action,
-                string: display_string.clone(),
-                positions: positions.clone(),
-            }];
-
-            // The following are valid autocomplete scenarios
-            // :w!filename.txt
-            // :w filename.txt
-            // :w[space]
-            let filename_autocomplete =
-                command.has_filename && (has_trailing_space || bang || !args.is_empty());
-
-            Some((command, results, filename_autocomplete, positions))
-        })
+    if let Some((command, action, args, bang)) =
+        commands(cx)
+            .iter()
+            .find_map(|command: &'static VimCommand| {
+                let action = command.parse(query, &range, cx)?;
+                let (args, bang) = command.get_command_args_bang(query.into())?;
+                Some((command, action, args, bang))
+            })
     {
-        if !filename_autocomplete {
+        let mut display_string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
+        if query.contains('!') {
+            display_string.push('!');
+        }
+
+        let string = format!("{} {}", &display_string, &args);
+        let positions = generate_positions(&string, &(range_prefix.clone() + query));
+
+        let mut results = vec![CommandInterceptResult {
+            action,
+            string,
+            positions: positions.clone(),
+        }];
+
+        let no_args_positions =
+            generate_positions(&display_string, &(range_prefix.clone() + query));
+
+        // The following are valid autocomplete scenarios
+        // :w!filename.txt
+        // :w filename.txt
+        // :w[space]
+        if !command.has_filename || (!has_trailing_space && !bang && args.is_empty()) {
             return Task::ready(results);
         }
 
         let query = query.to_owned();
         cx.spawn(async move |cx| {
             let query = query.as_str();
-            let command_string = range_prefix.clone() + command.prefix + command.suffix;
-            let mut display_string = ":".to_owned() + &command_string;
-            if query.contains('!') {
-                display_string.push('!');
-            }
             let Ok(filenames) =
                 cx.update(|cx| command.generate_filename_completions(query, workspace, cx))
             else {
@@ -1565,7 +1560,7 @@ pub fn command_interceptor(
             }
             let filenames = fuzzy::match_strings(
                 &candidates,
-                query,
+                &args,
                 false,
                 true,
                 MAX_RESULTS,
@@ -1581,14 +1576,17 @@ pub fn command_interceptor(
                 string,
             } in filenames
             {
-                let action = match cx.update(|cx| command.parse(&string, &range, cx)) {
+                let offset = display_string.len() + 1;
+                let mut positions: Vec<_> = positions.iter().map(|&pos| pos + offset).collect();
+                positions.splice(0..0, no_args_positions.clone());
+                let display_string = format!("{display_string} {string}");
+                let action = match cx.update(|cx| command.parse(&display_string[1..], &range, cx)) {
                     Ok(Some(action)) => action,
                     _ => continue,
                 };
-                let string = ":".to_string() + &string;
                 results.push(CommandInterceptResult {
                     action,
-                    string,
+                    string: display_string,
                     positions,
                 });
             }
