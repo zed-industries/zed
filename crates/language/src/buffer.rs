@@ -550,17 +550,17 @@ pub enum CharKind {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum ScopeContext {
     /// Character classification for completion queries.
-    /// 
+    ///
     /// This context treats certain characters as word constituents that would
-    /// normally be considered punctuation, such as '-' in Tailwind classes 
+    /// normally be considered punctuation, such as '-' in Tailwind classes
     /// ("bg-yellow-100") or '.' in import paths ("foo.ts").
     Completion,
     /// Character classification for linked edits.
-    /// 
+    ///
     /// This context handles characters that should be treated as part of
     /// identifiers during linked editing operations, such as '.' in JSX
     /// component names like `<Animated.View>`.
-    LinkedEdits,
+    LinkedEdit,
 }
 
 /// A runnable is a set of data about a region that could be resolved into a task
@@ -5274,7 +5274,7 @@ impl CharClassifier {
         if let Some(scope) = &self.scope {
             let characters = match self.scope_context {
                 Some(ScopeContext::Completion) => scope.completion_query_characters(),
-                Some(ScopeContext::LinkedEdits) => scope.word_characters(),
+                Some(ScopeContext::LinkedEdit) => scope.word_characters(),
                 None => scope.word_characters(),
             };
             if let Some(characters) = characters

@@ -4245,7 +4245,7 @@ impl Editor {
                 let is_word_char = text.chars().next().is_none_or(|char| {
                     let classifier = snapshot
                         .char_classifier_at(start_anchor.to_offset(&snapshot))
-                        .ignore_punctuation(true);
+                        .scope_context(Some(ScopeContext::LinkedEdit));
                     classifier.is_word(char)
                 });
 
