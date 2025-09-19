@@ -51,6 +51,7 @@ node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
 proto.workspace = true
+postcard.workspace = true
 release_channel.workspace = true
 remote.workspace = true
 reqwest_client.workspace = true
@@ -64,6 +65,7 @@ smol.workspace = true
 sysinfo.workspace = true
 telemetry_events.workspace = true
 tokio = { workspace = true, features = ["full", "rt-multi-thread"] }
+tokio-util.workspace = true
 util.workspace = true
 watch.workspace = true
 worktree.workspace = true

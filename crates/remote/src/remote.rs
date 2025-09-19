@@ -9,7 +9,8 @@ pub use remote_client::{
     RemoteConnectionOptions, RemotePlatform,
 };
 pub use transport::iroh::{
-    IrohConnectionOptions, IrohZedListener, IrohZedRemote, ZED_ALPN, ZedIrohTicket,
+    IrohConnectionOptions, IrohZedListener, IrohZedRemote, MAX_MESSAGE_SIZE, Message, ZED_ALPN,
+    ZedIrohTicket,
 };
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
 pub use transport::wsl::WslConnectionOptions;

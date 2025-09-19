@@ -31,6 +31,7 @@ pub enum Commands {
         #[arg(long)]
         identifier: String,
     },
+    P2p,
     Version,
 }
 
@@ -39,6 +40,8 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
     use anyhow::Context;
     use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
     use unix::{ExecuteProxyError, execute_proxy, execute_run};
+
+    use crate::unix::execute_p2p;
 
     match command {
         Commands::Run {
@@ -64,6 +67,7 @@ pub fn run(command: Commands) -> anyhow::Result<()> {
                 }
             })
             .context("running proxy on the remote server"),
+        Commands::P2p => execute_p2p().context("running p2p on the remote server"),
         Commands::Version => {
             let release_channel = *RELEASE_CHANNEL;
             match release_channel {

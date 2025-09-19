@@ -4,7 +4,7 @@ use crate::{
     remote_client::{CommandTemplate, RemoteConnection, RemoteConnectionOptions},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -40,7 +40,7 @@ use util::paths::{PathStyle, RemotePathBuf};
 pub const ZED_ALPN: &[u8] = b"iroh/zed/remote/0";
 
 // max length of an RPC message in bytes
-const MAX_MESSAGE_SIZE: usize = 10000;
+pub const MAX_MESSAGE_SIZE: usize = 10000;
 
 #[derive(Debug, Clone)]
 pub struct IrohZedRemote {
@@ -138,6 +138,7 @@ impl RemoteConnection for IrohZedRemote {
         cx: &mut AsyncApp,
     ) -> Task<Result<i32>> {
         delegate.set_status(Some("Opening stream"), cx);
+
         let addr = self.options.ticket.node.clone();
         match handle_rpc_messages(
             &self.endpoint,
@@ -247,18 +248,23 @@ fn handle_rpc_messages(
             anyhow::Ok(())
         });
 
-        anyhow::Ok((writer_task, reader_task))
+        anyhow::Ok((writer_task, reader_task, conn))
     })?;
 
     let task = cx.background_spawn(async move {
         match task.await {
-            Ok(Ok((writer_task, reader_task))) => {
-                let res = tokio::join!(writer_task, reader_task);
-                match res {
-                    (Ok(_), Ok(_)) => Ok(0),
-                    (Err(error), _) => Err(anyhow!("writer failed: {error:?}")),
-                    (_, Err(error)) => Err(anyhow!("reader failed: {error:?}")),
-                }
+            Ok(Ok((writer_task, reader_task, conn))) => {
+                let res = tokio::select! {
+                    res = writer_task => {
+                        res.context("writer")
+                    }
+                    res = reader_task => {
+                        res.context("reader")
+                    }
+                };
+                log::warn!("exiting iroh conn");
+                conn.close(1u32.try_into().unwrap(), b"exit");
+                res.map(|_| 0)
             }
             Ok(Err(error)) => Err(error),
             Err(error) => Err(anyhow!(error)),
@@ -381,33 +387,45 @@ impl ProtocolHandler for IrohZedProtocolHandler {
                     }
                 }
             }
+
+            log::warn!("exiting write task");
         });
 
-        while let Some(encoded_env) = read.try_next().await? {
-            match postcard::from_bytes::<Message>(&encoded_env) {
-                Ok(message) => {
-                    log::info!("received message {:?}", message);
-                    match message {
-                        Message::Envelope(envelope) => {
-                            if let Err(error) = self.incoming_tx.unbounded_send(envelope) {
-                                log::error!(
-                                    "failed to send message to application: {error:?}. exiting."
-                                );
-                                break;
+        let incoming_tx = self.incoming_tx.clone();
+        tokio::task::spawn(async move {
+            while let Some(raw) = read.next().await {
+                let raw = match raw {
+                    Ok(raw) => raw,
+                    Err(error) => {
+                        log::error!("received in valid message: {error:?}");
+                        break;
+                    }
+                };
+                match postcard::from_bytes::<Message>(&raw) {
+                    Ok(message) => {
+                        log::info!("received message {:?}", message);
+                        match message {
+                            Message::Envelope(envelope) => {
+                                if let Err(error) = incoming_tx.unbounded_send(envelope) {
+                                    log::error!(
+                                        "failed to send message to application: {error:?}. exiting."
+                                    );
+                                    break;
+                                }
                             }
+                            Message::Log(record) => record.log(log::logger()),
                         }
-                        Message::Log(record) => record.log(log::logger()),
+                    }
+                    Err(error) => {
+                        log::error!("received in valid message: {error:?}.");
                     }
                 }
-                Err(error) => {
-                    log::error!("received in valid message: {error:?}.");
-                }
             }
-        }
+        });
 
-        // Wait until the remote closes the connection, which it does once it
-        // received the response.
-        connection.closed().await;
+        // // Wait until the remote closes the connection, which it does once it
+        // // received the response.
+        // connection.closed().await;
 
         Ok(())
     }

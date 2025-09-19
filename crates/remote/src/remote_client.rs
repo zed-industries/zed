@@ -330,6 +330,7 @@ impl RemoteClient {
         cx: &mut App,
     ) -> Task<Result<Option<Entity<Self>>>> {
         let unique_identifier = unique_identifier.to_string(cx);
+        log::info!("CONNECT: {}", unique_identifier);
         cx.spawn(async move |cx| {
             let success = Box::pin(async move {
                 let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -446,6 +447,7 @@ impl RemoteClient {
     }
 
     fn reconnect(&mut self, cx: &mut Context<Self>) -> Result<()> {
+        log::info!("RECONNECT");
         let can_reconnect = self
             .state
             .as_ref()
