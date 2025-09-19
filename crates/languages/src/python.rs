@@ -1606,7 +1606,6 @@ pub(crate) struct BasedPyrightLspAdapter {
 impl BasedPyrightLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("basedpyright");
     const BINARY_NAME: &'static str = "basedpyright-langserver";
-    // FIXME
     const SERVER_PATH: &str = "node_modules/basedpyright/langserver.index.js";
     const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "basedpyright/langserver.index.js";
 
@@ -1845,7 +1844,7 @@ impl LspInstaller for BasedPyrightLspAdapter {
                 arguments: vec!["--stdio".into()],
             })
         } else {
-            // FIXME shouldn't this be self.node.binary_path()?
+            // TODO shouldn't this be self.node.binary_path()?
             let node = delegate.which("node".as_ref()).await?;
             let (node_modules_path, _) = delegate
                 .npm_package_installed_version(Self::SERVER_NAME.as_ref())
