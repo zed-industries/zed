@@ -313,8 +313,8 @@ objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "process"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -343,8 +343,8 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "process"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -372,8 +372,8 @@ objc2-metal = { version = "0.3" }
 object = { version = "0.36", default-features = false, features = ["archive", "read_core", "unaligned", "write"] }
 prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "process"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -402,8 +402,8 @@ object = { version = "0.36", default-features = false, features = ["archive", "r
 proc-macro2 = { version = "1", default-features = false, features = ["span-locations"] }
 prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "process"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "termios", "time"] }
 scopeguard = { version = "1" }
 security-framework = { version = "3", features = ["OSX_10_14"] }
 security-framework-sys = { version = "2", features = ["OSX_10_14"] }
@@ -443,8 +443,8 @@ prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["pro
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
@@ -484,8 +484,8 @@ proc-macro2 = { version = "1", default-features = false, features = ["span-locat
 prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -525,8 +525,8 @@ prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["pro
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
@@ -566,8 +566,8 @@ proc-macro2 = { version = "1", default-features = false, features = ["span-locat
 prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -658,8 +658,8 @@ prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["pro
 quote = { version = "1" }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
@@ -699,8 +699,8 @@ proc-macro2 = { version = "1", default-features = false, features = ["span-locat
 prost-5ef9efb8ec2df382 = { package = "prost", version = "0.12", features = ["prost-derive"] }
 rand-274715c4dabd11b0 = { package = "rand", version = "0.9" }
 ring = { version = "0.17", features = ["std"] }
-rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "pty", "shm", "stdio", "system", "termios", "time"] }
-rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["process", "termios", "time"] }
+rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
+rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
