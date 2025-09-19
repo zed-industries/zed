@@ -2,9 +2,7 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{AppContext, DismissEvent, Entity, EventEmitter, Focusable, Styled};
 use ui::{
-    ActiveTheme, App, Context, DynamicSpacing, Headline, HeadlineSize, Icon, IconName, IconSize,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, StyledExt,
-    StyledTypography, Window, div, h_flex, v_flex,
+    div, h_flex, v_flex, ActiveTheme, AnyElement, App, Context, DynamicSpacing, Headline, HeadlineSize, Icon, IconName, IconSize, InteractiveElement, IntoElement, ParentElement, Render, SharedString, StyledExt, StyledTypography, Window
 };
 use workspace::ModalView;
 
@@ -33,7 +31,7 @@ impl AskPassModal {
     ) -> Self {
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            if prompt.contains("yes/no") {
+            if prompt.contains("yes/no") || prompt.contains("Username") {
                 editor.set_masked(false, cx);
             } else {
                 editor.set_masked(true, cx);
@@ -57,6 +55,17 @@ impl AskPassModal {
             tx.send(self.editor.read(cx).text(cx)).ok();
         }
         cx.emit(DismissEvent);
+    }
+
+    fn render_hint(&mut self, &mut Context<Self>) -> Option<AnyElement> {
+        // if (self.prompt.contains("Password") || self.prompt.contains("Username")) && self.prompt.contains("github.com") {
+            return Some(
+                div().p_2().child("OOPS!").into()
+            )
+
+        // }
+
+        // None
     }
 }
 
@@ -97,5 +106,6 @@ impl Render for AskPassModal {
                     .child(self.prompt.clone())
                     .child(self.editor.clone()),
             )
+                .children(self.render_hint(cx))
     }
 }
