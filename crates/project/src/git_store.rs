@@ -7,7 +7,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
-use askpass::AskPassDelegate;
+use askpass::{AskPassDelegate, EncryptedPassword};
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -2100,7 +2100,10 @@ impl GitStore {
             anyhow::bail!("no askpass found");
         };
 
-        let response = askpass.ask_password(envelope.payload.prompt).await?;
+        let response = askpass
+            .ask_password(envelope.payload.prompt)
+            .await?
+            .try_into()?;
 
         delegates
             .lock()
@@ -2740,7 +2743,10 @@ fn make_remote_delegate(
                 prompt,
             });
             cx.spawn(async move |_, _| {
-                tx.send(response.await?.response).ok();
+                tx.send(EncryptedPassword::try_from(
+                    response.await?.response.as_ref(),
+                )?)
+                .ok();
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);

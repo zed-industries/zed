@@ -347,7 +347,14 @@ impl SshRemoteConnection {
         #[cfg(not(target_os = "windows"))]
         let socket = SshSocket::new(connection_options, socket_path)?;
         #[cfg(target_os = "windows")]
-        let socket = SshSocket::new(connection_options, &temp_dir, askpass.get_password())?;
+        let socket = SshSocket::new(
+            connection_options,
+            &temp_dir,
+            askpass
+                .get_password()
+                .context("Failed to fetch askpass password")?
+                .try_into()?,
+        )?;
         drop(askpass);
 
         let ssh_platform = socket.platform().await?;

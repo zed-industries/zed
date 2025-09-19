@@ -203,8 +203,12 @@ impl RemoteConnectionPrompt {
     pub fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
             self.status_message = Some("Connecting".into());
+            let pw = editor.text(cx);
+            if let Ok(secure) = EncryptedPassword::try_from(&pw) {
+                PassStore::global(cx).cache_password(self.connection_string, secure);
+            }
             self.editor.update(cx, |editor, cx| {
-                tx.send(editor.text(cx)).ok();
+                tx.send(pw).ok();
                 editor.clear(window, cx);
             });
         }
@@ -531,7 +535,12 @@ pub fn connect_over_ssh(
     cx: &mut App,
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
-    let known_password = connection_options.password.clone();
+    let known_password = connection_options
+        .password
+        .clone()
+        .password
+        .clone()
+        .or_else(|| PassStore::global(cx).cached_password(connection_options.connection_string()));
     let (tx, rx) = oneshot::channel();
     ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
 

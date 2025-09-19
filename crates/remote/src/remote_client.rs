@@ -1,5 +1,5 @@
 use crate::{
-    EncryptedPassword, SshConnectionOptions,
+    SshConnectionOptions,
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
@@ -8,6 +8,7 @@ use crate::{
     },
 };
 use anyhow::{Context as _, Result, anyhow};
+use askpass::EncryptedPassword;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -1376,11 +1377,9 @@ impl ProtoClient for ChannelClient {
 #[cfg(any(test, feature = "test-support"))]
 mod fake {
     use super::{ChannelClient, RemoteClientDelegate, RemoteConnection, RemotePlatform};
-    use crate::{
-        EncryptedPassword,
-        remote_client::{CommandTemplate, RemoteConnectionOptions},
-    };
+    use crate::remote_client::{CommandTemplate, RemoteConnectionOptions};
     use anyhow::Result;
+    use askpass::EncryptedPassword;
     use async_trait::async_trait;
     use collections::HashMap;
     use futures::{

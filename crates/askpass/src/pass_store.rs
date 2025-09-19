@@ -3,9 +3,16 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 use zeroize::Zeroize;
 
+type LengthWithoutPadding = u32;
 #[derive(Clone)]
-pub struct EncryptedPassword(Vec<u8>, u32);
+pub struct EncryptedPassword(Vec<u8>, LengthWithoutPadding);
 
+impl TryFrom<EncryptedPassword> for String {
+    type Error = anyhow::Error;
+    fn try_from(this: EncryptedPassword) -> Result<String> {
+        decrypt_password(this)
+    }
+}
 impl Drop for EncryptedPassword {
     fn drop(&mut self) {
         self.0.zeroize();
@@ -73,14 +80,14 @@ pub(crate) fn decrypt_password(mut password: EncryptedPassword) -> Result<String
 pub struct PassStore(BTreeMap<String, EncryptedPassword>);
 
 impl PassStore {
-    pub fn cached_password(&self, _url: &str) -> Option<EncryptedPassword> {
-        self.0.get(_url).cloned()
+    pub fn cached_password(&self, url: &str) -> Option<EncryptedPassword> {
+        self.0.get(url).cloned()
     }
 
-    pub fn cache_password(&mut self, _url: String, _pw: EncryptedPassword) -> Result<()> {
+    pub fn cache_password(&mut self, url: String, pw: EncryptedPassword) -> Result<()> {
         // This function is currently a no-op on non Windows platforms, as we use a MasterPass on Linux and Mac with ssh.
         if cfg!(windows) {
-            self.0.insert(_url, _pw);
+            self.0.insert(url, pw);
         }
         Ok(())
     }

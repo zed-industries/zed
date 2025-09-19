@@ -16,6 +16,8 @@ use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
 use util::ResultExt as _;
 
+use crate::pass_store::decrypt_password;
+
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
     CancelledByUser,
@@ -113,10 +115,12 @@ impl AskPassSession {
                     .context("getting askpass password")
                     .log_err()
                 {
-                    stream.write_all(password.as_bytes()).await.log_err();
                     #[cfg(target_os = "windows")]
                     {
-                        *askpass_secret.lock() = password;
+                        askpass_secret.get_or_init(|| password.clone());
+                    }
+                    if let Ok(decrypted) = decrypt_password(password) {
+                        stream.write_all(decrypted.as_bytes()).await.log_err();
                     }
                 } else {
                     if let Some(kill_tx) = kill_tx.take() {
@@ -197,8 +201,8 @@ impl AskPassSession {
 
     /// This will return the password that was last set by the askpass script.
     #[cfg(target_os = "windows")]
-    pub fn get_password(&self) -> String {
-        self.secret.lock().clone()
+    pub fn get_password(&self) -> Option<EncryptedPassword> {
+        self.secret.get().cloned()
     }
 }
 
