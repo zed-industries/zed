@@ -1514,7 +1514,6 @@ impl PickerDelegate for DebugDelegate {
         let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
-            char_count: hit.string.chars().count(),
             color: Color::Default,
         };
 
