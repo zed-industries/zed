@@ -3838,7 +3838,11 @@ impl EditorElement {
                                                 Tooltip::with_meta_in(
                                                     "Toggle Excerpt Fold",
                                                     Some(&ToggleFold),
-                                                    "Alt+click to toggle all",
+                                                    if cfg!(target_os = "macos") {
+                                                        "Option+click to toggle all"
+                                                    } else {
+                                                        "Alt+click to toggle all"
+                                                    },
                                                     &focus_handle,
                                                     window,
                                                     cx,
