@@ -808,8 +808,8 @@ impl settings::Settings for ThemeSettings {
             theme_overrides: HashMap::default(),
             active_icon_theme: themes
                 .get_icon_theme(icon_theme_selection.icon_theme(*system_appearance))
-                .ok()
-                .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()),
+                .or_else(|_| themes.default_icon_theme())
+                .unwrap(),
             icon_theme_selection: Some(icon_theme_selection),
             ui_density: content.ui_density.unwrap_or_default().into(),
             unnecessary_code_fade: content.unnecessary_code_fade.unwrap().clamp(0.0, 0.9),
