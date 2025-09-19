@@ -23924,50 +23924,7 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_linked_editing_with_non_word_characters(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-    let language = Arc::new(Language::new(
-        LanguageConfig {
-            name: "HTML".into(),
-            matcher: LanguageMatcher {
-                path_suffixes: vec!["html".to_string()],
-                ..LanguageMatcher::default()
-            },
-            brackets: BracketPairConfig {
-                pairs: vec![BracketPair {
-                    start: "<".into(),
-                    end: ">".into(),
-                    close: true,
-                    ..Default::default()
-                }],
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        Some(tree_sitter_html::LANGUAGE.into()),
-    ));
-    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
-
-    cx.set_state("<divˇ<div>Hello</div>");
-
-    cx.update_editor(|editor, _, cx| {
-        set_linked_edit_ranges(
-            (Point::new(0, 1), Point::new(0, 4)),
-            (Point::new(0, 16), Point::new(0, 19)),
-            editor,
-            cx,
-        );
-    });
-    cx.update_editor(|editor, window, cx| {
-        editor.handle_input(">", window, cx);
-    });
-    cx.assert_editor_state("<div>ˇ<div>Hello</div>");
-}
-
-#[gpui::test]
-async fn test_linked_editing_with_non_word_characters_2(cx: &mut TestAppContext) {
+async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -23994,12 +23951,27 @@ async fn test_linked_editing_with_non_word_characters_2(cx: &mut TestAppContext)
     ));
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
-    cx.set_state("<Animatedˇ>Hello</Animated>");
+    // Test typing > does not extend linked pair
+    cx.set_state("<divˇ<div></div>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 4)),
+            (Point::new(0, 11), Point::new(0, 14)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(">", window, cx);
+    });
+    cx.assert_editor_state("<div>ˇ<div></div>");
 
+    // Test typing . do extend linked pair
+    cx.set_state("<Animatedˇ></Animated>");
     cx.update_editor(|editor, _, cx| {
         set_linked_edit_ranges(
             (Point::new(0, 1), Point::new(0, 9)),
-            (Point::new(0, 17), Point::new(0, 25)),
+            (Point::new(0, 12), Point::new(0, 20)),
             editor,
             cx,
         );
@@ -24007,12 +23979,11 @@ async fn test_linked_editing_with_non_word_characters_2(cx: &mut TestAppContext)
     cx.update_editor(|editor, window, cx| {
         editor.handle_input(".", window, cx);
     });
-    cx.assert_editor_state("<Animated.ˇ>Hello</Animated.>");
-
+    cx.assert_editor_state("<Animated.ˇ></Animated.>");
     cx.update_editor(|editor, _, cx| {
         set_linked_edit_ranges(
             (Point::new(0, 1), Point::new(0, 10)),
-            (Point::new(0, 18), Point::new(0, 26)),
+            (Point::new(0, 13), Point::new(0, 21)),
             editor,
             cx,
         );
@@ -24020,7 +23991,7 @@ async fn test_linked_editing_with_non_word_characters_2(cx: &mut TestAppContext)
     cx.update_editor(|editor, window, cx| {
         editor.handle_input("V", window, cx);
     });
-    cx.assert_editor_state("<Animated.Vˇ>Hello</Animated.V>");
+    cx.assert_editor_state("<Animated.Vˇ></Animated.V>");
 }
 
 #[gpui::test]
