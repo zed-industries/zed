@@ -84,7 +84,7 @@ impl<S: Source> Denoiser<S> {
             .spawn(move || {
                 run_neural_denoiser(denoised_tx, input_rx);
             })
-            .expect("Should be ablet to spawn threads");
+            .unwrap();
 
         Ok(Self {
             inner: source,

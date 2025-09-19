@@ -138,13 +138,13 @@ impl Engine {
 
         const SPECTRUM_INPUT: &str = "input_2";
         const MEMORY_INPUT: &str = "input_3";
-        let spectrum =
+        let memory_input =
             Tensor::from_slice::<_, f32>(&self.in_magnitude, (1, 1, FFT_OUT_SIZE), &Device::Cpu)
                 .expect("the in magnitude has enough elements to fill the Tensor");
 
         let inputs = HashMap::from([
-            (SPECTRUM_INPUT.to_string(), spectrum),
-            (MEMORY_INPUT.to_string(), self.spectral_memory.clone()),
+            (MEMORY_INPUT.to_string(), memory_input),
+            (SPECTRUM_INPUT.to_string(), self.spectral_memory.clone()),
         ]);
         inputs
     }
