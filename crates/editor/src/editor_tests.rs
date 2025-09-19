@@ -23972,6 +23972,95 @@ async fn test_linked_editing_with_non_word_characters(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_linked_editing_with_non_word_characters_2(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "TSX".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["tsx".to_string()],
+                ..LanguageMatcher::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            linked_edit_characters: HashSet::from_iter(['.']),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Set up linked editing ranges for HTML tags
+    cx.set_state("<Animatedˇ>Hello</Animated>");
+
+    // Simulate linked editing ranges being set up (as would happen from language server)
+    cx.update_editor(|editor, window, cx| {
+        let Some((buffer, _)) = editor
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
+        else {
+            panic!("Failed to get buffer for selection position");
+        };
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        // Opening tag "Animated" spans positions 1-8 (inclusive)
+        let opening_range =
+            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 9));
+        // Closing tag "Animated" spans positions 17-24 (inclusive)
+        let closing_range =
+            buffer.anchor_before(Point::new(0, 17))..buffer.anchor_after(Point::new(0, 25));
+        let mut linked_ranges = HashMap::default();
+        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
+        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+    });
+
+    // Type '.' which is a non-word character
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(".", window, cx);
+    });
+    cx.assert_editor_state("<Animated.ˇ>Hello</Animated.>");
+
+    // Update ranges for the new text length after typing "."
+    cx.update_editor(|editor, window, cx| {
+        let Some((buffer, _)) = editor
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
+        else {
+            panic!("Failed to get buffer for selection position");
+        };
+        let buffer = buffer.read(cx);
+        let buffer_id = buffer.remote_id();
+        // Opening tag "Animated." spans positions 1-9 (inclusive)
+        let opening_range =
+            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 10));
+        // Closing tag "Animated." spans positions 18-26 (inclusive)
+        let closing_range =
+            buffer.anchor_before(Point::new(0, 18))..buffer.anchor_after(Point::new(0, 26));
+        let mut linked_ranges = HashMap::default();
+        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
+        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+    });
+
+    // Type 'V' which is a non-word character
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("V", window, cx);
+    });
+
+    cx.assert_editor_state("<Animated.Vˇ>Hello</Animated.V>");
+}
+
+#[gpui::test]
 async fn test_invisible_worktree_servers(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
