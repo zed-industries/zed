@@ -14,7 +14,7 @@ use itertools::Itertools;
 use postage::watch;
 use project::Worktree;
 use strum::VariantArray;
-use util::{ResultExt as _, maybe};
+use util::{ResultExt as _, maybe, rel_path::RelPath};
 use worktree::ChildEntriesOptions;
 
 /// Matches the most common license locations, with US and UK English spelling.
@@ -290,7 +290,7 @@ impl LicenseDetectionWatcher {
             include_dirs: false,
             include_ignored: true,
         };
-        for top_file in local_worktree.child_entries_with_options(Path::new(""), options) {
+        for top_file in local_worktree.child_entries_with_options(RelPath::empty(), options) {
             let path_bytes = top_file.path.as_os_str().as_encoded_bytes();
             if top_file.is_created() && LICENSE_FILE_NAME_REGEX.is_match(path_bytes) {
                 let rel_path = top_file.path.clone();
@@ -317,7 +317,7 @@ impl LicenseDetectionWatcher {
         let _is_open_source_task = cx.background_spawn(async move {
             let mut eligible_licenses = BTreeSet::new();
             while let Some(rel_path) = files_to_check_rx.next().await {
-                let abs_path = worktree_abs_path.join(&rel_path);
+                let abs_path = worktree.read(cx).absolutize(&rel_path);
                 let was_open_source = !eligible_licenses.is_empty();
                 if Self::is_path_eligible(&fs, abs_path).await.unwrap_or(false) {
                     eligible_licenses.insert(rel_path);

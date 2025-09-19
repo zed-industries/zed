@@ -183,7 +183,7 @@ impl TasksModal {
                 id: _,
                 directory_in_worktree: dir,
                 id_base: _,
-            } => dir.ends_with(".zed"),
+            } => dir.file_name().is_some_and(|name| name == ".zed"),
             _ => false,
         });
         // todo(debugger): We're always adding lsp tasks here even if prefer_lsp is false
@@ -194,7 +194,7 @@ impl TasksModal {
                 TaskSourceKind::Worktree {
                     directory_in_worktree: dir,
                     ..
-                } => !(hide_vscode && dir.ends_with(".vscode")),
+                } => !(hide_vscode && dir.file_name().is_some_and(|name| name == ".vscode")),
                 TaskSourceKind::Language { .. } => add_current_language_tasks,
                 _ => true,
             }

@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::iter;
 use std::mem;
 use std::ops::Range;
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -335,8 +336,9 @@ impl Markdown {
                 }
 
                 for path in paths {
-                    if let Ok(rel_path) = RelPath::new(&path)
-                        && let Ok(language) = registry.language_for_file_path(&rel_path).await
+                    if let Ok(language) = registry
+                        .language_for_file_path(Path::new(path.as_ref()))
+                        .await
                     {
                         languages_by_path.insert(path, language);
                     }

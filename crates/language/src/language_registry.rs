@@ -718,9 +718,9 @@ impl LanguageRegistry {
 
     pub fn language_for_file_path<'a>(
         self: &Arc<Self>,
-        path: &'a RelPath,
+        path: &'a Path,
     ) -> impl Future<Output = Result<Arc<Language>>> + 'a {
-        let available_language = self.language_for_file_internal(path.as_std_path(), None, None);
+        let available_language = self.language_for_file_internal(path, None, None);
 
         let this = self.clone();
         async move {

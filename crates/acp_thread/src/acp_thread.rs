@@ -573,7 +573,7 @@ impl ToolCallContent {
             ))),
             acp::ToolCallContent::Diff { diff } => Ok(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
-                    diff.path,
+                    diff.path.to_string_lossy().to_string(),
                     diff.old_text,
                     diff.new_text,
                     language_registry,

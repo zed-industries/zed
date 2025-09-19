@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::Workspace;
 use worktree::ChildEntriesOptions;
 
@@ -48,7 +48,7 @@ impl FileSlashCommand {
                         include_dirs: true,
                         include_ignored: false,
                     };
-                    let entries = worktree.child_entries_with_options(Path::new(""), options);
+                    let entries = worktree.child_entries_with_options(RelPath::empty(), options);
                     entries.map(move |entry| {
                         (
                             project::ProjectPath {
@@ -61,14 +61,15 @@ impl FileSlashCommand {
                 }))
                 .collect::<Vec<_>>();
 
-            let path_prefix: Arc<str> = Arc::default();
+            let path_prefix: Arc<RelPath> = RelPath::empty().into();
             Task::ready(
                 entries
                     .into_iter()
                     .filter_map(|(entry, is_dir)| {
                         let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
-                        let mut full_path = PathBuf::from(worktree.read(cx).root_name());
-                        full_path.push(&entry.path);
+                        let full_path = RelPath::new(worktree.read(cx).root_name())
+                            .unwrap()
+                            .join(&entry.path);
                         Some(PathMatch {
                             score: 0.,
                             positions: Vec::new(),
@@ -149,6 +150,8 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
+        let path_style = workspace.read(cx).path_style(cx);
+
         let paths = self.search_paths(
             arguments.last().cloned().unwrap_or_default(),
             cancellation_flag,
@@ -161,14 +164,14 @@ impl SlashCommand for FileSlashCommand {
                 .await
                 .into_iter()
                 .filter_map(|path_match| {
-                    let text = format!(
-                        "{}{}",
-                        path_match.path_prefix,
-                        path_match.path.to_string_lossy()
-                    );
+                    let text = path_match
+                        .path_prefix
+                        .join(&path_match.path)
+                        .display(path_style)
+                        .to_string();
 
                     let mut label = CodeLabel::default();
-                    let file_name = path_match.path.file_name()?.to_string_lossy();
+                    let file_name = path_match.path.file_name()?;
                     let label_text = if path_match.is_dir {
                         format!("{}/ ", file_name)
                     } else {
@@ -247,14 +250,15 @@ fn collect_files(
     cx.spawn(async move |cx| {
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
-            let mut directory_stack: Vec<Arc<Path>> = Vec::new();
-            let mut folded_directory_names_stack = Vec::new();
+            let mut directory_stack: Vec<Arc<RelPath>> = Vec::new();
+            let mut folded_directory_names: Arc<RelPath> = RelPath::empty().into();
+            // let mut folded_directory_names_stack = Vec::new();
             let mut is_top_level_directory = true;
 
             for entry in snapshot.entries(false, 0) {
-                let mut path_including_worktree_name = PathBuf::new();
-                path_including_worktree_name.push(snapshot.root_name());
-                path_including_worktree_name.push(&entry.path);
+                let path_including_worktree_name = RelPath::new(snapshot.root_name())
+                    .unwrap()
+                    .join(&entry.path);
 
                 if !matchers
                     .iter()
@@ -277,41 +281,35 @@ fn collect_files(
                     )))?;
                 }
 
-                let filename = entry
-                    .path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_str()
-                    .unwrap_or_default()
-                    .to_string();
+                let filename = entry.path.file_name().unwrap_or_default().to_string();
 
                 if entry.is_dir() {
                     // Auto-fold directories that contain no files
                     let mut child_entries = snapshot.child_entries(&entry.path);
+                    let path_style = snapshot.path_style();
                     if let Some(child) = child_entries.next() {
                         if child_entries.next().is_none() && child.kind.is_dir() {
                             if is_top_level_directory {
                                 is_top_level_directory = false;
-                                folded_directory_names_stack.push(
-                                    path_including_worktree_name.to_string_lossy().to_string(),
-                                );
+                                folded_directory_names =
+                                    folded_directory_names.join(&path_including_worktree_name);
                             } else {
-                                folded_directory_names_stack.push(filename.to_string());
+                                folded_directory_names =
+                                    folded_directory_names.join(RelPath::new(&filename).unwrap());
                             }
                             continue;
                         }
                     } else {
                         // Skip empty directories
-                        folded_directory_names_stack.clear();
+                        folded_directory_names = RelPath::empty().into();
                         continue;
                     }
-                    let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
-                    if prefix_paths.is_empty() {
+                    if folded_directory_names.is_empty() {
                         let label = if is_top_level_directory {
                             is_top_level_directory = false;
-                            path_including_worktree_name.to_string_lossy().to_string()
+                            path_including_worktree_name.display(path_style).to_string()
                         } else {
-                            filename
+                            filename.into()
                         };
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,
@@ -320,20 +318,15 @@ fn collect_files(
                         }))?;
                         events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                             SlashCommandContent::Text {
-                                text: label,
+                                text: label.to_string(),
                                 run_commands_in_text: false,
                             },
                         )))?;
                         directory_stack.push(entry.path.clone());
                     } else {
-                        // todo(windows)
-                        // Potential bug: this assumes that the path separator is always `\` on Windows
-                        let entry_name = format!(
-                            "{}{}{}",
-                            prefix_paths,
-                            std::path::MAIN_SEPARATOR_STR,
-                            &filename
-                        );
+                        let entry_name =
+                            folded_directory_names.join(RelPath::new(&filename).unwrap());
+                        let entry_name = entry_name.display(path_style);
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,
                             label: entry_name.clone().into(),
@@ -341,7 +334,7 @@ fn collect_files(
                         }))?;
                         events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                             SlashCommandContent::Text {
-                                text: entry_name,
+                                text: entry_name.to_string(),
                                 run_commands_in_text: false,
                             },
                         )))?;
@@ -356,7 +349,7 @@ fn collect_files(
                 } else if entry.is_file() {
                     let Some(open_buffer_task) = project_handle
                         .update(cx, |project, cx| {
-                            project.open_buffer((worktree_id, &entry.path), cx)
+                            project.open_buffer((worktree_id, entry.path.clone()), cx)
                         })
                         .ok()
                     else {
@@ -367,7 +360,7 @@ fn collect_files(
                         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                         append_buffer_to_output(
                             &snapshot,
-                            Some(&path_including_worktree_name),
+                            Some(path_including_worktree_name.as_std_path()),
                             &mut output,
                         )
                         .log_err();
@@ -465,7 +458,7 @@ mod custom_path_matcher {
     use std::{fmt::Debug as _, path::Path};
 
     use globset::{Glob, GlobSet, GlobSetBuilder};
-    use util::paths::SanitizedPath;
+    use util::{paths::SanitizedPath, rel_path::RelPath};
 
     #[derive(Clone, Debug, Default)]
     pub struct PathMatcher {
@@ -511,7 +504,7 @@ mod custom_path_matcher {
             })
         }
 
-        pub fn is_match<P: AsRef<Path>>(&self, other: P) -> bool {
+        pub fn is_match(&self, other: &RelPath) -> bool {
             let other_path = other.as_ref();
             self.sources
                 .iter()

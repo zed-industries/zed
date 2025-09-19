@@ -233,6 +233,21 @@ impl RelPath {
         Err(())
     }
 
+    pub fn push(&self, component: &str) -> Result<Arc<Self>> {
+        if component.is_empty() {
+            bail!("pushed component is empty");
+        } else if component.contains('/') {
+            bail!("pushed component contains a separator: {component:?}");
+        }
+        let path = format!(
+            "{}{}{}",
+            &self.0,
+            if self.is_empty() { "" } else { "/" },
+            component
+        );
+        Ok(Arc::from(unsafe { Self::new_unchecked(&path) }))
+    }
+
     pub fn join(&self, other: &Self) -> Arc<Self> {
         let result = if self.0.is_empty() {
             Cow::Borrowed(&other.0)
@@ -242,14 +257,6 @@ impl RelPath {
             Cow::Owned(format!("{}/{}", &self.0, &other.0))
         };
         Arc::from(unsafe { Self::new_unchecked(result.as_ref()) })
-    }
-
-    pub fn append_to_abs_path(&self, abs_path: &Path) -> PathBuf {
-        let mut result = abs_path.to_path_buf();
-        for component in self.components() {
-            result.push(component);
-        }
-        result
     }
 
     pub fn to_proto(&self) -> String {

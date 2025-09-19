@@ -194,7 +194,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             let file_language = project
                 .read(cx)
                 .languages()
-                .language_for_file_path(file.path.as_ref());
+                .language_for_file_path(file.path.as_std_path());
             let file_language = cx
                 .background_executor()
                 .block(file_language)
@@ -5520,11 +5520,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::new(
-                    &["*.ts".to_owned(), "*.odd".to_owned()],
-                    PathStyle::local()
-                )
-                .unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], PathStyle::local())
+                    .unwrap(),
                 PathMatcher::empty(PathStyle::local()),
                 false,
                 None,
@@ -5653,11 +5650,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 PathMatcher::empty(PathStyle::local()),
-                PathMatcher::new(
-                    &["*.ts".to_owned(), "*.odd".to_owned()],
-                    PathStyle::local()
-                )
-                .unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], PathStyle::local())
+                    .unwrap(),
                 false,
                 None,
             )
@@ -5898,16 +5892,10 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                PathMatcher::new(
-                    &["*.ts".to_owned(), "*.odd".to_owned()],
-                    PathStyle::local()
-                )
-                .unwrap(),
-                PathMatcher::new(
-                    &["*.ts".to_owned(), "*.odd".to_owned()],
-                    PathStyle::local()
-                )
-                .unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], PathStyle::local())
+                    .unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], PathStyle::local())
+                    .unwrap(),
                 false,
                 None,
             )
@@ -5928,16 +5916,10 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
                 false,
                 true,
                 false,
-                PathMatcher::new(
-                    &["*.ts".to_owned(), "*.odd".to_owned()],
-                    PathStyle::local()
-                )
-                .unwrap(),
-                PathMatcher::new(
-                    &["*.rs".to_owned(), "*.odd".to_owned()],
-                    PathStyle::local()
-                )
-                .unwrap(),
+                PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], PathStyle::local())
+                    .unwrap(),
+                PathMatcher::new(&["*.rs".to_owned(), "*.odd".to_owned()], PathStyle::local())
+                    .unwrap(),
                 false,
                 None,
             )

@@ -3581,7 +3581,7 @@ struct CoreSymbol {
     pub range: Range<Unclipped<PointUtf16>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SymbolLocation {
     InProject(ProjectPath),
     OutsideProject {
@@ -3591,12 +3591,10 @@ pub enum SymbolLocation {
 }
 
 impl SymbolLocation {
-    fn file_name(&self) -> Option<&RelPath> {
+    fn file_name(&self) -> Option<&str> {
         match self {
-            Self::InProject(path) => RelPath::new(path.path.file_name()?).ok(),
-            Self::OutsideProject { abs_path, .. } => {
-                RelPath::new(abs_path.file_name()?.to_str()?).ok()
-            }
+            Self::InProject(path) => path.path.file_name(),
+            Self::OutsideProject { abs_path, .. } => abs_path.file_name()?.to_str(),
         }
     }
 }
@@ -12937,13 +12935,13 @@ async fn populate_labels_for_symbols(
     #[allow(clippy::mutable_key_type)]
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
-    let mut unknown_paths = BTreeSet::<Arc<RelPath>>::new();
+    let mut unknown_paths = BTreeSet::<Arc<str>>::new();
     for symbol in symbols {
         let Some(file_name) = symbol.path.file_name() else {
             continue;
         };
         let language = language_registry
-            .language_for_file_path(file_name)
+            .language_for_file_path(Path::new(file_name))
             .await
             .ok()
             .or_else(|| {

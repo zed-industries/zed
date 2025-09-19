@@ -39,7 +39,7 @@ use std::{
     rc::Rc,
     sync::{Arc, Mutex},
 };
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 
 use zed_env_vars::ZED_STATELESS;
 
@@ -234,7 +234,7 @@ impl ThreadStore {
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
-                        .any(|name| path.as_ref() == Path::new(name))
+                        .any(|name| path.as_ref() == RelPath::new(name).unwrap())
                 }) {
                     self.enqueue_system_prompt_reload();
                 }
@@ -367,7 +367,7 @@ impl ThreadStore {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(name)
+                    .entry_for_path(RelPath::new(name).unwrap())
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })

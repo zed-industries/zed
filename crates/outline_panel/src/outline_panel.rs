@@ -51,7 +51,7 @@ use ui::{
     IndentGuideLayout, Label, LabelCommon, ListItem, ScrollAxes, Scrollbars, StyledExt,
     StyledTypography, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
 };
-use util::{RangeExt, ResultExt, TryFutureExt, debug_panic};
+use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
     OpenInTerminal, WeakItemHandle, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -107,7 +107,7 @@ pub struct OutlinePanel {
     pending_serialization: Task<Option<()>>,
     fs_entries_depth: HashMap<(WorktreeId, ProjectEntryId), usize>,
     fs_entries: Vec<FsEntry>,
-    fs_children_count: HashMap<WorktreeId, HashMap<Arc<Path>, FsChildren>>,
+    fs_children_count: HashMap<WorktreeId, HashMap<Arc<RelPath>, FsChildren>>,
     collapsed_entries: HashSet<CollapsedEntry>,
     unfolded_dirs: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
     selected_entry: SelectedEntry,
@@ -2329,13 +2329,13 @@ impl OutlinePanel {
                         Some(file) => {
                             let path = file.path();
                             let icon = if settings.file_icons {
-                                FileIcons::get_icon(path.as_ref(), cx)
+                                FileIcons::get_icon(path.as_std_path(), cx)
                             } else {
                                 None
                             }
                             .map(Icon::from_path)
                             .map(|icon| icon.color(color).into_any_element());
-                            (icon, file_name(path.as_ref()))
+                            (icon, file_name(path.as_std_path()))
                         }
                         None => (None, "Untitled".to_string()),
                     },
@@ -3518,17 +3518,17 @@ impl OutlinePanel {
                 .buffer_snapshot_for_id(*buffer_id, cx)
                 .and_then(|buffer_snapshot| {
                     let file = File::from_dyn(buffer_snapshot.file())?;
-                    file.worktree.read(cx).absolutize(&file.path).ok()
+                    Some(file.worktree.read(cx).absolutize(&file.path))
                 }),
             PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
                 worktree_id, entry, ..
-            })) => self
-                .project
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)?
-                .read(cx)
-                .absolutize(&entry.path)
-                .ok(),
+            })) => Some(
+                self.project
+                    .read(cx)
+                    .worktree_for_id(*worktree_id, cx)?
+                    .read(cx)
+                    .absolutize(&entry.path),
+            ),
             PanelEntry::FoldedDirs(FoldedDirsEntry {
                 worktree_id,
                 entries: dirs,
@@ -3537,13 +3537,13 @@ impl OutlinePanel {
                 self.project
                     .read(cx)
                     .worktree_for_id(*worktree_id, cx)
-                    .and_then(|worktree| worktree.read(cx).absolutize(&entry.path).ok())
+                    .map(|worktree| worktree.read(cx).absolutize(&entry.path))
             }),
             PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
         }
     }
 
-    fn relative_path(&self, entry: &FsEntry, cx: &App) -> Option<Arc<Path>> {
+    fn relative_path(&self, entry: &FsEntry, cx: &App) -> Option<Arc<RelPath>> {
         match entry {
             FsEntry::ExternalFile(FsEntryExternalFile { buffer_id, .. }) => {
                 let buffer_snapshot = self.buffer_snapshot_for_id(*buffer_id, cx)?;
@@ -3627,7 +3627,7 @@ impl OutlinePanel {
 
                 #[derive(Debug)]
                 struct ParentStats {
-                    path: Arc<Path>,
+                    path: Arc<RelPath>,
                     folded: bool,
                     expanded: bool,
                     depth: usize,

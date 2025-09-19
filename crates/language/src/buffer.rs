@@ -4590,7 +4590,6 @@ impl BufferSnapshot {
         self.file.as_ref()
     }
 
-    /// Resolves the file path (relative to the worktree root) associated with the underlying file.
     pub fn resolve_file_path(&self, cx: &App, include_root: bool) -> Option<PathBuf> {
         if let Some(file) = self.file() {
             if file.path().file_name().is_none() || include_root {

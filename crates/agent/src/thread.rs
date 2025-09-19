@@ -2868,7 +2868,7 @@ impl Thread {
                     if buffer.is_dirty()
                         && let Some(file) = buffer.file()
                     {
-                        let path = file.path().to_string_lossy().to_string();
+                        let path = file.path().as_str().into();
                         unsaved_buffers.push(path);
                     }
                 }

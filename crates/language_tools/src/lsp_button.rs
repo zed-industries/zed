@@ -21,6 +21,7 @@ use ui::{
     DocumentationSide, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, Window, prelude::*,
 };
 
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{StatusItemView, Workspace};
 
 use crate::lsp_log_view;
@@ -148,6 +149,7 @@ impl LanguageServerState {
                                         return;
                                     };
                                     let project = workspace.read(cx).project().clone();
+                                    let path_style = project.read(cx).path_style(cx);
                                     let buffer_store = project.read(cx).buffer_store().clone();
                                     let buffers = state
                                         .read(cx)
@@ -159,6 +161,9 @@ impl LanguageServerState {
                                                 servers.worktree.as_ref()?.upgrade()?.read(cx);
                                             let relative_path =
                                                 abs_path.strip_prefix(&worktree.abs_path()).ok()?;
+                                            let relative_path =
+                                                RelPath::from_std_path(relative_path, path_style)
+                                                    .log_err()?;
                                             let entry = worktree.entry_for_path(&relative_path)?;
                                             let project_path =
                                                 project.read(cx).path_for_entry(entry.id, cx)?;

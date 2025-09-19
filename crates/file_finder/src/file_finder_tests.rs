@@ -7,7 +7,7 @@ use menu::{Confirm, SelectNext, SelectPrevious};
 use pretty_assertions::assert_eq;
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
-use util::path;
+use util::{path, rel_path::rel_path};
 use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace};
 
 #[ctor::ctor]
@@ -1207,7 +1207,7 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
         vec![FoundPath::new(
             ProjectPath {
                 worktree_id,
-                path: Arc::from(Path::new("test/first.rs")),
+                path: rel_path("test/first.rs").into(),
             },
             Some(PathBuf::from(path!("/src/test/first.rs")))
         )],
@@ -1222,14 +1222,14 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
+                    path: rel_path("test/second.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/second.rs")))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/first.rs")))
             ),
@@ -1246,21 +1246,21 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/third.rs")),
+                    path: rel_path("test/third.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/third.rs")))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
+                    path: rel_path("test/second.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/second.rs")))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/first.rs")))
             ),
@@ -1277,21 +1277,21 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
+                    path: rel_path("test/second.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/second.rs")))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/third.rs")),
+                    path: rel_path("test/third.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/third.rs")))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/first.rs")))
             ),
@@ -1392,7 +1392,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         vec![FoundPath::new(
             ProjectPath {
                 worktree_id: external_worktree_id,
-                path: Arc::from(Path::new("")),
+                path: rel_path("").into(),
             },
             Some(PathBuf::from(path!("/external-src/test/third.rs")))
         )],
@@ -1407,14 +1407,14 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
+                    path: rel_path("test/second.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/second.rs")))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id: external_worktree_id,
-                    path: Arc::from(Path::new("")),
+                    path: rel_path("").into(),
                 },
                 Some(PathBuf::from(path!("/external-src/test/third.rs")))
             ),
@@ -1529,7 +1529,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             assert_eq!(history_match, &FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/first.rs")))
             ));
@@ -1572,7 +1572,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             assert_eq!(history_match, &FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
                 Some(PathBuf::from(path!("/src/test/first.rs")))
             ));

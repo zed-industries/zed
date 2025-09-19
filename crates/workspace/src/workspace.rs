@@ -1762,6 +1762,10 @@ impl Workspace {
         &self.project
     }
 
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        self.project.read(cx).path_style(cx)
+    }
+
     pub fn recently_activated_items(&self, cx: &App) -> HashMap<EntityId, usize> {
         let mut history: HashMap<EntityId, usize> = HashMap::default();
 

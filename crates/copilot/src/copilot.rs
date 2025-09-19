@@ -1194,7 +1194,7 @@ async fn get_copilot_lsp(fs: Arc<dyn Fs>, node_runtime: NodeRuntime) -> anyhow::
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use util::{path, paths::PathStyle};
+    use util::{path, paths::PathStyle, rel_path::rel_path};
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
@@ -1258,7 +1258,7 @@ mod tests {
             buffer.file_updated(
                 Arc::new(File {
                     abs_path: path!("/root/child/buffer-1").into(),
-                    path: Path::new("child/buffer-1").into(),
+                    path: rel_path("child/buffer-1").into(),
                 }),
                 cx,
             )
@@ -1355,7 +1355,7 @@ mod tests {
 
     struct File {
         abs_path: PathBuf,
-        path: Arc<Path>,
+        path: Arc<RelPath>,
     }
 
     impl language::File for File {
@@ -1369,7 +1369,7 @@ mod tests {
             }
         }
 
-        fn path(&self) -> &Arc<Path> {
+        fn path(&self) -> &Arc<RelPath> {
             &self.path
         }
 
@@ -1381,7 +1381,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn file_name<'a>(&'a self, _: &'a App) -> &'a std::ffi::OsStr {
+        fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
             unimplemented!()
         }
 

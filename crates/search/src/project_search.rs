@@ -1137,6 +1137,7 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
+        let path_style = self.entity.read(cx).project.read(cx).path_style(cx);
         let text = self.search_query_text(cx);
         let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
@@ -1146,7 +1147,7 @@ impl ProjectSearchView {
         let included_files = self
             .filters_enabled
             .then(|| {
-                match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx), cx) {
+                match self.parse_path_matches(self.included_files_editor.read(cx).text(cx), cx) {
                     Ok(included_files) => {
                         let should_unmark_error =
                             self.panels_with_errors.remove(&InputPanel::Include);
@@ -1162,15 +1163,15 @@ impl ProjectSearchView {
                         if should_mark_error.is_none() {
                             cx.notify();
                         }
-                        PathMatcher::default()
+                        PathMatcher::empty(path_style)
                     }
                 }
             })
-            .unwrap_or_default();
+            .unwrap_or(PathMatcher::empty(path_style));
         let excluded_files = self
             .filters_enabled
             .then(|| {
-                match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx), cx) {
+                match self.parse_path_matches(self.excluded_files_editor.read(cx).text(cx), cx) {
                     Ok(excluded_files) => {
                         let should_unmark_error =
                             self.panels_with_errors.remove(&InputPanel::Exclude);
@@ -1187,11 +1188,11 @@ impl ProjectSearchView {
                         if should_mark_error.is_none() {
                             cx.notify();
                         }
-                        PathMatcher::default()
+                        PathMatcher::empty(path_style)
                     }
                 }
             })
-            .unwrap_or_default();
+            .unwrap_or(PathMatcher::empty(path_style));
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be
@@ -1293,7 +1294,7 @@ impl ProjectSearchView {
     }
 
     fn parse_path_matches(&self, text: String, cx: &App) -> anyhow::Result<PathMatcher> {
-        let path_style = self.entity.read(cx).project.read(cx).path_style();
+        let path_style = self.entity.read(cx).project.read(cx).path_style(cx);
         let queries = text
             .split(',')
             .map(str::trim)
@@ -2347,7 +2348,7 @@ pub mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::DeploySearch;
 
     #[gpui::test]
@@ -3197,7 +3198,7 @@ pub mod tests {
                 .read(cx)
                 .project()
                 .read(cx)
-                .entry_for_path(&(worktree_id, "a").into(), cx)
+                .entry_for_path(&(worktree_id, rel_path("a")).into(), cx)
                 .expect("no entry for /a/ directory")
                 .clone()
         });
@@ -4082,7 +4083,7 @@ pub mod tests {
 
         let editor = workspace
             .update_in(&mut cx, |workspace, window, cx| {
-                workspace.open_path((worktree_id, "one.rs"), None, true, window, cx)
+                workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
             })
             .await
             .unwrap()
