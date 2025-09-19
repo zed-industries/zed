@@ -3213,6 +3213,7 @@ name = "cloud_llm_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -21656,6 +21657,7 @@ dependencies = [
  "util",
  "workspace",
  "workspace-hack",
+ "worktree",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, Signature};
@@ -22,6 +22,7 @@ use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::Project;
 use release_channel::AppVersion;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::time::{Duration, Instant};
 use std::{ops::Range, sync::Arc};
@@ -120,9 +121,17 @@ impl Zeta {
         });
         let excerpt_options = self.excerpt_options.clone();
         let snapshot = buffer.read(cx).snapshot();
+        let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx)) else {
+            return Task::ready(Err(anyhow!("No file path for excerpt")));
+        };
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
+        let worktree_snapshots = project
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).snapshot())
+            .collect::<Vec<_>>();
 
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
@@ -135,6 +144,9 @@ impl Zeta {
 
                 let cursor_point = position.to_point(&snapshot);
 
+                // TODO: make this only true if debug view is open
+                let debug_info = true;
+
                 let Some(request) = EditPredictionContext::gather_context(
                     cursor_point,
                     &snapshot,
@@ -143,12 +155,15 @@ impl Zeta {
                 )
                 .map(|context| {
                     make_cloud_request(
+                        excerpt_path.clone(),
                         context,
                         // TODO pass everything
                         Vec::new(),
                         false,
                         Vec::new(),
                         None,
+                        debug_info,
+                        &worktree_snapshots,
                         index_state.as_deref(),
                     )
                 }) else {
@@ -263,7 +278,7 @@ impl Zeta {
                 } else {
                     request_builder.uri(
                         http_client
-                            .build_zed_llm_url("/predict_edits/v2", &[])?
+                            .build_zed_llm_url("/predict_edits/v3", &[])?
                             .as_ref(),
                     )
                 };
@@ -585,11 +600,14 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
 }
 
 fn make_cloud_request(
+    excerpt_path: PathBuf,
     context: EditPredictionContext,
     events: Vec<predict_edits_v3::Event>,
     can_collect_data: bool,
     diagnostic_groups: Vec<predict_edits_v3::DiagnosticGroup>,
     git_info: Option<cloud_llm_client::PredictEditsGitInfo>,
+    debug_info: bool,
+    worktrees: &Vec<worktree::Snapshot>,
     index_state: Option<&SyntaxIndexState>,
 ) -> predict_edits_v3::PredictEditsRequest {
     let mut signatures = Vec::new();
@@ -597,6 +615,18 @@ fn make_cloud_request(
     let mut referenced_declarations = Vec::new();
 
     for snippet in context.snippets {
+        let project_entry_id = snippet.declaration.project_entry_id();
+        // TODO: Use full paths (worktree rooted) - need to move full_path method to the snapshot.
+        // Note that currently full_path is currently being used for excerpt_path.
+        let Some(path) = worktrees.iter().find_map(|worktree| {
+            let abs_path = worktree.abs_path();
+            worktree
+                .entry_for_id(project_entry_id)
+                .map(|e| abs_path.join(&e.path))
+        }) else {
+            continue;
+        };
+
         let parent_index = index_state.and_then(|index_state| {
             snippet.declaration.parent().and_then(|parent| {
                 add_signature(
@@ -607,9 +637,12 @@ fn make_cloud_request(
                 )
             })
         });
+
         let (text, text_is_truncated) = snippet.declaration.item_text();
         referenced_declarations.push(predict_edits_v3::ReferencedDeclaration {
+            path,
             text: text.into(),
+            range: snippet.declaration.item_range(),
             text_is_truncated,
             signature_range: snippet.declaration.signature_range_in_item_text(),
             parent_index,
@@ -635,7 +668,10 @@ fn make_cloud_request(
     });
 
     predict_edits_v3::PredictEditsRequest {
+        excerpt_path,
         excerpt: context.excerpt_text.body,
+        excerpt_range: context.excerpt.range,
+        cursor_offset: context.cursor_offset_in_excerpt,
         referenced_declarations,
         signatures,
         excerpt_parent,
@@ -644,6 +680,7 @@ fn make_cloud_request(
         can_collect_data,
         diagnostic_groups,
         git_info,
+        debug_info,
     }
 }
 

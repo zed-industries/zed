@@ -66,6 +66,13 @@ impl Declaration {
         }
     }
 
+    pub fn item_range(&self) -> Range<usize> {
+        match self {
+            Declaration::File { declaration, .. } => declaration.item_range_in_file.clone(),
+            Declaration::Buffer { declaration, .. } => declaration.item_range.clone(),
+        }
+    }
+
     pub fn item_text(&self) -> (Cow<'_, str>, bool) {
         match self {
             Declaration::File { declaration, .. } => (

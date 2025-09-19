@@ -20,6 +20,7 @@ pub use syntax_index::*;
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
+    pub cursor_offset_in_excerpt: usize,
     pub snippets: Vec<ScoredSnippet>,
 }
 
@@ -57,17 +58,18 @@ impl EditPredictionContext {
             index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
+        let cursor_offset_in_file = cursor_point.to_offset(buffer);
+        let cursor_offset_in_excerpt = cursor_offset_in_file - excerpt.range.start;
 
         let snippets = if let Some(index_state) = index_state {
             let references = references_in_excerpt(&excerpt, &excerpt_text, buffer);
-            let cursor_offset = cursor_point.to_offset(buffer);
 
             scored_snippets(
                 &index_state,
                 &excerpt,
                 &excerpt_text,
                 references,
-                cursor_offset,
+                cursor_offset_in_file,
                 buffer,
             )
         } else {
@@ -77,6 +79,7 @@ impl EditPredictionContext {
         Some(Self {
             excerpt,
             excerpt_text,
+            cursor_offset_in_excerpt,
             snippets,
         })
     }

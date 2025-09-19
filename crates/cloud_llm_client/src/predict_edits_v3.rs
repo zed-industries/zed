@@ -1,3 +1,4 @@
+use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use std::{ops::Range, path::PathBuf};
 use uuid::Uuid;
@@ -9,6 +10,11 @@ use crate::PredictEditsGitInfo;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRequest {
     pub excerpt: String,
+    pub excerpt_path: PathBuf,
+    /// Within file
+    pub excerpt_range: Range<usize>,
+    /// Within `excerpt`
+    pub cursor_offset: usize,
     /// Within `signatures`
     pub excerpt_parent: Option<usize>,
     pub signatures: Vec<Signature>,
@@ -21,10 +27,20 @@ pub struct PredictEditsRequest {
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
+    #[serde(default)]
+    pub debug_info: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Event {}
+#[serde(tag = "event")]
+pub enum Event {
+    BufferChange {
+        path: Option<PathBuf>,
+        old_path: Option<PathBuf>,
+        diff: String,
+        predicted: bool,
+    },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Signature {
@@ -36,8 +52,11 @@ pub struct Signature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferencedDeclaration {
+    pub path: PathBuf,
     pub text: String,
     pub text_is_truncated: bool,
+    /// Range of `text` within file, potentially truncated according to `text_is_truncated`
+    pub range: Range<usize>,
     /// Range within `text`
     pub signature_range: Range<usize>,
     /// Index within `signatures`.
@@ -79,6 +98,16 @@ pub struct DiagnosticGroup {
 pub struct PredictEditsResponse {
     pub request_id: Uuid,
     pub edits: Vec<Edit>,
+    pub debug_info: Option<DebugInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugInfo {
+    pub prompt: String,
+    pub prompt_planning_time: Duration,
+    pub model_response: String,
+    pub inference_time: Duration,
+    pub parsing_time: Duration,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

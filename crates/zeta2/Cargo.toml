@@ -30,3 +30,4 @@ thiserror.workspace = true
 util.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
+worktree.workspace = true
