@@ -21679,7 +21679,9 @@ impl Editor {
 }
 
 fn vim_enabled(cx: &App) -> bool {
-    vim_mode_setting::VimModeSetting::get_global(cx).0
+    vim_mode_setting::VimModeSetting::try_get(cx)
+        .map(|vim_mode| vim_mode.0)
+        .unwrap_or(false)
 }
 
 fn process_completion_for_edit(
