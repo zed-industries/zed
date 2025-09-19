@@ -17,10 +17,10 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentGuideSettings,
-    IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point,
-    PointUtf16, CharScopeContext, Selection, TextDimension, TextObject, ToOffset as _, ToPoint as _,
-    TransactionId, TreeSitterOptions, Unclipped,
+    CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntry, DiskState, File,
+    IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
+    OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
+    ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
     language_settings::{LanguageSettings, language_settings},
 };
 

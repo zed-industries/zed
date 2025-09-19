@@ -1,4 +1,4 @@
-use crate::{CharClassifier, CharKind, LanguageScope, CharScopeContext};
+use crate::{CharClassifier, CharKind, CharScopeContext, LanguageScope};
 use anyhow::{Context, anyhow};
 use imara_diff::{
     Algorithm, UnifiedDiffBuilder, diff,

@@ -16,8 +16,8 @@ use collections::{HashMap, HashSet};
 use futures::future;
 use gpui::{App, AsyncApp, Entity, Task};
 use language::{
-    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, OffsetRangeExt, PointUtf16,
-    CharScopeContext, ToOffset, ToPointUtf16, Transaction, Unclipped,
+    Anchor, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CharKind, CharScopeContext,
+    OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
     language_settings::{InlayHintKind, LanguageSettings, language_settings},
     point_from_lsp, point_to_lsp,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -2293,8 +2293,10 @@ impl LspCommand for GetCompletions {
                             range_for_token
                                 .get_or_insert_with(|| {
                                     let offset = self.position.to_offset(&snapshot);
-                                    let (range, kind) = snapshot
-                                        .surrounding_word(offset, Some(CharScopeContext::Completion));
+                                    let (range, kind) = snapshot.surrounding_word(
+                                        offset,
+                                        Some(CharScopeContext::Completion),
+                                    );
                                     let range = if kind == Some(CharKind::Word) {
                                         range
                                     } else {
