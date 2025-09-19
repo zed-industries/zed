@@ -52,20 +52,6 @@ impl Settings for AudioSettings {
             legacy_audio_compatible: audio.legacy_audio_compatible.unwrap(),
         }
     }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(audio) = content.audio.as_ref() else {
-            return;
-        };
-        self.rodio_audio.merge_from(&audio.rodio_audio);
-        self.auto_microphone_volume
-            .merge_from(&audio.auto_microphone_volume);
-        self.auto_speaker_volume
-            .merge_from(&audio.auto_speaker_volume);
-        self.denoise.merge_from(&audio.denoise);
-        self.legacy_audio_compatible
-            .merge_from(&audio.legacy_audio_compatible);
-    }
 }
 
 /// See docs on [LIVE_SETTINGS]
