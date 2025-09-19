@@ -5274,7 +5274,7 @@ impl CharClassifier {
         if let Some(scope) = &self.scope {
             let characters = match self.scope_context {
                 Some(ScopeContext::Completion) => scope.completion_query_characters(),
-                Some(ScopeContext::LinkedEdit) => scope.word_characters(),
+                Some(ScopeContext::LinkedEdit) => scope.linked_edit_characters(),
                 None => scope.word_characters(),
             };
             if let Some(characters) = characters
