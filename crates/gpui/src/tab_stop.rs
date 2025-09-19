@@ -2,7 +2,6 @@ use std::fmt::Debug;
 
 use ::sum_tree::SumTree;
 use collections::FxHashMap;
-use smallvec::SmallVec;
 use sum_tree::Bias;
 use util::debug_panic;
 
@@ -11,42 +10,48 @@ use crate::{FocusHandle, FocusId};
 /// Represents a collection of focus handles using the tab-index APIs.
 #[derive(Debug)]
 pub(crate) struct TabIndexMap {
-    current_path: GroupPath,
-    pub(crate) nodes: Vec<TabIndexNode>,
-    by_id: FxHashMap<FocusId, GroupPath>,
-    order: SumTree<TabIndexOrder>,
+    current_path: TabIndexPath,
+    pub(crate) insertion_history: Vec<TabIndexInsertion>,
+    by_id: FxHashMap<FocusId, TabIndexNode>,
+    order: SumTree<TabIndexNode>,
 }
 
 #[derive(Debug)]
-pub enum TabIndexNode {
+pub enum TabIndexInsertion {
     Element(FocusHandle),
     Group(TabIndex),
     GroupEnd,
 }
 
-impl TabIndexNode {
+impl TabIndexInsertion {
     fn focus_handle(&self) -> Option<&FocusHandle> {
         match self {
-            TabIndexNode::Element(focus_handle) => Some(focus_handle),
+            TabIndexInsertion::Element(focus_handle) => Some(focus_handle),
             _ => None,
         }
     }
 }
 
 type TabIndex = isize;
-type GroupPath = smallvec::SmallVec<[TabIndex; 6]>;
 
-#[derive(Clone, Debug)]
-struct TabIndexOrder {
-    node_index: usize,
-    path: GroupPath, // this is the tab group path
+#[derive(Debug, Default, PartialEq, Eq, Clone, Ord, PartialOrd)]
+struct TabIndexPath(smallvec::SmallVec<[TabIndex; 6]>);
+
+#[derive(Clone, Debug, Default, Ord, PartialOrd, Eq, PartialEq)]
+struct TabIndexNode {
+    // Path to access the node in the tree
+    // The final node in the list is a leaf node corresponding to an actual focus handle,
+    // all other nodes are group nodes
+    path: TabIndexPath,
+    // index into the backing array of nodes. Corresponds to insertion order
+    node_insertion_index: usize,
 }
 
 impl Default for TabIndexMap {
     fn default() -> Self {
         Self {
-            current_path: SmallVec::new(),
-            nodes: Vec::new(),
+            current_path: TabIndexPath::default(),
+            insertion_history: Vec::new(),
             by_id: FxHashMap::default(),
             order: SumTree::new(&()),
         }
@@ -59,33 +64,33 @@ impl TabIndexMap {
             return;
         }
 
-        self.nodes.push(TabIndexNode::Element(focus_handle.clone()));
+        self.insertion_history
+            .push(TabIndexInsertion::Element(focus_handle.clone()));
         let mut path = self.current_path.clone();
-        path.push(focus_handle.tab_index);
-        self.by_id.insert(focus_handle.id, path.clone());
-        self.order.push(
-            TabIndexOrder {
-                node_index: self.nodes.len() - 1,
-                path,
-            },
-            &(),
-        );
+        path.0.push(focus_handle.tab_index);
+        let order = TabIndexNode {
+            node_insertion_index: self.insertion_history.len() - 1,
+            path,
+        };
+        self.by_id.insert(focus_handle.id, order.clone());
+        self.order.insert_or_replace(order, &());
     }
 
     pub fn begin_group(&mut self, tab_index: isize) {
-        self.nodes.push(TabIndexNode::Group(tab_index));
-        self.current_path.push(tab_index);
+        self.insertion_history
+            .push(TabIndexInsertion::Group(tab_index));
+        self.current_path.0.push(tab_index);
     }
 
     pub fn end_group(&mut self) {
-        self.nodes.push(TabIndexNode::GroupEnd);
-        self.current_path.pop();
+        self.insertion_history.push(TabIndexInsertion::GroupEnd);
+        self.current_path.0.pop();
     }
 
     pub fn clear(&mut self) {
         *self = Self::default();
-        self.current_path.clear();
-        self.nodes.clear();
+        self.current_path.0.clear();
+        self.insertion_history.clear();
         self.by_id.clear();
         self.order = SumTree::new(&());
     }
@@ -98,12 +103,13 @@ impl TabIndexMap {
                 .and_then(|order| self.focus_handle_for_order(order));
         };
 
-        let path = self.path_for_focus_id(focused_id)?;
-        let mut cursor = self.order.cursor::<sum_tree_impl::GroupPathProgress>(&());
+        let path = self.tab_node_for_focus_id(focused_id)?;
+        let mut cursor = self.order.cursor::<TabIndexNode>(&());
         cursor.seek(&path, Bias::Left);
         cursor.next();
         cursor
             .item()
+            .or_else(|| self.order.first()) // Wrap to the beginning if at the end
             .and_then(|order| self.focus_handle_for_order(order))
     }
 
@@ -115,27 +121,28 @@ impl TabIndexMap {
                 .and_then(|order| self.focus_handle_for_order(order));
         };
 
-        let path = self.path_for_focus_id(focused_id)?;
-        let mut cursor = self.order.cursor::<sum_tree_impl::GroupPathProgress>(&());
+        let path = self.tab_node_for_focus_id(focused_id)?;
+        let mut cursor = self.order.cursor::<TabIndexNode>(&());
         cursor.seek(&path, Bias::Left);
         cursor.prev();
         cursor
             .item()
+            .or_else(|| self.order.last()) // Wrap to the end if at the beginning
             .and_then(|order| self.focus_handle_for_order(order))
     }
 
-    pub fn reuse_paint(&mut self, nodes: &[TabIndexNode]) {
+    pub fn reuse_paint(&mut self, nodes: &[TabIndexInsertion]) {
         for node in nodes {
             match node {
-                TabIndexNode::Element(focus_handle) => self.insert(focus_handle),
-                TabIndexNode::Group(tab_index) => self.begin_group(*tab_index),
-                TabIndexNode::GroupEnd => self.end_group(),
+                TabIndexInsertion::Element(focus_handle) => self.insert(focus_handle),
+                TabIndexInsertion::Group(tab_index) => self.begin_group(*tab_index),
+                TabIndexInsertion::GroupEnd => self.end_group(),
             }
         }
     }
 
-    fn focus_handle_for_order(&self, order: &TabIndexOrder) -> Option<FocusHandle> {
-        let handle = self.nodes[order.node_index].focus_handle();
+    fn focus_handle_for_order(&self, order: &TabIndexNode) -> Option<FocusHandle> {
+        let handle = self.insertion_history[order.node_insertion_index].focus_handle();
         debug_assert!(
             handle.is_some(),
             "The order node did not correspond to an element, this is a GPUI bug"
@@ -143,24 +150,24 @@ impl TabIndexMap {
         handle.cloned()
     }
 
-    fn path_for_focus_id(&self, focused_id: &FocusId) -> Option<&SmallVec<[isize; 6]>> {
-        let Some(path) = self.by_id.get(focused_id) else {
+    fn tab_node_for_focus_id(&self, focused_id: &FocusId) -> Option<&TabIndexNode> {
+        let Some(order) = self.by_id.get(focused_id) else {
             debug_panic!("The focused ID was not stored in the ID map, this is a GPUI bug");
             return None;
         };
-        Some(path)
+        Some(order)
     }
 }
 
 mod sum_tree_impl {
-    use smallvec::SmallVec;
     use sum_tree::SeekTarget;
 
-    use crate::tab_stop::{GroupPath, TabIndex, TabIndexOrder};
+    use crate::tab_stop::{TabIndexNode, TabIndexPath};
 
     #[derive(Clone, Debug)]
     pub struct TabOrderNodeSummary {
-        max_path: GroupPath,
+        max_index: usize,
+        max_path: TabIndexPath,
     }
 
     impl sum_tree::Summary for TabOrderNodeSummary {
@@ -168,33 +175,38 @@ mod sum_tree_impl {
 
         fn zero(_cx: &Self::Context) -> Self {
             TabOrderNodeSummary {
-                max_path: SmallVec::new(),
+                max_index: 0,
+                max_path: TabIndexPath::default(),
             }
         }
 
         fn add_summary(&mut self, summary: &Self, _cx: &Self::Context) {
-            self.max_path = summary.max_path.clone();
+            *self = summary.clone();
         }
     }
 
-    impl sum_tree::Item for TabIndexOrder {
+    impl sum_tree::KeyedItem for TabIndexNode {
+        type Key = Self;
+
+        fn key(&self) -> Self::Key {
+            self.clone()
+        }
+    }
+
+    impl sum_tree::Item for TabIndexNode {
         type Summary = TabOrderNodeSummary;
 
         fn summary(&self, _cx: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
             TabOrderNodeSummary {
+                max_index: self.node_insertion_index,
                 max_path: self.path.clone(),
             }
         }
     }
 
-    #[derive(Clone)]
-    pub struct GroupPathProgress<'a> {
-        max_path: &'a [TabIndex],
-    }
-
-    impl<'a> sum_tree::Dimension<'a, TabOrderNodeSummary> for GroupPathProgress<'a> {
+    impl<'a> sum_tree::Dimension<'a, TabOrderNodeSummary> for TabIndexNode {
         fn zero(_: &<TabOrderNodeSummary as sum_tree::Summary>::Context) -> Self {
-            Self { max_path: &[] }
+            TabIndexNode::default()
         }
 
         fn add_summary(
@@ -202,13 +214,17 @@ mod sum_tree_impl {
             summary: &'a TabOrderNodeSummary,
             _: &<TabOrderNodeSummary as sum_tree::Summary>::Context,
         ) {
-            self.max_path = &summary.max_path;
+            self.node_insertion_index = summary.max_index;
+            self.path = summary.max_path.clone();
         }
     }
 
-    impl<'a, 'b> SeekTarget<'a, TabOrderNodeSummary, GroupPathProgress<'a>> for &'b GroupPath {
-        fn cmp(&self, cursor_location: &GroupPathProgress<'a>, _: &()) -> std::cmp::Ordering {
-            Iterator::cmp(self.iter(), cursor_location.max_path.iter())
+    impl<'a, 'b> SeekTarget<'a, TabOrderNodeSummary, TabIndexNode> for &'b TabIndexNode {
+        fn cmp(&self, cursor_location: &TabIndexNode, _: &()) -> std::cmp::Ordering {
+            Iterator::cmp(self.path.0.iter(), cursor_location.path.0.iter()).then(
+                self.node_insertion_index
+                    .cmp(&cursor_location.node_insertion_index),
+            )
         }
     }
 }
@@ -219,34 +235,95 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    // todo! remove
-    fn basic_list_print() {
+    fn test_tab_handles() {
         let focus_map = Arc::new(FocusMap::default());
-        let mut tab_handles = TabIndexMap::default();
-        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(0).tab_stop(true));
-        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(1).tab_stop(true));
-        tab_handles.begin_group(3);
-        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(0).tab_stop(true));
-        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(1).tab_stop(true));
-        tab_handles.end_group();
-        tab_handles.begin_group(2);
-        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(0).tab_stop(true));
-        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(1).tab_stop(true));
-        tab_handles.end_group();
+        let mut tab_index_map = TabIndexMap::default();
 
-        tab_handles.insert(&FocusHandle::new(&focus_map).tab_index(4).tab_stop(true));
+        let focus_handles = vec![
+            FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
+            FocusHandle::new(&focus_map).tab_stop(true).tab_index(1),
+            FocusHandle::new(&focus_map).tab_stop(true).tab_index(1),
+            FocusHandle::new(&focus_map),
+            FocusHandle::new(&focus_map).tab_index(2),
+            FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
+            FocusHandle::new(&focus_map).tab_stop(true).tab_index(2),
+        ];
 
-        // eprintln!("{:?}", &tab_handles.index_buf);
-        // eprintln!("{:?}", &tab_handles.handles);
-        // eprintln!(
-        //     "{:?}",
-        //     tab_handles
-        //         .index_buf
-        //         .iter()
-        //         .map(|&e| &tab_handles.nodes[e])
-        //         .collect::<Vec<_>>()
-        // );
-        // assert!(false);
+        for handle in focus_handles.iter() {
+            tab_index_map.insert(handle);
+        }
+        let expected = [
+            focus_handles[0].clone(),
+            focus_handles[5].clone(),
+            focus_handles[1].clone(),
+            focus_handles[2].clone(),
+            focus_handles[6].clone(),
+        ];
+
+        let mut prev = None;
+        let mut found = vec![];
+        for _ in 0..expected.len() {
+            let handle = tab_index_map.next(prev.as_ref()).unwrap();
+            prev = Some(handle.id.clone());
+            found.push(handle.id);
+        }
+
+        assert_eq!(
+            found,
+            expected
+                .iter()
+                .map(|handle| handle.id.clone())
+                .collect::<Vec<_>>()
+        );
+
+        // Select first tab index if no handle is currently focused.
+        assert_eq!(tab_index_map.next(None), Some(expected[0].clone()));
+        // Select last tab index if no handle is currently focused.
+        assert_eq!(tab_index_map.prev(None), expected.last().cloned(),);
+
+        assert_eq!(
+            tab_index_map.next(Some(&expected[0].id)),
+            Some(expected[1].clone())
+        );
+        assert_eq!(
+            tab_index_map.next(Some(&expected[1].id)),
+            Some(expected[2].clone())
+        );
+        assert_eq!(
+            tab_index_map.next(Some(&expected[2].id)),
+            Some(expected[3].clone())
+        );
+        assert_eq!(
+            tab_index_map.next(Some(&expected[3].id)),
+            Some(expected[4].clone())
+        );
+        assert_eq!(
+            tab_index_map.next(Some(&expected[4].id)),
+            Some(expected[0].clone())
+        );
+
+        // prev
+        assert_eq!(tab_index_map.prev(None), Some(expected[4].clone()));
+        assert_eq!(
+            tab_index_map.prev(Some(&expected[0].id)),
+            Some(expected[4].clone())
+        );
+        assert_eq!(
+            tab_index_map.prev(Some(&expected[1].id)),
+            Some(expected[0].clone())
+        );
+        assert_eq!(
+            tab_index_map.prev(Some(&expected[2].id)),
+            Some(expected[1].clone())
+        );
+        assert_eq!(
+            tab_index_map.prev(Some(&expected[3].id)),
+            Some(expected[2].clone())
+        );
+        assert_eq!(
+            tab_index_map.prev(Some(&expected[4].id)),
+            Some(expected[3].clone())
+        );
     }
 
     /// Helper function to parse XML-like structure and test tab navigation
@@ -840,7 +917,10 @@ mod tests {
                     let indent_str = "  ".repeat(indent);
 
                     match &node.node_type {
-                        NodeType::TabStop { tab_index, actual } => {
+                        NodeType::TabStop {
+                            tab_index,
+                            actual: _,
+                        } => {
                             // let actual = node
                             //     .handle
                             //     .as_ref()
@@ -1145,101 +1225,5 @@ mod tests {
             "#;
             check(content);
         }
-    }
-
-    #[test]
-    fn test_tab_handles() {
-        let focus_map = Arc::new(FocusMap::default());
-        let mut tab_index_map = TabIndexMap::default();
-
-        let focus_handles = vec![
-            FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
-            FocusHandle::new(&focus_map).tab_stop(true).tab_index(1),
-            FocusHandle::new(&focus_map).tab_stop(true).tab_index(1),
-            FocusHandle::new(&focus_map),
-            FocusHandle::new(&focus_map).tab_index(2),
-            FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
-            FocusHandle::new(&focus_map).tab_stop(true).tab_index(2),
-        ];
-
-        for handle in focus_handles.iter() {
-            tab_index_map.insert(handle);
-        }
-        dbg!(&tab_index_map);
-        let expected = [
-            focus_handles[0].clone(),
-            focus_handles[5].clone(),
-            focus_handles[1].clone(),
-            focus_handles[2].clone(),
-            focus_handles[6].clone(),
-        ];
-
-        //  left: [FocusId(1v1), FocusId(2v1), FocusId(3v1), FocusId(3v1), FocusId(3v1)]
-        // right: [FocusId(1v1), FocusId(6v1), FocusId(2v1), FocusId(3v1), FocusId(7v1)]
-
-        let mut prev = None;
-        let mut found = vec![];
-        for _ in 0..expected.len() {
-            let handle = tab_index_map.next(prev.as_ref()).unwrap();
-            prev = Some(handle.id.clone());
-            found.push(handle.id);
-        }
-
-        assert_eq!(
-            found,
-            expected
-                .iter()
-                .map(|handle| handle.id.clone())
-                .collect::<Vec<_>>()
-        );
-
-        // Select first tab index if no handle is currently focused.
-        assert_eq!(tab_index_map.next(None), Some(expected[0].clone()));
-        // Select last tab index if no handle is currently focused.
-        assert_eq!(tab_index_map.prev(None), expected.last().cloned(),);
-
-        assert_eq!(
-            tab_index_map.next(Some(&expected[0].id)),
-            Some(expected[1].clone())
-        );
-        assert_eq!(
-            tab_index_map.next(Some(&expected[1].id)),
-            Some(expected[2].clone())
-        );
-        assert_eq!(
-            tab_index_map.next(Some(&expected[2].id)),
-            Some(expected[3].clone())
-        );
-        assert_eq!(
-            tab_index_map.next(Some(&expected[3].id)),
-            Some(expected[4].clone())
-        );
-        assert_eq!(
-            tab_index_map.next(Some(&expected[4].id)),
-            Some(expected[0].clone())
-        );
-
-        // prev
-        assert_eq!(tab_index_map.prev(None), Some(expected[4].clone()));
-        assert_eq!(
-            tab_index_map.prev(Some(&expected[0].id)),
-            Some(expected[4].clone())
-        );
-        assert_eq!(
-            tab_index_map.prev(Some(&expected[1].id)),
-            Some(expected[0].clone())
-        );
-        assert_eq!(
-            tab_index_map.prev(Some(&expected[2].id)),
-            Some(expected[1].clone())
-        );
-        assert_eq!(
-            tab_index_map.prev(Some(&expected[3].id)),
-            Some(expected[2].clone())
-        );
-        assert_eq!(
-            tab_index_map.prev(Some(&expected[4].id)),
-            Some(expected[3].clone())
-        );
     }
 }
