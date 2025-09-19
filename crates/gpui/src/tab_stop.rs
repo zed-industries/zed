@@ -11,22 +11,22 @@ use crate::{FocusHandle, FocusId};
 #[derive(Debug)]
 pub(crate) struct TabIndexMap {
     current_path: TabIndexPath,
-    pub(crate) insertion_history: Vec<TabIndexInsertion>,
+    pub(crate) insertion_history: Vec<TabIndexOperation>,
     by_id: FxHashMap<FocusId, TabIndexNode>,
     order: SumTree<TabIndexNode>,
 }
 
-#[derive(Debug)]
-pub enum TabIndexInsertion {
-    Element(FocusHandle),
+#[derive(Debug, Clone)]
+pub enum TabIndexOperation {
+    TabStop(FocusHandle),
     Group(TabIndex),
     GroupEnd,
 }
 
-impl TabIndexInsertion {
+impl TabIndexOperation {
     fn focus_handle(&self) -> Option<&FocusHandle> {
         match self {
-            TabIndexInsertion::Element(focus_handle) => Some(focus_handle),
+            TabIndexOperation::TabStop(focus_handle) => Some(focus_handle),
             _ => None,
         }
     }
@@ -65,7 +65,7 @@ impl TabIndexMap {
         }
 
         self.insertion_history
-            .push(TabIndexInsertion::Element(focus_handle.clone()));
+            .push(TabIndexOperation::TabStop(focus_handle.clone()));
         let mut path = self.current_path.clone();
         path.0.push(focus_handle.tab_index);
         let order = TabIndexNode {
@@ -78,12 +78,12 @@ impl TabIndexMap {
 
     pub fn begin_group(&mut self, tab_index: isize) {
         self.insertion_history
-            .push(TabIndexInsertion::Group(tab_index));
+            .push(TabIndexOperation::Group(tab_index));
         self.current_path.0.push(tab_index);
     }
 
     pub fn end_group(&mut self) {
-        self.insertion_history.push(TabIndexInsertion::GroupEnd);
+        self.insertion_history.push(TabIndexOperation::GroupEnd);
         self.current_path.0.pop();
     }
 
@@ -134,9 +134,9 @@ impl TabIndexMap {
     pub fn replay(&mut self, nodes: &[TabIndexOperation]) {
         for node in nodes {
             match node {
-                TabIndexInsertion::Element(focus_handle) => self.insert(focus_handle),
-                TabIndexInsertion::Group(tab_index) => self.begin_group(*tab_index),
-                TabIndexInsertion::GroupEnd => self.end_group(),
+                TabIndexOperation::TabStop(focus_handle) => self.insert(focus_handle),
+                TabIndexOperation::Group(tab_index) => self.begin_group(*tab_index),
+                TabIndexOperation::GroupEnd => self.end_group(),
             }
         }
     }
@@ -156,7 +156,6 @@ impl TabIndexMap {
 
     fn tab_node_for_focus_id(&self, focused_id: &FocusId) -> Option<&TabIndexNode> {
         let Some(order) = self.by_id.get(focused_id) else {
-            debug_panic!("The focused ID was not stored in the ID map, this is a GPUI bug");
             return None;
         };
         Some(order)
