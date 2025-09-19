@@ -21638,14 +21638,23 @@ dependencies = [
 name = "zeta2"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "arrayvec",
  "client",
  "cloud_llm_client",
  "edit_prediction",
  "edit_prediction_context",
+ "futures 0.3.31",
  "gpui",
  "language",
+ "language_model",
  "log",
  "project",
+ "release_channel",
+ "serde_json",
+ "thiserror 2.0.12",
+ "util",
+ "workspace",
  "workspace-hack",
 ]
 

@@ -233,7 +233,7 @@ impl Render for EditPredictionButton {
                 )
             }
 
-            EditPredictionProvider::Zed | EditPredictionProvider::Zed2 => {
+            EditPredictionProvider::Zed => {
                 let enabled = self.editor_enabled.unwrap_or(true);
 
                 let zeta_icon = if enabled {

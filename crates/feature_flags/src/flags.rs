@@ -29,3 +29,9 @@ pub struct JjUiFeatureFlag {}
 impl FeatureFlag for JjUiFeatureFlag {
     const NAME: &'static str = "jj-ui";
 }
+
+pub struct EditPredictionV2FeatureFlag;
+
+impl FeatureFlag for EditPredictionV2FeatureFlag {
+    const NAME: &'static str = "edit-prediction-v2";
+}

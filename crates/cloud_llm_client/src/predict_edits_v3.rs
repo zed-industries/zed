@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::ops::Range;
+use std::{ops::Range, path::PathBuf};
+use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
 
@@ -72,6 +73,19 @@ pub struct ScoreComponents {
 pub struct DiagnosticGroup {
     pub language_server: String,
     pub diagnostic_group: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PredictEditsResponse {
+    pub request_id: Uuid,
+    pub edits: Vec<Edit>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Edit {
+    pub path: PathBuf,
+    pub range: Range<usize>,
+    pub content: String,
 }
 
 /*

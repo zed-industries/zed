@@ -28,40 +28,51 @@ impl EditPredictionContext {
         cursor_point: Point,
         buffer: BufferSnapshot,
         excerpt_options: EditPredictionExcerptOptions,
-        syntax_index: Entity<SyntaxIndex>,
+        syntax_index: Option<Entity<SyntaxIndex>>,
         cx: &mut App,
     ) -> Task<Option<Self>> {
-        let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
-        cx.background_spawn(async move {
-            let index_state = index_state.lock().await;
-            Self::gather_context(cursor_point, &buffer, &excerpt_options, &index_state)
-        })
+        if let Some(syntax_index) = syntax_index {
+            let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
+            cx.background_spawn(async move {
+                let index_state = index_state.lock().await;
+                Self::gather_context(cursor_point, &buffer, &excerpt_options, Some(&index_state))
+            })
+        } else {
+            cx.background_spawn(async move {
+                Self::gather_context(cursor_point, &buffer, &excerpt_options, None)
+            })
+        }
     }
 
     pub fn gather_context(
         cursor_point: Point,
         buffer: &BufferSnapshot,
         excerpt_options: &EditPredictionExcerptOptions,
-        index_state: &SyntaxIndexState,
+        index_state: Option<&SyntaxIndexState>,
     ) -> Option<Self> {
         let excerpt = EditPredictionExcerpt::select_from_buffer(
             cursor_point,
             buffer,
             excerpt_options,
-            Some(index_state),
+            index_state,
         )?;
         let excerpt_text = excerpt.text(buffer);
-        let references = references_in_excerpt(&excerpt, &excerpt_text, buffer);
-        let cursor_offset = cursor_point.to_offset(buffer);
 
-        let snippets = scored_snippets(
-            &index_state,
-            &excerpt,
-            &excerpt_text,
-            references,
-            cursor_offset,
-            buffer,
-        );
+        let snippets = if let Some(index_state) = index_state {
+            let references = references_in_excerpt(&excerpt, &excerpt_text, buffer);
+            let cursor_offset = cursor_point.to_offset(buffer);
+
+            scored_snippets(
+                &index_state,
+                &excerpt,
+                &excerpt_text,
+                references,
+                cursor_offset,
+                buffer,
+            )
+        } else {
+            vec![]
+        };
 
         Some(Self {
             excerpt,
@@ -114,7 +125,7 @@ mod tests {
                         min_bytes: 10,
                         target_before_cursor_over_total_bytes: 0.5,
                     },
-                    index,
+                    Some(index),
                     cx,
                 )
             })
