@@ -770,12 +770,9 @@ impl SettingsObserver {
         envelope: TypedEnvelope<proto::UpdateUserSettings>,
         cx: AsyncApp,
     ) -> anyhow::Result<()> {
-        let new_settings = serde_json::from_str(&envelope.payload.contents).with_context(|| {
-            format!("deserializing {} user settings", envelope.payload.contents)
-        })?;
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
-                .set_raw_user_settings(new_settings, cx)
+                .set_user_settings(&envelope.payload.contents, cx)
                 .context("setting new user settings")?;
             anyhow::Ok(())
         })??;

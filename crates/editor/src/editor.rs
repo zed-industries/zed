@@ -21678,12 +21678,10 @@ impl Editor {
     }
 }
 
-// todo(settings_refactor) this should not be!
 fn vim_enabled(cx: &App) -> bool {
-    cx.global::<SettingsStore>()
-        .raw_user_settings()
-        .and_then(|settings| settings.content.vim_mode)
-        == Some(true)
+    vim_mode_setting::VimModeSetting::try_get(cx)
+        .map(|vim_mode| vim_mode.0)
+        .unwrap_or(false)
 }
 
 fn process_completion_for_edit(
