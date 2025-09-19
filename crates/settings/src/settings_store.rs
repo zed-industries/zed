@@ -870,15 +870,15 @@ impl SettingsStore {
 
         if changed_local_path.is_none() {
             let mut merged = self.default_settings.as_ref().clone();
-            merged.merge_from(self.extension_settings.as_deref());
-            merged.merge_from(self.global_settings.as_deref());
+            merged.merge_from_option(self.extension_settings.as_deref());
+            merged.merge_from_option(self.global_settings.as_deref());
             if let Some(user_settings) = self.user_settings.as_ref() {
-                merged.merge_from(Some(&user_settings.content));
-                merged.merge_from(user_settings.for_release_channel());
-                merged.merge_from(user_settings.for_os());
-                merged.merge_from(user_settings.for_profile(cx));
+                merged.merge_from(&user_settings.content);
+                merged.merge_from_option(user_settings.for_release_channel());
+                merged.merge_from_option(user_settings.for_os());
+                merged.merge_from_option(user_settings.for_profile(cx));
             }
-            merged.merge_from(self.server_settings.as_deref());
+            merged.merge_from_option(self.server_settings.as_deref());
             self.merged_settings = Rc::new(merged);
 
             for setting_value in self.setting_values.values_mut() {
@@ -906,7 +906,7 @@ impl SettingsStore {
             } else {
                 self.merged_settings.as_ref().clone()
             };
-            merged_local_settings.merge_from(Some(local_settings));
+            merged_local_settings.merge_from(local_settings);
 
             project_settings_stack.push(merged_local_settings);
 

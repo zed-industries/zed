@@ -582,7 +582,7 @@ impl settings::Settings for AllLanguageSettings {
         let mut languages = HashMap::default();
         for (language_name, settings) in &all_languages.languages.0 {
             let mut language_settings = all_languages.defaults.clone();
-            settings::merge_from::MergeFrom::merge_from(&mut language_settings, Some(settings));
+            settings::merge_from::MergeFrom::merge_from(&mut language_settings, settings);
             languages.insert(
                 LanguageName(language_name.clone()),
                 load_from_content(language_settings),

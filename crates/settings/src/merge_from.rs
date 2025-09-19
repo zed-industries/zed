@@ -1,29 +1,37 @@
-use std::rc::Rc;
-
 /// Trait for recursively merging settings structures.
 ///
-/// This trait allows settings objects to be merged from optional sources,
-/// where `None` values are ignored and `Some` values override existing values.
+/// When Zed starts it loads settinsg from `default.json` to initialize
+/// everything. These may be further refined by loading the user's settings,
+/// and any settings profiles; and then further refined by loading any
+/// local project settings.
 ///
-/// HashMaps, structs and similar types are merged by combining their contents key-wise,
-/// but all other types (including Vecs) are last-write-wins.
-/// (Though see also ExtendingVec and SaturatingBool)
+/// The default behaviour of merging is:
+/// * For objects with named keys (HashMap, structs, etc.). The values are merged deeply
+///   (so if the default settings has languages.JSON.prettier.allowed = true, and the user's settings has
+///    languages.JSON.tab_size = 4; the merged settings file will have both settings).
+/// * For options, a None value is ignored, but Some values are merged recursively.
+/// * For other types (including Vec), a merge overwrites the current value.
+///
+/// If you want to break the rules you can (e.g. ExtendingVec, or SaturatingBool).
 #[allow(unused)]
 pub trait MergeFrom {
+    /// Merge from a source of the same type.
+    fn merge_from(&mut self, other: &Self);
+
     /// Merge from an optional source of the same type.
-    /// If `other` is `None`, no changes are made.
-    /// If `other` is `Some(value)`, fields from `value` are merged into `self`.
-    fn merge_from(&mut self, other: Option<&Self>);
+    fn merge_from_option(&mut self, other: Option<&Self>) {
+        if let Some(other) = other {
+            self.merge_from(other);
+        }
+    }
 }
 
 macro_rules! merge_from_overwrites {
     ($($type:ty),+) => {
         $(
             impl MergeFrom for $type {
-                fn merge_from(&mut self, other: Option<&Self>) {
-                    if let Some(value) = other {
-                        *self = value.clone();
-                    }
+                fn merge_from(&mut self, other: &Self) {
+                    *self = other.clone();
                 }
             }
         )+
@@ -51,11 +59,28 @@ merge_from_overwrites!(
     gpui::FontFeatures
 );
 
-impl<T: Clone> MergeFrom for Vec<T> {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(other) = other {
-            *self = other.clone()
+impl<T: Clone + MergeFrom> MergeFrom for Option<T> {
+    fn merge_from(&mut self, other: &Self) {
+        let Some(other) = other else {
+            return;
+        };
+        if let Some(this) = self {
+            this.merge_from(other);
+        } else {
+            self.replace(other.clone());
         }
+    }
+}
+
+impl<T: Clone> MergeFrom for Vec<T> {
+    fn merge_from(&mut self, other: &Self) {
+        *self = other.clone()
+    }
+}
+
+impl<T: MergeFrom> MergeFrom for Box<T> {
+    fn merge_from(&mut self, other: &Self) {
+        self.as_mut().merge_from(other.as_ref())
     }
 }
 
@@ -65,11 +90,10 @@ where
     K: Clone + std::hash::Hash + Eq,
     V: Clone + MergeFrom,
 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else { return };
+    fn merge_from(&mut self, other: &Self) {
         for (k, v) in other {
             if let Some(existing) = self.get_mut(k) {
-                existing.merge_from(Some(v));
+                existing.merge_from(v);
             } else {
                 self.insert(k.clone(), v.clone());
             }
@@ -82,11 +106,10 @@ where
     K: Clone + std::hash::Hash + Eq + Ord,
     V: Clone + MergeFrom,
 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else { return };
+    fn merge_from(&mut self, other: &Self) {
         for (k, v) in other {
             if let Some(existing) = self.get_mut(k) {
-                existing.merge_from(Some(v));
+                existing.merge_from(v);
             } else {
                 self.insert(k.clone(), v.clone());
             }
@@ -100,11 +123,10 @@ where
     // Q: ?Sized + std::hash::Hash + collections::Equivalent<K> + Eq,
     V: Clone + MergeFrom,
 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else { return };
+    fn merge_from(&mut self, other: &Self) {
         for (k, v) in other {
             if let Some(existing) = self.get_mut(k) {
-                existing.merge_from(Some(v));
+                existing.merge_from(v);
             } else {
                 self.insert(k.clone(), v.clone());
             }
@@ -116,8 +138,7 @@ impl<T> MergeFrom for collections::BTreeSet<T>
 where
     T: Clone + Ord,
 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else { return };
+    fn merge_from(&mut self, other: &Self) {
         for item in other {
             self.insert(item.clone());
         }
@@ -128,8 +149,7 @@ impl<T> MergeFrom for collections::HashSet<T>
 where
     T: Clone + std::hash::Hash + Eq,
 {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else { return };
+    fn merge_from(&mut self, other: &Self) {
         for item in other {
             self.insert(item.clone());
         }
@@ -137,13 +157,12 @@ where
 }
 
 impl MergeFrom for serde_json::Value {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else { return };
+    fn merge_from(&mut self, other: &Self) {
         match (self, other) {
             (serde_json::Value::Object(this), serde_json::Value::Object(other)) => {
                 for (k, v) in other {
                     if let Some(existing) = this.get_mut(k) {
-                        existing.merge_from(other.get(k));
+                        existing.merge_from(v);
                     } else {
                         this.insert(k.clone(), v.clone());
                     }
@@ -151,14 +170,5 @@ impl MergeFrom for serde_json::Value {
             }
             (this, other) => *this = other.clone(),
         }
-    }
-}
-
-impl<T: MergeFrom + Clone> MergeFrom for Rc<T> {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else { return };
-        let mut this: T = self.as_ref().clone();
-        this.merge_from(Some(other.as_ref()));
-        *self = Rc::new(this)
     }
 }

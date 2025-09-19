@@ -34,37 +34,27 @@ pub struct AllLanguageSettingsContent {
     pub file_types: HashMap<Arc<str>, ExtendingVec<String>>,
 }
 
-fn merge_option<T: merge_from::MergeFrom + Clone>(this: &mut Option<T>, other: Option<&T>) {
-    let Some(other) = other else { return };
-    if let Some(this) = this {
-        this.merge_from(Some(other));
-    } else {
-        this.replace(other.clone());
-    }
-}
-
 impl merge_from::MergeFrom for AllLanguageSettingsContent {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        let Some(other) = other else { return };
-        self.file_types.merge_from(Some(&other.file_types));
-        merge_option(&mut self.features, other.features.as_ref());
-        merge_option(&mut self.edit_predictions, other.edit_predictions.as_ref());
+    fn merge_from(&mut self, other: &Self) {
+        self.file_types.merge_from(&other.file_types);
+        self.features.merge_from(&other.features);
+        self.edit_predictions.merge_from(&other.edit_predictions);
 
         // A user's global settings override the default global settings and
         // all default language-specific settings.
         //
-        self.defaults.merge_from(Some(&other.defaults));
+        self.defaults.merge_from(&other.defaults);
         for language_settings in self.languages.0.values_mut() {
-            language_settings.merge_from(Some(&other.defaults));
+            language_settings.merge_from(&other.defaults);
         }
 
         // A user's language-specific settings override default language-specific settings.
         for (language_name, user_language_settings) in &other.languages.0 {
             if let Some(existing) = self.languages.0.get_mut(language_name) {
-                existing.merge_from(Some(&user_language_settings));
+                existing.merge_from(&user_language_settings);
             } else {
                 let mut new_settings = self.defaults.clone();
-                new_settings.merge_from(Some(&user_language_settings));
+                new_settings.merge_from(&user_language_settings);
 
                 self.languages.0.insert(language_name.clone(), new_settings);
             }
