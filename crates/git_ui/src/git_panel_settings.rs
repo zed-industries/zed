@@ -7,7 +7,6 @@ use ui::{
     px,
     scrollbars::{ScrollbarVisibility, ShowScrollbar},
 };
-use util::MergeFrom;
 use workspace::dock::DockPosition;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -52,7 +51,7 @@ impl ScrollbarVisibility for GitPanelSettings {
 }
 
 impl Settings for GitPanelSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
         let git_panel = content.git_panel.clone().unwrap();
         Self {
             button: git_panel.button.unwrap(),
@@ -65,25 +64,6 @@ impl Settings for GitPanelSettings {
             fallback_branch_name: git_panel.fallback_branch_name.unwrap(),
             sort_by_path: git_panel.sort_by_path.unwrap(),
             collapse_untracked_diff: git_panel.collapse_untracked_diff.unwrap(),
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut ui::App) {
-        let Some(git_panel) = &content.git_panel else {
-            return;
-        };
-        self.button.merge_from(&git_panel.button);
-        self.dock.merge_from(&git_panel.dock.map(Into::into));
-        self.default_width
-            .merge_from(&git_panel.default_width.map(px));
-        self.status_style.merge_from(&git_panel.status_style);
-        self.fallback_branch_name
-            .merge_from(&git_panel.fallback_branch_name);
-        self.sort_by_path.merge_from(&git_panel.sort_by_path);
-        self.collapse_untracked_diff
-            .merge_from(&git_panel.collapse_untracked_diff);
-        if let Some(show) = git_panel.scrollbar.as_ref().and_then(|s| s.show) {
-            self.scrollbar.show = Some(show.into())
         }
     }
 

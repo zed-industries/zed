@@ -9,7 +9,7 @@ mod non_windows_and_freebsd_deps {
     pub(super) use log::info;
     pub(super) use parking_lot::Mutex;
     pub(super) use rodio::cpal::Sample;
-    pub(super) use rodio::source::{LimitSettings, UniformSourceIterator};
+    pub(super) use rodio::source::LimitSettings;
     pub(super) use std::sync::Arc;
 }
 
@@ -31,17 +31,19 @@ pub use rodio_ext::RodioExt;
 
 use crate::audio_settings::LIVE_SETTINGS;
 
-// NOTE: We used to use WebRTC's mixer which only supported
-// 16kHz, 32kHz and 48kHz. As 48 is the most common "next step up"
-// for audio output devices like speakers/bluetooth, we just hard-code
-// this; and downsample when we need to.
+// We are migrating to 16kHz sample rate from 48kHz. In the future
+// once we are reasonably sure most users have upgraded we will
+// remove the LEGACY parameters.
 //
-// Since most noise cancelling requires 16kHz we will move to
-// that in the future.
-pub const SAMPLE_RATE: NonZero<u32> = nz!(48000);
-pub const CHANNEL_COUNT: NonZero<u16> = nz!(2);
+// We migrate to 16kHz because it is sufficient for speech and required
+// by the denoiser and future Speech to Text layers.
+pub const SAMPLE_RATE: NonZero<u32> = nz!(16000);
+pub const CHANNEL_COUNT: NonZero<u16> = nz!(1);
 pub const BUFFER_SIZE: usize = // echo canceller and livekit want 10ms of audio
     (SAMPLE_RATE.get() as usize / 100) * CHANNEL_COUNT.get() as usize;
+
+pub const LEGACY_SAMPLE_RATE: NonZero<u32> = nz!(48000);
+pub const LEGACY_CHANNEL_COUNT: NonZero<u16> = nz!(2);
 
 pub const REPLAY_DURATION: Duration = Duration::from_secs(30);
 
@@ -106,6 +108,11 @@ impl Global for Audio {}
 
 impl Audio {
     fn ensure_output_exists(&mut self) -> Result<&Mixer> {
+        #[cfg(debug_assertions)]
+        log::warn!(
+            "Audio does not sound correct without optimizations. Use a release build to debug audio issues"
+        );
+
         if self.output_handle.is_none() {
             self.output_handle = Some(
                 OutputStreamBuilder::open_default_stream()
@@ -160,13 +167,20 @@ impl Audio {
         let stream = rodio::microphone::MicrophoneBuilder::new()
             .default_device()?
             .default_config()?
-            .prefer_sample_rates([SAMPLE_RATE, SAMPLE_RATE.saturating_mul(nz!(2))])
-            // .prefer_channel_counts([nz!(1), nz!(2)])
+            .prefer_sample_rates([
+                SAMPLE_RATE, // sample rates trivially resamplable to `SAMPLE_RATE`
+                SAMPLE_RATE.saturating_mul(nz!(2)),
+                SAMPLE_RATE.saturating_mul(nz!(3)),
+                SAMPLE_RATE.saturating_mul(nz!(4)),
+            ])
+            .prefer_channel_counts([nz!(1), nz!(2), nz!(3), nz!(4)])
             .prefer_buffer_sizes(512..)
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
 
-        let (replay, stream) = UniformSourceIterator::new(stream, CHANNEL_COUNT, SAMPLE_RATE)
+        let (replay, stream) = stream
+            .possibly_disconnected_channels_to_mono()
+            .constant_samplerate(SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
             .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
                 let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
@@ -187,15 +201,28 @@ impl Audio {
                     }
                 }
             })
-            .automatic_gain_control(1.0, 4.0, 0.0, 5.0)
+            .denoise()
+            .context("Could not set up denoiser")?
+            .periodic_access(Duration::from_millis(100), move |denoise| {
+                denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
+            })
+            .automatic_gain_control(1.0, 2.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
-                agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
+                agc_source
+                    .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
             })
             .replayable(REPLAY_DURATION)?;
 
         voip_parts
             .replays
             .add_voip_stream("local microphone".to_string(), replay);
+
+        let stream = if voip_parts.legacy_audio_compatible {
+            stream.constant_params(LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE)
+        } else {
+            stream.constant_params(CHANNEL_COUNT, SAMPLE_RATE)
+        };
+
         Ok(stream)
     }
 
@@ -206,9 +233,10 @@ impl Audio {
         cx: &mut App,
     ) -> anyhow::Result<()> {
         let (replay_source, source) = source
-            .automatic_gain_control(1.0, 4.0, 0.0, 5.0)
+            .constant_params(CHANNEL_COUNT, SAMPLE_RATE)
+            .automatic_gain_control(1.0, 2.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
-                agc_source.set_enabled(LIVE_SETTINGS.control_input_volume.load(Ordering::Relaxed));
+                agc_source.set_enabled(LIVE_SETTINGS.auto_speaker_volume.load(Ordering::Relaxed));
             })
             .replayable(REPLAY_DURATION)
             .expect("REPLAY_DURATION is longer than 100ms");
@@ -269,6 +297,7 @@ impl Audio {
 pub struct VoipParts {
     echo_canceller: Arc<Mutex<apm::AudioProcessingModule>>,
     replays: replays::Replays,
+    legacy_audio_compatible: bool,
 }
 
 #[cfg(not(any(all(target_os = "windows", target_env = "gnu"), target_os = "freebsd")))]
@@ -277,8 +306,12 @@ impl VoipParts {
         let (apm, replays) = cx.try_read_default_global::<Audio, _>(|audio, _| {
             (Arc::clone(&audio.echo_canceller), audio.replays.clone())
         })?;
+        let legacy_audio_compatible =
+            AudioSettings::try_read_global(cx, |settings| settings.legacy_audio_compatible)
+                .unwrap_or_default();
 
         Ok(Self {
+            legacy_audio_compatible,
             echo_canceller: apm,
             replays,
         })

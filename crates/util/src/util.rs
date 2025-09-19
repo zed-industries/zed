@@ -1390,21 +1390,3 @@ Line 3"#
         assert_eq!(result[1], (10..15, "world")); // '🦀' is 4 bytes
     }
 }
-
-pub fn refine<T: Clone>(dest: &mut T, src: &Option<T>) {
-    if let Some(src) = src {
-        *dest = src.clone()
-    }
-}
-
-pub trait MergeFrom: Sized + Clone {
-    fn merge_from(&mut self, src: &Option<Self>);
-}
-
-impl<T: Clone> MergeFrom for T {
-    fn merge_from(&mut self, src: &Option<Self>) {
-        if let Some(src) = src {
-            *self = src.clone();
-        }
-    }
-}

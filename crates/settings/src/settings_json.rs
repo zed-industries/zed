@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::App;
+use gpui::SharedString;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{ops::Range, sync::LazyLock};
@@ -10,15 +10,9 @@ use util::RangeExt;
 pub struct SettingsJsonSchemaParams<'a> {
     pub language_names: &'a [String],
     pub font_names: &'a [String],
+    pub theme_names: &'a [SharedString],
+    pub icon_theme_names: &'a [SharedString],
 }
-
-/// Value registered which specifies JSON schemas that are generated at runtime.
-pub struct ParameterizedJsonSchema {
-    pub add_and_get_ref:
-        fn(&mut schemars::SchemaGenerator, &SettingsJsonSchemaParams, &App) -> schemars::Schema,
-}
-
-inventory::collect!(ParameterizedJsonSchema);
 
 pub fn update_value_in_json_text<'a>(
     text: &mut String,

@@ -5,11 +5,12 @@ use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 
 use crate::FontFamilyName;
 
 #[skip_serializing_none]
-#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct TerminalSettingsContent {
     /// What shell to use when opening a terminal.
     ///
@@ -127,7 +128,7 @@ pub struct TerminalSettingsContent {
 }
 
 /// Shell configuration to open the terminal with.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum Shell {
     /// Use the system's default terminal configuration in /etc/passwd
@@ -146,7 +147,7 @@ pub enum Shell {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingDirectory {
     /// Use the current file's project directory.  Will Fallback to the
@@ -163,15 +164,15 @@ pub enum WorkingDirectory {
 }
 
 #[skip_serializing_none]
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the terminal.
     ///
     /// Default: inherits editor scrollbar settings
-    pub show: Option<Option<ShowScrollbar>>,
+    pub show: Option<ShowScrollbar>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalLineHeight {
     /// Use a line height that's comfortable for reading, 1.618
@@ -198,7 +199,7 @@ impl TerminalLineHeight {
 /// When to show the scrollbar.
 ///
 /// Default: auto
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowScrollbar {
     /// Show the scrollbar if there's important information or
@@ -212,7 +213,9 @@ pub enum ShowScrollbar {
     Never,
 }
 
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShapeContent {
     /// Cursor is a block like `█`.
@@ -226,7 +229,7 @@ pub enum CursorShapeContent {
     Hollow,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBlink {
     /// Never blink the cursor, ignoring the terminal mode.
@@ -238,7 +241,7 @@ pub enum TerminalBlink {
     On,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum AlternateScroll {
     On,
@@ -247,7 +250,7 @@ pub enum AlternateScroll {
 
 // Toolbar related settings
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct TerminalToolbarContent {
     /// Whether to display the terminal title in breadcrumbs inside the terminal pane.
     /// Only shown if the terminal title is not empty.
@@ -259,7 +262,7 @@ pub struct TerminalToolbarContent {
     pub breadcrumbs: Option<bool>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum VenvSettings {
     #[default]
@@ -297,7 +300,7 @@ impl VenvSettings {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalDockPosition {
     Left,
@@ -305,7 +308,7 @@ pub enum TerminalDockPosition {
     Right,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum ActivateScript {
     #[default]

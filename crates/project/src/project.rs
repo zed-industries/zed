@@ -971,21 +971,16 @@ pub enum PulledDiagnostics {
 /// Whether to disable all AI features in Zed.
 ///
 /// Default: false
-#[derive(Copy, Clone, Debug, settings::SettingsUi)]
+#[derive(Copy, Clone, Debug)]
 pub struct DisableAiSettings {
     pub disable_ai: bool,
 }
 
 impl settings::Settings for DisableAiSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
-            disable_ai: content.disable_ai.unwrap(),
+            disable_ai: content.disable_ai.unwrap().0,
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        // If disable_ai is true *in any file*, it is disabled.
-        self.disable_ai = self.disable_ai || content.disable_ai.unwrap_or(false);
     }
 
     fn import_from_vscode(

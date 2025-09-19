@@ -19,7 +19,7 @@ use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, SemanticVersion, Subscription, Task,
 };
 use http_client::http::{HeaderMap, HeaderValue};
-use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
@@ -391,20 +391,17 @@ impl CloudLanguageModel {
         let mut refreshed_token = false;
 
         loop {
-            let request_builder = http_client::Request::builder()
+            let request = http_client::Request::builder()
                 .method(Method::POST)
-                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref());
-            let request_builder = if let Some(app_version) = app_version {
-                request_builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
-            } else {
-                request_builder
-            };
-
-            let request = request_builder
+                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
+                .when_some(app_version, |builder, app_version| {
+                    builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                })
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
                 .body(serde_json::to_string(&body)?.into())?;
+
             let mut response = http_client.send(request).await?;
             let status = response.status();
             if status.is_success() {

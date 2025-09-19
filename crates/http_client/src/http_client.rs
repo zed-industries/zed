@@ -28,6 +28,25 @@ pub enum RedirectPolicy {
 pub struct FollowRedirects(pub bool);
 
 pub trait HttpRequestExt {
+    /// Conditionally modify self with the given closure.
+    fn when(self, condition: bool, then: impl FnOnce(Self) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        if condition { then(self) } else { self }
+    }
+
+    /// Conditionally unwrap and modify self with the given closure, if the given option is Some.
+    fn when_some<T>(self, option: Option<T>, then: impl FnOnce(Self, T) -> Self) -> Self
+    where
+        Self: Sized,
+    {
+        match option {
+            Some(value) => then(self, value),
+            None => self,
+        }
+    }
+
     /// Whether or not to follow redirects
     fn follow_redirects(self, follow: RedirectPolicy) -> Self;
 }
@@ -48,12 +67,12 @@ pub trait HttpClient: 'static + Send + Sync {
         req: http::Request<AsyncBody>,
     ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>>;
 
-    fn get<'a>(
-        &'a self,
+    fn get(
+        &self,
         uri: &str,
         body: AsyncBody,
         follow_redirects: bool,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let request = Builder::new()
             .uri(uri)
             .follow_redirects(if follow_redirects {
@@ -64,16 +83,16 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await }),
+            Ok(request) => self.send(request),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }
 
-    fn post_json<'a>(
-        &'a self,
+    fn post_json(
+        &self,
         uri: &str,
         body: AsyncBody,
-    ) -> BoxFuture<'a, anyhow::Result<Response<AsyncBody>>> {
+    ) -> BoxFuture<'static, anyhow::Result<Response<AsyncBody>>> {
         let request = Builder::new()
             .uri(uri)
             .method(Method::POST)
@@ -81,7 +100,7 @@ pub trait HttpClient: 'static + Send + Sync {
             .body(body);
 
         match request {
-            Ok(request) => Box::pin(async move { self.send(request).await }),
+            Ok(request) => self.send(request),
             Err(e) => Box::pin(async move { Err(e.into()) }),
         }
     }

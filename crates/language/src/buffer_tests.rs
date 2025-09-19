@@ -269,15 +269,15 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     cx.update(|cx| {
         init_settings(cx, |settings| {
             settings.file_types.extend([
-                ("TypeScript".into(), vec!["js".into()]),
+                ("TypeScript".into(), vec!["js".into()].into()),
                 (
                     "JavaScript".into(),
-                    vec!["*longer.ts".into(), "ecmascript".into()],
+                    vec!["*longer.ts".into(), "ecmascript".into()].into(),
                 ),
-                ("C++".into(), vec!["c".into(), "*.dev".into()]),
+                ("C++".into(), vec!["c".into(), "*.dev".into()].into()),
                 (
                     "Dockerfile".into(),
-                    vec!["Dockerfile".into(), "Dockerfile.*".into()],
+                    vec!["Dockerfile".into(), "Dockerfile.*".into()].into(),
                 ),
             ]);
         })

@@ -1,6 +1,6 @@
 use anyhow::{Context as _, bail};
 use collections::{FxHashMap, HashMap, HashSet};
-use language::LanguageRegistry;
+use language::{LanguageName, LanguageRegistry};
 use std::{
     borrow::Cow,
     path::{Path, PathBuf},
@@ -22,7 +22,7 @@ use itertools::Itertools as _;
 use picker::{Picker, PickerDelegate, highlighted_match_with_paths::HighlightedMatch};
 use project::{DebugScenarioContext, Project, TaskContexts, TaskSourceKind, task_store::TaskStore};
 use settings::Settings;
-use task::{DebugScenario, RevealTarget, ZedDebugConfig};
+use task::{DebugScenario, RevealTarget, VariableName, ZedDebugConfig};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Button, ButtonCommon, ButtonSize, CheckboxWithLabel, Clickable, Color, Context,
@@ -978,6 +978,7 @@ pub(super) struct DebugDelegate {
     task_store: Entity<TaskStore>,
     candidates: Vec<(
         Option<TaskSourceKind>,
+        Option<LanguageName>,
         DebugScenario,
         Option<DebugScenarioContext>,
     )>,
@@ -1005,28 +1006,89 @@ impl DebugDelegate {
         }
     }
 
-    fn get_scenario_kind(
+    fn get_task_subtitle(
+        &self,
+        task_kind: &Option<TaskSourceKind>,
+        context: &Option<DebugScenarioContext>,
+        cx: &mut App,
+    ) -> Option<String> {
+        match task_kind {
+            Some(TaskSourceKind::Worktree {
+                id: worktree_id,
+                directory_in_worktree,
+                ..
+            }) => self
+                .debug_panel
+                .update(cx, |debug_panel, cx| {
+                    let project = debug_panel.project().read(cx);
+                    let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+
+                    let mut path = if worktrees.len() > 1
+                        && let Some(worktree) = project.worktree_for_id(*worktree_id, cx)
+                    {
+                        let worktree_path = worktree.read(cx).abs_path();
+                        let full_path = worktree_path.join(directory_in_worktree);
+                        full_path
+                    } else {
+                        directory_in_worktree.clone()
+                    };
+
+                    match path
+                        .components()
+                        .next_back()
+                        .and_then(|component| component.as_os_str().to_str())
+                    {
+                        Some(".zed") => {
+                            path.push("debug.json");
+                        }
+                        Some(".vscode") => {
+                            path.push("launch.json");
+                        }
+                        _ => {}
+                    }
+                    Some(path.display().to_string())
+                })
+                .unwrap_or_else(|_| Some(directory_in_worktree.display().to_string())),
+            Some(TaskSourceKind::AbsPath { abs_path, .. }) => {
+                Some(abs_path.to_string_lossy().into_owned())
+            }
+            Some(TaskSourceKind::Lsp { language_name, .. }) => {
+                Some(format!("LSP: {language_name}"))
+            }
+            Some(TaskSourceKind::Language { .. }) => None,
+            _ => context.clone().and_then(|ctx| {
+                ctx.task_context
+                    .task_variables
+                    .get(&VariableName::RelativeFile)
+                    .map(|f| format!("in {f}"))
+                    .or_else(|| {
+                        ctx.task_context
+                            .task_variables
+                            .get(&VariableName::Dirname)
+                            .map(|d| format!("in {d}/"))
+                    })
+            }),
+        }
+    }
+
+    fn get_scenario_language(
         languages: &Arc<LanguageRegistry>,
         dap_registry: &DapRegistry,
         scenario: DebugScenario,
-    ) -> (Option<TaskSourceKind>, DebugScenario) {
+    ) -> (Option<LanguageName>, DebugScenario) {
         let language_names = languages.language_names();
-        let language = dap_registry
-            .adapter_language(&scenario.adapter)
-            .map(|language| TaskSourceKind::Language { name: language.0 });
+        let language_name = dap_registry.adapter_language(&scenario.adapter);
 
-        let language = language.or_else(|| {
+        let language_name = language_name.or_else(|| {
             scenario.label.split_whitespace().find_map(|word| {
                 language_names
                     .iter()
                     .find(|name| name.as_ref().eq_ignore_ascii_case(word))
-                    .map(|name| TaskSourceKind::Language {
-                        name: name.to_owned().into(),
-                    })
+                    .cloned()
             })
         });
 
-        (language, scenario)
+        (language_name, scenario)
     }
 
     pub fn tasks_loaded(
@@ -1080,9 +1142,9 @@ impl DebugDelegate {
                 this.delegate.candidates = recent
                     .into_iter()
                     .map(|(scenario, context)| {
-                        let (kind, scenario) =
-                            Self::get_scenario_kind(&languages, dap_registry, scenario);
-                        (kind, scenario, Some(context))
+                        let (language_name, scenario) =
+                            Self::get_scenario_language(&languages, dap_registry, scenario);
+                        (None, language_name, scenario, Some(context))
                     })
                     .chain(
                         scenarios
@@ -1097,9 +1159,9 @@ impl DebugDelegate {
                             })
                             .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))
                             .map(|(kind, scenario)| {
-                                let (language, scenario) =
-                                    Self::get_scenario_kind(&languages, dap_registry, scenario);
-                                (language.or(Some(kind)), scenario, None)
+                                let (language_name, scenario) =
+                                    Self::get_scenario_language(&languages, dap_registry, scenario);
+                                (Some(kind), language_name, scenario, None)
                             }),
                     )
                     .collect();
@@ -1145,7 +1207,7 @@ impl PickerDelegate for DebugDelegate {
             let candidates: Vec<_> = candidates
                 .into_iter()
                 .enumerate()
-                .map(|(index, (_, candidate, _))| {
+                .map(|(index, (_, _, candidate, _))| {
                     StringMatchCandidate::new(index, candidate.label.as_ref())
                 })
                 .collect();
@@ -1314,7 +1376,7 @@ impl PickerDelegate for DebugDelegate {
             .get(self.selected_index())
             .and_then(|match_candidate| self.candidates.get(match_candidate.candidate_id).cloned());
 
-        let Some((kind, debug_scenario, context)) = debug_scenario else {
+        let Some((kind, _, debug_scenario, context)) = debug_scenario else {
             return;
         };
 
@@ -1447,6 +1509,7 @@ impl PickerDelegate for DebugDelegate {
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let hit = &self.matches.get(ix)?;
+        let (task_kind, language_name, _scenario, context) = &self.candidates[hit.candidate_id];
 
         let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),
@@ -1454,33 +1517,40 @@ impl PickerDelegate for DebugDelegate {
             char_count: hit.string.chars().count(),
             color: Color::Default,
         };
-        let task_kind = &self.candidates[hit.candidate_id].0;
 
-        let icon = match task_kind {
-            Some(TaskSourceKind::UserInput) => Some(Icon::new(IconName::Terminal)),
-            Some(TaskSourceKind::AbsPath { .. }) => Some(Icon::new(IconName::Settings)),
-            Some(TaskSourceKind::Worktree { .. }) => Some(Icon::new(IconName::FileTree)),
-            Some(TaskSourceKind::Lsp {
-                language_name: name,
-                ..
-            })
-            | Some(TaskSourceKind::Language { name }) => file_icons::FileIcons::get(cx)
-                .get_icon_for_type(&name.to_lowercase(), cx)
-                .map(Icon::from_path),
-            None => Some(Icon::new(IconName::HistoryRerun)),
-        }
-        .map(|icon| icon.color(Color::Muted).size(IconSize::Small));
-        let indicator = if matches!(task_kind, Some(TaskSourceKind::Lsp { .. })) {
-            Some(Indicator::icon(
-                Icon::new(IconName::BoltFilled)
-                    .color(Color::Muted)
-                    .size(IconSize::Small),
-            ))
-        } else {
-            None
+        let subtitle = self.get_task_subtitle(task_kind, context, cx);
+
+        let language_icon = language_name.as_ref().and_then(|lang| {
+            file_icons::FileIcons::get(cx)
+                .get_icon_for_type(&lang.0.to_lowercase(), cx)
+                .map(Icon::from_path)
+        });
+
+        let (icon, indicator) = match task_kind {
+            Some(TaskSourceKind::UserInput) => (Some(Icon::new(IconName::Terminal)), None),
+            Some(TaskSourceKind::AbsPath { .. }) => (Some(Icon::new(IconName::Settings)), None),
+            Some(TaskSourceKind::Worktree { .. }) => (Some(Icon::new(IconName::FileTree)), None),
+            Some(TaskSourceKind::Lsp { language_name, .. }) => (
+                file_icons::FileIcons::get(cx)
+                    .get_icon_for_type(&language_name.to_lowercase(), cx)
+                    .map(Icon::from_path),
+                Some(Indicator::icon(
+                    Icon::new(IconName::BoltFilled)
+                        .color(Color::Muted)
+                        .size(IconSize::Small),
+                )),
+            ),
+            Some(TaskSourceKind::Language { name }) => (
+                file_icons::FileIcons::get(cx)
+                    .get_icon_for_type(&name.to_lowercase(), cx)
+                    .map(Icon::from_path),
+                None,
+            ),
+            None => (Some(Icon::new(IconName::HistoryRerun)), None),
         };
-        let icon = icon.map(|icon| {
-            IconWithIndicator::new(icon, indicator)
+
+        let icon = language_icon.or(icon).map(|icon| {
+            IconWithIndicator::new(icon.color(Color::Muted).size(IconSize::Small), indicator)
                 .indicator_border_color(Some(cx.theme().colors().border_transparent))
         });
 
@@ -1490,7 +1560,18 @@ impl PickerDelegate for DebugDelegate {
                 .start_slot::<IconWithIndicator>(icon)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(highlighted_location.render(window, cx)),
+                .child(
+                    v_flex()
+                        .items_start()
+                        .child(highlighted_location.render(window, cx))
+                        .when_some(subtitle, |this, subtitle_text| {
+                            this.child(
+                                Label::new(subtitle_text)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                        }),
+                ),
         )
     }
 }
@@ -1537,6 +1618,19 @@ impl NewProcessModal {
                 true => ToggleState::Selected,
                 _ => ToggleState::Unselected,
             }
+        })
+    }
+
+    pub(crate) fn debug_picker_candidate_subtitles(&self, cx: &mut App) -> Vec<String> {
+        self.debug_picker.update(cx, |picker, cx| {
+            picker
+                .delegate
+                .candidates
+                .iter()
+                .filter_map(|(task_kind, _, _, context)| {
+                    picker.delegate.get_task_subtitle(task_kind, context, cx)
+                })
+                .collect()
         })
     }
 }

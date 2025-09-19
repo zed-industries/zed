@@ -414,7 +414,9 @@ message Envelope {
         NewExternalAgentVersionAvailable new_external_agent_version_available = 377;
 
         StashDrop stash_drop = 378;
-        StashApply stash_apply = 379; // current max
+        StashApply stash_apply = 379;
+
+        GitRenameBranch git_rename_branch = 380; // current max
     }
 
     reserved 87 to 88;

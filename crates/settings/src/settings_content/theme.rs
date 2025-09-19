@@ -4,6 +4,7 @@ use schemars::{JsonSchema, JsonSchema_repr};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
+use settings_macros::MergeFrom;
 use std::sync::Arc;
 
 use serde_with::skip_serializing_none;
@@ -11,7 +12,7 @@ use serde_with::skip_serializing_none;
 /// Settings for rendering text in UI and text buffers.
 
 #[skip_serializing_none]
-#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct ThemeSettingsContent {
     /// The default font size for text in the UI.
     #[serde(default)]
@@ -53,7 +54,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_features: Option<FontFeatures>,
     /// The font size for the agent panel. Falls back to the UI font size if unset.
     #[serde(default)]
-    pub agent_font_size: Option<Option<f32>>,
+    pub agent_font_size: Option<f32>,
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
@@ -93,7 +94,7 @@ fn default_font_fallbacks() -> Option<FontFallbacks> {
 }
 
 /// Represents the selection of a theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ThemeSelection {
     /// A static theme selection, represented by a single theme name.
@@ -111,7 +112,7 @@ pub enum ThemeSelection {
 }
 
 /// Represents the selection of an icon theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum IconThemeSelection {
     /// A static icon theme selection, represented by a single icon theme name.
@@ -134,7 +135,9 @@ pub enum IconThemeSelection {
 /// `Light` and `Dark` will select their respective themes.
 ///
 /// `System` will select the theme based on the system's appearance.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
     /// Use the specified `light` theme.
@@ -163,6 +166,7 @@ pub enum ThemeMode {
     Serialize,
     Deserialize,
     JsonSchema,
+    MergeFrom,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
@@ -190,15 +194,14 @@ impl UiDensity {
     }
 }
 
-/// Newtype for font family name. Its `ParameterizedJsonSchema` lists the font families known at
-/// runtime.
+/// Font family name.
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct FontFamilyName(pub Arc<str>);
 
 /// The buffer's line height.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
     /// A less dense line height.
@@ -226,7 +229,7 @@ where
 
 /// The content of a serialized theme.
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct ThemeStyleContent {
     #[serde(default, rename = "background.appearance")]
@@ -249,31 +252,30 @@ pub struct ThemeStyleContent {
     pub syntax: IndexMap<String, HighlightStyleContent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct AccentContent(pub Option<String>);
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct PlayerColorContent {
     pub cursor: Option<String>,
     pub background: Option<String>,
     pub selection: Option<String>,
 }
 
-/// Newtype for a theme name. Its `ParameterizedJsonSchema` lists the theme names known at runtime.
+/// Theme name.
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct ThemeName(pub Arc<str>);
 
-/// Newtype for a icon theme name. Its `ParameterizedJsonSchema` lists the icon theme names known at
-/// runtime.
+/// Icon Theme Name
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(transparent)]
 pub struct IconThemeName(pub Arc<str>);
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct ThemeColorsContent {
     /// Border color. Used for most borders, is usually a high contrast color.
@@ -778,7 +780,7 @@ pub struct ThemeColorsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct HighlightStyleContent {
     pub color: Option<String>,
@@ -812,7 +814,7 @@ where
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(default)]
 pub struct StatusColorsContent {
     /// Indicates some kind of conflict, like a file changed on disk while it was open, or
@@ -958,7 +960,7 @@ pub struct StatusColorsContent {
 }
 
 /// The background appearance of the window.
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowBackgroundContent {
     Opaque,
@@ -976,7 +978,7 @@ impl Into<gpui::WindowBackgroundAppearance> for WindowBackgroundContent {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FontStyleContent {
     Normal,
@@ -994,7 +996,9 @@ impl From<FontStyleContent> for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, Serialize_repr, Deserialize_repr, JsonSchema_repr, PartialEq, MergeFrom,
+)]
 #[repr(u16)]
 pub enum FontWeightContent {
     Thin = 100,

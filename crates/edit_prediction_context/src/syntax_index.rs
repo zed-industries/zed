@@ -9,7 +9,7 @@ use project::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use slotmap::SlotMap;
 use text::BufferId;
-use util::{ResultExt as _, debug_panic, some_or_debug_panic};
+use util::{debug_panic, some_or_debug_panic};
 
 use crate::declaration::{
     BufferDeclaration, Declaration, DeclarationId, FileDeclaration, Identifier,
@@ -332,7 +332,7 @@ impl SyntaxIndex {
                 let language = language_registry
                     .language_for_file_path(&project_path.path)
                     .await
-                    .log_err();
+                    .ok();
 
                 let buffer = cx.new(|cx| {
                     let mut buffer = Buffer::local(loaded_file.text, cx);

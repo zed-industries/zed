@@ -2,21 +2,17 @@ use std::fmt::{Display, Formatter};
 
 use crate::{
     self as settings,
-    settings_content::{self, BaseKeymapContent, SettingsContent},
+    settings_content::{BaseKeymapContent, SettingsContent},
 };
 use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_with::skip_serializing_none;
 use settings::{Settings, VsCodeSettings};
-use settings_ui_macros::{SettingsKey, SettingsUi};
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
 /// Default: VSCode
-#[derive(
-    Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default, SettingsUi,
-)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 pub enum BaseKeymap {
     #[default]
     VSCode,
@@ -134,35 +130,9 @@ impl BaseKeymap {
     }
 }
 
-#[derive(
-    Copy,
-    Clone,
-    Debug,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    PartialEq,
-    Eq,
-    Default,
-    SettingsUi,
-    SettingsKey,
-)]
-// extracted so that it can be an option, and still work with derive(SettingsUi)
-#[settings_key(None)]
-#[skip_serializing_none]
-pub struct BaseKeymapSetting {
-    pub base_keymap: Option<BaseKeymap>,
-}
-
 impl Settings for BaseKeymap {
-    fn from_defaults(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Self {
         s.base_keymap.unwrap().into()
-    }
-
-    fn refine(&mut self, s: &settings_content::SettingsContent, _cx: &mut App) {
-        if let Some(base_keymap) = s.base_keymap {
-            *self = base_keymap.into();
-        };
     }
 
     fn import_from_vscode(_vscode: &VsCodeSettings, current: &mut SettingsContent) {

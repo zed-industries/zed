@@ -7,7 +7,7 @@
 
 use component::{example_group, single_example};
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, TextStyle};
+use gpui::{App, Entity, FocusHandle, Focusable, FontStyle, Hsla, Length, TextStyle};
 use settings::Settings;
 use std::sync::Arc;
 use theme::ThemeSettings;
@@ -42,6 +42,8 @@ pub struct SingleLineInput {
     start_icon: Option<IconName>,
     /// Whether the text field is disabled.
     disabled: bool,
+    /// The minimum width of for the input
+    min_width: Length,
 }
 
 impl Focusable for SingleLineInput {
@@ -67,6 +69,7 @@ impl SingleLineInput {
             editor,
             start_icon: None,
             disabled: false,
+            min_width: px(192.).into(),
         }
     }
 
@@ -82,6 +85,11 @@ impl SingleLineInput {
 
     pub fn label_size(mut self, size: LabelSize) -> Self {
         self.label_size = size;
+        self
+    }
+
+    pub fn label_min_width(mut self, width: impl Into<Length>) -> Self {
+        self.min_width = width.into();
         self
     }
 
@@ -167,7 +175,7 @@ impl Render for SingleLineInput {
             })
             .child(
                 h_flex()
-                    .min_w_48()
+                    .min_w(self.min_width)
                     .min_h_8()
                     .w_full()
                     .px_2()

@@ -74,6 +74,7 @@ snippet_provider.workspace = true
 url.workspace = true
 task.workspace = true
 tempfile.workspace = true
+theme.workspace = true
 toml.workspace = true
 tree-sitter = { workspace = true, optional = true }
 tree-sitter-bash = { workspace = true, optional = true }

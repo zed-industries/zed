@@ -58,17 +58,14 @@ pub struct GitHostingProviderSettings {
 }
 
 impl Settings for GitHostingProviderSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         Self {
-            git_hosting_providers: content.project.git_hosting_providers.clone().unwrap(),
+            git_hosting_providers: content
+                .project
+                .git_hosting_providers
+                .clone()
+                .unwrap()
+                .into(),
         }
     }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _: &mut App) {
-        if let Some(more) = &content.project.git_hosting_providers {
-            self.git_hosting_providers.extend_from_slice(&more.clone());
-        }
-    }
-
-    fn import_from_vscode(_: &settings::VsCodeSettings, _: &mut settings::SettingsContent) {}
 }

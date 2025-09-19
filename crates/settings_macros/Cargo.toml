@@ -1,12 +1,12 @@
 [package]
-name = "settings_ui_macros"
+name = "settings_macros"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lib]
-path = "src/settings_ui_macros.rs"
+path = "src/settings_macros.rs"
 proc-macro = true
 
 [lints]
@@ -16,8 +16,6 @@ workspace = true
 default = []
 
 [dependencies]
-heck.workspace = true
-proc-macro2.workspace = true
 quote.workspace = true
 syn.workspace = true
 workspace-hack.workspace = true

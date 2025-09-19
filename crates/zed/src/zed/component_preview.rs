@@ -216,7 +216,7 @@ impl ComponentPreview {
     }
 
     fn scope_ordered_entries(&self) -> Vec<PreviewEntry> {
-        use std::collections::HashMap;
+        use collections::HashMap;
 
         let mut scope_groups: HashMap<
             ComponentScope,

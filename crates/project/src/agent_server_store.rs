@@ -22,7 +22,7 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsContent, SettingsKey, SettingsStore, SettingsUi};
+use settings::{SettingsContent, SettingsStore};
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -989,8 +989,7 @@ impl ExternalAgentServer for LocalCustomAgent {
 pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 
-#[derive(Default, Clone, JsonSchema, Debug, SettingsUi, SettingsKey, PartialEq)]
-#[settings_key(key = "agent_servers")]
+#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
@@ -1063,7 +1062,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
 }
 
 impl settings::Settings for AllAgentServersSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let agent_settings = content.agent_servers.clone().unwrap();
         Self {
             gemini: agent_settings.gemini.map(Into::into),
@@ -1073,21 +1072,6 @@ impl settings::Settings for AllAgentServersSettings {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
-        }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(content) = &content.agent_servers else {
-            return;
-        };
-        if let Some(gemini) = content.gemini.clone() {
-            self.gemini = Some(gemini.into())
-        };
-        if let Some(claude) = content.claude.clone() {
-            self.claude = Some(claude.into());
-        }
-        for (name, config) in content.custom.clone() {
-            self.custom.insert(name, config.into());
         }
     }
 

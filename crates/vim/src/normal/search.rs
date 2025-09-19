@@ -222,7 +222,7 @@ impl Vim {
                 let mut count = self.search.count;
                 let direction = self.search.direction;
                 search_bar.has_active_match();
-                let new_head = new_selections.last().unwrap().start;
+                let new_head = new_selections.last()?.start;
                 let is_different_head = self
                     .search
                     .prior_selections

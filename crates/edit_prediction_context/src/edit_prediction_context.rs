@@ -6,8 +6,12 @@ mod reference;
 mod syntax_index;
 mod text_similarity;
 
+use std::time::Instant;
+
 pub use declaration::{BufferDeclaration, Declaration, FileDeclaration, Identifier};
+pub use declaration_scoring::SnippetStyle;
 pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
+
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
 pub use reference::references_in_excerpt;
@@ -16,10 +20,12 @@ use text::{Point, ToOffset as _};
 
 use crate::declaration_scoring::{ScoredSnippet, scored_snippets};
 
+#[derive(Debug)]
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
     pub snippets: Vec<ScoredSnippet>,
+    pub retrieval_duration: std::time::Duration,
 }
 
 impl EditPredictionContext {
@@ -29,14 +35,14 @@ impl EditPredictionContext {
         excerpt_options: EditPredictionExcerptOptions,
         syntax_index: Entity<SyntaxIndex>,
         cx: &mut App,
-    ) -> Task<Self> {
+    ) -> Task<Option<Self>> {
+        let start = Instant::now();
         let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
         cx.background_spawn(async move {
             let index_state = index_state.lock().await;
 
             let excerpt =
-                EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &excerpt_options)
-                    .unwrap();
+                EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &excerpt_options)?;
             let excerpt_text = excerpt.text(&buffer);
             let references = references_in_excerpt(&excerpt, &excerpt_text, &buffer);
             let cursor_offset = cursor_point.to_offset(&buffer);
@@ -50,11 +56,12 @@ impl EditPredictionContext {
                 &buffer,
             );
 
-            Self {
+            Some(Self {
                 excerpt,
                 excerpt_text,
                 snippets,
-            }
+                retrieval_duration: start.elapsed(),
+            })
         })
     }
 }
@@ -107,7 +114,8 @@ mod tests {
                     cx,
                 )
             })
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(context.snippets.len(), 1);
         assert_eq!(context.snippets[0].identifier.name.as_ref(), "process_data");

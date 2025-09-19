@@ -1407,6 +1407,7 @@ dependencies = [
  "async-tar",
  "collections",
  "crossbeam",
+ "denoise",
  "gpui",
  "libwebrtc",
  "log",
@@ -3146,7 +3147,6 @@ dependencies = [
  "release_channel",
  "rpc",
  "rustls-pki-types",
- "schemars 1.0.1",
  "serde",
  "serde_json",
  "serde_urlencoded",
@@ -5197,6 +5197,33 @@ dependencies = [
  "text",
  "tree-sitter",
  "util",
+ "workspace-hack",
+ "zlog",
+]
+
+[[package]]
+name = "edit_prediction_tools"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "collections",
+ "edit_prediction_context",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "pretty_assertions",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "text",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
  "workspace-hack",
  "zlog",
 ]
@@ -9299,7 +9326,6 @@ dependencies = [
  "serde",
  "settings",
  "shellexpand 2.1.2",
- "util",
  "workspace",
  "workspace-hack",
 ]
@@ -9521,7 +9547,6 @@ dependencies = [
  "http_client",
  "imara-diff",
  "indoc",
- "inventory",
  "itertools 0.14.0",
  "log",
  "lsp",
@@ -10419,6 +10444,7 @@ version = "0.1.0"
 dependencies = [
  "assets",
  "base64 0.22.1",
+ "collections",
  "env_logger 0.11.8",
  "fs",
  "futures 0.3.31",
@@ -15499,7 +15525,7 @@ dependencies = [
  "serde_path_to_error",
  "serde_repr",
  "serde_with",
- "settings_ui_macros",
+ "settings_macros",
  "smallvec",
  "tree-sitter",
  "tree-sitter-json",
@@ -15507,6 +15533,16 @@ dependencies = [
  "util",
  "workspace-hack",
  "zlog",
+]
+
+[[package]]
+name = "settings_macros"
+version = "0.1.0"
+dependencies = [
+ "quote",
+ "settings",
+ "syn 2.0.101",
+ "workspace-hack",
 ]
 
 [[package]]
@@ -15528,18 +15564,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
-]
-
-[[package]]
-name = "settings_ui_macros"
-version = "0.1.0"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "settings",
- "syn 2.0.101",
- "workspace-hack",
 ]
 
 [[package]]
@@ -17190,7 +17214,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indexmap 2.9.0",
- "inventory",
  "log",
  "palette",
  "parking_lot",
@@ -20748,7 +20771,6 @@ dependencies = [
  "nix 0.29.0",
  "nix 0.30.1",
  "nom 7.1.3",
- "num",
  "num-bigint",
  "num-bigint-dig",
  "num-complex",
@@ -21246,6 +21268,7 @@ dependencies = [
  "debugger_ui",
  "diagnostics",
  "edit_prediction_button",
+ "edit_prediction_tools",
  "editor",
  "encoding_rs",
  "encodings",

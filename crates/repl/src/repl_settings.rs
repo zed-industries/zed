@@ -1,6 +1,5 @@
 use gpui::App;
 use settings::Settings;
-use util::MergeFrom;
 
 /// Settings for configuring REPL display and behavior.
 #[derive(Clone, Debug)]
@@ -18,21 +17,12 @@ pub struct ReplSettings {
 }
 
 impl Settings for ReplSettings {
-    fn from_defaults(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         let repl = content.repl.as_ref().unwrap();
 
         Self {
             max_lines: repl.max_lines.unwrap(),
             max_columns: repl.max_columns.unwrap(),
         }
-    }
-
-    fn refine(&mut self, content: &settings::SettingsContent, _cx: &mut App) {
-        let Some(repl) = content.repl.as_ref() else {
-            return;
-        };
-
-        self.max_columns.merge_from(&repl.max_columns);
-        self.max_lines.merge_from(&repl.max_lines);
     }
 }

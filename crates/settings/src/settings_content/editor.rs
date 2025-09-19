@@ -4,11 +4,12 @@ use collections::HashMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
 
 use crate::{DiagnosticSeverityContent, ShowScrollbar};
 
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct EditorSettingsContent {
     /// Whether the cursor blinks in the editor.
     ///
@@ -194,7 +195,7 @@ pub struct EditorSettingsContent {
 
 // Status bar related settings
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct StatusBarContent {
     /// Whether to display the active language button in the status bar.
     ///
@@ -208,7 +209,7 @@ pub struct StatusBarContent {
 
 // Toolbar related settings
 #[skip_serializing_none]
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct ToolbarContent {
     /// Whether to display breadcrumbs in the editor toolbar.
     ///
@@ -235,7 +236,7 @@ pub struct ToolbarContent {
 
 /// Scrollbar related settings
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 pub struct ScrollbarContent {
     /// When to show the scrollbar in the editor.
     ///
@@ -271,7 +272,7 @@ pub struct ScrollbarContent {
 
 /// Minimap related settings
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct MinimapContent {
     /// When to show the minimap in the editor.
     ///
@@ -296,7 +297,7 @@ pub struct MinimapContent {
     /// How to highlight the current line in the minimap.
     ///
     /// Default: inherits editor line highlights setting
-    pub current_line_highlight: Option<Option<CurrentLineHighlight>>,
+    pub current_line_highlight: Option<CurrentLineHighlight>,
 
     /// Maximum number of columns to display in the minimap.
     ///
@@ -306,7 +307,7 @@ pub struct MinimapContent {
 
 /// Forcefully enable or disable the scrollbar for each axis
 #[skip_serializing_none]
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Default)]
 pub struct ScrollbarAxesContent {
     /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
     ///
@@ -321,7 +322,7 @@ pub struct ScrollbarAxesContent {
 
 /// Gutter related settings
 #[skip_serializing_none]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct GutterContent {
     /// Whether to show line numbers in the gutter.
     ///
@@ -346,7 +347,9 @@ pub struct GutterContent {
 }
 
 /// How to render LSP `textDocument/documentColor` colors in the editor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentColorsRenderMode {
     /// Do not query and render document colors.
@@ -360,7 +363,7 @@ pub enum DocumentColorsRenderMode {
     Background,
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum CurrentLineHighlight {
     // Don't highlight the current line.
@@ -374,7 +377,7 @@ pub enum CurrentLineHighlight {
 }
 
 /// When to populate a new search's query based on the text under the cursor.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum SeedQuerySetting {
     /// Always populate the search query with the word under the cursor.
@@ -386,7 +389,9 @@ pub enum SeedQuerySetting {
 }
 
 /// What to do when multibuffer is double clicked in some of its excerpts (parts of singleton buffers).
-#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Default, Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DoubleClickInMultibuffer {
     /// Behave as a regular buffer and select the whole word.
@@ -400,7 +405,9 @@ pub enum DoubleClickInMultibuffer {
 /// When to show the minimap thumb.
 ///
 /// Default: always
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumb {
     /// Show the minimap thumb only when the mouse is hovering over the minimap.
@@ -413,7 +420,9 @@ pub enum MinimapThumb {
 /// Defines the border style for the minimap's scrollbar thumb.
 ///
 /// Default: left_open
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MinimapThumbBorder {
     /// Displays a border on all sides of the thumb.
@@ -432,7 +441,7 @@ pub enum MinimapThumbBorder {
 /// Which diagnostic indicators to show in the scrollbar.
 ///
 /// Default: all
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ScrollbarDiagnostics {
     /// Show all diagnostic levels: hint, information, warnings, error.
@@ -450,7 +459,7 @@ pub enum ScrollbarDiagnostics {
 /// The key to use for adding multiple cursors
 ///
 /// Default: alt
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum MultiCursorModifier {
     Alt,
@@ -461,7 +470,7 @@ pub enum MultiCursorModifier {
 /// Whether the editor will scroll beyond the last line.
 ///
 /// Default: one_page
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollBeyondLastLine {
     /// The editor will not scroll beyond the last line.
@@ -475,7 +484,9 @@ pub enum ScrollBeyondLastLine {
 }
 
 /// The shape of a selection cursor.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CursorShape {
     /// A vertical bar
@@ -490,7 +501,9 @@ pub enum CursorShape {
 }
 
 /// What to do when go to definition yields no results.
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GoToDefinitionFallback {
     /// Disables the fallback.
@@ -503,7 +516,9 @@ pub enum GoToDefinitionFallback {
 /// Determines when the mouse cursor should be hidden in an editor or input box.
 ///
 /// Default: on_typing_and_movement
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum HideMouseMode {
     /// Never hide the mouse cursor
@@ -518,7 +533,9 @@ pub enum HideMouseMode {
 /// Determines how snippets are sorted relative to other completion items.
 ///
 /// Default: inline
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SnippetSortOrder {
     /// Place snippets at the top of the completion list
@@ -534,7 +551,7 @@ pub enum SnippetSortOrder {
 
 /// Default options for buffer and project search items.
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct SearchSettingsContent {
     /// Whether to show the project search button in the status bar.
     pub button: Option<bool>,
@@ -545,7 +562,7 @@ pub struct SearchSettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub struct JupyterContent {
     /// Whether the Jupyter feature is enabled.
@@ -561,7 +578,7 @@ pub struct JupyterContent {
 
 /// Whether to allow drag and drop text selection in buffer.
 #[skip_serializing_none]
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
 pub struct DragAndDropSelectionContent {
     /// When true, enables drag and drop text selection in buffer.
     ///
@@ -577,7 +594,9 @@ pub struct DragAndDropSelectionContent {
 /// When to show the minimap in the editor.
 ///
 /// Default: never
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ShowMinimap {
     /// Follow the visibility of the scrollbar.
@@ -592,7 +611,9 @@ pub enum ShowMinimap {
 /// Where to show the minimap in the editor.
 ///
 /// Default: all_editors
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(
+    Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayIn {
     /// Show on all open editors.
