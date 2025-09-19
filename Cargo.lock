@@ -498,8 +498,9 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.25.1-dev"
-source = "git+https://github.com/zed-industries/alacritty.git?branch=add-hush-login-flag#828457c9ff1f7ea0a0469337cc8a37ee3a1b0590"
+version = "0.25.1-rc1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3cb5f4f1ef69bdb8b2095ddd14b09dd74ee0303aae8bd5372667a54cff689a1b"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.9.0",
@@ -511,10 +512,11 @@ dependencies = [
  "piper",
  "polling",
  "regex-automata",
+ "rustix 1.0.7",
  "rustix-openpty",
  "serde",
  "signal-hook",
- "unicode-width 0.1.14",
+ "unicode-width 0.2.0",
  "vte",
  "windows-sys 0.59.0",
 ]
@@ -8223,12 +8225,6 @@ checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
 name = "hermit-abi"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbf6a919d6cf397374f7dfeeea91d974c7c0a7221d0d0f4f20d859d329e53fcc"
-
-[[package]]
-name = "hermit-abi"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fbd780fe5cc30f81464441920d82ac8740e2e46b29a6fad543ddd075229ce37e"
@@ -12822,17 +12818,16 @@ dependencies = [
 
 [[package]]
 name = "polling"
-version = "3.7.4"
+version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a604568c3202727d1507653cb121dbd627a58684eb09a820fd746bee38b4442f"
+checksum = "5d0e4f59085d47d8241c88ead0f274e8a0cb551f3625263c05eb8dd897c34218"
 dependencies = [
  "cfg-if",
  "concurrent-queue",
- "hermit-abi 0.4.0",
+ "hermit-abi 0.5.0",
  "pin-project-lite",
- "rustix 0.38.44",
- "tracing",
- "windows-sys 0.59.0",
+ "rustix 1.0.7",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -14679,7 +14674,6 @@ checksum = "fdb5bc1ae2baa591800df16c9ca78619bf65c0488b41b96ccec5d11220d8c154"
 dependencies = [
  "bitflags 2.9.0",
  "errno 0.3.11",
- "itoa",
  "libc",
  "linux-raw-sys 0.4.15",
  "windows-sys 0.59.0",
@@ -14710,13 +14704,13 @@ dependencies = [
 
 [[package]]
 name = "rustix-openpty"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a25c3aad9fc1424eb82c88087789a7d938e1829724f3e4043163baf0d13cfc12"
+checksum = "1de16c7c59892b870a6336f185dc10943517f1327447096bbb7bb32cd85e2393"
 dependencies = [
  "errno 0.3.11",
  "libc",
- "rustix 0.38.44",
+ "rustix 1.0.7",
 ]
 
 [[package]]
@@ -20037,6 +20031,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f2f500e4d28234f72040990ec9d39e3a6b950f9f22d3dba18416c35882612bcb"
 dependencies = [
  "windows-targets 0.53.2",
+]
+
+[[package]]
+name = "windows-sys"
+version = "0.61.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e201184e40b2ede64bc2ea34968b28e33622acdbbf37104f0e4a33f7abe657aa"
+dependencies = [
+ "windows-link 0.2.0",
 ]
 
 [[package]]
