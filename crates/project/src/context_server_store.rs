@@ -282,16 +282,17 @@ impl ContextServerStore {
         self.servers.get(id).map(|state| state.configuration())
     }
 
-    pub fn all_server_ids(&self) -> Vec<ContextServerId> {
-        self.servers.keys().cloned().collect()
-    }
-
-    pub fn all_registry_descriptor_ids(&self, cx: &App) -> Vec<ContextServerId> {
-        self.registry
-            .read(cx)
-            .context_server_descriptors()
-            .into_iter()
-            .map(|(id, _)| ContextServerId(id))
+    pub fn server_ids(&self, cx: &App) -> HashSet<ContextServerId> {
+        self.servers
+            .keys()
+            .cloned()
+            .chain(
+                self.registry
+                    .read(cx)
+                    .context_server_descriptors()
+                    .into_iter()
+                    .map(|(id, _)| ContextServerId(id)),
+            )
             .collect()
     }
 
