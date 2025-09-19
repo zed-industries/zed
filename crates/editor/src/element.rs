@@ -3829,8 +3829,8 @@ impl EditorElement {
                                 .child(
                                     ButtonLike::new("toggle-buffer-fold")
                                         .style(ui::ButtonStyle::Transparent)
-                                        .height(px(28.).into())
-                                        .width(px(28.))
+                                        .height(px(20.).into())
+                                        .width(px(24.))
                                         .children(toggle_chevron_icon)
                                         .tooltip({
                                             let focus_handle = focus_handle.clone();
