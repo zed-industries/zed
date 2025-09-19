@@ -11,13 +11,6 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub(crate) struct SerializedCommandInvocation {
-    pub(crate) command_name: String,
-    pub(crate) user_query: String,
-    pub(crate) last_invoked: OffsetDateTime,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) struct SerializedCommandUsage {
     pub(crate) command_name: String,
     pub(crate) invocations: u16,
@@ -36,20 +29,6 @@ impl Column for SerializedCommandUsage {
             last_invoked: OffsetDateTime::from_unix_timestamp(last_invoked_raw)?,
         };
         Ok((usage, next_index))
-    }
-}
-
-impl Column for SerializedCommandInvocation {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (command_name, next_index): (String, i32) = Column::column(statement, start_index)?;
-        let (user_query, next_index): (String, i32) = Column::column(statement, next_index)?;
-        let (last_invoked_raw, next_index): (i64, i32) = Column::column(statement, next_index)?;
-        let command_invocation = Self {
-            command_name,
-            user_query,
-            last_invoked: OffsetDateTime::from_unix_timestamp(last_invoked_raw)?,
-        };
-        Ok((command_invocation, next_index))
     }
 }
 
@@ -82,18 +61,6 @@ impl CommandPaletteDB {
         );
         self.write_command_invocation_internal(command_name, user_query)
             .await
-    }
-
-    query! {
-        pub fn get_last_invoked(command: &str) -> Result<Option<SerializedCommandInvocation>> {
-            SELECT
-            command_name,
-            user_query,
-            last_invoked FROM command_invocations
-            WHERE command_name=(?)
-            ORDER BY last_invoked DESC
-            LIMIT 1
-        }
     }
 
     query! {
