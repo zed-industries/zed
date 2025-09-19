@@ -11,7 +11,7 @@ use smol::fs;
 use util::ResultExt as _;
 
 // This is the default timeout setting used by VSCode.
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(17);
+const DEFAULT_TIMEOUT: u64 = 17;
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {
@@ -52,7 +52,7 @@ pub struct AskPassSession {
     askpass_helper: String,
     #[cfg(target_os = "windows")]
     secret: std::sync::Arc<parking_lot::Mutex<String>>,
-    timeout: Duration,
+    timeout: u64,
     _askpass_task: Task<()>,
     askpass_opened_rx: Option<oneshot::Receiver<()>>,
     askpass_kill_master_rx: Option<oneshot::Receiver<()>>,
@@ -70,7 +70,7 @@ impl AskPassSession {
     pub async fn new(
         executor: &BackgroundExecutor,
         mut delegate: AskPassDelegate,
-        timeout: Option<Duration>,
+        timeout: Option<u64>,
     ) -> Result<Self> {
         use net::async_net::UnixListener;
         use util::fs::make_file_executable;
@@ -187,7 +187,7 @@ impl AskPassSession {
                 AskPassResult::CancelledByUser
             }
 
-            _ = futures::FutureExt::fuse(smol::Timer::after(self.timeout)) => {
+            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(self.timeout))) => {
                 AskPassResult::Timedout
             }
         }
