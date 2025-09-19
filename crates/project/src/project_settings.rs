@@ -17,12 +17,13 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub use settings::DirenvSettings;
+pub use settings::LspSettings;
 use settings::{
-    InvalidSettingsError, LocalSettingsKind, Settings, SettingsKey, SettingsLocation,
-    SettingsSources, SettingsStore, SettingsUi, parse_json_with_comments, watch_config_file,
+    DapSettingsContent, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
+    SettingsStore, parse_json_with_comments, watch_config_file,
 };
 use std::{
-    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -36,8 +37,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
+#[derive(Debug, Clone)]
 pub struct ProjectSettings {
     /// Configuration for language servers.
     ///
@@ -47,48 +47,75 @@ pub struct ProjectSettings {
     /// To override settings for a language, add an entry for that language server's
     /// name to the lsp value.
     /// Default: null
-    #[serde(default)]
-    pub lsp: HashMap<LanguageServerName, LspSettings>,
+    // todo(settings-follow-up)
+    // We should change to use a non content type (settings::LspSettings is a content type)
+    // Note: Will either require merging with defaults, which also requires deciding where the defaults come from,
+    //       or case by case deciding which fields are optional and which are actually required.
+    pub lsp: HashMap<LanguageServerName, settings::LspSettings>,
 
     /// Common language server settings.
-    #[serde(default)]
     pub global_lsp_settings: GlobalLspSettings,
 
     /// Configuration for Debugger-related features
-    #[serde(default)]
     pub dap: HashMap<DebugAdapterName, DapSettings>,
 
     /// Settings for context servers used for AI-related features.
-    #[serde(default)]
     pub context_servers: HashMap<Arc<str>, ContextServerSettings>,
 
     /// Configuration for Diagnostics-related features.
-    #[serde(default)]
     pub diagnostics: DiagnosticsSettings,
 
     /// Configuration for Git-related features
-    #[serde(default)]
     pub git: GitSettings,
 
     /// Configuration for Node-related features
-    #[serde(default)]
     pub node: NodeBinarySettings,
 
     /// Configuration for how direnv configuration should be loaded
-    #[serde(default)]
     pub load_direnv: DirenvSettings,
 
     /// Configuration for session-related features
-    #[serde(default)]
     pub session: SessionSettings,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub struct SessionSettings {
+    /// Whether or not to restore unsaved buffers on restart.
+    ///
+    /// If this is true, user won't be prompted whether to save/discard
+    /// dirty files when closing the application.
+    ///
+    /// Default: true
+    pub restore_unsaved_buffers: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub struct DapSettings {
-    pub binary: Option<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
+pub struct NodeBinarySettings {
+    /// The path to the Node binary.
+    pub path: Option<String>,
+    /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
+    pub npm_path: Option<String>,
+    /// If enabled, Zed will download its own copy of Node.
+    pub ignore_system_version: bool,
+}
+
+impl From<settings::NodeBinarySettings> for NodeBinarySettings {
+    fn from(settings: settings::NodeBinarySettings) -> Self {
+        Self {
+            path: settings.path,
+            npm_path: settings.npm_path,
+            ignore_system_version: settings.ignore_system_version.unwrap_or(false),
+        }
+    }
+}
+
+/// Common language server settings.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GlobalLspSettings {
+    /// Whether to show the LSP servers button in the status bar.
+    ///
+    /// Default: `true`
+    pub button: bool,
 }
 
 #[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -114,14 +141,29 @@ pub enum ContextServerSettings {
     },
 }
 
-/// Common language server settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct GlobalLspSettings {
-    /// Whether to show the LSP servers button in the status bar.
-    ///
-    /// Default: `true`
-    #[serde(default = "default_true")]
-    pub button: bool,
+impl From<settings::ContextServerSettingsContent> for ContextServerSettings {
+    fn from(value: settings::ContextServerSettingsContent) -> Self {
+        match value {
+            settings::ContextServerSettingsContent::Custom { enabled, command } => {
+                ContextServerSettings::Custom { enabled, command }
+            }
+            settings::ContextServerSettingsContent::Extension { enabled, settings } => {
+                ContextServerSettings::Extension { enabled, settings }
+            }
+        }
+    }
+}
+impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
+    fn into(self) -> settings::ContextServerSettingsContent {
+        match self {
+            ContextServerSettings::Custom { enabled, command } => {
+                settings::ContextServerSettingsContent::Custom { enabled, command }
+            }
+            ContextServerSettings::Extension { enabled, settings } => {
+                settings::ContextServerSettingsContent::Extension { enabled, settings }
+            }
+        }
+    }
 }
 
 impl ContextServerSettings {
@@ -147,161 +189,13 @@ impl ContextServerSettings {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct NodeBinarySettings {
-    /// The path to the Node binary.
-    pub path: Option<String>,
-    /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
-    pub npm_path: Option<String>,
-    /// If enabled, Zed will download its own copy of Node.
-    #[serde(default)]
-    pub ignore_system_version: bool,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DirenvSettings {
-    /// Load direnv configuration through a shell hook
-    ShellHook,
-    /// Load direnv configuration directly using `direnv export json`
-    #[default]
-    Direct,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct DiagnosticsSettings {
-    /// Whether to show the project diagnostics button in the status bar.
-    pub button: bool,
-
-    /// Whether or not to include warning diagnostics.
-    pub include_warnings: bool,
-
-    /// Settings for using LSP pull diagnostics mechanism in Zed.
-    pub lsp_pull_diagnostics: LspPullDiagnosticsSettings,
-
-    /// Settings for showing inline diagnostics.
-    pub inline: InlineDiagnosticsSettings,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct LspPullDiagnosticsSettings {
-    /// Whether to pull for diagnostics or not.
-    ///
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    /// Minimum time to wait before pulling diagnostics from the language server(s).
-    /// 0 turns the debounce off.
-    ///
-    /// Default: 50
-    #[serde(default = "default_lsp_diagnostics_pull_debounce_ms")]
-    pub debounce_ms: u64,
-}
-
-fn default_lsp_diagnostics_pull_debounce_ms() -> u64 {
-    50
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct InlineDiagnosticsSettings {
-    /// Whether or not to show inline diagnostics
-    ///
-    /// Default: false
-    pub enabled: bool,
-    /// Whether to only show the inline diagnostics after a delay after the
-    /// last editor event.
-    ///
-    /// Default: 150
-    #[serde(default = "default_inline_diagnostics_update_debounce_ms")]
-    pub update_debounce_ms: u64,
-    /// The amount of padding between the end of the source line and the start
-    /// of the inline diagnostic in units of columns.
-    ///
-    /// Default: 4
-    #[serde(default = "default_inline_diagnostics_padding")]
-    pub padding: u32,
-    /// The minimum column to display inline diagnostics. This setting can be
-    /// used to horizontally align inline diagnostics at some position. Lines
-    /// longer than this value will still push diagnostics further to the right.
-    ///
-    /// Default: 0
-    pub min_column: u32,
-
-    pub max_severity: Option<DiagnosticSeverity>,
-}
-
-fn default_inline_diagnostics_update_debounce_ms() -> u64 {
-    150
-}
-
-fn default_inline_diagnostics_padding() -> u32 {
-    4
-}
-
-impl Default for DiagnosticsSettings {
-    fn default() -> Self {
-        Self {
-            button: true,
-            include_warnings: true,
-            lsp_pull_diagnostics: LspPullDiagnosticsSettings::default(),
-            inline: InlineDiagnosticsSettings::default(),
-        }
-    }
-}
-
-impl Default for LspPullDiagnosticsSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            debounce_ms: default_lsp_diagnostics_pull_debounce_ms(),
-        }
-    }
-}
-
-impl Default for InlineDiagnosticsSettings {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            update_debounce_ms: default_inline_diagnostics_update_debounce_ms(),
-            padding: default_inline_diagnostics_padding(),
-            min_column: 0,
-            max_severity: None,
-        }
-    }
-}
-
-impl Default for GlobalLspSettings {
-    fn default() -> Self {
-        Self {
-            button: default_true(),
-        }
-    }
-}
-
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    PartialEq,
-    Ord,
-    PartialOrd,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-    SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DiagnosticSeverity {
     // No diagnostics are shown.
     Off,
     Error,
     Warning,
     Info,
-    #[serde(alias = "all")]
     Hint,
 }
 
@@ -313,6 +207,18 @@ impl DiagnosticSeverity {
             DiagnosticSeverity::Warning => Some(lsp::DiagnosticSeverity::WARNING),
             DiagnosticSeverity::Info => Some(lsp::DiagnosticSeverity::INFORMATION),
             DiagnosticSeverity::Hint => Some(lsp::DiagnosticSeverity::HINT),
+        }
+    }
+}
+
+impl From<settings::DiagnosticSeverityContent> for DiagnosticSeverity {
+    fn from(severity: settings::DiagnosticSeverityContent) -> Self {
+        match severity {
+            settings::DiagnosticSeverityContent::Off => DiagnosticSeverity::Off,
+            settings::DiagnosticSeverityContent::Error => DiagnosticSeverity::Error,
+            settings::DiagnosticSeverityContent::Warning => DiagnosticSeverity::Warning,
+            settings::DiagnosticSeverityContent::Info => DiagnosticSeverity::Info,
+            settings::DiagnosticSeverityContent::Hint => DiagnosticSeverity::Hint,
         }
     }
 }
@@ -390,12 +296,12 @@ impl GoToDiagnosticSeverityFilter {
     }
 }
 
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Copy, Clone, Debug)]
 pub struct GitSettings {
     /// Whether or not to show the git gutter.
     ///
     /// Default: tracked_files
-    pub git_gutter: Option<GitGutterSetting>,
+    pub git_gutter: settings::GitGutterSetting,
     /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
     /// Default: null
@@ -404,111 +310,50 @@ pub struct GitSettings {
     /// the currently focused line.
     ///
     /// Default: on
-    pub inline_blame: Option<InlineBlameSettings>,
+    pub inline_blame: InlineBlameSettings,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
-    pub branch_picker: Option<BranchPickerSettings>,
+    pub branch_picker: BranchPickerSettings,
     /// How hunks are displayed visually in the editor.
     ///
     /// Default: staged_hollow
-    pub hunk_style: Option<GitHunkStyleSetting>,
+    pub hunk_style: settings::GitHunkStyleSetting,
 }
 
-impl GitSettings {
-    pub fn inline_blame_enabled(&self) -> bool {
-        #[allow(unknown_lints, clippy::manual_unwrap_or_default)]
-        match self.inline_blame {
-            Some(InlineBlameSettings { enabled, .. }) => enabled,
-            _ => false,
-        }
-    }
-
-    pub fn inline_blame_delay(&self) -> Option<Duration> {
-        match self.inline_blame {
-            Some(InlineBlameSettings { delay_ms, .. }) if delay_ms > 0 => {
-                Some(Duration::from_millis(delay_ms))
-            }
-            _ => None,
-        }
-    }
-
-    pub fn show_inline_commit_summary(&self) -> bool {
-        match self.inline_blame {
-            Some(InlineBlameSettings {
-                show_commit_summary,
-                ..
-            }) => show_commit_summary,
-            _ => false,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GitHunkStyleSetting {
-    /// Show unstaged hunks with a filled background and staged hunks hollow.
-    #[default]
-    StagedHollow,
-    /// Show unstaged hunks hollow and staged hunks with a filled background.
-    UnstagedHollow,
-}
-
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum GitGutterSetting {
-    /// Show git gutter in tracked files.
-    #[default]
-    TrackedFiles,
-    /// Hide git gutter
-    Hide,
-}
-
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug)]
 pub struct InlineBlameSettings {
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
     ///
     /// Default: true
-    #[serde(default = "default_true")]
     pub enabled: bool,
     /// Whether to only show the inline blame information
     /// after a delay once the cursor stops moving.
     ///
     /// Default: 0
-    #[serde(default)]
-    pub delay_ms: u64,
+    pub delay_ms: std::time::Duration,
     /// The amount of padding between the end of the source line and the start
     /// of the inline blame in units of columns.
     ///
     /// Default: 7
-    #[serde(default = "default_inline_blame_padding")]
     pub padding: u32,
     /// The minimum column number to show the inline blame information at
     ///
     /// Default: 0
-    #[serde(default)]
     pub min_column: u32,
     /// Whether to show commit summary as part of the inline blame.
     ///
     /// Default: false
-    #[serde(default)]
     pub show_commit_summary: bool,
 }
 
-fn default_inline_blame_padding() -> u32 {
-    7
-}
-
-impl Default for InlineBlameSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            delay_ms: 0,
-            padding: default_inline_blame_padding(),
-            min_column: 0,
-            show_commit_summary: false,
+impl GitSettings {
+    pub fn inline_blame_delay(&self) -> Option<Duration> {
+        if self.inline_blame.delay_ms.as_millis() > 0 {
+            Some(self.inline_blame.delay_ms)
+        } else {
+            None
         }
     }
 }
@@ -531,93 +376,161 @@ impl Default for BranchPickerSettings {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
-pub struct BinarySettings {
-    pub path: Option<String>,
-    pub arguments: Option<Vec<String>>,
-    pub env: Option<BTreeMap<String, String>>,
-    pub ignore_system_version: Option<bool>,
+#[derive(Clone, Debug)]
+pub struct DiagnosticsSettings {
+    /// Whether to show the project diagnostics button in the status bar.
+    pub button: bool,
+
+    /// Whether or not to include warning diagnostics.
+    pub include_warnings: bool,
+
+    /// Settings for using LSP pull diagnostics mechanism in Zed.
+    pub lsp_pull_diagnostics: LspPullDiagnosticsSettings,
+
+    /// Settings for showing inline diagnostics.
+    pub inline: InlineDiagnosticsSettings,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
-pub struct FetchSettings {
-    // Whether to consider pre-releases for fetching
-    pub pre_release: Option<bool>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, Hash)]
-#[serde(rename_all = "snake_case")]
-pub struct LspSettings {
-    pub binary: Option<BinarySettings>,
-    pub initialization_options: Option<serde_json::Value>,
-    pub settings: Option<serde_json::Value>,
-    /// If the server supports sending tasks over LSP extensions,
-    /// this setting can be used to enable or disable them in Zed.
-    /// Default: true
-    #[serde(default = "default_true")]
-    pub enable_lsp_tasks: bool,
-    pub fetch: Option<FetchSettings>,
-}
-
-impl Default for LspSettings {
-    fn default() -> Self {
-        Self {
-            binary: None,
-            initialization_options: None,
-            settings: None,
-            enable_lsp_tasks: true,
-            fetch: None,
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
-pub struct SessionSettings {
-    /// Whether or not to restore unsaved buffers on restart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InlineDiagnosticsSettings {
+    /// Whether or not to show inline diagnostics
     ///
-    /// If this is true, user won't be prompted whether to save/discard
-    /// dirty files when closing the application.
+    /// Default: false
+    pub enabled: bool,
+    /// Whether to only show the inline diagnostics after a delay after the
+    /// last editor event.
+    ///
+    /// Default: 150
+    pub update_debounce_ms: u64,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline diagnostic in units of columns.
+    ///
+    /// Default: 4
+    pub padding: u32,
+    /// The minimum column to display inline diagnostics. This setting can be
+    /// used to horizontally align inline diagnostics at some position. Lines
+    /// longer than this value will still push diagnostics further to the right.
+    ///
+    /// Default: 0
+    pub min_column: u32,
+
+    pub max_severity: Option<DiagnosticSeverity>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct LspPullDiagnosticsSettings {
+    /// Whether to pull for diagnostics or not.
     ///
     /// Default: true
-    pub restore_unsaved_buffers: bool,
-}
-
-impl Default for SessionSettings {
-    fn default() -> Self {
-        Self {
-            restore_unsaved_buffers: true,
-        }
-    }
+    pub enabled: bool,
+    /// Minimum time to wait before pulling diagnostics from the language server(s).
+    /// 0 turns the debounce off.
+    ///
+    /// Default: 50
+    pub debounce_ms: u64,
 }
 
 impl Settings for ProjectSettings {
-    type FileContent = Self;
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let project = &content.project.clone();
+        let diagnostics = content.diagnostics.as_ref().unwrap();
+        let lsp_pull_diagnostics = diagnostics.lsp_pull_diagnostics.as_ref().unwrap();
+        let inline_diagnostics = diagnostics.inline.as_ref().unwrap();
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> anyhow::Result<Self> {
-        sources.json_merge()
+        let git = content.git.as_ref().unwrap();
+        let git_settings = GitSettings {
+            git_gutter: git.git_gutter.unwrap(),
+            gutter_debounce: git.gutter_debounce,
+            inline_blame: {
+                let inline = git.inline_blame.unwrap();
+                InlineBlameSettings {
+                    enabled: inline.enabled.unwrap(),
+                    delay_ms: std::time::Duration::from_millis(inline.delay_ms.unwrap()),
+                    padding: inline.padding.unwrap(),
+                    min_column: inline.min_column.unwrap(),
+                    show_commit_summary: inline.show_commit_summary.unwrap(),
+                }
+            },
+            branch_picker: {
+                let branch_picker = git.branch_picker.unwrap();
+                BranchPickerSettings {
+                    show_author_name: branch_picker.show_author_name.unwrap(),
+                }
+            },
+            hunk_style: git.hunk_style.unwrap(),
+        };
+        Self {
+            context_servers: project
+                .context_servers
+                .clone()
+                .into_iter()
+                .map(|(key, value)| (key, value.into()))
+                .collect(),
+            lsp: project
+                .lsp
+                .clone()
+                .into_iter()
+                .map(|(key, value)| (LanguageServerName(key.into()), value))
+                .collect(),
+            global_lsp_settings: GlobalLspSettings {
+                button: content
+                    .global_lsp_settings
+                    .as_ref()
+                    .unwrap()
+                    .button
+                    .unwrap(),
+            },
+            dap: project
+                .dap
+                .clone()
+                .into_iter()
+                .map(|(key, value)| (DebugAdapterName(key.into()), DapSettings::from(value)))
+                .collect(),
+            diagnostics: DiagnosticsSettings {
+                button: diagnostics.button.unwrap(),
+                include_warnings: diagnostics.include_warnings.unwrap(),
+                lsp_pull_diagnostics: LspPullDiagnosticsSettings {
+                    enabled: lsp_pull_diagnostics.enabled.unwrap(),
+                    debounce_ms: lsp_pull_diagnostics.debounce_ms.unwrap(),
+                },
+                inline: InlineDiagnosticsSettings {
+                    enabled: inline_diagnostics.enabled.unwrap(),
+                    update_debounce_ms: inline_diagnostics.update_debounce_ms.unwrap(),
+                    padding: inline_diagnostics.padding.unwrap(),
+                    min_column: inline_diagnostics.min_column.unwrap(),
+                    max_severity: inline_diagnostics.max_severity.map(Into::into),
+                },
+            },
+            git: git_settings,
+            node: content.node.clone().unwrap().into(),
+            load_direnv: project.load_direnv.clone().unwrap(),
+            session: SessionSettings {
+                restore_unsaved_buffers: content.session.unwrap().restore_unsaved_buffers.unwrap(),
+            },
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+    fn import_from_vscode(
+        vscode: &settings::VsCodeSettings,
+        current: &mut settings::SettingsContent,
+    ) {
         // this just sets the binary name instead of a full path so it relies on path lookup
         // resolving to the one you want
-        vscode.enum_setting(
-            "npm.packageManager",
-            &mut current.node.npm_path,
-            |s| match s {
-                v @ ("npm" | "yarn" | "bun" | "pnpm") => Some(v.to_owned()),
-                _ => None,
-            },
-        );
+        let npm_path = vscode.read_enum("npm.packageManager", |s| match s {
+            v @ ("npm" | "yarn" | "bun" | "pnpm") => Some(v.to_owned()),
+            _ => None,
+        });
+        if npm_path.is_some() {
+            current.node.get_or_insert_default().npm_path = npm_path;
+        }
 
         if let Some(b) = vscode.read_bool("git.blame.editorDecoration.enabled") {
-            if let Some(blame) = current.git.inline_blame.as_mut() {
-                blame.enabled = b
-            } else {
-                current.git.inline_blame = Some(InlineBlameSettings {
-                    enabled: b,
-                    ..Default::default()
-                })
-            }
+            current
+                .git
+                .get_or_insert_default()
+                .inline_blame
+                .get_or_insert_default()
+                .enabled = Some(b);
         }
 
         #[derive(Deserialize)]
@@ -627,29 +540,27 @@ impl Settings for ProjectSettings {
             env: Option<HashMap<String, String>>,
             // note: we don't support envFile and type
         }
-        impl From<VsCodeContextServerCommand> for ContextServerCommand {
-            fn from(cmd: VsCodeContextServerCommand) -> Self {
-                Self {
-                    path: cmd.command,
-                    args: cmd.args.unwrap_or_default(),
-                    env: cmd.env,
-                    timeout: None,
-                }
-            }
-        }
         if let Some(mcp) = vscode.read_value("mcp").and_then(|v| v.as_object()) {
             current
+                .project
                 .context_servers
                 .extend(mcp.iter().filter_map(|(k, v)| {
                     Some((
                         k.clone().into(),
-                        ContextServerSettings::Custom {
+                        settings::ContextServerSettingsContent::Custom {
                             enabled: true,
                             command: serde_json::from_value::<VsCodeContextServerCommand>(
                                 v.clone(),
                             )
-                            .ok()?
-                            .into(),
+                            .ok()
+                            .map(|cmd| {
+                                settings::ContextServerCommand {
+                                    path: cmd.command,
+                                    args: cmd.args.unwrap_or_default(),
+                                    env: cmd.env,
+                                    timeout: None,
+                                }
+                            })?,
                         },
                     ))
                 }));
@@ -736,17 +647,19 @@ impl SettingsObserver {
             if let Some(upstream_client) = upstream_client {
                 let mut user_settings = None;
                 user_settings_watcher = Some(cx.observe_global::<SettingsStore>(move |_, cx| {
-                    let new_settings = cx.global::<SettingsStore>().raw_user_settings();
-                    if Some(new_settings) != user_settings.as_ref() {
-                        if let Some(new_settings_string) = serde_json::to_string(new_settings).ok()
-                        {
-                            user_settings = Some(new_settings.clone());
-                            upstream_client
-                                .send(proto::UpdateUserSettings {
-                                    project_id: REMOTE_SERVER_PROJECT_ID,
-                                    contents: new_settings_string,
-                                })
-                                .log_err();
+                    if let Some(new_settings) = cx.global::<SettingsStore>().raw_user_settings() {
+                        if Some(new_settings) != user_settings.as_ref() {
+                            if let Some(new_settings_string) =
+                                serde_json::to_string(new_settings).ok()
+                            {
+                                user_settings = Some(new_settings.clone());
+                                upstream_client
+                                    .send(proto::UpdateUserSettings {
+                                        project_id: REMOTE_SERVER_PROJECT_ID,
+                                        contents: new_settings_string,
+                                    })
+                                    .log_err();
+                            }
                         }
                     }
                 }));
@@ -786,6 +699,7 @@ impl SettingsObserver {
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
             for (path, content) in store.local_settings(worktree.read(cx).id()) {
+                let content = serde_json::to_string(&content).unwrap();
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
@@ -856,10 +770,9 @@ impl SettingsObserver {
         envelope: TypedEnvelope<proto::UpdateUserSettings>,
         cx: AsyncApp,
     ) -> anyhow::Result<()> {
-        let new_settings = serde_json::from_str::<serde_json::Value>(&envelope.payload.contents)
-            .with_context(|| {
-                format!("deserializing {} user settings", envelope.payload.contents)
-            })?;
+        let new_settings = serde_json::from_str(&envelope.payload.contents).with_context(|| {
+            format!("deserializing {} user settings", envelope.payload.contents)
+        })?;
         cx.update_global(|settings_store: &mut SettingsStore, cx| {
             settings_store
                 .set_raw_user_settings(new_settings, cx)
@@ -1291,4 +1204,27 @@ pub fn local_settings_kind_to_proto(kind: LocalSettingsKind) -> proto::LocalSett
         LocalSettingsKind::Editorconfig => proto::LocalSettingsKind::Editorconfig,
         LocalSettingsKind::Debug => proto::LocalSettingsKind::Debug,
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct DapSettings {
+    pub binary: DapBinary,
+    pub args: Vec<String>,
+}
+
+impl From<DapSettingsContent> for DapSettings {
+    fn from(content: DapSettingsContent) -> Self {
+        DapSettings {
+            binary: content
+                .binary
+                .map_or_else(|| DapBinary::Default, |binary| DapBinary::Custom(binary)),
+            args: content.args.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum DapBinary {
+    Default,
+    Custom(String),
 }

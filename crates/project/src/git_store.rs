@@ -398,6 +398,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
+        client.add_entity_request_handler(Self::handle_rename_branch);
         client.add_entity_request_handler(Self::handle_git_init);
         client.add_entity_request_handler(Self::handle_push);
         client.add_entity_request_handler(Self::handle_pull);
@@ -1938,6 +1939,25 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.change_branch(branch_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_rename_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRenameBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let branch = envelope.payload.branch;
+        let new_name = envelope.payload.new_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.rename_branch(branch, new_name)
             })?
             .await??;
 
@@ -4321,6 +4341,36 @@ impl Repository {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 branch_name,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn rename_branch(
+        &mut self,
+        branch: String,
+        new_name: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git branch -m {branch} {new_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.rename_branch(branch, new_name).await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        client
+                            .request(proto::GitRenameBranch {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                branch,
+                                new_name,
                             })
                             .await?;
 

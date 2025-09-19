@@ -119,15 +119,13 @@ pub fn scored_snippets(
                                 )
                             })
                         } else {
-                            // TODO should we prefer the current file instead?
-                            Some((false, 0, declaration))
+                            Some((false, u32::MAX, declaration))
                         }
                     }
                     Declaration::File { .. } => {
-                        // TODO should we prefer the current file instead?
                         // We can assume that a file declaration is in a different file,
                         // because the current one must be open
-                        Some((false, 0, declaration))
+                        Some((false, u32::MAX, declaration))
                     }
                 })
                 .sorted_by_key(|&(_, distance, _)| distance)

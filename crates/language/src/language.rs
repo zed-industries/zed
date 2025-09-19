@@ -22,8 +22,8 @@ mod toolchain;
 #[cfg(test)]
 pub mod buffer_tests;
 
-pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
+pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -55,7 +55,7 @@ use std::{
     str,
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
@@ -168,7 +168,6 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
-    pub reinstall_attempt_count: AtomicU64,
     cached_binary: ServerBinaryCache,
 }
 
@@ -185,7 +184,6 @@ impl Debug for CachedLspAdapter {
                 &self.disk_based_diagnostics_progress_token,
             )
             .field("language_ids", &self.language_ids)
-            .field("reinstall_attempt_count", &self.reinstall_attempt_count)
             .finish_non_exhaustive()
     }
 }
@@ -204,7 +202,6 @@ impl CachedLspAdapter {
             language_ids,
             adapter,
             cached_binary: Default::default(),
-            reinstall_attempt_count: AtomicU64::new(0),
         })
     }
 

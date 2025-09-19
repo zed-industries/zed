@@ -24,6 +24,7 @@ use language_model::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+pub use settings::GoogleAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::{
@@ -58,32 +59,6 @@ pub enum ModelMode {
         /// The maximum number of tokens to use for reasoning. Must be lower than the model's `max_output_tokens`.
         budget_tokens: Option<u32>,
     },
-}
-
-impl From<ModelMode> for GoogleModelMode {
-    fn from(value: ModelMode) -> Self {
-        match value {
-            ModelMode::Default => GoogleModelMode::Default,
-            ModelMode::Thinking { budget_tokens } => GoogleModelMode::Thinking { budget_tokens },
-        }
-    }
-}
-
-impl From<GoogleModelMode> for ModelMode {
-    fn from(value: GoogleModelMode) -> Self {
-        match value {
-            GoogleModelMode::Default => ModelMode::Default,
-            GoogleModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    name: String,
-    display_name: Option<String>,
-    max_tokens: u64,
-    mode: Option<ModelMode>,
 }
 
 pub struct GoogleLanguageModelProvider {
@@ -234,7 +209,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
-                    mode: model.mode.unwrap_or_default().into(),
+                    mode: model.mode.unwrap_or_default(),
                 },
             );
         }

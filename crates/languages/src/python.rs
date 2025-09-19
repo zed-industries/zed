@@ -1558,19 +1558,8 @@ impl LspInstaller for PyLspAdapter {
         ensure!(
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
-                .arg("python-lsp-server")
-                .arg("-U")
-                .output()
-                .await?
-                .status
-                .success(),
-            "python-lsp-server installation failed"
-        );
-        ensure!(
-            util::command::new_smol_command(pip_path.as_path())
-                .arg("install")
                 .arg("python-lsp-server[all]")
-                .arg("-U")
+                .arg("--upgrade")
                 .output()
                 .await?
                 .status
@@ -1581,7 +1570,7 @@ impl LspInstaller for PyLspAdapter {
             util::command::new_smol_command(pip_path)
                 .arg("install")
                 .arg("pylsp-mypy")
-                .arg("-U")
+                .arg("--upgrade")
                 .output()
                 .await?
                 .status
@@ -1589,6 +1578,10 @@ impl LspInstaller for PyLspAdapter {
             "pylsp-mypy installation failed"
         );
         let pylsp = venv.join(BINARY_DIR).join("pylsp");
+        ensure!(
+            delegate.which(pylsp.as_os_str()).await.is_some(),
+            "pylsp installation was incomplete"
+        );
         Ok(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -1603,6 +1596,7 @@ impl LspInstaller for PyLspAdapter {
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
         let pylsp = venv.join(BINARY_DIR).join("pylsp");
+        delegate.which(pylsp.as_os_str()).await?;
         Some(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -1641,9 +1635,11 @@ impl BasedPyrightLspAdapter {
                 .arg("venv")
                 .arg("basedpyright-venv")
                 .current_dir(work_dir)
-                .spawn()?
+                .spawn()
+                .context("spawning child")?
                 .output()
-                .await?;
+                .await
+                .context("getting child output")?;
         }
 
         Ok(path.into())
@@ -1885,11 +1881,14 @@ impl LspInstaller for BasedPyrightLspAdapter {
             let path = Path::new(toolchain?.path.as_ref())
                 .parent()?
                 .join(Self::BINARY_NAME);
-            path.exists().then(|| LanguageServerBinary {
-                path,
-                arguments: vec!["--stdio".into()],
-                env: None,
-            })
+            delegate
+                .which(path.as_os_str())
+                .await
+                .map(|_| LanguageServerBinary {
+                    path,
+                    arguments: vec!["--stdio".into()],
+                    env: None,
+                })
         }
     }
 
@@ -1905,16 +1904,21 @@ impl LspInstaller for BasedPyrightLspAdapter {
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
                 .arg("basedpyright")
-                .arg("-U")
+                .arg("--upgrade")
                 .output()
-                .await?
+                .await
+                .context("getting pip install output")?
                 .status
                 .success(),
             "basedpyright installation failed"
         );
-        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        let path = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        ensure!(
+            delegate.which(path.as_os_str()).await.is_some(),
+            "basedpyright installation was incomplete"
+        );
         Ok(LanguageServerBinary {
-            path: pylsp,
+            path,
             env: None,
             arguments: vec!["--stdio".into()],
         })
@@ -1926,9 +1930,10 @@ impl LspInstaller for BasedPyrightLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        let path = venv.join(BINARY_DIR).join(Self::BINARY_NAME);
+        delegate.which(path.as_os_str()).await?;
         Some(LanguageServerBinary {
-            path: pylsp,
+            path,
             env: None,
             arguments: vec!["--stdio".into()],
         })
@@ -2169,7 +2174,7 @@ impl LspInstaller for RuffLspAdapter {
 #[cfg(test)]
 mod tests {
     use gpui::{AppContext as _, BorrowAppContext, Context, TestAppContext};
-    use language::{AutoindentMode, Buffer, language_settings::AllLanguageSettings};
+    use language::{AutoindentMode, Buffer};
     use settings::SettingsStore;
     use std::num::NonZeroU32;
 
@@ -2182,8 +2187,8 @@ mod tests {
             cx.set_global(test_settings);
             language::init(cx);
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<AllLanguageSettings>(cx, |s| {
-                    s.defaults.tab_size = NonZeroU32::new(2);
+                store.update_user_settings(cx, |s| {
+                    s.project.all_languages.defaults.tab_size = NonZeroU32::new(2);
                 });
             });
         });

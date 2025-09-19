@@ -26,12 +26,8 @@ use language_model::{
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
-    agent_server_store::{
-        AgentServerCommand, AgentServerStore, AllAgentServersSettings, CLAUDE_CODE_NAME,
-        CustomAgentServerSettings, GEMINI_NAME,
-    },
+    agent_server_store::{AgentServerStore, CLAUDE_CODE_NAME, GEMINI_NAME},
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
-    project_settings::{ContextServerSettings, ProjectSettings},
 };
 use settings::{Settings, SettingsStore, update_settings_file};
 use ui::{
@@ -419,8 +415,8 @@ impl AgentConfiguration {
             always_allow_tool_actions,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
-                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
-                    settings.set_always_allow_tool_actions(allow);
+                update_settings_file(fs.clone(), cx, move |settings, _| {
+                    settings.agent.get_or_insert_default().set_always_allow_tool_actions(allow);
                 });
             },
         )
@@ -437,8 +433,11 @@ impl AgentConfiguration {
             single_file_review,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
-                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
-                    settings.set_single_file_review(allow);
+                update_settings_file(fs.clone(), cx, move |settings, _| {
+                    settings
+                        .agent
+                        .get_or_insert_default()
+                        .set_single_file_review(allow);
                 });
             },
         )
@@ -457,8 +456,8 @@ impl AgentConfiguration {
             play_sound_when_agent_done,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
-                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
-                    settings.set_play_sound_when_agent_done(allow);
+                update_settings_file(fs.clone(), cx, move |settings, _| {
+                    settings.agent.get_or_insert_default().set_play_sound_when_agent_done(allow);
                 });
             },
         )
@@ -477,8 +476,8 @@ impl AgentConfiguration {
             use_modifier_to_send,
             move |state, _window, cx| {
                 let allow = state == &ToggleState::Selected;
-                update_settings_file::<AgentSettings>(fs.clone(), cx, move |settings, _| {
-                    settings.set_use_modifier_to_send(allow);
+                update_settings_file(fs.clone(), cx, move |settings, _| {
+                    settings.agent.get_or_insert_default().set_use_modifier_to_send(allow);
                 });
             },
         )
@@ -862,14 +861,14 @@ impl AgentConfiguration {
                                     async move |cx| {
                                         uninstall_extension_task.await?;
                                         cx.update(|cx| {
-                                            update_settings_file::<ProjectSettings>(
+                                            update_settings_file(
                                                 fs.clone(),
                                                 cx,
                                                 {
                                                     let context_server_id =
                                                         context_server_id.clone();
                                                     move |settings, _| {
-                                                        settings
+                                                        settings.project
                                                             .context_servers
                                                             .remove(&context_server_id.0);
                                                     }
@@ -944,67 +943,53 @@ impl AgentConfiguration {
                             .flex_none()
                             .child(context_server_configuration_menu)
                             .child(
-                                Switch::new("context-server-switch", is_running.into())
-                                    .color(SwitchColor::Accent)
-                                    .on_click({
-                                        let context_server_manager =
-                                            self.context_server_store.clone();
-                                        let fs = self.fs.clone();
+                            Switch::new("context-server-switch", is_running.into())
+                                .color(SwitchColor::Accent)
+                                .on_click({
+                                    let context_server_manager = self.context_server_store.clone();
+                                    let fs = self.fs.clone();
 
-                                        move |state, _window, cx| {
-                                            let is_enabled = match state {
-                                                ToggleState::Unselected
-                                                | ToggleState::Indeterminate => {
-                                                    context_server_manager.update(
-                                                        cx,
-                                                        |this, cx| {
-                                                            this.stop_server(
-                                                                &context_server_id,
-                                                                cx,
-                                                            )
-                                                            .log_err();
-                                                        },
-                                                    );
-                                                    false
-                                                }
-                                                ToggleState::Selected => {
-                                                    context_server_manager.update(
-                                                        cx,
-                                                        |this, cx| {
-                                                            if let Some(server) =
-                                                                this.get_server(&context_server_id)
-                                                            {
-                                                                this.start_server(server, cx);
-                                                            }
-                                                        },
-                                                    );
-                                                    true
-                                                }
-                                            };
-                                            update_settings_file::<ProjectSettings>(
-                                                fs.clone(),
-                                                cx,
-                                                {
-                                                    let context_server_id =
-                                                        context_server_id.clone();
-
-                                                    move |settings, _| {
-                                                        settings
-                                                            .context_servers
-                                                            .entry(context_server_id.0)
-                                                            .or_insert_with(|| {
-                                                                ContextServerSettings::Extension {
-                                                                    enabled: is_enabled,
-                                                                    settings: serde_json::json!({}),
-                                                                }
-                                                            })
-                                                            .set_enabled(is_enabled);
+                                    move |state, _window, cx| {
+                                        let is_enabled = match state {
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    this.stop_server(&context_server_id, cx)
+                                                        .log_err();
+                                                });
+                                                false
+                                            }
+                                            ToggleState::Selected => {
+                                                context_server_manager.update(cx, |this, cx| {
+                                                    if let Some(server) =
+                                                        this.get_server(&context_server_id)
+                                                    {
+                                                        this.start_server(server, cx);
                                                     }
-                                                },
-                                            );
-                                        }
-                                    }),
-                            ),
+                                                });
+                                                true
+                                            }
+                                        };
+                                        update_settings_file(fs.clone(), cx, {
+                                            let context_server_id = context_server_id.clone();
+
+                                            move |settings, _| {
+                                                settings
+                                                    .project
+                                                    .context_servers
+                                                    .entry(context_server_id.0)
+                                                    .or_insert_with(|| {
+                                                        settings::ContextServerSettingsContent::Extension {
+                                                            enabled: is_enabled,
+                                                            settings: serde_json::json!({}),
+                                                        }
+                                                    })
+                                                    .set_enabled(is_enabled);
+                                            }
+                                        });
+                                    }
+                                }),
+                        ),
                     ),
             )
             .map(|parent| {
@@ -1236,15 +1221,12 @@ fn show_unable_to_uninstall_extension_with_context_server(
                                     let context_server_id = context_server_id.clone();
                                     async move |_workspace_handle, cx| {
                                         cx.update(|cx| {
-                                            update_settings_file::<ProjectSettings>(
-                                                fs,
-                                                cx,
-                                                move |settings, _| {
-                                                    settings
-                                                        .context_servers
-                                                        .remove(&context_server_id.0);
-                                                },
-                                            );
+                                            update_settings_file(fs, cx, move |settings, _| {
+                                                settings
+                                                    .project
+                                                    .context_servers
+                                                    .remove(&context_server_id.0);
+                                            });
                                         })?;
                                         anyhow::Ok(())
                                     }
@@ -1282,7 +1264,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
             let settings = cx.global::<SettingsStore>();
 
             let mut unique_server_name = None;
-            let edits = settings.edits_for_update::<AllAgentServersSettings>(&text, |file| {
+            let edits = settings.edits_for_update(&text, |settings| {
                 let server_name: Option<SharedString> = (0..u8::MAX)
                     .map(|i| {
                         if i == 0 {
@@ -1291,20 +1273,27 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                             format!("your_agent_{}", i).into()
                         }
                     })
-                    .find(|name| !file.custom.contains_key(name));
+                    .find(|name| {
+                        !settings
+                            .agent_servers
+                            .as_ref()
+                            .is_some_and(|agent_servers| agent_servers.custom.contains_key(name))
+                    });
                 if let Some(server_name) = server_name {
                     unique_server_name = Some(server_name.clone());
-                    file.custom.insert(
-                        server_name,
-                        CustomAgentServerSettings {
-                            command: AgentServerCommand {
+                    settings
+                        .agent_servers
+                        .get_or_insert_default()
+                        .custom
+                        .insert(
+                            server_name,
+                            settings::CustomAgentServerSettings {
                                 path: "path_to_executable".into(),
                                 args: vec![],
                                 env: Some(HashMap::default()),
+                                default_mode: None,
                             },
-                            default_mode: None,
-                        },
-                    );
+                        );
                 }
             });
 

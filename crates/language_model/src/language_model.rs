@@ -21,6 +21,7 @@ use open_router::OpenRouterError;
 use parking_lot::Mutex;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+pub use settings::LanguageModelCacheConfiguration;
 use std::ops::{Add, Sub};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -60,14 +61,6 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
 
 pub fn init_settings(cx: &mut App) {
     registry::init(cx);
-}
-
-/// Configuration for caching language model messages.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct LanguageModelCacheConfiguration {
-    pub max_cache_anchors: usize,
-    pub should_speculate: bool,
-    pub min_total_token: u64,
 }
 
 /// A completion event from a language model.

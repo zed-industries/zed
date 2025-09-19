@@ -311,7 +311,7 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
-  /// Whether indentation should be adjusted based on the context whilst typing.
+  // Whether indentation should be adjusted based on the context whilst typing.
   "auto_indent": true,
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,
@@ -407,6 +407,39 @@
     "show_sign_in": true,
     // Whether to show the menus in the titlebar.
     "show_menus": false
+  },
+  "audio": {
+    // Opt into the new audio system.
+    "experimental.rodio_audio": false,
+    // Requires 'rodio_audio: true'
+    //
+    // Automatically increase or decrease you microphone's volume. This affects how
+    // loud you sound to others.
+    //
+    // Recommended: off (default)
+    // Microphones are too quite in zed, until everyone is on experimental
+    // audio and has auto speaker volume on this will make you very loud
+    // compared to other speakers.
+    "experimental.auto_microphone_volume": false,
+    // Requires 'rodio_audio: true'
+    //
+    // Automatically increate or decrease the volume of other call members.
+    // This only affects how things sound for you.
+    "experimental.auto_speaker_volume": true,
+    // Requires 'rodio_audio: true'
+    //
+    // Remove background noises. Works great for typing, cars, dogs, AC. Does
+    // not work well on music.
+    "experimental.denoise": true,
+    // Requires 'rodio_audio: true'
+    //
+    // Use audio parameters compatible with the previous versions of
+    // experimental audio and non-experimental audio. When this is false you
+    // will sound strange to anyone not on the latest experimental audio. In
+    // the future we will migrate by setting this to false
+    //
+    // You need to rejoin a call for this setting to apply
+    "experimental.legacy_audio_compatible": true
   },
   // Scrollbar related settings
   "scrollbar": {
@@ -588,6 +621,7 @@
     // Toggle certain types of hints on and off, all switched on by default.
     "show_type_hints": true,
     "show_parameter_hints": true,
+    "show_value_hints": true,
     // Corresponds to null/None LSP hint type value.
     "show_other_hints": true,
     // Whether to show a background for inlay hints.
@@ -796,7 +830,7 @@
   "agent": {
     // Whether the agent is enabled.
     "enabled": true,
-    /// What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
+    // What completion mode to start new threads in, if available. Can be 'normal' or 'burn'.
     "preferred_completion_mode": "normal",
     // Whether to show the agent panel button in the status bar.
     "button": true,
@@ -806,6 +840,8 @@
     "default_width": 640,
     // Default height when the agent panel is docked to the bottom.
     "default_height": 320,
+    // The view to use by default (thread, or text_thread)
+    "default_view": "thread",
     // The default model to use when creating new threads.
     "default_model": {
       // The provider to use.
@@ -907,14 +943,18 @@
 
     // Default: false
     "play_sound_when_agent_done": false,
-    /// Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
-    ///
-    /// Default: true
+    // Whether to have edit cards in the agent panel expanded, showing a preview of the full diff.
+    //
+    // Default: true
     "expand_edit_card": true,
-    /// Whether to have terminal cards in the agent panel expanded, showing the whole command output.
-    ///
-    /// Default: true
+    // Whether to have terminal cards in the agent panel expanded, showing the whole command output.
+    //
+    // Default: true
     "expand_terminal_card": true,
+    // Whether to always use cmd-enter (or ctrl-enter on Linux or Windows) to send messages in the agent panel.
+    //
+    // Default: false
+    "use_modifier_to_send": false,
     // Minimum number of lines to display in the agent message editor.
     //
     // Default: 4
@@ -931,6 +971,7 @@
   //
   // This is typically customized on a per-language basis.
   "language_servers": ["..."],
+
   // When to automatically save edited buffers. This setting can
   // take four values.
   //
@@ -1262,7 +1303,13 @@
     // },
     // Whether edit predictions are enabled when editing text threads.
     // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true
+    "enabled_in_text_threads": true,
+
+    "copilot": {
+      "enterprise_uri": null,
+      "proxy": null,
+      "proxy_no_verify": null
+    }
   },
   // Settings specific to journaling
   "journal": {
@@ -1765,6 +1812,7 @@
     "anthropic": {
       "api_url": "https://api.anthropic.com"
     },
+    "bedrock": {},
     "google": {
       "api_url": "https://generativelanguage.googleapis.com"
     },
@@ -1786,14 +1834,30 @@
     },
     "mistral": {
       "api_url": "https://api.mistral.ai/v1"
-    }
+    },
+    "vercel": {
+      "api_url": "https://api.v0.dev/v1"
+    },
+    "x_ai": {
+      "api_url": "https://api.x.ai/v1"
+    },
+    "zed.dev": {}
+  },
+  "session": {
+    // Whether or not to restore unsaved buffers on restart.
+    //
+    // If this is true, user won't be prompted whether to save/discard
+    // dirty files when closing the application.
+    //
+    // Default: true
+    "restore_unsaved_buffers": true
   },
   // Zed's Prettier integration settings.
   // Allows to enable/disable formatting with Prettier
   // and configure default Prettier, used when no project-level Prettier installation is found.
   "prettier": {
     // // Whether to consider prettier formatter or not when attempting to format a file.
-    // "allowed": false,
+    "allowed": false
     //
     // // Use regular Prettier json configuration.
     // // If Prettier is allowed, Zed will use this for its Prettier instance for any applicable file, if
@@ -1826,6 +1890,10 @@
     //     }
     // }
   },
+  // DAP Specific settings.
+  "dap": {
+    // Specify the DAP name as a key here.
+  },
   // Common language server settings.
   "global_lsp_settings": {
     // Whether to show the LSP servers button in the status bar.
@@ -1833,7 +1901,8 @@
   },
   // Jupyter settings
   "jupyter": {
-    "enabled": true
+    "enabled": true,
+    "kernel_selections": {}
     // Specify the language name as the key and the kernel name as the value.
     // "kernel_selections": {
     //    "python": "conda-base"
@@ -1964,5 +2033,11 @@
   //     }
   //   }
   // }
-  "profiles": []
+  "profiles": [],
+
+  // A map of log scopes to the desired log level.
+  // Useful for filtering out noisy logs or enabling more verbose logging.
+  //
+  // Example: {"log": {"client": "warn"}}
+  "log": {}
 }
