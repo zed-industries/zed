@@ -36,8 +36,7 @@ use crate::{
     merge_from::MergeFrom,
     parse_json_with_comments, replace_value_in_json_text,
     settings_content::{
-        ExtensionsSettingsContent, ProjectSettingsContent, ServerSettingsContent, SettingsContent,
-        UserSettingsContent,
+        ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
     },
     update_value_in_json_text,
 };
@@ -621,19 +620,14 @@ impl SettingsStore {
         server_settings_content: &str,
         cx: &mut App,
     ) -> Result<()> {
-        let settings: Option<ServerSettingsContent> = if server_settings_content.is_empty() {
+        let settings: Option<SettingsContent> = if server_settings_content.is_empty() {
             None
         } else {
             parse_json_with_comments(server_settings_content)?
         };
 
         // Rewrite the server settings into a content type
-        self.server_settings = settings.map(|settings| {
-            Box::new(SettingsContent {
-                project: settings.project,
-                ..Default::default()
-            })
-        });
+        self.server_settings = settings.map(|settings| Box::new(settings));
 
         self.recompute_values(None, cx)?;
         Ok(())

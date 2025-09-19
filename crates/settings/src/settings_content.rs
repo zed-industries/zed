@@ -167,13 +167,6 @@ impl SettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct ServerSettingsContent {
-    #[serde(flatten)]
-    pub project: ProjectSettingsContent,
-}
-
-#[skip_serializing_none]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
