@@ -397,7 +397,6 @@ impl MacTextSystemState {
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
             cx.set_allows_font_smoothing(true);
-            cx.set_should_smooth_fonts(true);
             cx.set_text_drawing_mode(CGTextDrawingMode::CGTextFill);
             cx.set_gray_fill_color(0.0, 1.0);
             cx.set_allows_antialiasing(true);
