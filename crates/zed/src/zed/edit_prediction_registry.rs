@@ -130,6 +130,14 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                         provider.refresh_models(cx);
                     });
                 }
+                // Reassign edit prediction providers to pick up new model/settings
+                assign_edit_prediction_providers(
+                    &editors,
+                    provider,
+                    &client,
+                    user_store.clone(),
+                    cx,
+                );
             }
         }
     })
@@ -370,5 +378,125 @@ mod tests {
                 let _models = provider.read(cx).available_models_for_completion(cx);
             }
         });
+    }
+
+    #[gpui::test]
+    async fn test_ollama_model_change_updates_existing_editors(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        // Initialize the global Ollama provider
+        cx.update(|cx| {
+            init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        });
+
+        // Set up initial settings with first model
+        let initial_model = "qwen2.5-coder:3b".to_string();
+        let updated_model = "codellama:7b-code".to_string();
+
+        cx.update(|cx| {
+            let initial_settings = AllLanguageModelSettings {
+                ollama: OllamaSettings {
+                    api_url: "http://localhost:11434".to_string(),
+                    available_models: vec![ollama::AvailableModel {
+                        name: initial_model.clone(),
+                        display_name: None,
+                        max_tokens: 4096,
+                        keep_alive: None,
+                        supports_tools: None,
+                        supports_images: None,
+                        supports_thinking: None,
+                    }],
+                },
+                ..Default::default()
+            };
+            AllLanguageModelSettings::override_global(initial_settings, cx);
+
+            // Also set the edit prediction provider to Ollama
+            let mut language_settings =
+                language::language_settings::AllLanguageSettings::get_global(cx).clone();
+            language_settings.edit_predictions.provider =
+                language::language_settings::EditPredictionProvider::Ollama;
+            language::language_settings::AllLanguageSettings::override_global(
+                language_settings,
+                cx,
+            );
+        });
+
+        // Create an editor and assign Ollama provider with initial model
+        let buffer = cx.new(|cx| Buffer::local("fn main() {\n    \n}", cx));
+        let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let (editor, visual_cx) =
+            cx.add_window_view(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
+
+        editor.update_in(visual_cx, |editor, window, cx| {
+            assign_edit_prediction_provider(
+                editor,
+                language::language_settings::EditPredictionProvider::Ollama,
+                &app_state.client,
+                app_state.user_store.clone(),
+                window,
+                cx,
+            );
+        });
+
+        // Verify initial provider is set
+        let initial_provider_set = editor.read_with(visual_cx, |editor, _| {
+            editor.edit_prediction_provider().is_some()
+        });
+        assert!(
+            initial_provider_set,
+            "Initial Ollama provider should be set"
+        );
+
+        // Get reference to the initial provider to verify it gets replaced
+        let initial_provider_ptr = editor.read_with(visual_cx, |editor, _| {
+            editor
+                .edit_prediction_provider()
+                .map(|provider| Arc::as_ptr(&provider) as *const ())
+        });
+
+        // Change settings to use a different model
+        visual_cx.update(|_, cx| {
+            let updated_settings = AllLanguageModelSettings {
+                ollama: OllamaSettings {
+                    api_url: "http://localhost:11434".to_string(),
+                    available_models: vec![ollama::AvailableModel {
+                        name: updated_model.clone(),
+                        display_name: None,
+                        max_tokens: 4096,
+                        keep_alive: None,
+                        supports_tools: None,
+                        supports_images: None,
+                        supports_thinking: None,
+                    }],
+                },
+                ..Default::default()
+            };
+            AllLanguageModelSettings::override_global(updated_settings, cx);
+        });
+
+        // Allow the settings change observer to run
+        visual_cx.background_executor.run_until_parked();
+
+        // Verify that the provider was reassigned (new instance created)
+        let updated_provider_ptr = editor.read_with(visual_cx, |editor, _| {
+            editor
+                .edit_prediction_provider()
+                .map(|provider| Arc::as_ptr(&provider) as *const ())
+        });
+
+        assert_ne!(
+            initial_provider_ptr, updated_provider_ptr,
+            "Provider should be reassigned with new instance when model changes"
+        );
+
+        // Verify provider is still present after settings change
+        let provider_still_set = editor.read_with(visual_cx, |editor, _| {
+            editor.edit_prediction_provider().is_some()
+        });
+        assert!(
+            provider_still_set,
+            "Ollama provider should still be set after model change"
+        );
     }
 }
