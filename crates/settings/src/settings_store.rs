@@ -326,43 +326,11 @@ impl SettingsStore {
         self.user_settings.as_ref()
     }
 
-    /// Replaces current settings with the values from the given JSON.
-    pub fn set_raw_user_settings(
-        &mut self,
-        new_settings: UserSettingsContent,
-        cx: &mut App,
-    ) -> Result<()> {
-        self.user_settings = Some(new_settings);
-        self.recompute_values(None, cx)?;
-        Ok(())
-    }
-
-    /// Replaces current settings with the values from the given JSON.
-    pub fn set_raw_server_settings(
-        &mut self,
-        new_settings: Option<Value>,
-        cx: &mut App,
-    ) -> Result<()> {
-        // Rewrite the server settings into a content type
-        self.server_settings = new_settings
-            .map(|settings| settings.to_string())
-            .and_then(|str| parse_json_with_comments::<SettingsContent>(&str).ok())
-            .map(Box::new);
-
-        self.recompute_values(None, cx)?;
-        Ok(())
-    }
-
     /// Get the configured settings profile names.
     pub fn configured_settings_profiles(&self) -> impl Iterator<Item = &str> {
         self.user_settings
             .iter()
             .flat_map(|settings| settings.profiles.keys().map(|k| k.as_str()))
-    }
-
-    /// Access the raw JSON value of the default settings.
-    pub fn raw_default_settings(&self) -> &SettingsContent {
-        &self.default_settings
     }
 
     #[cfg(any(test, feature = "test-support"))]
