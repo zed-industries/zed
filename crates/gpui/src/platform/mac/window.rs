@@ -1747,9 +1747,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                 }
             }
 
-            // Don't send key equivalents to the input handler,
-            // or macOS shortcuts like cmd-` will stop working.
-            if key_equivalent {
+            // Don't send key equivalents to the input handler if there are key modifiers other
+            // than Function key, or macOS shortcuts like cmd-` will stop working.
+            if key_equivalent && key_down_event.keystroke.modifiers != Modifiers::function() {
                 return NO;
             }
 
