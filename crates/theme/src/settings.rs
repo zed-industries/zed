@@ -804,8 +804,8 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_selection: Some(theme_selection),
-            experimental_theme_overrides: None,
-            theme_overrides: HashMap::default(),
+            experimental_theme_overrides: content.experimental_theme_overrides.clone(),
+            theme_overrides: content.theme_overrides.clone(),
             active_icon_theme: themes
                 .get_icon_theme(icon_theme_selection.icon_theme(*system_appearance))
                 .ok()
