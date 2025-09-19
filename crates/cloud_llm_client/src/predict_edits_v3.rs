@@ -6,7 +6,7 @@ use crate::PredictEditsGitInfo;
 // TODO: snippet ordering within file / relative to excerpt
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Body {
+pub struct PredictEditsRequest {
     pub excerpt: String,
     /// Within `signatures`
     pub excerpt_parent: Option<usize>,
@@ -15,8 +15,8 @@ pub struct Body {
     pub events: Vec<Event>,
     #[serde(default)]
     pub can_collect_data: bool,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub diagnostic_groups: Option<Vec<(String, serde_json::Value)>>,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub diagnostic_groups: Vec<DiagnosticGroup>,
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
@@ -66,6 +66,12 @@ pub struct ScoreComponents {
     pub containing_range_vs_signature_weighted_overlap: f32,
     pub adjacent_vs_item_weighted_overlap: f32,
     pub adjacent_vs_signature_weighted_overlap: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiagnosticGroup {
+    pub language_server: String,
+    pub diagnostic_group: serde_json::Value,
 }
 
 /*

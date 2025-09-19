@@ -13,9 +13,11 @@ path = "src/zeta2.rs"
 
 [dependencies]
 client.workspace = true
+cloud_llm_client.workspace = true
 edit_prediction.workspace = true
+edit_prediction_context.workspace = true
 gpui.workspace = true
 language.workspace = true
+log.workspace = true
 project.workspace = true
 workspace-hack.workspace = true
-util.workspace = true

@@ -21639,11 +21639,13 @@ name = "zeta2"
 version = "0.1.0"
 dependencies = [
  "client",
+ "cloud_llm_client",
  "edit_prediction",
+ "edit_prediction_context",
  "gpui",
  "language",
+ "log",
  "project",
- "util",
  "workspace-hack",
 ]
 

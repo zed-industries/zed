@@ -16,10 +16,6 @@ use crate::{
 
 const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
 
-// TODO:
-//
-// * Consider adding declaration_file_count
-
 #[derive(Clone, Debug)]
 pub struct ScoredSnippet {
     pub identifier: Identifier,
@@ -28,7 +24,6 @@ pub struct ScoredSnippet {
     pub scores: Scores,
 }
 
-// TODO: Consider having "Concise" style corresponding to `concise_text`
 #[derive(EnumIter, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SnippetStyle {
     Signature,
@@ -244,6 +239,7 @@ fn score_snippet(
     let adjacent_vs_signature_weighted_overlap =
         weighted_overlap_coefficient(adjacent_identifier_occurrences, &item_signature_occurrences);
 
+    // TODO: Consider adding declaration_file_count
     let score_components = ScoreComponents {
         is_same_file,
         is_referenced_nearby,

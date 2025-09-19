@@ -17,12 +17,6 @@ use crate::declaration::{
 };
 use crate::outline::declarations_in_buffer;
 
-// TODO:
-//
-// * Skip for remote projects
-//
-// * Consider making SyntaxIndex not an Entity.
-
 // Potential future improvements:
 //
 // * Send multiple selected excerpt ranges. Challenge is that excerpt ranges influence which
@@ -41,7 +35,6 @@ use crate::outline::declarations_in_buffer;
 // * Concurrent slotmap
 //
 // * Use queue for parsing
-//
 
 pub struct SyntaxIndex {
     state: Arc<Mutex<SyntaxIndexState>>,

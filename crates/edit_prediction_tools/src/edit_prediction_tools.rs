@@ -222,7 +222,7 @@ impl EditPredictionTools {
 
                     start_time = Some(Instant::now());
 
-                    EditPredictionContext::gather(
+                    EditPredictionContext::gather_context_in_background(
                         cursor_position,
                         current_buffer_snapshot,
                         options,
