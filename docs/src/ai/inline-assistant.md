@@ -14,8 +14,6 @@ Give the Inline Assistant context the same way you can in [the Agent Panel](./ag
 
 A useful pattern here is to create a thread in the Agent Panel, and then mention that thread with `@thread` in the Inline Assistant to include it as context.
 
-> The Inline Assistant is limited to normal mode context windows ([see Models](./models.md) for more).
-
 ## Prefilling Prompts
 
 To create a custom keybinding that prefills a prompt, you can add the following format in your keymap:
