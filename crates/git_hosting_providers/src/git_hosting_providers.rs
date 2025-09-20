@@ -40,6 +40,18 @@ pub fn register_additional_providers(
         return;
     };
 
+    // Check if any existing providers can handle this origin URL
+    // This includes both default providers and configured providers from settings
+    if provider_registry
+        .list_hosting_providers()
+        .iter()
+        .any(|provider| provider.parse_remote_url(&origin_url).is_some())
+    {
+        // An existing provider can handle this URL, no need for additional registration
+        return;
+    }
+
+    // Fall back to heuristic detection for unconfigured providers
     if let Ok(gitlab_self_hosted) = Gitlab::from_remote_url(&origin_url) {
         provider_registry.register_hosting_provider(Arc::new(gitlab_self_hosted));
     } else if let Ok(github_self_hosted) = Github::from_remote_url(&origin_url) {
