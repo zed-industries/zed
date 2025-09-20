@@ -4575,10 +4575,6 @@ impl RenderOnce for PanelRepoFooter {
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
             .truncate(true)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Switch,
-            ))
             .on_click(|_, window, cx| {
                 window.dispatch_action(zed_actions::git::Switch.boxed_clone(), cx);
             });
