@@ -1,4 +1,8 @@
 ; Refer to https://github.com/nvim-treesitter/nvim-treesitter/blob/master/queries/go/injections.scm#L4C1-L16C41
+((comment) @injection.content
+ (#set! injection.language "comment")
+)
+
 (call_expression
   (selector_expression) @_function
   (#any-of? @_function
