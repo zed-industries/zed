@@ -1,0 +1,11 @@
+[package]
+name = "perf"
+version = "0.1.0"
+publish.workspace = true
+edition.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+workspace-hack.workspace = true
