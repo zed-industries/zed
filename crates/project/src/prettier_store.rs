@@ -22,12 +22,13 @@ use lsp::{LanguageServer, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
+use settings::Settings;
 use smol::stream::StreamExt;
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
     File, PathChange, ProjectEntryId, Worktree, lsp_store::WorktreeId,
-    worktree_store::WorktreeStore,
+    project_settings::ProjectSettings, worktree_store::WorktreeStore,
 };
 
 pub struct PrettierStore {
@@ -278,17 +279,26 @@ impl PrettierStore {
         worktree_id: Option<WorktreeId>,
         cx: &mut Context<Self>,
     ) -> PrettierTask {
+        let request_timeout = ProjectSettings::get_global(cx)
+            .global_lsp_settings
+            .request_timeout();
         cx.spawn(async move |prettier_store, cx| {
             log::info!("Starting prettier at path {prettier_dir:?}");
             let new_server_id = prettier_store.read_with(cx, |prettier_store, _| {
                 prettier_store.languages.next_language_server_id()
             })?;
 
-            let new_prettier = Prettier::start(new_server_id, prettier_dir, node, cx.clone())
-                .await
-                .context("default prettier spawn")
-                .map(Arc::new)
-                .map_err(Arc::new)?;
+            let new_prettier = Prettier::start(
+                new_server_id,
+                prettier_dir,
+                node,
+                request_timeout,
+                cx.clone(),
+            )
+            .await
+            .context("default prettier spawn")
+            .map(Arc::new)
+            .map_err(Arc::new)?;
             Self::register_new_prettier(
                 &prettier_store,
                 &new_prettier,

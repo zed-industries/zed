@@ -249,6 +249,7 @@ impl Prettier {
         _: LanguageServerId,
         prettier_dir: PathBuf,
         _: NodeRuntime,
+        _: Option<std::time::Duration>,
         _: AsyncApp,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
@@ -262,6 +263,7 @@ impl Prettier {
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
         node: NodeRuntime,
+        request_timeout: Option<std::time::Duration>,
         mut cx: AsyncApp,
     ) -> anyhow::Result<Self> {
         use lsp::{LanguageServerBinary, LanguageServerName};
@@ -294,6 +296,7 @@ impl Prettier {
             &prettier_dir,
             None,
             Default::default(),
+            request_timeout,
             &mut cx,
         )
         .context("prettier server creation")?;

@@ -20,10 +20,12 @@ use language::{
     language_settings::{EditPredictionProvider, all_language_settings, language_settings},
     point_from_lsp, point_to_lsp,
 };
+#[cfg(any(test, feature = "test-support"))]
+use lsp::DEFAULT_LSP_REQUEST_TIMEOUT;
 use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use parking_lot::Mutex;
-use project::DisableAiSettings;
+use project::{DisableAiSettings, project_settings::ProjectSettings};
 use request::StatusNotification;
 use serde_json::json;
 use settings::Settings;
@@ -454,6 +456,7 @@ impl Copilot {
             },
             "copilot".into(),
             Default::default(),
+            Some(DEFAULT_LSP_REQUEST_TIMEOUT),
             &mut cx.to_async(),
         );
         let node_runtime = NodeRuntime::unavailable();
@@ -498,6 +501,11 @@ impl Copilot {
             };
 
             let server_name = LanguageServerName("copilot".into());
+            let request_timeout = cx.update(|cx| {
+                ProjectSettings::get_global(cx)
+                    .global_lsp_settings
+                    .request_timeout()
+            })?;
             let server = LanguageServer::new(
                 Arc::new(Mutex::new(None)),
                 new_server_id,
@@ -506,6 +514,7 @@ impl Copilot {
                 root_path,
                 None,
                 Default::default(),
+                request_timeout,
                 cx,
             )?;
 

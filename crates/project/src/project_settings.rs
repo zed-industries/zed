@@ -164,7 +164,6 @@ impl Into<settings::ContextServerSettingsContent> for ContextServerSettings {
             }
         }
     }
-}
 
 impl ContextServerSettings {
     pub fn default_extension() -> Self {
@@ -185,6 +184,171 @@ impl ContextServerSettings {
         match self {
             ContextServerSettings::Custom { enabled: e, .. } => *e = enabled,
             ContextServerSettings::Extension { enabled: e, .. } => *e = enabled,
+        }
+    }
+}
+ 
+/// Common language server settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct GlobalLspSettings {
+    /// Whether to show the LSP servers button in the status bar.
+    ///
+    /// Default: `true`
+    #[serde(default = "default_true")]
+    pub button: bool,
+
+    /// The number of seconds to wait for an LSP request before timing out.
+    /// Set to `0` to disable the timeout.
+    ///
+    /// Default: `120`
+    #[serde(default = "default_lsp_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct NodeBinarySettings {
+    /// The path to the Node binary.
+    pub path: Option<String>,
+    /// The path to the npm binary Zed should use (defaults to `.path/../npm`).
+    pub npm_path: Option<String>,
+    /// If enabled, Zed will download its own copy of Node.
+    #[serde(default)]
+    pub ignore_system_version: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DirenvSettings {
+    /// Load direnv configuration through a shell hook
+    ShellHook,
+    /// Load direnv configuration directly using `direnv export json`
+    #[default]
+    Direct,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct DiagnosticsSettings {
+    /// Whether to show the project diagnostics button in the status bar.
+    pub button: bool,
+
+    /// Whether or not to include warning diagnostics.
+    pub include_warnings: bool,
+
+    /// Settings for using LSP pull diagnostics mechanism in Zed.
+    pub lsp_pull_diagnostics: LspPullDiagnosticsSettings,
+
+    /// Settings for showing inline diagnostics.
+    pub inline: InlineDiagnosticsSettings,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct LspPullDiagnosticsSettings {
+    /// Whether to pull for diagnostics or not.
+    ///
+    /// Default: true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Minimum time to wait before pulling diagnostics from the language server(s).
+    /// 0 turns the debounce off.
+    ///
+    /// Default: 50
+    #[serde(default = "default_lsp_diagnostics_pull_debounce_ms")]
+    pub debounce_ms: u64,
+}
+
+fn default_lsp_diagnostics_pull_debounce_ms() -> u64 {
+    50
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct InlineDiagnosticsSettings {
+    /// Whether or not to show inline diagnostics
+    ///
+    /// Default: false
+    pub enabled: bool,
+    /// Whether to only show the inline diagnostics after a delay after the
+    /// last editor event.
+    ///
+    /// Default: 150
+    #[serde(default = "default_inline_diagnostics_update_debounce_ms")]
+    pub update_debounce_ms: u64,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline diagnostic in units of columns.
+    ///
+    /// Default: 4
+    #[serde(default = "default_inline_diagnostics_padding")]
+    pub padding: u32,
+    /// The minimum column to display inline diagnostics. This setting can be
+    /// used to horizontally align inline diagnostics at some position. Lines
+    /// longer than this value will still push diagnostics further to the right.
+    ///
+    /// Default: 0
+    pub min_column: u32,
+
+    pub max_severity: Option<DiagnosticSeverity>,
+}
+
+fn default_inline_diagnostics_update_debounce_ms() -> u64 {
+    150
+}
+
+fn default_inline_diagnostics_padding() -> u32 {
+    4
+}
+
+impl Default for DiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            button: true,
+            include_warnings: true,
+            lsp_pull_diagnostics: LspPullDiagnosticsSettings::default(),
+            inline: InlineDiagnosticsSettings::default(),
+        }
+    }
+}
+
+impl Default for LspPullDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            debounce_ms: default_lsp_diagnostics_pull_debounce_ms(),
+        }
+    }
+}
+
+impl Default for InlineDiagnosticsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            update_debounce_ms: default_inline_diagnostics_update_debounce_ms(),
+            padding: default_inline_diagnostics_padding(),
+            min_column: 0,
+            max_severity: None,
+        }
+    }
+}
+
+impl Default for GlobalLspSettings {
+    fn default() -> Self {
+        Self {
+            button: default_true(),
+            request_timeout_secs: default_lsp_request_timeout_secs(),
+        }
+    }
+}
+
+fn default_lsp_request_timeout_secs() -> u64 {
+    120
+}
+
+impl GlobalLspSettings {
+    pub fn request_timeout(&self) -> Option<Duration> {
+        match self.request_timeout_secs {
+            0 => None,
+            secs => Some(Duration::from_secs(secs)),
         }
     }
 }
