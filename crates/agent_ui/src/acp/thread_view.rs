@@ -2100,7 +2100,7 @@ impl AcpThreadView {
 
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
 
-        let is_open = needs_confirmation || self.expanded_tool_calls.contains(&tool_call.id);
+        let is_open = !needs_confirmation && self.expanded_tool_calls.contains(&tool_call.id);
 
         let gradient_overlay = {
             div()
@@ -2130,34 +2130,62 @@ impl AcpThreadView {
         };
 
         let tool_output_display =
-            if is_open {
+            if needs_confirmation {
+                // For permission confirmation, always show permission buttons
                 match &tool_call.status {
-                    ToolCallStatus::WaitingForConfirmation { options, .. } => v_flex()
-                        .w_full()
-                        .children(tool_call.content.iter().enumerate().map(
-                            |(content_ix, content)| {
-                                div()
-                                    .child(self.render_tool_call_content(
-                                        entry_ix,
-                                        content,
-                                        content_ix,
-                                        tool_call,
-                                        use_card_layout,
-                                        window,
-                                        cx,
-                                    ))
-                                    .into_any_element()
-                            },
-                        ))
-                        .child(self.render_permission_buttons(
-                            tool_call.kind,
-                            options,
-                            entry_ix,
-                            tool_call.id.clone(),
-                            window,
-                            cx,
-                        ))
-                        .into_any(),
+                    ToolCallStatus::WaitingForConfirmation { options, .. } => {
+                        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+
+                        v_flex()
+                            .w_full()
+                            .when(is_expanded, |this| {
+                                this.child(
+                                    div()
+                                        .p_3()
+                                        .bg(cx.theme().colors().editor_background)
+                                        .border_t_1()
+                                        .border_color(self.tool_card_border_color(cx))
+                                        .child(self.render_markdown(
+                                            tool_call.label.clone(),
+                                            MarkdownStyle {
+                                                code_block_overflow_x_scroll: true,
+                                                ..default_markdown_style(false, false, window, cx)
+                                            },
+                                        )),
+                                )
+                            })
+                            .when(is_expanded && !tool_call.content.is_empty(), |this| {
+                                this.children(tool_call.content.iter().enumerate().map(
+                                    |(content_ix, content)| {
+                                        div()
+                                            .child(self.render_tool_call_content(
+                                                entry_ix,
+                                                content,
+                                                content_ix,
+                                                tool_call,
+                                                use_card_layout,
+                                                window,
+                                                cx,
+                                            ))
+                                            .into_any_element()
+                                    },
+                                ))
+                            })
+                    }
+                    .child(self.render_permission_buttons(
+                        tool_call.kind,
+                        options,
+                        entry_ix,
+                        tool_call.id.clone(),
+                        window,
+                        cx,
+                    ))
+                    .into_any(),
+                    _ => Empty.into_any(),
+                }
+                .into()
+            } else if is_open {
+                match &tool_call.status {
                     ToolCallStatus::Pending | ToolCallStatus::InProgress
                         if is_edit
                             && tool_call.content.is_empty()
@@ -2185,6 +2213,7 @@ impl AcpThreadView {
                             },
                         ))
                         .into_any(),
+                    ToolCallStatus::WaitingForConfirmation { .. } => Empty.into_any(),
                     ToolCallStatus::Rejected => Empty.into_any(),
                 }
                 .into()
@@ -2274,7 +2303,7 @@ impl AcpThreadView {
                             })
                             .when(!has_location, |this| this.child(gradient_overlay)),
                     )
-                    .when(is_collapsible || failed_or_canceled, |this| {
+                    .when(is_collapsible || failed_or_canceled || needs_confirmation, |this| {
                         this.child(
                             h_flex()
                                 .px_1()
@@ -2288,7 +2317,7 @@ impl AcpThreadView {
                                         .on_click(cx.listener({
                                             let id = tool_call.id.clone();
                                             move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                if is_open {
+                                                if this.expanded_tool_calls.contains(&id) {
                                                     this.expanded_tool_calls.remove(&id);
                                                 } else {
                                                     this.expanded_tool_calls.insert(id.clone());
@@ -2297,6 +2326,25 @@ impl AcpThreadView {
                                             }
                                         })),
                                 )
+                                })
+                                .when(needs_confirmation && !is_collapsible, |this| {
+                                    this.child(
+                                        Disclosure::new(("expand-command", entry_ix), self.expanded_tool_calls.contains(&tool_call.id))
+                                            .opened_icon(IconName::ChevronUp)
+                                            .closed_icon(IconName::ChevronDown)
+                                            .visible_on_hover(&card_header_id)
+                                            .on_click(cx.listener({
+                                                let id = tool_call.id.clone();
+                                                move |this: &mut Self, _, _, cx: &mut Context<Self>| {
+                                                    if this.expanded_tool_calls.contains(&id) {
+                                                        this.expanded_tool_calls.remove(&id);
+                                                    } else {
+                                                        this.expanded_tool_calls.insert(id.clone());
+                                                    }
+                                                    cx.notify();
+                                                }
+                                            }))
+                                    )
                                 })
                                 .when(failed_or_canceled, |this| {
                                     this.child(
