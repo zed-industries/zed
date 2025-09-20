@@ -1,4 +1,5 @@
 mod boundary;
+pub mod duplicate;
 mod object;
 mod paste;
 mod select;
