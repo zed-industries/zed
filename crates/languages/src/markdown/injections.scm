@@ -1,3 +1,7 @@
+((comment) @injection.content
+ (#set! injection.language "comment")
+)
+
 (fenced_code_block
   (info_string
     (language) @injection.language)
