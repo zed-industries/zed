@@ -499,16 +499,13 @@ impl PickerDelegate for BranchListDelegate {
         let branch_name = if entry.is_new {
             h_flex()
                 .gap_1()
+                .w_full()
                 .child(
                     Icon::new(IconName::Plus)
                         .size(IconSize::Small)
                         .color(Color::Muted),
                 )
-                .child(
-                    Label::new(format!("Create branch \"{}\"…", entry.branch.name()))
-                        .single_line()
-                        .truncate(),
-                )
+                .child(Label::new(format!("Create branch \"{}\"…", entry.branch.name())).truncate())
                 .into_any_element()
         } else {
             HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
