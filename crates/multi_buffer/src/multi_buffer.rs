@@ -5259,7 +5259,8 @@ impl MultiBufferSnapshot {
             } else {
                 Anchor::max()
             };
-            // TODO this is a hack, remove it
+
+            // TODO this is a hack, because all APIs should be able to handle ExcerptId::min and max.
             if let Some((excerpt_id, _, _)) = self.as_singleton() {
                 anchor.excerpt_id = *excerpt_id;
             }

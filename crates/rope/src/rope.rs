@@ -30,6 +30,19 @@ impl Rope {
         Self::default()
     }
 
+    pub fn is_char_boundary(&self, offset: usize) -> bool {
+        if self.chunks.is_empty() {
+            return offset == 0;
+        }
+        let mut cursor = self.chunks.cursor::<usize>(&());
+        cursor.seek(&offset, Bias::Left);
+        let chunk_offset = offset - cursor.start();
+        cursor
+            .item()
+            .map(|chunk| chunk.text.is_char_boundary(chunk_offset))
+            .unwrap_or(false) // Offset is past the end of the rope
+    }
+
     pub fn append(&mut self, rope: Rope) {
         if let Some(chunk) = rope.chunks.first()
             && (self
@@ -2067,6 +2080,28 @@ mod tests {
         assert!(rope.reversed_chunks_in_range(0..0).equals_str(""));
         assert!(!rope.chunks_in_range(0..0).equals_str("foo"));
         assert!(!rope.reversed_chunks_in_range(0..0).equals_str("foo"));
+    }
+
+    #[test]
+    fn test_is_char_boundary() {
+        let rope = Rope::from("地");
+        assert!(rope.is_char_boundary(0));
+        assert!(!rope.is_char_boundary(2));
+        assert!(rope.is_char_boundary(3));
+        assert!(!rope.is_char_boundary(10));
+
+        let rope = Rope::from("");
+        assert!(rope.is_char_boundary(0));
+        assert!(!rope.is_char_boundary(1));
+
+        let rope = Rope::from("🔴🟠🟡🟢🔵🟣⚫️⚪️🟤\n🏳️‍⚧️🏁🏳️‍🌈🏴‍☠️⛳️📬📭🏴🏳️🚩");
+        assert!(rope.is_char_boundary(4)); // In the first chunk 🔴
+        assert!(!rope.is_char_boundary(19));
+        assert!(rope.is_char_boundary(20)); // In the first line 🔵
+        assert!(!rope.is_char_boundary(21));
+        assert!(!rope.is_char_boundary(78));
+        assert!(rope.is_char_boundary(79)); // In the second line 🏳️‍🌈
+        assert!(rope.is_char_boundary(117)); // Full length of the string
     }
 
     fn clip_offset(text: &str, mut offset: usize, bias: Bias) -> usize {
