@@ -130,34 +130,21 @@ impl OllamaEditPredictionProvider {
     ) -> Result<GenerateResponse> {
         let model_name = request.model.clone();
         let uri = format!("{api_url}/api/generate");
-        log::info!("Making HTTP request to: {}", uri);
-        log::info!("Request model: {}", request.model);
         let mut request_builder = HttpRequest::builder()
             .method(Method::POST)
             .uri(uri)
             .header("Content-Type", "application/json");
 
         if let Some(api_key) = api_key {
-            log::info!("Adding Authorization header with API key");
             request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
-        } else {
-            log::info!("No API key provided, making unauthenticated request");
         }
 
         let serialized_request = serde_json::to_string(&request)?;
-        log::info!("Request payload: {}", serialized_request);
         let request = request_builder.body(AsyncBody::from(serialized_request))?;
 
         let mut response = match client.send(request).await {
-            Ok(response) => {
-                log::info!(
-                    "HTTP request sent successfully, status: {}",
-                    response.status()
-                );
-                response
-            }
+            Ok(response) => response,
             Err(err) => {
-                log::error!("Ollama server unavailable at {}: {}", api_url, err);
                 return Err(err);
             }
         };
@@ -168,14 +155,6 @@ impl OllamaEditPredictionProvider {
         if !response.status().is_success() {
             match response.status().as_u16() {
                 404 => {
-                    log::error!("Model or endpoint not found (404). This could mean:");
-                    log::error!("1. The model is not available on this Ollama instance");
-                    log::error!(
-                        "2. For Ollama Turbo, only specific models are supported: gpt-oss:20b, gpt-oss:120b, deepseek-v3.1:671b"
-                    );
-                    log::error!(
-                        "3. The /api/generate endpoint might not be available (try /api/chat instead)"
-                    );
                     anyhow::bail!(
                         "Model not found (404). Check if model '{}' is available on the Ollama instance at {}. Response: {}",
                         model_name,
@@ -184,9 +163,6 @@ impl OllamaEditPredictionProvider {
                     );
                 }
                 401 | 403 => {
-                    log::error!(
-                        "Authentication failed. Check your OLLAMA_API_KEY or API key in settings."
-                    );
                     anyhow::bail!(
                         "Authentication failed ({}): {}. Please check your Ollama API key.",
                         response.status(),
@@ -260,9 +236,7 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
         };
 
         self.pending_refresh = Some(cx.spawn(async move |this, cx| {
-            log::info!("Starting completion request task");
             if debounce {
-                log::info!("Debouncing for {:?}", OLLAMA_DEBOUNCE_TIMEOUT);
                 cx.background_executor()
                     .timer(OLLAMA_DEBOUNCE_TIMEOUT)
                     .await;
@@ -289,13 +263,8 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                         .read(cx)
                         .api_key(cx)
                         .map(|k| k.as_ref().to_string());
-                    log::info!(
-                        "Retrieved API key from OllamaLanguageModelProvider: {}",
-                        key.is_some()
-                    );
                     key
                 } else {
-                    log::info!("No global OllamaLanguageModelProvider found");
                     None
                 };
                 (this.model.clone(), api_key)
