@@ -4,7 +4,6 @@ use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as Http
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub use settings::KeepAlive;
-use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
@@ -137,14 +136,6 @@ pub struct ChatRequest {
     pub think: Option<bool>,
 }
 
-impl ChatRequest {
-    pub fn with_tools(mut self, tools: Vec<OllamaTool>) -> Self {
-        self.stream = false;
-        self.tools = tools;
-        self
-    }
-}
-
 // https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
 #[derive(Serialize, Default, Debug)]
 pub struct ChatOptions {
@@ -157,14 +148,10 @@ pub struct ChatOptions {
 
 #[derive(Deserialize, Debug)]
 pub struct ChatResponseDelta {
-    #[allow(unused)]
     pub model: String,
-    #[allow(unused)]
     pub created_at: String,
     pub message: ChatMessage,
-    #[allow(unused)]
     pub done_reason: Option<String>,
-    #[allow(unused)]
     pub done: bool,
     pub prompt_eval_count: Option<u64>,
     pub eval_count: Option<u64>,
@@ -222,38 +209,6 @@ impl ModelShow {
     }
 }
 
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    request: ChatRequest,
-) -> Result<ChatResponseDelta> {
-    let uri = format!("{api_url}/api/chat");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json");
-
-    let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder.body(AsyncBody::from(serialized_request))?;
-
-    let mut response = client.send(request).await?;
-
-    let mut body = Vec::new();
-    response.body_mut().read_to_end(&mut body).await?;
-
-    if response.status().is_success() {
-        let response_message: ChatResponseDelta = serde_json::from_slice(&body)?;
-        Ok(response_message)
-    } else {
-        let body_str = std::str::from_utf8(&body)?;
-        anyhow::bail!(
-            "Failed to connect to API: {} {}",
-            response.status(),
-            body_str
-        );
-    }
-}
-
 pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
@@ -296,7 +251,6 @@ pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: Option<&str>,
-    _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
     let request = HttpRequest::builder()
