@@ -35,6 +35,7 @@ project.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+text.workspace = true
 workspace-hack.workspace = true
 
 [dev-dependencies]

@@ -8,7 +8,8 @@ use language_models::provider::ollama::{AvailableModel, OllamaLanguageModelProvi
 use ollama::KeepAlive;
 use project::Project;
 use serde::{Deserialize, Serialize};
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{ops::Range, path::Path, sync::Arc, time::Duration};
+use text;
 
 pub const OLLAMA_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(75);
 const OLLAMA_EDIT_PREDICTION_LENGTH: i32 = 150;
@@ -44,11 +45,18 @@ struct GenerateResponse {
     eval_count: Option<i32>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct OllamaCompletion {
+    pub text: String,
+    pub range: Range<Anchor>,
+    pub timestamp: std::time::Instant,
+}
+
 pub struct OllamaEditPredictionProvider {
     model: String,
     buffer_id: Option<EntityId>,
     file_extension: Option<String>,
-    current_completion: Option<String>,
+    current_completion: Option<OllamaCompletion>,
     pending_refresh: Option<Task<Result<()>>>,
     _service_subscription: Option<Subscription>,
 }
@@ -331,7 +339,23 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                 this.pending_refresh = None;
                 match response {
                     Ok(response) if !response.response.trim().is_empty() => {
-                        this.current_completion = Some(response.response);
+                        // Create a completion range that covers potential already-typed text
+                        // This allows the deduplication logic to work correctly for partial acceptance
+                        let buffer_snapshot = buffer.read(cx).snapshot();
+                        let cursor_offset = cursor_position.to_offset(&buffer_snapshot);
+                        let max_lookback = response.response.len().min(cursor_offset);
+                        let start_offset = cursor_offset.saturating_sub(max_lookback);
+                        let start_anchor =
+                            buffer_snapshot.anchor_at(start_offset, text::Bias::Left);
+
+                        let completion_range = start_anchor..cursor_position;
+
+                        let completion = OllamaCompletion {
+                            text: response.response,
+                            range: completion_range,
+                            timestamp: std::time::Instant::now(),
+                        };
+                        this.current_completion = Some(completion);
                     }
                     _ => {
                         this.current_completion = None;
@@ -375,37 +399,39 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
             return None;
         }
 
-        let completion_text = self.current_completion.as_ref()?.clone();
+        let completion = self.current_completion.as_ref()?;
 
-        if completion_text.trim().is_empty() {
+        if completion.text.trim().is_empty() {
             return None;
         }
 
         let buffer_snapshot = buffer.read(cx);
-        let cursor_offset = cursor_position.to_offset(buffer_snapshot);
+        let cursor_offset = cursor_position.to_offset(&buffer_snapshot);
 
-        // Get text before cursor to check what's already been typed
-        let text_before_cursor = buffer_snapshot
-            .text_for_range(0..cursor_offset)
-            .collect::<String>();
+        // Use original Ollama-style prefix matching but with more efficient range
+        let max_lookback = completion.text.len().min(cursor_offset);
+        let start_offset = cursor_offset.saturating_sub(max_lookback);
+        let text_before_cursor: String = buffer_snapshot
+            .text_for_range(start_offset..cursor_offset)
+            .collect();
 
         // Find how much of the completion has already been typed by checking
         // if the text before the cursor ends with a prefix of our completion
         let mut prefix_len = 0;
-        for i in 1..=completion_text.len().min(text_before_cursor.len()) {
-            if text_before_cursor.ends_with(&completion_text[..i]) {
+        for i in 1..=completion.text.len().min(text_before_cursor.len()) {
+            if text_before_cursor.ends_with(&completion.text[..i]) {
                 prefix_len = i;
             }
         }
 
         // Only suggest the remaining part of the completion
-        let remaining_completion = &completion_text[prefix_len..];
+        let remaining_completion = &completion.text[prefix_len..];
 
         if remaining_completion.trim().is_empty() {
             return None;
         }
 
-        let position = cursor_position.bias_right(buffer_snapshot);
+        let position = cursor_position.bias_right(&buffer_snapshot);
 
         Some(EditPrediction {
             id: None,
@@ -725,13 +751,12 @@ mod tests {
         provider.read_with(cx, |provider, _cx| {
             assert!(provider.current_completion.is_some());
             assert_eq!(
-                provider.current_completion.as_ref().unwrap(),
+                provider.current_completion.as_ref().unwrap().text,
                 "println!(\"Hello\");"
             );
             assert!(!provider.is_refreshing());
         });
 
-        // Test suggestion logic returns the completion
         let suggestion = cx.update(|cx| {
             provider.update(cx, |provider, cx| {
                 provider.suggest(&buffer, cursor_position, cx)
