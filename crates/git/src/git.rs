@@ -99,6 +99,8 @@ actions!(
         OpenModifiedFiles,
         /// Clones a repository.
         Clone,
+        /// Adds a file to .gitignore.
+        AddToGitignore,
     ]
 );
 
