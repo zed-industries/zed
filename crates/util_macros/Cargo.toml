@@ -17,3 +17,6 @@ doctest = false
 quote.workspace = true
 syn.workspace = true
 workspace-hack.workspace = true
+
+[features]
+perf-enabled = []
