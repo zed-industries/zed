@@ -504,15 +504,10 @@ impl PickerDelegate for BranchListDelegate {
                         .size(IconSize::Small)
                         .color(Color::Muted),
                 )
-                .child(
-                    Label::new(format!("Create branch \"{}\"…", entry.branch.name()))
-                        .single_line()
-                        .truncate(),
-                )
+                .child(Label::new(format!("Create branch \"{}\"…", entry.branch.name())).truncate())
                 .into_any_element()
         } else {
             HighlightedLabel::new(entry.branch.name().to_owned(), entry.positions.clone())
-                .single_line()
                 .truncate()
                 .into_any_element()
         };
