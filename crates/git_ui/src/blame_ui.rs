@@ -88,25 +88,10 @@ impl BlameRenderer for GitBlameRenderer {
                             let workspace = workspace.clone();
                             move |_, window, cx| {
                                 CommitView::open(
-                                    CommitSummary {
-                                        sha: blame_entry.sha.to_string().into(),
-                                        subject: blame_entry
-                                            .summary
-                                            .clone()
-                                            .unwrap_or_default()
-                                            .into(),
-                                        commit_timestamp: blame_entry
-                                            .committer_time
-                                            .unwrap_or_default(),
-                                        author_name: blame_entry
-                                            .committer_name
-                                            .clone()
-                                            .unwrap_or_default()
-                                            .into(),
-                                        has_parent: true,
-                                    },
+                                    blame_entry.sha.to_string(),
                                     repository.downgrade(),
                                     workspace.clone(),
+                                    None,
                                     window,
                                     cx,
                                 )
@@ -342,9 +327,10 @@ impl BlameRenderer for GitBlameRenderer {
                                                             .icon_position(IconPosition::Start)
                                                             .on_click(move |_, window, cx| {
                                                                 CommitView::open(
-                                                                    commit_summary.clone(),
+                                                                    commit_summary.sha.to_string(),
                                                                     repository.downgrade(),
                                                                     workspace.clone(),
+                                                                    None,
                                                                     window,
                                                                     cx,
                                                                 );
@@ -386,15 +372,10 @@ impl BlameRenderer for GitBlameRenderer {
         cx: &mut App,
     ) {
         CommitView::open(
-            CommitSummary {
-                sha: blame_entry.sha.to_string().into(),
-                subject: blame_entry.summary.clone().unwrap_or_default().into(),
-                commit_timestamp: blame_entry.committer_time.unwrap_or_default(),
-                author_name: blame_entry.committer_name.unwrap_or_default().into(),
-                has_parent: true,
-            },
+            blame_entry.sha.to_string(),
             repository.downgrade(),
             workspace,
+            None,
             window,
             cx,
         )
