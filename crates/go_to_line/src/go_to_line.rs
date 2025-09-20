@@ -727,6 +727,281 @@ mod tests {
         cx.dispatch_action(menu::Confirm);
     }
 
+    #[gpui::test]
+    async fn test_scroll_restoration_on_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                    // Line 1
+                    // Line 2
+                    // Line 3
+                    // Line 4
+                    // Line 5
+                    // Line 6
+                    // Line 7
+                    // Line 8
+                    // Line 9
+                    // Line 10
+                    // Line 11
+                    // Line 12
+                    // Line 13
+                    // Line 14
+                    // Line 15
+                    // Line 16
+                    // Line 17
+                    // Line 18
+                    // Line 19
+                    // Line 20
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Start at line 1 and save scroll position
+        let initial_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Open go to line and type line 15
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+        cx.simulate_input("15");
+
+        // Verify that the editor has scrolled to show line 15
+        cx.executor().advance_clock(Duration::from_millis(100));
+        let scrolled_position = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_ne!(initial_scroll, scrolled_position, "Editor should have scrolled to line 15");
+
+        // Cancel with Escape
+        cx.dispatch_action(menu::Cancel);
+        drop(go_to_line_view);
+        editor.update(cx, |_, _| {}); // Force update
+
+        // Verify scroll position is restored to initial
+        let final_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_eq!(
+            initial_scroll, final_scroll,
+            "Scroll position should be restored after canceling with Escape"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_scroll_persistence_on_confirm(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                    // Line 1
+                    // Line 2
+                    // Line 3
+                    // Line 4
+                    // Line 5
+                    // Line 6
+                    // Line 7
+                    // Line 8
+                    // Line 9
+                    // Line 10
+                    // Line 11
+                    // Line 12
+                    // Line 13
+                    // Line 14
+                    // Line 15
+                    // Line 16
+                    // Line 17
+                    // Line 18
+                    // Line 19
+                    // Line 20
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Start at line 1 and save scroll position
+        let initial_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Open go to line and type line 15
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+        cx.simulate_input("15");
+
+        // Verify that the editor has scrolled to show line 15
+        cx.executor().advance_clock(Duration::from_millis(100));
+        let scrolled_position = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_ne!(initial_scroll, scrolled_position, "Editor should have scrolled to line 15");
+
+        // Confirm with Enter
+        cx.dispatch_action(menu::Confirm);
+        drop(go_to_line_view);
+        editor.update(cx, |_, _| {}); // Force update
+
+        // Verify scroll position stays at line 15 (not restored)
+        let final_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_eq!(
+            scrolled_position, final_scroll,
+            "Scroll position should persist after confirming with Enter"
+        );
+
+        // Also verify cursor is at line 15
+        assert_single_caret_at_row(&editor, 14, cx); // Line 15 is row 14 (0-indexed)
+    }
+
+    #[gpui::test]
+    async fn test_scroll_persistence_on_click_outside(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.rs": indoc!{"
+                    // Line 1
+                    // Line 2
+                    // Line 3
+                    // Line 4
+                    // Line 5
+                    // Line 6
+                    // Line 7
+                    // Line 8
+                    // Line 9
+                    // Line 10
+                    // Line 11
+                    // Line 12
+                    // Line 13
+                    // Line 14
+                    // Line 15
+                    // Line 16
+                    // Line 17
+                    // Line 18
+                    // Line 19
+                    // Line 20
+                "}
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.rs"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        // Start at line 1 and save scroll position
+        let initial_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+
+        // Open go to line and type line 15
+        let go_to_line_view = open_go_to_line_view(&workspace, cx);
+        cx.simulate_input("15");
+
+        // Verify that the editor has scrolled to show line 15
+        cx.executor().advance_clock(Duration::from_millis(100));
+        let scrolled_position = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_ne!(initial_scroll, scrolled_position, "Editor should have scrolled to line 15");
+
+        // Simulate clicking outside by blurring the line editor
+        // This triggers the same code path as clicking on the editor
+        go_to_line_view.update_in(cx, |go_to_line, window, cx| {
+            go_to_line.line_editor.update(cx, |editor, cx| {
+                editor.blur(window, cx);
+            });
+        });
+
+        cx.executor().advance_clock(Duration::from_millis(100));
+
+        // The modal should be dismissed now
+        let modal_gone = workspace.update(cx, |workspace, cx| {
+            workspace.active_modal::<GoToLine>(cx).is_none()
+        });
+        assert!(modal_gone, "Modal should be dismissed after clicking outside");
+
+        // Verify scroll position stays at line 15 (not restored)
+        let final_scroll = editor.update_in(cx, |editor, _window, cx| {
+            editor.scroll_position(cx)
+        });
+        assert_eq!(
+            scrolled_position, final_scroll,
+            "Scroll position should persist after clicking outside the modal"
+        );
+    }
+
     fn open_go_to_line_view(
         workspace: &Entity<Workspace>,
         cx: &mut VisualTestContext,
