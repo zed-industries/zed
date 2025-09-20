@@ -18,12 +18,9 @@ use gpui::{
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
-use settings::Settings;
+use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
-use terminal::{
-    Terminal,
-    terminal_settings::{TerminalDockPosition, TerminalSettings},
-};
+use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
     ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable, Tooltip,
     prelude::*,
@@ -1465,18 +1462,14 @@ impl Panel for TerminalPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        settings::update_settings_file::<TerminalSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => TerminalDockPosition::Left,
-                    DockPosition::Bottom => TerminalDockPosition::Bottom,
-                    DockPosition::Right => TerminalDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left => TerminalDockPosition::Left,
+                DockPosition::Bottom => TerminalDockPosition::Bottom,
+                DockPosition::Right => TerminalDockPosition::Right,
+            };
+            settings.terminal.get_or_insert_default().dock = Some(dock);
+        });
     }
 
     fn size(&self, window: &Window, cx: &App) -> Pixels {

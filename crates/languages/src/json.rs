@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use dap::DapRegistry;
 use futures::StreamExt;
-use gpui::{App, AsyncApp, Task};
+use gpui::{App, AsyncApp, SharedString, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
     ContextProvider, LanguageName, LanguageRegistry, LocalFile as _, LspAdapter,
@@ -29,6 +29,7 @@ use std::{
     sync::Arc,
 };
 use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
+use theme::ThemeRegistry;
 use util::{ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into};
 
 use crate::PackageJsonData;
@@ -156,13 +157,20 @@ impl JsonLspAdapter {
     ) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
-        let settings_schema = cx.global::<SettingsStore>().json_schema(
-            &SettingsJsonSchemaParams {
+        let theme_names = &ThemeRegistry::global(cx).list_names();
+        let icon_theme_names = &ThemeRegistry::global(cx)
+            .list_icon_themes()
+            .into_iter()
+            .map(|icon_theme| icon_theme.name)
+            .collect::<Vec<SharedString>>();
+        let settings_schema = cx
+            .global::<SettingsStore>()
+            .json_schema(&SettingsJsonSchemaParams {
                 language_names: &language_names,
                 font_names,
-            },
-            cx,
-        );
+                theme_names,
+                icon_theme_names,
+            });
 
         let tasks_schema = task::TaskTemplates::generate_json_schema();
         let debug_schema = task::DebugTaskFile::generate_json_schema(&adapter_schemas);

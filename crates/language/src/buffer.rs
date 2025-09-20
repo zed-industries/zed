@@ -30,10 +30,9 @@ use gpui::{
 
 use lsp::{LanguageServerId, NumberOrString};
 use parking_lot::Mutex;
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{SettingsUi, WorktreeId};
+use settings::WorktreeId;
 use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
@@ -174,10 +173,7 @@ pub enum IndentKind {
 }
 
 /// The shape of a selection cursor.
-#[derive(
-    Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, SettingsUi,
-)]
-#[serde(rename_all = "snake_case")]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum CursorShape {
     /// A vertical bar
     #[default]
@@ -188,6 +184,17 @@ pub enum CursorShape {
     Underline,
     /// A box drawn around the following character
     Hollow,
+}
+
+impl From<settings::CursorShape> for CursorShape {
+    fn from(shape: settings::CursorShape) -> Self {
+        match shape {
+            settings::CursorShape::Bar => CursorShape::Bar,
+            settings::CursorShape::Block => CursorShape::Block,
+            settings::CursorShape::Underline => CursorShape::Underline,
+            settings::CursorShape::Hollow => CursorShape::Hollow,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -537,6 +544,23 @@ pub enum CharKind {
     Punctuation,
     /// Word.
     Word,
+}
+
+/// Context for character classification within a specific scope.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum CharScopeContext {
+    /// Character classification for completion queries.
+    ///
+    /// This context treats certain characters as word constituents that would
+    /// normally be considered punctuation, such as '-' in Tailwind classes
+    /// ("bg-yellow-100") or '.' in import paths ("foo.ts").
+    Completion,
+    /// Character classification for linked edits.
+    ///
+    /// This context handles characters that should be treated as part of
+    /// identifiers during linked editing operations, such as '.' in JSX
+    /// component names like `<Animated.View>`.
+    LinkedEdit,
 }
 
 /// A runnable is a set of data about a region that could be resolved into a task
@@ -3442,16 +3466,14 @@ impl BufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(
         &self,
         start: T,
-        for_completion: bool,
+        scope_context: Option<CharScopeContext>,
     ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).take(128).peekable();
         let mut prev_chars = self.reversed_chars_at(start).take(128).peekable();
 
-        let classifier = self
-            .char_classifier_at(start)
-            .for_completion(for_completion);
+        let classifier = self.char_classifier_at(start).scope_context(scope_context);
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(|c| classifier.kind(c)),
             next_chars.peek().copied().map(|c| classifier.kind(c)),
@@ -5205,7 +5227,7 @@ pub(crate) fn contiguous_ranges(
 #[derive(Default, Debug)]
 pub struct CharClassifier {
     scope: Option<LanguageScope>,
-    for_completion: bool,
+    scope_context: Option<CharScopeContext>,
     ignore_punctuation: bool,
 }
 
@@ -5213,14 +5235,14 @@ impl CharClassifier {
     pub fn new(scope: Option<LanguageScope>) -> Self {
         Self {
             scope,
-            for_completion: false,
+            scope_context: None,
             ignore_punctuation: false,
         }
     }
 
-    pub fn for_completion(self, for_completion: bool) -> Self {
+    pub fn scope_context(self, scope_context: Option<CharScopeContext>) -> Self {
         Self {
-            for_completion,
+            scope_context,
             ..self
         }
     }
@@ -5250,10 +5272,10 @@ impl CharClassifier {
         }
 
         if let Some(scope) = &self.scope {
-            let characters = if self.for_completion {
-                scope.completion_query_characters()
-            } else {
-                scope.word_characters()
+            let characters = match self.scope_context {
+                Some(CharScopeContext::Completion) => scope.completion_query_characters(),
+                Some(CharScopeContext::LinkedEdit) => scope.linked_edit_characters(),
+                None => scope.word_characters(),
             };
             if let Some(characters) = characters
                 && characters.contains(&c)

@@ -346,6 +346,7 @@ pub trait GitRepository: Send + Sync {
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
@@ -1095,11 +1096,11 @@ impl GitRepository for RealGitRepository {
                 let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
-                let mut branch = repo.branch(branch_name, &branch_commit, false)?;
+                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
                 branch.set_upstream(Some(&name))?;
                 branch
             } else {
-                anyhow::bail!("Branch not found");
+                anyhow::bail!("Branch '{}' not found", name);
             };
 
             Ok(branch
@@ -1115,7 +1116,6 @@ impl GitRepository for RealGitRepository {
                 GitBinary::new(git_binary_path, working_directory?, executor)
                     .run(&["checkout", &branch])
                     .await?;
-
                 anyhow::Ok(())
             })
             .boxed()
@@ -1129,6 +1129,21 @@ impl GitRepository for RealGitRepository {
                 let current_commit = repo.head()?.peel_to_commit()?;
                 repo.branch(&name, &current_commit, false)?;
                 Ok(())
+            })
+            .boxed()
+    }
+
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&["branch", "-m", &branch, &new_name])
+                    .await?;
+                anyhow::Ok(())
             })
             .boxed()
     }

@@ -45,8 +45,13 @@ impl AgentServer for ClaudeCode {
     }
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
-        update_settings_file::<AllAgentServersSettings>(fs, cx, |settings, _| {
-            settings.claude.get_or_insert_default().default_mode = mode_id.map(|m| m.to_string())
+        update_settings_file(fs, cx, |settings, _| {
+            settings
+                .agent_servers
+                .get_or_insert_default()
+                .claude
+                .get_or_insert_default()
+                .default_mode = mode_id.map(|m| m.to_string())
         });
     }
 
