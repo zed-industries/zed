@@ -17,3 +17,4 @@ collections.workspace = true
 derive_more.workspace = true
 gpui.workspace = true
 workspace-hack.workspace = true
+workspace.workspace = true
