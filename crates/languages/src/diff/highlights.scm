@@ -3,12 +3,12 @@
 [
   (addition)
   (new_file)
-] @diff.plus
+] @string
 
 [
   (deletion)
   (old_file)
-] @diff.minus
+] @keyword
 
 (commit) @constant
 
@@ -17,8 +17,6 @@
 (command
   "diff" @function
   (argument) @variable.parameter)
-
-(filename) @string.special.path
 
 (mode) @number
 
