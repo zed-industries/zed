@@ -1,8 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-};
+use std::{path::PathBuf, str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result, bail};
 

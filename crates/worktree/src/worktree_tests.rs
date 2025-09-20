@@ -1745,30 +1745,6 @@ fn randomly_mutate_worktree(
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.0);
             worktree.delete_entry(entry.id, false, cx).unwrap()
         }
-        ..=66 if entry.path.as_ref() != RelPath::empty() => {
-            let other_entry = snapshot.entries(false, 0).choose(rng).unwrap();
-            let new_parent_path = if other_entry.is_dir() {
-                other_entry.path.clone()
-            } else {
-                other_entry.path.parent().unwrap().into()
-            };
-            let mut new_path = new_parent_path.join(rel_path(&random_filename(rng)));
-            if new_path.starts_with(&entry.path) {
-                new_path = rel_path(&random_filename(rng)).into();
-            }
-
-            log::info!(
-                "renaming entry {:?} ({}) to {:?}",
-                entry.path,
-                entry.id.0,
-                new_path
-            );
-            let task = worktree.rename_entry(entry.id, new_path, cx);
-            cx.background_spawn(async move {
-                task.await?.into_included().unwrap();
-                Ok(())
-            })
-        }
         _ => {
             if entry.is_dir() {
                 let child_path = entry.path.join(rel_path(&random_filename(rng)));

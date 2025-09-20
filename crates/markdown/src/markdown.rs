@@ -7,7 +7,6 @@ use gpui::HitboxBehavior;
 use language::LanguageName;
 use log::Level;
 pub use path_range::{LineCol, PathWithRange};
-use util::rel_path::RelPath;
 
 use std::borrow::Cow;
 use std::collections::HashMap;

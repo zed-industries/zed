@@ -1737,7 +1737,7 @@ pub struct JsxTagAutoCloseSettings {
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
-    use util::rel_path::{RelPath, rel_path};
+    use util::rel_path::rel_path;
 
     use super::*;
 

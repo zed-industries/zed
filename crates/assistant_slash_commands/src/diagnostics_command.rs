@@ -13,7 +13,7 @@ use project::{DiagnosticSummary, PathMatchCandidateSet, Project};
 use rope::Point;
 use std::{
     fmt::Write,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;

@@ -2175,10 +2175,9 @@ impl Project {
     pub fn rename_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        new_path: impl Into<ProjectPath>,
+        new_path: ProjectPath,
         cx: &mut Context<Self>,
     ) -> Task<Result<CreatedEntry>> {
-        let new_path = new_path.into();
         let worktree_store = self.worktree_store.clone();
         let Some((worktree, old_path, is_dir)) = worktree_store
             .read(cx)

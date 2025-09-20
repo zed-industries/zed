@@ -1546,104 +1546,6 @@ impl LocalWorktree {
         }))
     }
 
-    /// Rename an entry.
-    ///
-    /// `new_path` is the new relative path to the worktree root.
-    /// If the root entry is renamed then `new_path` is the new root name instead.
-    fn rename_entry(
-        &self,
-        entry_id: ProjectEntryId,
-        new_path: Arc<RelPath>,
-        cx: &Context<Worktree>,
-    ) -> Task<Result<CreatedEntry>> {
-        let old_path = match self.entry_for_id(entry_id) {
-            Some(entry) => entry.path.clone(),
-            None => return Task::ready(Err(anyhow!("no entry to rename for id {entry_id:?}"))),
-        };
-        let abs_old_path = self.absolutize(&old_path);
-
-        let is_root_entry = self.root_entry().is_some_and(|e| e.id == entry_id);
-        let abs_new_path = if is_root_entry {
-            let Some(root_parent_path) = self.abs_path().parent() else {
-                return Task::ready(Err(anyhow!("no parent for path {:?}", self.abs_path)));
-            };
-            root_parent_path.join(new_path.as_std_path())
-        } else {
-            self.absolutize(&new_path)
-        };
-
-        let fs = self.fs.clone();
-        let abs_path = abs_new_path.clone();
-        let case_sensitive = self.fs_case_sensitive;
-
-        let do_rename = async move |fs: &dyn Fs, old_path: &Path, new_path: &Path, overwrite| {
-            fs.rename(
-                &old_path,
-                &new_path,
-                fs::RenameOptions {
-                    overwrite,
-                    ..fs::RenameOptions::default()
-                },
-            )
-            .await
-            .with_context(|| format!("renaming {old_path:?} into {new_path:?}"))
-        };
-
-        let rename_task = cx.background_spawn(async move {
-            // If we're on a case-insensitive FS and we're doing a case-only rename (i.e. `foobar` to `FOOBAR`)
-            // we want to overwrite, because otherwise we run into a file-already-exists error.
-            let overwrite = !case_sensitive
-                && abs_old_path != abs_new_path
-                && abs_old_path.to_str().map(|p| p.to_lowercase())
-                    == abs_new_path.to_str().map(|p| p.to_lowercase());
-
-            // The directory we're renaming into might not exist yet
-            if let Err(e) = do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite).await {
-                if let Some(err) = e.downcast_ref::<std::io::Error>()
-                    && err.kind() == std::io::ErrorKind::NotFound
-                {
-                    if let Some(parent) = abs_new_path.parent() {
-                        fs.create_dir(parent)
-                            .await
-                            .with_context(|| format!("creating parent directory {parent:?}"))?;
-                        return do_rename(fs.as_ref(), &abs_old_path, &abs_new_path, overwrite)
-                            .await;
-                    }
-                }
-                return Err(e);
-            }
-            Ok(())
-        });
-
-        cx.spawn(async move |this, cx| {
-            rename_task.await?;
-            Ok(this
-                .update(cx, |this, cx| {
-                    let local = this.as_local_mut().unwrap();
-                    if is_root_entry {
-                        // We eagerly update `abs_path` and refresh this worktree.
-                        // Otherwise, the FS watcher would do it on the `RootUpdated` event,
-                        // but with a noticeable delay, so we handle it proactively.
-                        local.update_abs_path_and_refresh(
-                            Some(SanitizedPath::new_arc(&abs_path)),
-                            cx,
-                        );
-                        Task::ready(Ok(this.root_entry().cloned()))
-                    } else {
-                        // First refresh the parent directory (in case it was newly created)
-                        if let Some(parent) = new_path.parent() {
-                            let _ = local.refresh_entries_for_paths(vec![parent.into()]);
-                        }
-                        // Then refresh the new path
-                        local.refresh_entry(new_path.clone(), Some(old_path), cx)
-                    }
-                })?
-                .await?
-                .map(CreatedEntry::Included)
-                .unwrap_or_else(|| CreatedEntry::Excluded { abs_path }))
-        })
-    }
-
     pub fn copy_external_entries(
         &self,
         target_directory: Arc<RelPath>,
@@ -2220,12 +2122,7 @@ impl Snapshot {
         entry: proto::Entry,
         always_included_paths: &PathMatcher,
     ) -> Result<Entry> {
-        let entry = Entry::try_from((
-            &self.root_char_bag,
-            always_included_paths,
-            entry,
-            self.path_style(),
-        ))?;
+        let entry = Entry::try_from((&self.root_char_bag, always_included_paths, entry))?;
         let old_entry = self.entries_by_id.insert_or_replace(
             PathEntry {
                 id: entry.id,
@@ -2298,12 +2195,7 @@ impl Snapshot {
         }
 
         for entry in update.updated_entries {
-            let entry = Entry::try_from((
-                &self.root_char_bag,
-                always_included_paths,
-                entry,
-                self.path_style(),
-            ))?;
+            let entry = Entry::try_from((&self.root_char_bag, always_included_paths, entry))?;
             if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, &()) {
                 entries_by_path_edits.push(Edit::Remove(PathKey(path.clone())));
             }
@@ -5435,16 +5327,11 @@ impl<'a> From<&'a Entry> for proto::Entry {
     }
 }
 
-impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry, PathStyle)> for Entry {
+impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
     type Error = anyhow::Error;
 
     fn try_from(
-        (root_char_bag, always_included, entry, path_style): (
-            &'a CharBag,
-            &PathMatcher,
-            proto::Entry,
-            PathStyle,
-        ),
+        (root_char_bag, always_included, entry): (&'a CharBag, &PathMatcher, proto::Entry),
     ) -> Result<Self> {
         let kind = if entry.is_dir {
             EntryKind::Dir

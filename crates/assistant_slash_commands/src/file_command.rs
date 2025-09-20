@@ -14,7 +14,7 @@ use smol::stream::StreamExt;
 use std::{
     fmt::Write,
     ops::{Range, RangeInclusive},
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
@@ -329,7 +329,7 @@ fn collect_files(
                         let entry_name = entry_name.display(path_style);
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,
-                            label: entry_name.clone().into(),
+                            label: entry_name.to_string().into(),
                             metadata: None,
                         }))?;
                         events_tx.unbounded_send(Ok(SlashCommandEvent::Content(

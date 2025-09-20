@@ -2,7 +2,7 @@ use std::{
     collections::BTreeSet,
     fmt::{Display, Formatter},
     ops::Range,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, LazyLock},
 };
 
@@ -283,7 +283,6 @@ impl LicenseDetectionWatcher {
             return Self::Remote;
         };
         let fs = local_worktree.fs().clone();
-        let worktree_abs_path = local_worktree.abs_path().clone();
 
         let options = ChildEntriesOptions {
             include_files: true,
@@ -312,12 +311,13 @@ impl LicenseDetectionWatcher {
                 worktree::Event::DeletedEntry(_) | worktree::Event::UpdatedGitRepositories(_) => {}
             });
 
+        let worktree_snapshot = worktree.read(cx).snapshot();
         let (mut is_open_source_tx, is_open_source_rx) = watch::channel_with::<bool>(false);
 
         let _is_open_source_task = cx.background_spawn(async move {
             let mut eligible_licenses = BTreeSet::new();
             while let Some(rel_path) = files_to_check_rx.next().await {
-                let abs_path = worktree.read(cx).absolutize(&rel_path);
+                let abs_path = worktree_snapshot.absolutize(&rel_path);
                 let was_open_source = !eligible_licenses.is_empty();
                 if Self::is_path_eligible(&fs, abs_path).await.unwrap_or(false) {
                     eligible_licenses.insert(rel_path);
@@ -384,6 +384,8 @@ impl LicenseDetectionWatcher {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use fs::FakeFs;
     use gpui::TestAppContext;
     use rand::Rng as _;

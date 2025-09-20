@@ -77,8 +77,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 0.5,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("b0.5")),
-            path_prefix: Arc::default(),
+            path: rel_path("b0.5").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -86,8 +86,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("c1.0")),
-            path_prefix: Arc::default(),
+            path: rel_path("c1.0").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -95,8 +95,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("a1.0")),
-            path_prefix: Arc::default(),
+            path: rel_path("a1.0").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -104,8 +104,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 0.5,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("a0.5")),
-            path_prefix: Arc::default(),
+            path: rel_path("a0.5").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -113,8 +113,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("b1.0")),
-            path_prefix: Arc::default(),
+            path: rel_path("b1.0").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -128,8 +128,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("a1.0")),
-                path_prefix: Arc::default(),
+                path: rel_path("a1.0").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -137,8 +137,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("b1.0")),
-                path_prefix: Arc::default(),
+                path: rel_path("b1.0").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -146,8 +146,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("c1.0")),
-                path_prefix: Arc::default(),
+                path: rel_path("c1.0").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -155,8 +155,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 0.5,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("a0.5")),
-                path_prefix: Arc::default(),
+                path: rel_path("a0.5").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -164,8 +164,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 0.5,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("b0.5")),
-                path_prefix: Arc::default(),
+                path: rel_path("b0.5").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -968,7 +968,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 
     let b_path = ProjectPath {
         worktree_id: worktree_id2,
-        path: Arc::from(Path::new(path!("the-parent-dirb/fileb"))),
+        path: rel_path("the-parent-dirb/fileb").into(),
     };
     workspace
         .update_in(cx, |workspace, window, cx| {
@@ -1001,7 +1001,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
             project_path,
             Some(ProjectPath {
                 worktree_id: worktree_id2,
-                path: Arc::from(Path::new(path!("the-parent-dirb/filec")))
+                path: rel_path("the-parent-dirb/filec").into()
             })
         );
     });
@@ -1065,7 +1065,7 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
             project_path,
             Some(ProjectPath {
                 worktree_id: worktree_id2,
-                path: Arc::from(Path::new("filec"))
+                path: rel_path("filec").into()
             })
         );
     });
@@ -1103,7 +1103,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     // so that one should be sorted earlier
     let b_path = ProjectPath {
         worktree_id,
-        path: Arc::from(Path::new("dir2/b.txt")),
+        path: rel_path("dir2/b.txt").into(),
     };
     workspace
         .update_in(cx, |workspace, window, cx| {
@@ -2766,9 +2766,9 @@ fn active_file_picker(
 
 #[derive(Debug, Default)]
 struct SearchEntries {
-    history: Vec<PathBuf>,
+    history: Vec<Arc<RelPath>>,
     history_found_paths: Vec<FoundPath>,
-    search: Vec<PathBuf>,
+    search: Vec<Arc<RelPath>>,
     search_matches: Vec<PathMatch>,
 }
 
@@ -2806,14 +2806,13 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                     path_match
                         .as_ref()
                         .map(|path_match| {
-                            Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
+                            path_match.0.path_prefix.as_ref().join(&path_match.0.path)
                         })
                         .unwrap_or_else(|| {
                             history_path
                                 .absolute
                                 .as_deref()
-                                .unwrap_or_else(|| &history_path.project.path)
-                                .to_path_buf()
+                                .unwrap_or_else(|| history_path.project.path.clone())
                         }),
                 );
                 search_entries
@@ -2823,7 +2822,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
             Match::Search(path_match) => {
                 search_entries
                     .search
-                    .push(Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path));
+                    .push(path_match.0.path_prefix.join(&path_match.0.path));
                 search_entries.search_matches.push(path_match.0.clone());
             }
             Match::CreateNew(_) => {}

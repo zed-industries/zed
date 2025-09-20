@@ -950,7 +950,7 @@ impl FileFinderDelegate {
                 extend_old_matches,
             );
 
-            let mut query_path = (&query.raw_query).as_str();
+            let mut query_path = query.raw_query.as_str();
             // add option of creating new file only if path is relative
             let available_worktree = self
                 .project

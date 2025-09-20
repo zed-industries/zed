@@ -1,139 +1,13 @@
-use std::{
-    borrow::Cow,
-    ffi::OsStr,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
-
+use crate::paths::PathStyle;
 use anyhow::{Context as _, Result, bail};
-use serde::{Deserialize, Serialize};
-
-use crate::paths::{PathStyle, SanitizedPath};
-
-/// An absolute path.
-#[derive(PartialEq, Debug, Eq, Hash)]
-struct AbsPath {
-    style: PathStyle,
-    contents: String,
-}
-
-impl AbsPath {
-    pub fn new<S: AsRef<str>>(path: &S, style: PathStyle) -> Result<Self> {
-        // TODO: remove .. components (write cannonicalize?)
-        let path = path.as_ref();
-        match style {
-            PathStyle::Posix => {
-                anyhow::ensure!(path.starts_with('/'));
-            }
-            PathStyle::Windows => {
-                // TODO: this needs to work the same regardless of current target
-                let path = dunce::simplified(Path::new(path)).to_str().unwrap();
-
-                let mut is_absolute = false;
-                if path.starts_with('\\') {
-                    is_absolute = true;
-                } else {
-                    let mut chars = path.chars();
-                    if let Some(c) = chars.next() {
-                        if c.is_ascii_alphabetic() {
-                            if let Some(c) = chars.next() {
-                                if c == ':' {
-                                    is_absolute = true;
-                                }
-                            }
-                        }
-                    }
-                }
-                anyhow::ensure!(is_absolute);
-            }
-        }
-        Ok(Self {
-            style,
-            contents: path.to_owned(),
-        })
-    }
-
-    pub fn file_name(&self) -> Option<&str> {
-        if let Some(end_ix) = self.contents.rfind(self.style.separator()) {
-            let name = &self.contents[end_ix + 1..];
-            if name.is_empty() { None } else { Some(name) }
-        } else {
-            None
-        }
-    }
-
-    pub fn to_proto(&self) -> String {
-        self.contents.to_owned()
-    }
-
-    pub fn path_style(&self) -> PathStyle {
-        self.style
-    }
-
-    pub fn starts_with(&self, other: &Self) -> bool {
-        self.strip_prefix(other).is_ok()
-    }
-
-    pub fn strip_prefix(&self, other: &Self) -> Result<&RelPath, ()> {
-        if let Some(suffix) = self.contents.strip_prefix(&other.contents) {
-            if suffix.starts_with(self.style.separator()) {
-                return Ok(unsafe { RelPath::new_unchecked(&suffix[1..]) });
-            } else if suffix.is_empty() {
-                return Ok(RelPath::empty());
-            }
-        }
-        Err(())
-    }
-
-    pub fn to_std_path(&self) -> PathBuf {
-        PathBuf::from(&self.contents)
-    }
-
-    pub fn as_std_path(&self) -> Option<&Path> {
-        if self.style == PathStyle::local() {
-            Some(Path::new(&self.contents))
-        } else {
-            None
-        }
-    }
-
-    pub fn as_sanitized_path(&self) -> Option<&SanitizedPath> {
-        Some(SanitizedPath::new(self.as_std_path()?))
-    }
-
-    pub fn from_sanitized_path(p: &SanitizedPath) -> Result<Self> {
-        Self::new(&p.to_str().context("non-unicode path")?, PathStyle::local())
-    }
-
-    pub fn from_std_path(path: &Path) -> Result<Self> {
-        let path = path.to_str().context("non-unicode path")?;
-        // TODO strip trailing slash?
-        Self::new(&path, PathStyle::local())
-    }
-
-    // this is a temporary escape hatch for places where we're handed a std::path::Path that semantically might not be a local path
-    // TODO eliminate all uses of this by using the correct types everywhere
-    pub fn from_std_path_with_style(path: &Path, style: PathStyle) -> Result<Self> {
-        let path = path.to_str().context("non-unicode path")?;
-        Self::new(&path, style)
-    }
-}
-
-impl std::fmt::Display for AbsPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.contents)
-    }
-}
+use serde::Serialize;
+use std::{borrow::Cow, ffi::OsStr, ops::Deref, path::Path, sync::Arc};
 
 #[repr(transparent)]
 #[derive(PartialEq, Debug, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct RelPath(str);
 
-impl AsRef<Path> for RelPath {
-    fn as_ref(&self) -> &Path {
-        Path::new(&self.0)
-    }
-}
+pub struct RelPathBuf(String);
 
 impl RelPath {
     pub fn empty() -> &'static Self {
@@ -263,6 +137,10 @@ impl RelPath {
         self.0.to_owned()
     }
 
+    pub fn to_rel_path_buf(&self) -> RelPathBuf {
+        RelPathBuf(self.0.to_string())
+    }
+
     pub fn from_proto(path: &str) -> Result<Arc<Self>> {
         Ok(Arc::from(Self::new(path)?))
     }
@@ -287,6 +165,49 @@ impl RelPath {
     }
 
     pub fn as_std_path(&self) -> &Path {
+        Path::new(&self.0)
+    }
+}
+
+impl RelPathBuf {
+    pub fn pop(&mut self) {
+        if let Some(ix) = self.0.rfind('/') {
+            self.0.truncate(ix);
+        }
+    }
+
+    pub fn push(&mut self, path: &RelPath) {
+        self.0.push('/');
+        self.0.push_str(&path.0);
+    }
+
+    pub fn as_rel_path(&self) -> &RelPath {
+        unsafe { RelPath::new_unchecked(self.0.as_str()) }
+    }
+}
+
+impl Into<Arc<RelPath>> for RelPathBuf {
+    fn into(self) -> Arc<RelPath> {
+        Arc::from(self.as_rel_path())
+    }
+}
+
+impl AsRef<RelPath> for RelPathBuf {
+    fn as_ref(&self) -> &RelPath {
+        self.as_rel_path()
+    }
+}
+
+impl Deref for RelPathBuf {
+    type Target = RelPath;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_ref()
+    }
+}
+
+impl AsRef<Path> for RelPath {
+    fn as_ref(&self) -> &Path {
         Path::new(&self.0)
     }
 }
@@ -381,9 +302,9 @@ impl<'a> DoubleEndedIterator for RelPathComponents<'a> {
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools;
-
     use super::*;
+    use itertools::Itertools;
+    use std::path::PathBuf;
 
     #[test]
     fn test_path_construction() {

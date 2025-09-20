@@ -1905,6 +1905,7 @@ impl OutlinePanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
         if let Some(clipboard_text) = self
             .selected_entry()
             .and_then(|entry| match entry {
@@ -1914,7 +1915,7 @@ impl OutlinePanel {
                 }
                 PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
             })
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| p.display(path_style).to_string())
         {
             cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
@@ -2272,7 +2273,7 @@ impl OutlinePanel {
                 let color =
                     entry_git_aware_label_color(entry.git_summary, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
-                    FileIcons::get_icon(&entry.path, cx)
+                    FileIcons::get_icon(entry.path.as_std_path(), cx)
                         .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
                 } else {
                     None
@@ -2303,7 +2304,7 @@ impl OutlinePanel {
                     is_active,
                 );
                 let icon = if settings.folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, &directory.entry.path, cx)
+                    FileIcons::get_folder_icon(is_expanded, directory.entry.path.as_std_path(), cx)
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
@@ -2615,19 +2616,17 @@ impl OutlinePanel {
                         if root_entry.id == entry.id {
                             file_name(worktree.abs_path().as_ref())
                         } else {
-                            let path = worktree.absolutize(entry.path.as_ref()).ok();
-                            let path = path.as_deref().unwrap_or_else(|| entry.path.as_ref());
-                            file_name(path)
+                            let path = worktree.absolutize(entry.path.as_ref());
+                            file_name(&path)
                         }
                     }
                     None => {
-                        let path = worktree.absolutize(entry.path.as_ref()).ok();
-                        let path = path.as_deref().unwrap_or_else(|| entry.path.as_ref());
-                        file_name(path)
+                        let path = worktree.absolutize(entry.path.as_ref());
+                        file_name(&path)
                     }
                 }
             }
-            None => file_name(entry.path.as_ref()),
+            None => file_name(entry.path.as_std_path()),
         }
     }
 
@@ -2842,7 +2841,7 @@ impl OutlinePanel {
                     }
 
                     let mut new_children_count =
-                        HashMap::<WorktreeId, HashMap<Arc<Path>, FsChildren>>::default();
+                        HashMap::<WorktreeId, HashMap<Arc<RelPath>, FsChildren>>::default();
 
                     let worktree_entries = new_worktree_entries
                         .into_iter()
@@ -4023,8 +4022,9 @@ impl OutlinePanel {
             let id = state.entries.len();
             match &entry {
                 PanelEntry::Fs(fs_entry) => {
-                    if let Some(file_name) =
-                        self.relative_path(fs_entry, cx).as_deref().map(file_name)
+                    if let Some(file_name) = self
+                        .relative_path(fs_entry, cx)
+                        .and_then(|path| Some(path.file_name()?.to_string()))
                     {
                         state
                             .match_candidates
@@ -4477,21 +4477,19 @@ impl OutlinePanel {
         let item_text_chars = match entry {
             PanelEntry::Fs(FsEntry::ExternalFile(external)) => self
                 .buffer_snapshot_for_id(external.buffer_id, cx)
-                .and_then(|snapshot| {
-                    Some(snapshot.file()?.path().file_name()?.to_string_lossy().len())
-                })
+                .and_then(|snapshot| Some(snapshot.file()?.path().file_name()?.len()))
                 .unwrap_or_default(),
             PanelEntry::Fs(FsEntry::Directory(directory)) => directory
                 .entry
                 .path
                 .file_name()
-                .map(|name| name.to_string_lossy().len())
+                .map(|name| name.len())
                 .unwrap_or_default(),
             PanelEntry::Fs(FsEntry::File(file)) => file
                 .entry
                 .path
                 .file_name()
-                .map(|name| name.to_string_lossy().len())
+                .map(|name| name.len())
                 .unwrap_or_default(),
             PanelEntry::FoldedDirs(folded_dirs) => {
                 folded_dirs
@@ -4500,7 +4498,7 @@ impl OutlinePanel {
                     .map(|dir| {
                         dir.path
                             .file_name()
-                            .map(|name| name.to_string_lossy().len())
+                            .map(|name| name.len())
                             .unwrap_or_default()
                     })
                     .sum::<usize>()
@@ -4799,7 +4797,7 @@ fn workspace_active_editor(
 }
 
 fn back_to_common_visited_parent(
-    visited_dirs: &mut Vec<(ProjectEntryId, Arc<Path>)>,
+    visited_dirs: &mut Vec<(ProjectEntryId, Arc<RelPath>)>,
     worktree_id: &WorktreeId,
     new_entry: &Entry,
 ) -> Option<(WorktreeId, ProjectEntryId)> {
@@ -6653,6 +6651,8 @@ outline: struct OutlineEntryExcerpt
         selected_entry: Option<&PanelEntry>,
         cx: &mut App,
     ) -> String {
+        let project = project.read(cx);
+        let path_style = project.path_style(cx);
         let mut display_string = String::new();
         for entry in cached_entries {
             if !display_string.is_empty() {
@@ -6667,44 +6667,37 @@ outline: struct OutlineEntryExcerpt
                         panic!("Did not cover external files with tests")
                     }
                     FsEntry::Directory(directory) => {
-                        match project
-                            .read(cx)
+                        if let Some(worktree) = project
                             .worktree_for_id(directory.worktree_id, cx)
-                            .and_then(|worktree| {
-                                if worktree.read(cx).root_entry() == Some(&directory.entry.entry) {
-                                    Some(worktree.read(cx).abs_path())
-                                } else {
-                                    None
-                                }
-                            }) {
-                            Some(root_path) => format!(
-                                "{}/{}",
-                                root_path.display(),
-                                directory.entry.path.display(),
-                            ),
-                            None => format!(
-                                "{}/",
-                                directory
-                                    .entry
-                                    .path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                            ),
+                            .filter(|worktree| {
+                                worktree.read(cx).root_entry() == Some(&directory.entry.entry)
+                            })
+                        {
+                            worktree
+                                .read(cx)
+                                .absolutize(&directory.entry.path)
+                                .to_string_lossy()
+                                .to_string()
+                        } else {
+                            format!(
+                                "{}{}",
+                                directory.entry.path.file_name().unwrap_or_default(),
+                                path_style.separator(),
+                            )
                         }
                     }
                     FsEntry::File(file) => file
                         .entry
                         .path
                         .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
+                        .map(|name| name.to_string())
                         .unwrap_or_default(),
                 },
                 PanelEntry::FoldedDirs(folded_dirs) => folded_dirs
                     .entries
                     .iter()
                     .filter_map(|dir| dir.path.file_name())
-                    .map(|name| name.to_string_lossy().to_string() + "/")
+                    .map(|name| name.to_string() + path_style.separator())
                     .collect(),
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Excerpt(_) => continue,

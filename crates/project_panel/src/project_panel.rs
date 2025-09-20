@@ -26,7 +26,6 @@ use gpui::{
     div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
     uniform_list,
 };
-use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use project::{
@@ -34,7 +33,6 @@ use project::{
     ProjectPath, Worktree, WorktreeId,
     git_store::{GitStoreEvent, git_traversal::ChildEntriesGitIter},
     project_settings::GoToDiagnosticSeverityFilter,
-    relativize_path,
 };
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
@@ -61,7 +59,7 @@ use ui::{
     ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
     v_flex,
 };
-use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths};
+use util::{ResultExt, TakeUntilExt, TryFutureExt, maybe, paths::compare_paths, rel_path::RelPath};
 use workspace::{
     DraggedSelection, OpenInTerminal, OpenOptions, OpenVisible, PreviewTabsSettings, SelectedEntry,
     SplitDirection, Workspace,
@@ -452,6 +450,7 @@ impl ProjectPanel {
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let git_store = project.read(cx).git_store().clone();
+        let path_style = project.read(cx).path_style(cx);
         let project_panel = cx.new(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
@@ -698,7 +697,7 @@ impl ProjectPanel {
                                         },
                                         ErrorCode::UnsharedItem => Some(format!(
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
-                                            file_path.display()
+                                            file_path.display(path_style)
                                         )),
                                         // See note in worktree.rs where this error originates. Returning Some in this case prevents
                                         // the error popup from saying "Try Again", which is a red herring in this case
@@ -1388,6 +1387,30 @@ impl ProjectPanel {
         };
         let filename = self.filename_editor.read(cx).text(cx);
         if !filename.is_empty() {
+            if filename.is_empty() {
+                edit_state.validation_state =
+                    ValidationState::Error("File or directory name cannot be empty.".to_string());
+                cx.notify();
+                return;
+            }
+
+            let trimmed_filename = filename.trim();
+            if trimmed_filename != filename {
+                edit_state.validation_state = ValidationState::Warning(
+                    "File or directory name contains leading or trailing whitespace.".to_string(),
+                );
+                cx.notify();
+                return;
+            }
+
+            let Ok(filename) = RelPath::new(trimmed_filename) else {
+                edit_state.validation_state = ValidationState::Warning(
+                    "File or directory name contains leading or trailing whitespace.".to_string(),
+                );
+                cx.notify();
+                return;
+            };
+
             if let Some(worktree) = self
                 .project
                 .read(cx)
@@ -1425,20 +1448,6 @@ impl ProjectPanel {
                     return;
                 }
             }
-            let trimmed_filename = filename.trim();
-            if trimmed_filename.is_empty() {
-                edit_state.validation_state =
-                    ValidationState::Error("File or directory name cannot be empty.".to_string());
-                cx.notify();
-                return;
-            }
-            if trimmed_filename != filename {
-                edit_state.validation_state = ValidationState::Warning(
-                    "File or directory name contains leading or trailing whitespace.".to_string(),
-                );
-                cx.notify();
-                return;
-            }
         }
         edit_state.validation_state = ValidationState::None;
         cx.notify();
@@ -1456,11 +1465,16 @@ impl ProjectPanel {
         if filename.trim().is_empty() {
             return None;
         }
-        #[cfg(not(target_os = "windows"))]
-        let filename_indicates_dir = filename.ends_with("/");
-        // On Windows, path separator could be either `/` or `\`.
-        #[cfg(target_os = "windows")]
-        let filename_indicates_dir = filename.ends_with("/") || filename.ends_with("\\");
+
+        let path_style = self.project.read(cx).path_style(cx);
+        let mut filename_indicates_dir = if path_style.is_windows() {
+            filename.ends_with('/') || filename.ends_with('\\')
+        } else {
+            filename.ends_with('/')
+        };
+        let filename =
+            RelPath::from_std_path(filename.trim_start_matches('/').as_ref(), path_style).ok()?;
+
         edit_state.is_dir =
             edit_state.is_dir || (edit_state.is_new_entry() && filename_indicates_dir);
         let is_dir = edit_state.is_dir;
@@ -1474,18 +1488,14 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
             });
-            let new_path = entry.path.join(filename.trim_start_matches('/'));
-            if worktree
-                .read(cx)
-                .entry_for_path(new_path.as_path())
-                .is_some()
-            {
+            let new_path = entry.path.join(&filename);
+            if worktree.read(cx).entry_for_path(&new_path).is_some() {
                 return None;
             }
 
             edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
-                project.create_entry((worktree_id, &new_path), is_dir, cx)
+                project.create_entry((worktree_id, new_path.into()), is_dir, cx)
             });
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
@@ -1493,7 +1503,7 @@ impl ProjectPanel {
             } else {
                 filename.clone().into()
             };
-            if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path()) {
+            if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
                 if existing.id == entry.id {
                     window.focus(&self.focus_handle);
                 }
@@ -1501,7 +1511,7 @@ impl ProjectPanel {
             }
             edited_entry_id = entry.id;
             edit_task = self.project.update(cx, |project, cx| {
-                project.rename_entry(entry.id, new_path.as_path(), cx)
+                project.rename_entry(entry.id, (worktree_id, new_path).into(), cx)
             });
         };
 
@@ -2401,8 +2411,8 @@ impl ProjectPanel {
         source: &SelectedEntry,
         (worktree, target_entry): (Entity<Worktree>, &Entry),
         cx: &App,
-    ) -> Option<(PathBuf, Option<Range<usize>>)> {
-        let mut new_path = target_entry.path.to_path_buf();
+    ) -> Option<(Arc<RelPath>, Option<Range<usize>>)> {
+        let mut new_path = target_entry.path.to_rel_path_buf();
         // If we're pasting into a file, or a directory into itself, go up one level.
         if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
             new_path.pop();
@@ -2412,11 +2422,10 @@ impl ProjectPanel {
             .read(cx)
             .path_for_entry(source.entry_id, cx)?
             .path
-            .file_name()?
-            .to_os_string();
-        new_path.push(&clipboard_entry_file_name);
-        let extension = new_path.extension().map(|e| e.to_os_string());
-        let file_name_without_extension = Path::new(&clipboard_entry_file_name).file_stem()?;
+            .file_name()?;
+        new_path.push(RelPath::new(clipboard_entry_file_name).unwrap());
+        let extension = new_path.extension();
+        let file_name_without_extension = new_path.file_stem()?;
         let file_name_len = file_name_without_extension.to_string_lossy().len();
         let mut disambiguation_range = None;
         let mut ix = 0;
@@ -2425,30 +2434,29 @@ impl ProjectPanel {
             while worktree.entry_for_path(&new_path).is_some() {
                 new_path.pop();
 
-                let mut new_file_name = file_name_without_extension.to_os_string();
+                let mut new_file_name = file_name_without_extension.to_string();
 
                 let disambiguation = " copy";
                 let mut disambiguation_len = disambiguation.len();
 
-                new_file_name.push(disambiguation);
+                new_file_name.push_str(disambiguation);
 
                 if ix > 0 {
                     let extra_disambiguation = format!(" {}", ix);
                     disambiguation_len += extra_disambiguation.len();
-
-                    new_file_name.push(extra_disambiguation);
+                    new_file_name.push_str(&extra_disambiguation);
                 }
                 if let Some(extension) = extension.as_ref() {
-                    new_file_name.push(".");
-                    new_file_name.push(extension);
+                    new_file_name.push_str(".");
+                    new_file_name.push_str(extension);
                 }
 
-                new_path.push(new_file_name);
+                new_path.push(RelPath::new(&new_file_name).unwrap());
                 disambiguation_range = Some(file_name_len..(file_name_len + disambiguation_len));
                 ix += 1;
             }
         }
-        Some((new_path, disambiguation_range))
+        Some((new_path.as_rel_path().into(), disambiguation_range))
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
@@ -2460,58 +2468,38 @@ impl ProjectPanel {
                 .clipboard
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
+
             enum PasteTask {
                 Rename(Task<Result<CreatedEntry>>),
                 Copy(Task<Result<Option<Entry>>>),
             }
-            let mut paste_entry_tasks: IndexMap<(ProjectEntryId, bool), PasteTask> =
-                IndexMap::default();
+
+            let mut paste_tasks = Vec::new();
             let mut disambiguation_range = None;
-            let clip_is_cut = clipboard_entries.is_cut();
             for clipboard_entry in clipboard_entries.items() {
                 let (new_path, new_disambiguation_range) =
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
-                let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
-                let relative_worktree_source_path = if !is_same_worktree {
-                    let target_base_path = worktree.read(cx).abs_path();
-                    let clipboard_project_path =
-                        self.project.read(cx).path_for_entry(clip_entry_id, cx)?;
-                    let clipboard_abs_path = self
-                        .project
-                        .read(cx)
-                        .absolute_path(&clipboard_project_path, cx)?;
-                    relativize_path(&target_base_path, clipboard_abs_path.as_path())
-                } else {
-                    None
-                };
-                let task = if clip_is_cut && is_same_worktree {
+                let task = if clipboard_entries.is_cut() {
                     let task = self.project.update(cx, |project, cx| {
-                        project.rename_entry(clip_entry_id, new_path, cx)
+                        project.rename_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
                     });
                     PasteTask::Rename(task)
                 } else {
-                    let entry_id = if is_same_worktree {
-                        clip_entry_id
-                    } else {
-                        entry.id
-                    };
                     let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(entry_id, relative_worktree_source_path, new_path, cx)
+                        project.copy_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
                     });
                     PasteTask::Copy(task)
                 };
-                let needs_delete = !is_same_worktree && clip_is_cut;
-                paste_entry_tasks.insert((clip_entry_id, needs_delete), task);
+                paste_tasks.push(task);
                 disambiguation_range = new_disambiguation_range.or(disambiguation_range);
             }
 
-            let item_count = paste_entry_tasks.len();
+            let item_count = paste_tasks.len();
 
             cx.spawn_in(window, async move |project_panel, cx| {
                 let mut last_succeed = None;
-                let mut need_delete_ids = Vec::new();
-                for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
+                for task in paste_tasks {
                     match task {
                         PasteTask::Rename(task) => {
                             if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
@@ -2521,23 +2509,9 @@ impl ProjectPanel {
                         PasteTask::Copy(task) => {
                             if let Some(Some(entry)) = task.await.log_err() {
                                 last_succeed = Some(entry);
-                                if need_delete {
-                                    need_delete_ids.push(entry_id);
-                                }
                             }
                         }
                     }
-                }
-                // remove entry for cut in difference worktree
-                for entry_id in need_delete_ids {
-                    project_panel
-                        .update(cx, |project_panel, cx| {
-                            project_panel
-                                .project
-                                .update(cx, |project, cx| project.delete_entry(entry_id, true, cx))
-                                .context("no such entry")
-                        })??
-                        .await?;
                 }
                 // update selection
                 if let Some(entry) = last_succeed {

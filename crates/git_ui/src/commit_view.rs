@@ -14,9 +14,8 @@ use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
-    ffi::OsStr,
     fmt::Write as _,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
@@ -241,7 +240,7 @@ impl language::File for GitBlob {
         self.path.as_std_path().to_path_buf()
     }
 
-    fn file_name<'a>(&'a self, _: &'a App) -> &str {
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
         self.path.file_name().unwrap()
     }
 

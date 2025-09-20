@@ -6986,7 +6986,6 @@ impl LspStore {
                 server_id: LanguageServerId,
                 lsp_adapter: Arc<CachedLspAdapter>,
                 worktree: WeakEntity<Worktree>,
-                worktree_abs_path: Arc<Path>,
                 lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
             }
 
@@ -7025,7 +7024,6 @@ impl LspStore {
                 if !supports_workspace_symbol_request {
                     continue;
                 }
-                let worktree_abs_path = worktree.abs_path().clone();
                 let worktree_handle = worktree_handle.clone();
                 let server_id = server.server_id();
                 requests.push(
@@ -7065,7 +7063,6 @@ impl LspStore {
                                     server_id,
                                     lsp_adapter,
                                     worktree: worktree_handle.downgrade(),
-                                    worktree_abs_path,
                                     lsp_symbols,
                                 }
                             }),
@@ -9488,7 +9485,7 @@ impl LspStore {
                 anyhow::ensure!(&new_signature == signature, "invalid symbol signature");
             }
             Ok(())
-        })?;
+        })??;
         let buffer = this
             .update(&mut cx, |this, cx| {
                 this.open_buffer_for_symbol(

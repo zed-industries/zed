@@ -3841,7 +3841,7 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
         .update(cx, |project, cx| {
             project.rename_entry(
                 entry_id,
-                (worktree_id, rel_path("dir1/dir2/dir3/test.txt")),
+                (worktree_id, rel_path("dir1/dir2/dir3/test.txt")).into(),
                 cx,
             )
         })
@@ -3880,7 +3880,11 @@ async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
 
     let _result = project
         .update(cx, |project, cx| {
-            project.rename_entry(entry_id, (worktree_id, rel_path("dir1/dir2/test.txt")), cx)
+            project.rename_entry(
+                entry_id,
+                (worktree_id, rel_path("dir1/dir2/test.txt")).into(),
+                cx,
+            )
         })
         .await
         .unwrap();
@@ -4451,7 +4455,7 @@ async fn test_buffer_identity_across_renames(cx: &mut gpui::TestAppContext) {
 
     project
         .update(cx, |project, cx| {
-            project.rename_entry(dir_id, (tree_id, rel_path("b")), cx)
+            project.rename_entry(dir_id, (tree_id, rel_path("b")).into(), cx)
         })
         .unwrap()
         .await
@@ -5169,7 +5173,11 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
             .read(cx)
             .entry_for_path(rel_path("one.rs"))
             .unwrap();
-        project.rename_entry(entry.id, (worktree.read(cx).id(), rel_path("three.rs")), cx)
+        project.rename_entry(
+            entry.id,
+            (worktree.read(cx).id(), rel_path("three.rs")).into(),
+            cx,
+        )
     });
     let expected_edit = lsp::WorkspaceEdit {
         changes: None,

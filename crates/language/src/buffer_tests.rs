@@ -26,7 +26,7 @@ use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
 use theme::ActiveTheme;
 use unindent::Unindent as _;
-use util::rel_path::{RelPath, rel_path};
+use util::rel_path::rel_path;
 use util::test::marked_text_offsets;
 use util::{RandomCharIter, assert_set_eq, post_inc, test::marked_text_ranges};
 

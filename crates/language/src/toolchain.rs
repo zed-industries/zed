@@ -4,10 +4,7 @@
 //! which is a set of tools used to interact with the projects written in said language.
 //! For example, a Python project can have an associated virtual environment; a Rust project can have a toolchain override.
 
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
 use collections::HashMap;

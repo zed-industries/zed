@@ -253,6 +253,10 @@ impl PathStyle {
             PathStyle::Windows => "\\",
         }
     }
+
+    pub fn is_windows(&self) -> bool {
+        *self == PathStyle::Windows
+    }
 }
 
 #[derive(Debug, Clone)]

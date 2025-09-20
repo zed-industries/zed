@@ -34,7 +34,7 @@ use sum_tree::Bias;
 use text::{Point, Rope};
 use theme::Theme;
 use unicase::UniCase;
-use util::{ResultExt, maybe, post_inc, rel_path::RelPath};
+use util::{ResultExt, maybe, post_inc};
 
 #[derive(
     Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,

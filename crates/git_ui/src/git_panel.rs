@@ -54,7 +54,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use std::future::Future;
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use time::OffsetDateTime;
