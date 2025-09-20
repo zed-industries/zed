@@ -4622,8 +4622,9 @@ impl RenderOnce for PanelRepoFooter {
                     .when(show_separator, |this| {
                         this.child(
                             div()
-                                .text_color(cx.theme().colors().text_muted)
+                                .text_color(cx.theme().colors().icon_muted)
                                 .text_sm()
+                                .mx_px()
                                 .child("/"),
                         )
                     })
