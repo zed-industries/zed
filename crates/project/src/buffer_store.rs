@@ -381,6 +381,8 @@ impl LocalBufferStore {
         let version = buffer.version();
         let buffer_id = buffer.remote_id();
         let file = buffer.file().cloned();
+        let encoding = buffer.encoding.clone();
+
         if file
             .as_ref()
             .is_some_and(|file| file.disk_state() == DiskState::New)
@@ -389,7 +391,13 @@ impl LocalBufferStore {
         }
 
         let save = worktree.update(cx, |worktree, cx| {
-            worktree.write_file(path.as_ref(), text, line_ending, cx)
+            worktree.write_file(
+                path.as_ref(),
+                text,
+                line_ending,
+                cx,
+                &encoding.lock().unwrap(),
+            )
         });
 
         cx.spawn(async move |this, cx| {
@@ -636,7 +644,13 @@ impl LocalBufferStore {
 
         cx.spawn(async move |this, cx| {
             let buffer = match load_buffer.await {
-                Ok(buffer) => Ok(buffer),
+                Ok(buffer) => {
+                    // Reload the buffer to trigger UTF-16 detection
+                    buffer
+                        .update(cx, |buffer, cx| buffer.reload(cx, false))?
+                        .await?;
+                    Ok(buffer)
+                }
                 Err(error) if is_not_found_error(&error) => cx.new(|cx| {
                     let buffer_id = BufferId::from(cx.entity_id().as_non_zero_u64());
                     let text_buffer = text::Buffer::new(0, buffer_id, "");
@@ -709,7 +723,9 @@ impl LocalBufferStore {
         cx.spawn(async move |_, cx| {
             let mut project_transaction = ProjectTransaction::default();
             for buffer in buffers {
-                let transaction = buffer.update(cx, |buffer, cx| buffer.reload(cx))?.await?;
+                let transaction = buffer
+                    .update(cx, |buffer, cx| buffer.reload(cx, false))?
+                    .await?;
                 buffer.update(cx, |buffer, cx| {
                     if let Some(transaction) = transaction {
                         if !push_to_history {
