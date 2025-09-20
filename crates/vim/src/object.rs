@@ -1039,7 +1039,7 @@ fn text_object(
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
-    matches.sort_by_key(|r| (r.end - r.start));
+    matches.sort_by_key(|r| r.end - r.start);
     if let Some(buffer_range) = matches.first() {
         let range = excerpt.map_range_from_buffer(buffer_range.clone());
         return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
@@ -1050,7 +1050,7 @@ fn text_object(
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == around { Some(r) } else { None })
         .collect();
-    matches.sort_by_key(|r| (r.end - r.start));
+    matches.sort_by_key(|r| r.end - r.start);
     let around_range = matches.first()?;
 
     let mut matches: Vec<Range<usize>> = buffer

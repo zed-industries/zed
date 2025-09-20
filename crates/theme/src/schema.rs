@@ -1,11 +1,9 @@
 #![allow(missing_docs)]
 
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla};
-use indexmap::IndexMap;
 use palette::FromColor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{AccentContent, PlayerColorContent};
 pub use settings::{FontWeightContent, WindowBackgroundContent};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
@@ -47,30 +45,6 @@ pub struct ThemeContent {
     pub name: String,
     pub appearance: AppearanceContent,
     pub style: settings::ThemeStyleContent,
-}
-
-/// The content of a serialized theme.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
-#[serde(default)]
-pub struct ThemeStyleContent {
-    #[serde(default, rename = "background.appearance")]
-    pub window_background_appearance: Option<settings::WindowBackgroundContent>,
-
-    #[serde(default)]
-    pub accents: Vec<AccentContent>,
-
-    #[serde(flatten, default)]
-    pub colors: settings::ThemeColorsContent,
-
-    #[serde(flatten, default)]
-    pub status: settings::StatusColorsContent,
-
-    #[serde(default)]
-    pub players: Vec<PlayerColorContent>,
-
-    /// The styles for syntax nodes.
-    #[serde(default)]
-    pub syntax: IndexMap<String, settings::HighlightStyleContent>,
 }
 
 /// Returns the syntax style overrides in the [`ThemeContent`].

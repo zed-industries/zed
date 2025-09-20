@@ -3579,7 +3579,7 @@ impl ProjectPanel {
             let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
             let entries = visible
                 .index
-                .get_or_init(|| visible.entries.iter().map(|e| (e.path.clone())).collect());
+                .get_or_init(|| visible.entries.iter().map(|e| e.path.clone()).collect());
             let base_index = ix + entry_range.start;
             for (i, entry) in visible.entries[entry_range].iter().enumerate() {
                 let global_index = base_index + i;
@@ -3623,7 +3623,7 @@ impl ProjectPanel {
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 let entries = visible
                     .index
-                    .get_or_init(|| visible.entries.iter().map(|e| (e.path.clone())).collect());
+                    .get_or_init(|| visible.entries.iter().map(|e| e.path.clone()).collect());
                 for entry in visible.entries[entry_range].iter() {
                     let status = git_status_setting
                         .then_some(entry.git_summary)
@@ -4968,7 +4968,7 @@ impl ProjectPanel {
                 visible_worktree
                     .entries
                     .iter()
-                    .map(|e| (e.path.clone()))
+                    .map(|e| e.path.clone())
                     .collect()
             });
 
