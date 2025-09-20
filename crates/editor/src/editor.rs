@@ -16735,6 +16735,11 @@ impl Editor {
                                     )
                                 });
                             target_editor.update(cx, |target_editor, cx| {
+                                if target_editor.nav_history().is_none() {
+                                    let nav_history =
+                                        pane.read(cx).nav_history_for_item(&cx.entity());
+                                    target_editor.set_nav_history(Some(nav_history));
+                                }
                                 // When selecting a definition in a different buffer, disable the nav history
                                 // to avoid creating a history entry at the previous cursor location.
                                 pane.update(cx, |pane, _| pane.disable_history());
@@ -16777,12 +16782,14 @@ impl Editor {
                     target_buffer.anchor_after(target_start)
                         ..target_buffer.anchor_before(target_end)
                 })?;
+
+                let location = Location {
+                    buffer: target_buffer_handle,
+                    range,
+                };
                 LocationLink {
-                    origin: None,
-                    target: Location {
-                        buffer: target_buffer_handle,
-                        range,
-                    },
+                    origin: Some(location.clone()),
+                    target: location,
                 }
             });
             Ok(location)
