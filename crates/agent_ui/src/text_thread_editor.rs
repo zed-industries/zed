@@ -46,7 +46,7 @@ use settings::{
     update_settings_file,
 };
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     cmp,
     ops::Range,
     path::{Path, PathBuf},
@@ -2526,7 +2526,7 @@ impl Item for TextThreadEditor {
 
     fn navigate(
         &mut self,
-        data: Box<dyn std::any::Any>,
+        data: Arc<dyn Any + Send>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
