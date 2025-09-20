@@ -216,6 +216,7 @@ pub enum AgentType {
     TextThread,
     Gemini,
     ClaudeCode,
+    GooseAcp,
     NativeAgent,
     Custom {
         name: SharedString,
@@ -230,6 +231,7 @@ impl AgentType {
             Self::NativeAgent => "Agent 2".into(),
             Self::Gemini => "Gemini CLI".into(),
             Self::ClaudeCode => "Claude Code".into(),
+            Self::GooseAcp => "Goose".into(),
             Self::Custom { name, .. } => name.into(),
         }
     }
@@ -239,6 +241,7 @@ impl AgentType {
             Self::Zed | Self::NativeAgent | Self::TextThread => None,
             Self::Gemini => Some(IconName::AiGemini),
             Self::ClaudeCode => Some(IconName::AiClaude),
+            Self::GooseAcp => Some(IconName::Terminal),
             Self::Custom { .. } => Some(IconName::Terminal),
         }
     }
@@ -249,6 +252,7 @@ impl From<ExternalAgent> for AgentType {
         match value {
             ExternalAgent::Gemini => Self::Gemini,
             ExternalAgent::ClaudeCode => Self::ClaudeCode,
+            ExternalAgent::GooseAcp => Self::GooseAcp,
             ExternalAgent::Custom { name, command } => Self::Custom { name, command },
             ExternalAgent::NativeAgent => Self::NativeAgent,
         }
@@ -1427,6 +1431,11 @@ impl AgentPanel {
                     cx,
                 )
             }
+            AgentType::GooseAcp => {
+                self.selected_agent = AgentType::GooseAcp;
+                self.serialize(cx);
+                self.external_thread(Some(crate::ExternalAgent::GooseAcp), None, None, window, cx)
+            }
             AgentType::Custom { name, command } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name, command }),
                 None,
@@ -1981,6 +1990,32 @@ impl AgentPanel {
                                                         panel.update(cx, |panel, cx| {
                                                             panel.new_agent_thread(
                                                                 AgentType::ClaudeCode,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }),
+                            )
+                            .item(
+                                ContextMenuEntry::new("New Goose Thread")
+                                    .icon(IconName::Terminal)
+                                    .disabled(is_via_collab)
+                                    .icon_color(Color::Muted)
+                                    .handler({
+                                        let workspace = workspace.clone();
+                                        move |window, cx| {
+                                            if let Some(workspace) = workspace.upgrade() {
+                                                workspace.update(cx, |workspace, cx| {
+                                                    if let Some(panel) =
+                                                        workspace.panel::<AgentPanel>(cx)
+                                                    {
+                                                        panel.update(cx, |panel, cx| {
+                                                            panel.new_agent_thread(
+                                                                AgentType::GooseAcp,
                                                                 window,
                                                                 cx,
                                                             );
