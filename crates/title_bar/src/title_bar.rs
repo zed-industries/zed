@@ -26,9 +26,12 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window, actions, div,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription,
+    WeakEntity, Window, actions, div,
 };
+
+#[cfg(not(target_os = "macos"))]
+use gpui::MouseButton;
 use onboarding_banner::OnboardingBanner;
 use project::{Project, WorktreeSettings};
 use remote::RemoteConnectionOptions;
@@ -43,6 +46,29 @@ use ui::{
 use util::ResultExt;
 use workspace::{Workspace, notifications::NotifyResultExt};
 use zed_actions::{OpenRecent, OpenRemote};
+
+// Add a small extension trait to keep builder chains tidy while handling platform differences.
+// On non-macOS, attach a left-button on_mouse_down handler that stops propagation.
+// On macOS, this is a no-op.
+#[cfg(not(target_os = "macos"))]
+trait StopPropagationOnLeftClickExt: StatefulInteractiveElement + Sized {
+    fn stop_propagation_on_left_click(self) -> Self {
+        self.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+impl<T> StopPropagationOnLeftClickExt for T where T: StatefulInteractiveElement + Sized {}
+
+#[cfg(target_os = "macos")]
+trait StopPropagationOnLeftClickExt: Sized {
+    fn stop_propagation_on_left_click(self) -> Self {
+        self
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl<T> StopPropagationOnLeftClickExt for T where T: Sized {}
 
 pub use onboarding_banner::restore_banner;
 
@@ -186,36 +212,34 @@ impl Render for TitleBar {
 
         let mut children = Vec::new();
 
-        children.push(
-            h_flex()
-                .gap_1()
-                .map(|title_bar| {
-                    let mut render_project_items = title_bar_settings.show_branch_name
-                        || title_bar_settings.show_project_items;
-                    title_bar
-                        .when_some(
-                            self.application_menu.clone().filter(|_| !show_menus),
-                            |title_bar, menu| {
-                                render_project_items &=
-                                    !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
-                                title_bar.child(menu)
-                            },
-                        )
-                        .when(render_project_items, |title_bar| {
-                            title_bar
-                                .when(title_bar_settings.show_project_items, |title_bar| {
-                                    title_bar
-                                        .children(self.render_project_host(cx))
-                                        .child(self.render_project_name(cx))
-                                })
-                                .when(title_bar_settings.show_branch_name, |title_bar| {
-                                    title_bar.children(self.render_project_branch(cx))
-                                })
-                        })
-                })
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .into_any_element(),
-        );
+        children.push({
+            let el = h_flex().gap_1().map(|title_bar| {
+                let mut render_project_items =
+                    title_bar_settings.show_branch_name || title_bar_settings.show_project_items;
+                title_bar
+                    .when_some(
+                        self.application_menu.clone().filter(|_| !show_menus),
+                        |title_bar, menu| {
+                            render_project_items &=
+                                !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
+                            title_bar.child(menu)
+                        },
+                    )
+                    .when(render_project_items, |title_bar| {
+                        title_bar
+                            .when(title_bar_settings.show_project_items, |title_bar| {
+                                title_bar
+                                    .children(self.render_project_host(cx))
+                                    .child(self.render_project_name(cx))
+                            })
+                            .when(title_bar_settings.show_branch_name, |title_bar| {
+                                title_bar.children(self.render_project_branch(cx))
+                            })
+                    })
+            });
+            let el = el.stop_propagation_on_left_click();
+            el.into_any_element()
+        });
 
         children.push(self.render_collaborator_list(window, cx).into_any_element());
 
@@ -227,11 +251,10 @@ impl Render for TitleBar {
         let status = &*status.borrow();
         let user = self.user_store.read(cx).current_user();
 
-        children.push(
-            h_flex()
+        children.push({
+            let el = h_flex()
                 .gap_1()
                 .pr_1()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .when(
@@ -240,9 +263,10 @@ impl Render for TitleBar {
                 )
                 .when(user.is_some(), |parent| {
                     parent.child(self.render_user_menu_button(cx))
-                })
-                .into_any_element(),
-        );
+                });
+            let el = el.stop_propagation_on_left_click();
+            el.into_any_element()
+        });
 
         if show_menus {
             self.platform_titlebar.update(cx, |this, _| {
