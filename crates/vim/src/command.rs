@@ -1244,14 +1244,14 @@ fn generate_commands(_: &App) -> Vec<VimCommand> {
             .range(act_on_range),
         VimCommand::str(("rev", "ert"), "git::Restore").range(act_on_range),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(select_range),
-        VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {
-            Some(
-                YankCommand {
-                    range: range.clone(),
-                }
-                .boxed_clone(),
-            )
-        }),
+        // VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {
+        //     Some(
+        //         YankCommand {
+        //             range: range.clone(),
+        //         }
+        //         .boxed_clone(),
+        //     )
+        // }),
         VimCommand::new(("reg", "isters"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("di", "splay"), ToggleRegistersView).bang(ToggleRegistersView),
         VimCommand::new(("marks", ""), ToggleMarksView).bang(ToggleMarksView),

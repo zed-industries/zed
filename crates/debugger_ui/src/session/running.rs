@@ -26,8 +26,8 @@ use dap::{
 };
 use futures::{SinkExt, channel::mpsc};
 use gpui::{
-    Action as _, AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    NoAction, Pixels, Point, Subscription, Task, WeakEntity,
+    AnyView, AppContext, Axis, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Pixels,
+    Point, Subscription, Task, WeakEntity,
 };
 use language::Buffer;
 use loaded_source_list::LoadedSourceList;
@@ -385,7 +385,7 @@ pub(crate) fn new_debugger_pane(
             project.clone(),
             Default::default(),
             None,
-            NoAction.boxed_clone(),
+            None,
             window,
             cx,
         );

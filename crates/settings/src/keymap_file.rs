@@ -2,9 +2,8 @@ use anyhow::{Context as _, Result};
 use collections::{BTreeMap, HashMap, IndexMap};
 use fs::Fs;
 use gpui::{
-    Action, ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
-    KeyBinding, KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke,
-    NoAction, SharedString,
+    ActionBuildError, App, InvalidKeystrokeError, KEYSTROKE_PARSE_EXPECTED_MESSAGE, KeyBinding,
+    KeyBindingContextPredicate, KeyBindingMetaIndex, KeybindingKeystroke, Keystroke, SharedString,
 };
 use schemars::{JsonSchema, json_schema};
 use serde::Deserialize;
@@ -350,12 +349,12 @@ impl KeymapFile {
                 let action_input = items[1].clone();
                 let action_input_string = action_input.to_string();
                 (
-                    cx.build_action(name, Some(action_input)),
+                    cx.build_action(name, Some(action_input)).map(Some),
                     Some(action_input_string),
                 )
             }
-            Value::String(name) => (cx.build_action(name, None), None),
-            Value::Null => (Ok(NoAction.boxed_clone()), None),
+            Value::String(name) => (cx.build_action(name, None).map(Some), None),
+            Value::Null => (Ok(None), None),
             _ => {
                 return Err(format!(
                     "expected two-element array of `[name, input]`. \
@@ -410,7 +409,9 @@ impl KeymapFile {
             }
         };
 
-        if let Some(validator) = KEY_BINDING_VALIDATORS.get(&key_binding.action().type_id()) {
+        if let Some(action) = key_binding.action()
+            && let Some(validator) = KEY_BINDING_VALIDATORS.get(&action.type_id())
+        {
             match validator.validate(&key_binding) {
                 Ok(()) => Ok(key_binding),
                 Err(error) => Err(error.0),
@@ -502,7 +503,7 @@ impl KeymapFile {
 
         let mut empty_schema_action_names = vec![];
         for (name, action_schema) in action_schemas.into_iter() {
-            let deprecation = if name == NoAction.name() {
+            let deprecation = if name.is_empty() {
                 Some("null")
             } else {
                 deprecations.get(name).copied()
@@ -635,7 +636,7 @@ impl KeymapFile {
                 target_keybind_source,
             } if target_keybind_source != KeybindSource::User => {
                 let mut source = target.clone();
-                source.action_name = gpui::NoAction.name();
+                source.action_name = "";
                 source.action_arguments.take();
                 operation = KeybindUpdateOperation::Add {
                     source,
@@ -930,7 +931,7 @@ pub struct KeybindUpdateTarget<'a> {
 
 impl<'a> KeybindUpdateTarget<'a> {
     fn action_value(&self) -> Result<Value> {
-        if self.action_name == gpui::NoAction.name() {
+        if self.action_name.is_empty() {
             return Ok(Value::Null);
         }
         let action_name: Value = self.action_name.into();

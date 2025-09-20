@@ -3800,11 +3800,13 @@ impl Window {
         }
 
         for binding in match_result.bindings {
-            self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+            if let Some(action) = binding.action.as_deref() {
+                self.dispatch_action_on_node(node_id, action, cx);
+            }
             if !cx.propagate_event {
                 self.dispatch_keystroke_observers(
                     event,
-                    Some(binding.action),
+                    binding.action,
                     match_result.context_stack,
                     cx,
                 );
@@ -3922,14 +3924,11 @@ impl Window {
 
             cx.propagate_event = true;
             for binding in replay.bindings {
-                self.dispatch_action_on_node(node_id, binding.action.as_ref(), cx);
+                if let Some(action) = binding.action.as_deref() {
+                    self.dispatch_action_on_node(node_id, action, cx);
+                }
                 if !cx.propagate_event {
-                    self.dispatch_keystroke_observers(
-                        &event,
-                        Some(binding.action),
-                        Vec::default(),
-                        cx,
-                    );
+                    self.dispatch_keystroke_observers(&event, binding.action, Vec::default(), cx);
                     continue 'replay;
                 }
             }

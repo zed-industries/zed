@@ -528,7 +528,7 @@ impl Component for KeyBinding {
                             single_example(
                                 "Default",
                                 KeyBinding::new_from_gpui(
-                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None),
+                                    gpui::KeyBinding::new_no_action("ctrl-s", None),
                                     cx,
                                 )
                                 .into_any_element(),
@@ -536,7 +536,7 @@ impl Component for KeyBinding {
                             single_example(
                                 "Mac Style",
                                 KeyBinding::new_from_gpui(
-                                    gpui::KeyBinding::new("cmd-s", gpui::NoAction, None),
+                                    gpui::KeyBinding::new_no_action("cmd-s", None),
                                     cx,
                                 )
                                 .platform_style(PlatformStyle::Mac)
@@ -545,7 +545,7 @@ impl Component for KeyBinding {
                             single_example(
                                 "Windows Style",
                                 KeyBinding::new_from_gpui(
-                                    gpui::KeyBinding::new("ctrl-s", gpui::NoAction, None),
+                                    gpui::KeyBinding::new_no_action("ctrl-s", None),
                                     cx,
                                 )
                                 .platform_style(PlatformStyle::Windows)
@@ -558,7 +558,7 @@ impl Component for KeyBinding {
                         vec![single_example(
                             "Vim Mode Enabled",
                             KeyBinding::new_from_gpui(
-                                gpui::KeyBinding::new("dd", gpui::NoAction, None),
+                                gpui::KeyBinding::new_no_action("dd", None),
                                 cx,
                             )
                             .vim_mode(true)
@@ -571,7 +571,7 @@ impl Component for KeyBinding {
                             single_example(
                                 "Multiple Keys",
                                 KeyBinding::new_from_gpui(
-                                    gpui::KeyBinding::new("ctrl-k ctrl-b", gpui::NoAction, None),
+                                    gpui::KeyBinding::new_no_action("ctrl-k ctrl-b", None),
                                     cx,
                                 )
                                 .into_any_element(),
@@ -579,7 +579,7 @@ impl Component for KeyBinding {
                             single_example(
                                 "With Shift",
                                 KeyBinding::new_from_gpui(
-                                    gpui::KeyBinding::new("shift-cmd-p", gpui::NoAction, None),
+                                    gpui::KeyBinding::new_no_action("shift-cmd-p", None),
                                     cx,
                                 )
                                 .into_any_element(),
