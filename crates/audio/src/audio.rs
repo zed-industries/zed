@@ -128,7 +128,7 @@ impl Audio {
                     target_os = "freebsd"
                 )))]
                 let source = source.inspect_buffer::<BUFFER_SIZE, _>(move |buffer| {
-                    let mut buf: [i16; _] = buffer.map(|s| s.to_sample());
+                    let mut buf: [i16; BUFFER_SIZE] = buffer.map(|s| s.to_sample());
                     echo_canceller
                         .lock()
                         .process_reverse_stream(
@@ -169,7 +169,7 @@ impl Audio {
         let (replay, stream) = UniformSourceIterator::new(stream, CHANNEL_COUNT, SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
             .process_buffer::<BUFFER_SIZE, _>(move |buffer| {
-                let mut int_buffer: [i16; _] = buffer.map(|s| s.to_sample());
+                let mut int_buffer: [i16; BUFFER_SIZE] = buffer.map(|s| s.to_sample());
                 if voip_parts
                     .echo_canceller
                     .lock()
