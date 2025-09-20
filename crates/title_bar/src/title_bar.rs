@@ -26,9 +26,12 @@ use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
 use gpui::{
     Action, AnyElement, App, Context, Corner, Element, Entity, Focusable, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Subscription, WeakEntity, Window, actions, div,
+    IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled, Subscription,
+    WeakEntity, Window, actions, div,
 };
+
+#[cfg(not(target_os = "macos"))]
+use gpui::MouseButton;
 use onboarding_banner::OnboardingBanner;
 use project::{Project, WorktreeSettings};
 use remote::RemoteConnectionOptions;
@@ -186,36 +189,35 @@ impl Render for TitleBar {
 
         let mut children = Vec::new();
 
-        children.push(
-            h_flex()
-                .gap_1()
-                .map(|title_bar| {
-                    let mut render_project_items = title_bar_settings.show_branch_name
-                        || title_bar_settings.show_project_items;
-                    title_bar
-                        .when_some(
-                            self.application_menu.clone().filter(|_| !show_menus),
-                            |title_bar, menu| {
-                                render_project_items &=
-                                    !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
-                                title_bar.child(menu)
-                            },
-                        )
-                        .when(render_project_items, |title_bar| {
-                            title_bar
-                                .when(title_bar_settings.show_project_items, |title_bar| {
-                                    title_bar
-                                        .children(self.render_project_host(cx))
-                                        .child(self.render_project_name(cx))
-                                })
-                                .when(title_bar_settings.show_branch_name, |title_bar| {
-                                    title_bar.children(self.render_project_branch(cx))
-                                })
-                        })
-                })
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .into_any_element(),
-        );
+        children.push({
+            let el = h_flex().gap_1().map(|title_bar| {
+                let mut render_project_items =
+                    title_bar_settings.show_branch_name || title_bar_settings.show_project_items;
+                title_bar
+                    .when_some(
+                        self.application_menu.clone().filter(|_| !show_menus),
+                        |title_bar, menu| {
+                            render_project_items &=
+                                !menu.update(cx, |menu, cx| menu.all_menus_shown(cx));
+                            title_bar.child(menu)
+                        },
+                    )
+                    .when(render_project_items, |title_bar| {
+                        title_bar
+                            .when(title_bar_settings.show_project_items, |title_bar| {
+                                title_bar
+                                    .children(self.render_project_host(cx))
+                                    .child(self.render_project_name(cx))
+                            })
+                            .when(title_bar_settings.show_branch_name, |title_bar| {
+                                title_bar.children(self.render_project_branch(cx))
+                            })
+                    })
+            });
+            #[cfg(not(target_os = "macos"))]
+            let el = el.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+            el.into_any_element()
+        });
 
         children.push(self.render_collaborator_list(window, cx).into_any_element());
 
@@ -227,11 +229,10 @@ impl Render for TitleBar {
         let status = &*status.borrow();
         let user = self.user_store.read(cx).current_user();
 
-        children.push(
-            h_flex()
+        children.push({
+            let el = h_flex()
                 .gap_1()
                 .pr_1()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .children(self.render_call_controls(window, cx))
                 .children(self.render_connection_status(status, cx))
                 .when(
@@ -240,9 +241,11 @@ impl Render for TitleBar {
                 )
                 .when(user.is_some(), |parent| {
                     parent.child(self.render_user_menu_button(cx))
-                })
-                .into_any_element(),
-        );
+                });
+            #[cfg(not(target_os = "macos"))]
+            let el = el.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+            el.into_any_element()
+        });
 
         if show_menus {
             self.platform_titlebar.update(cx, |this, _| {
