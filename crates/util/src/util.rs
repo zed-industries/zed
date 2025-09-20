@@ -13,7 +13,7 @@ pub mod size;
 pub mod test;
 pub mod time;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use futures::Future;
 use itertools::Either;
 use regex::Regex;
@@ -289,8 +289,6 @@ fn load_shell_from_passwd() -> Result<()> {
 #[cfg(unix)]
 /// Returns a shell escaped path for the current zed executable
 pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
-    use anyhow::Context;
-
     let zed_path = std::env::current_exe()
         .context("Failed to determine current zed executable path.")?
         .to_string_lossy()
@@ -304,6 +302,103 @@ pub fn get_shell_safe_zed_path() -> anyhow::Result<String> {
         shlex::try_quote(&zed_path).context("Failed to shell-escape Zed executable path.")?;
 
     Ok(zed_path_escaped.to_string())
+}
+
+/// Returns a shell escaped path for the zed cli executable, this function
+/// should be called from the zed executable, not zed-cli.
+pub fn get_shell_safe_zed_cli_path() -> Result<String> {
+    let zed_path =
+        std::env::current_exe().context("Failed to determine current zed executable path.")?;
+    let parent = zed_path
+        .parent()
+        .context("Failed to determine parent directory of zed executable path.")?;
+
+    #[cfg(target_os = "macos")]
+    let zed_cli_path = {
+        enum MacosAppBundle {
+            App,
+            LocalPath,
+        }
+
+        fn locate_bundle(zed_path: &std::path::Path) -> Result<std::path::PathBuf> {
+            let mut app_path = zed_path.canonicalize()?;
+            while app_path.extension() != Some(std::ffi::OsStr::new("app")) {
+                anyhow::ensure!(
+                    app_path.pop(),
+                    "cannot find app bundle containing  {zed_path:?}"
+                );
+            }
+            Ok(app_path)
+        }
+
+        let app_path = locate_bundle(&zed_path)
+            .context("locating macOS app bundle")
+            .log_err()
+            .unwrap_or(zed_path.clone());
+
+        let app_bundle = match app_path.extension().and_then(|ext| ext.to_str()) {
+            Some("app") => MacosAppBundle::App,
+            _ => MacosAppBundle::LocalPath,
+        };
+
+        let zed_cli_path = match app_bundle {
+            MacosAppBundle::App => app_path.join("Contents/MacOS/cli"),
+            MacosAppBundle::LocalPath => parent.join("cli"),
+        };
+
+        zed_cli_path.to_string_lossy().to_string()
+    };
+
+    #[cfg(target_os = "windows")]
+    let zed_cli_path = {
+        // bin/zed.exe is for installed builds, ./cli.exe is for development builds.
+        let possible_locations = ["bin/zed.exe", "./cli.exe"];
+        possible_locations
+            .iter()
+            .find_map(|p| {
+                parent
+                    .join(p)
+                    .canonicalize()
+                    .ok()
+                    .filter(|p| p != &zed_path)
+            })
+            .context(format!(
+                "could not find any of: {}",
+                possible_locations.join(", ")
+            ))?
+            .to_string_lossy()
+            .to_string()
+    };
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    let zed_cli_path = {
+        // libexec is the standard, lib/cli is for Arch (and other non-libexec distros),
+        // ./cli is for the target directory in development builds.
+        let possible_locations = ["../libexec/cli", "../lib/zed/cli", "./cli"];
+        possible_locations
+            .iter()
+            .find_map(|p| {
+                parent
+                    .join(p)
+                    .canonicalize()
+                    .ok()
+                    .filter(|path| path != &zed_path)
+            })
+            .with_context(|| format!("could not find any of: {}", possible_locations.join(", ")))?
+            .to_string_lossy()
+            .to_string()
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        Ok(zed_cli_path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(shlex::try_quote(&zed_cli_path)
+            .context("Failed to shell-escape Zed executable path.")?
+            .to_string())
+    }
 }
 
 #[cfg(unix)]
