@@ -9,7 +9,7 @@ When using the Agent Panel, whether through Zed's hosted AI service or via conne
 > Note that rating responses will send your data related to that response to Zed's servers.
 > **_If you don't want data persisted on Zed's servers, don't rate_**. We will not collect data for improving our Agentic offering without you explicitly rating responses.
 
-When using upstream services through Zed AI, we require assurances from our service providers that your user content won't be used for training models. For example, usage of Anthropic Claude 3.5 via Zed AI in the Assistant is governed by the [Anthropic Commercial Terms](https://www.anthropic.com/legal/commercial-terms) which includes the following:
+When using upstream services through Zed AI, we require assurances from our service providers that your user content won't be used for training models. For example, usage of Anthropic Claude moddels via Zed AI in the Assistant is governed by the [Anthropic Commercial Terms](https://www.anthropic.com/legal/commercial-terms) which includes the following:
 
 > "Anthropic may not train models on Customer Content from paid Services."
 
