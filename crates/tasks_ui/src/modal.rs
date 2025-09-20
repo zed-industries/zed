@@ -482,7 +482,6 @@ impl PickerDelegate for TasksModalDelegate {
         let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
-            char_count: hit.string.chars().count(),
             color: Color::Default,
         };
         let icon = match source_kind {
