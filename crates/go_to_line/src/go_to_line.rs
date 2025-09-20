@@ -27,10 +27,23 @@ pub struct GoToLine {
     active_editor: Entity<Editor>,
     current_text: SharedString,
     prev_scroll_position: Option<gpui::Point<f32>>,
+    should_restore_scroll: bool,
+    dismiss_via_cancel: bool,
     _subscriptions: Vec<Subscription>,
 }
 
-impl ModalView for GoToLine {}
+impl ModalView for GoToLine {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        if !self.dismiss_via_cancel {
+            self.should_restore_scroll = false;
+        }
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
 
 impl Focusable for GoToLine {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -133,6 +146,8 @@ impl GoToLine {
             active_editor,
             current_text: current_text.into(),
             prev_scroll_position: Some(scroll_position),
+            should_restore_scroll: true,
+            dismiss_via_cancel: false,
             _subscriptions: vec![line_editor_change, cx.on_release_in(window, Self::release)],
         }
     }
@@ -141,8 +156,10 @@ impl GoToLine {
         let scroll_position = self.prev_scroll_position.take();
         self.active_editor.update(cx, |editor, cx| {
             editor.clear_row_highlights::<GoToLineRowHighlights>();
-            if let Some(scroll_position) = scroll_position {
-                editor.set_scroll_position(scroll_position, window, cx);
+            if self.should_restore_scroll {
+                if let Some(scroll_position) = scroll_position {
+                    editor.set_scroll_position(scroll_position, window, cx);
+                }
             }
             cx.notify();
         })
@@ -243,6 +260,7 @@ impl GoToLine {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
+        self.dismiss_via_cancel = true;
         cx.emit(DismissEvent);
     }
 
