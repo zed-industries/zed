@@ -242,7 +242,7 @@ To enable Steep, add `\"steep\"` to the `language_servers` list for Ruby in your
 
 ## Setting up Herb
 
-`Herb` is enabled by default for `HTML/ERB` language.
+`Herb` is enabled by default for the `HTML/ERB` language.
 
 ## Using the Tailwind CSS Language Server with Ruby
 
