@@ -174,6 +174,7 @@ impl AskPassSession {
     // future when this is no longer needed. Note that this can only be called once, but due to the
     // drop order this takes an &mut, so you can `drop()` it after you're done with the master process.
     pub async fn run(&mut self) -> AskPassResult {
+        let connection_timeout = Duration::from_secs(self.timeout);
         let askpass_opened_rx = self.askpass_opened_rx.take().expect("Only call run once");
         let askpass_kill_master_rx = self
             .askpass_kill_master_rx
@@ -187,7 +188,7 @@ impl AskPassSession {
                 AskPassResult::CancelledByUser
             }
 
-            _ = futures::FutureExt::fuse(smol::Timer::after(Duration::from_secs(self.timeout))) => {
+            _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
                 AskPassResult::Timedout
             }
         }
