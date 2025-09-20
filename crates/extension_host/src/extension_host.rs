@@ -37,8 +37,8 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
-    QUERY_FILENAME_PREFIXES, Rope,
+    CommentInjection, CommentInjectionQuery, LanguageConfig, LanguageMatcher, LanguageName,
+    LanguageQueries, LoadedLanguage, QUERY_FILENAME_PREFIXES, Rope,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -1836,5 +1836,45 @@ fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
             }
         }
     }
+    LanguageExtension::update_injections_with_path(root_path, &mut result);
     result
+}
+
+// Helper to enable handling of tagged comments for supported language extensions.
+struct LanguageExtension;
+
+impl LanguageExtension {
+    fn update_injections_with_path(path: &Path, queries: &mut LanguageQueries) {
+        if let Some(name) = path.file_name().and_then(std::ffi::OsStr::to_str) {
+            Self::update_injections(name, queries)
+        }
+    }
+}
+
+impl CommentInjection for LanguageExtension {
+    // NOTE: An extension might already have a comment injection.
+    //   In that case it does not need to be defined in this array.
+    // TODO: Support all known language extensions from Zed extensions which do not include the needed injections themselves.
+    const LANGUAGE_COMMENT_INJECTIONS: &[(&'static str, CommentInjectionQuery)] = &[
+        // GL Shading Language (GLSL).
+        ("glsl", Self::Q_COMMENT),
+        ("html", Self::Q_COMMENT),
+        // Protocol Buffers.
+        ("proto", Self::Q_COMMENT),
+        // Rusty Object Notation (RON).
+        (
+            "ron",
+            CommentInjectionQuery::Clause {
+                clause: "[(line_comment) (block_comment)]",
+            },
+        ),
+        // Scheme, Tree-sitter queries.
+        (
+            "scheme",
+            CommentInjectionQuery::Clause {
+                clause: "[(comment) (block_comment)]",
+            },
+        ),
+        ("toml", Self::Q_COMMENT),
+    ];
 }

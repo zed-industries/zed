@@ -13,7 +13,7 @@ use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use extension::ExtensionHostProxy;
 use extension_host::ExtensionStore;
-use fs::{Fs, RealFs};
+use fs::{Fs, PathEventKind, RealFs};
 use futures::{StreamExt, channel::oneshot, future};
 use git::GitHostingProviderRegistry;
 use gpui::{App, AppContext, Application, AsyncApp, Focusable as _, UpdateGlobal as _};
@@ -474,6 +474,8 @@ pub fn main() {
             extension_host_proxy.clone(),
             languages.clone(),
         );
+
+        watch_tagged_comment_configuration(fs.clone(), cx, languages.clone());
 
         Client::set_global(client.clone(), cx);
 
@@ -1368,6 +1370,61 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut App) {
         }
     })
     .detach_and_log_err(cx);
+}
+
+// Spawns a background task watching for changes of the tagged comment configuration file.
+fn watch_tagged_comment_configuration(
+    fs: Arc<dyn fs::Fs>,
+    cx: &mut App,
+    registry: Arc<LanguageRegistry>,
+) {
+    use {languages::Comment, std::time::Duration};
+
+    async fn update(fs: &dyn fs::Fs, registry: &LanguageRegistry) {
+        match fs.load(Path::new(Comment::config_path())).await {
+            Ok(config) => Comment::configure(&config, registry),
+            Err(error) => {
+                // Disable tagged comment support if the configuration file does not exist.
+                // Do not just fail silently in case there is an error other than "file not found".
+                if let Some(error) = error.downcast_ref::<std::io::Error>()
+                    && error.kind() == std::io::ErrorKind::NotFound
+                {
+                    Comment::disable(registry);
+                } else {
+                    log::error!("failed to load tagged comment configuration: {error}");
+                }
+            }
+        }
+    }
+
+    cx.spawn(async move |_| {
+        // Make initial update attempt.
+        update(fs.as_ref(), &registry).await;
+
+        // Monitor configuration file.
+        let (mut events, _) = fs
+            .watch(
+                Comment::config_path().parent().unwrap(),
+                Duration::from_millis(100),
+            )
+            .await;
+        while let Some(mut batch) = events.next().await {
+            // Only the latest state is of interest.
+            let latest = batch.pop();
+            if let Some(event) = latest {
+                // NOTE: Renaming the file triggers an event of kind `Changed`, not `Removed`.
+                match event.kind.unwrap_or(PathEventKind::Changed) {
+                    PathEventKind::Changed | PathEventKind::Created => {
+                        update(fs.as_ref(), &registry).await;
+                    }
+                    PathEventKind::Removed => {
+                        Comment::disable(&registry);
+                    }
+                }
+            }
+        }
+    })
+    .detach()
 }
 
 /// Spawns a background task to watch the themes directory for changes.

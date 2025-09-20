@@ -1,0 +1,45 @@
+// If your current theme does not define the used styles, you need to change the style
+// or define custom styles in your Zed settings.
+[
+  {
+    // Tag names to be recognized.
+    "tags": ["INFO", "NOTE"],
+
+    // Optional style used for the whole comment.
+    // If not set, the default comment style is used.
+    // If set to a style Zed can't match, no styling is used.
+    // "style": "comment",
+
+    // Optional style used for the tag name.
+    // If not set, the style set in `style` is used.
+    // If set to a style Zed can't match, no styling is used.
+    "tag_name_style": "comment.note.name",
+
+    // Style to be used for the tag user.
+    // "tag_user_style": "constant",
+
+    // Tagged comments may optionally be included in outline views.
+    // "name" - show only the tag name (e.g. "TODO").
+    // "user" - show tag name and user.
+    // "comment" - show the first line of the comment trailed by the tag name.
+    "outline": "comment"
+  },
+  {
+    "tags": ["TODO"],
+    "tag_name_style": "comment.todo.name",
+    "outline": "comment"
+  },
+  {
+    "tags": ["WARN", "WARNING"],
+    // Define a style for the whole comment, including the text.
+    "style": "comment.warning",
+    "tag_name_style": "comment.warning.name",
+    "outline": "comment"
+  },
+  {
+    "tags": ["BUG", "FIXME"],
+    "style": "comment.error",
+    "tag_name_style": "comment.error.name",
+    "outline": "comment"
+  }
+]
