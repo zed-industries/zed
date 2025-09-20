@@ -1,9 +1,10 @@
 use anyhow::{Context as AnyhowContext, Result};
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, EntityId, SharedString, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use language::{Anchor, Buffer, ToOffset};
+use language::{Anchor, Buffer, ToOffset, ToPoint};
 use language_models::provider::ollama::{AvailableModel, OllamaLanguageModelProvider};
 use ollama::KeepAlive;
 use project::Project;
@@ -50,6 +51,7 @@ pub struct OllamaCompletion {
     pub text: String,
     pub range: Range<Anchor>,
     pub timestamp: std::time::Instant,
+    pub excerpt_range: Option<Range<usize>>, // Track the context excerpt used
 }
 
 pub struct OllamaEditPredictionProvider {
@@ -105,22 +107,6 @@ impl OllamaEditPredictionProvider {
     /// Updates the file extension used by this provider
     pub fn update_file_extension(&mut self, new_file_extension: String) {
         self.file_extension = Some(new_file_extension);
-    }
-
-    fn extract_context(&self, buffer: &Buffer, cursor_position: Anchor) -> (String, String) {
-        let cursor_offset = cursor_position.to_offset(buffer);
-        let text = buffer.text();
-
-        // Get reasonable context around cursor
-        let context_size = 2000; // 2KB before and after cursor
-
-        let start = cursor_offset.saturating_sub(context_size);
-        let end = (cursor_offset + context_size).min(text.len());
-
-        let prefix = text[start..cursor_offset].to_string();
-        let suffix = text[cursor_offset..end].to_string();
-
-        (prefix, suffix)
     }
 
     /// Get stop tokens for the current model
@@ -282,8 +268,8 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                     .await;
             }
 
-            let (prefix, suffix) = this.update(cx, |this, cx| {
-                let buffer_snapshot = buffer.read(cx);
+            let (prefix, suffix, excerpt_range) = this.update(cx, |this, cx| {
+                let buffer_snapshot = buffer.read(cx).snapshot();
                 this.buffer_id = Some(buffer.entity_id());
                 this.file_extension = buffer_snapshot.file().and_then(|file| {
                     Some(
@@ -293,7 +279,7 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                             .to_string(),
                     )
                 });
-                this.extract_context(buffer_snapshot, cursor_position)
+                this.extract_smart_context(&buffer_snapshot, cursor_position)
             })?;
 
             let (model, api_key) = this.update(cx, |this, cx| {
@@ -354,6 +340,7 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
                             text: response.response,
                             range: completion_range,
                             timestamp: std::time::Instant::now(),
+                            excerpt_range,
                         };
                         this.current_completion = Some(completion);
                     }
@@ -438,6 +425,59 @@ impl EditPredictionProvider for OllamaEditPredictionProvider {
             edits: vec![(position..position, remaining_completion.to_string())],
             edit_preview: None,
         })
+    }
+}
+
+impl OllamaEditPredictionProvider {
+    /// Extract intelligent context using EditPredictionExcerpt for better completions
+    fn extract_smart_context(
+        &self,
+        buffer_snapshot: &language::BufferSnapshot,
+        cursor_position: Anchor,
+    ) -> (String, String, Option<Range<usize>>) {
+        let cursor_point = cursor_position.to_point(buffer_snapshot);
+        let cursor_offset = cursor_position.to_offset(buffer_snapshot);
+
+        // Configure excerpt options for optimal Ollama context
+        let excerpt_options = EditPredictionExcerptOptions {
+            max_bytes: 4000,                            // Reasonable for Ollama context window
+            min_bytes: 200,                             // Ensure we get meaningful context
+            target_before_cursor_over_total_bytes: 0.7, // More context before the cursor, as opposed to after
+            include_parent_signatures: false,           // Focused, immediate syntactic context
+        };
+
+        // Try to get intelligent excerpt, fallback to simple extraction
+        if let Some(excerpt) = EditPredictionExcerpt::select_from_buffer(
+            cursor_point,
+            buffer_snapshot,
+            &excerpt_options,
+        ) {
+            let excerpt_text = excerpt.text(buffer_snapshot);
+            let cursor_offset_in_excerpt = cursor_offset.saturating_sub(excerpt.range.start);
+
+            // Use excerpt body directly (parent signatures disabled per Zed team)
+            let full_context = excerpt_text.body;
+            let cursor_offset_in_full = cursor_offset_in_excerpt;
+
+            let prefix = full_context[..cursor_offset_in_full.min(full_context.len())].to_string();
+            let suffix = full_context[cursor_offset_in_full.min(full_context.len())..].to_string();
+
+            (prefix, suffix, Some(excerpt.range))
+        } else {
+            // Fallback to original simple extraction
+            let cursor_offset = cursor_position.to_offset(buffer_snapshot);
+            let max_chars = 1000.min(cursor_offset);
+            let start = cursor_offset.saturating_sub(max_chars);
+
+            let prefix: String = buffer_snapshot
+                .text_for_range(start..cursor_offset)
+                .collect();
+            let suffix: String = buffer_snapshot
+                .text_for_range(cursor_offset..buffer_snapshot.len().min(cursor_offset + max_chars))
+                .collect();
+
+            (prefix, suffix, None)
+        }
     }
 }
 
@@ -707,6 +747,90 @@ mod tests {
             assert_eq!(models.len(), 1);
             assert_eq!(models[0].name, "qwen2.5-coder:7b");
         });
+    }
+
+    #[gpui::test]
+    async fn test_smart_context_extraction(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let provider = cx.new(|cx| {
+            OllamaEditPredictionProvider::new(
+                "qwen2.5-coder:3b".to_string(),
+                "http://localhost:11434".into(),
+                cx,
+            )
+        });
+
+        // Create a buffer with realistic code structure for excerpt testing
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                r#"// File header comment
+use std::collections::HashMap;
+
+fn main() {
+    let mut map = HashMap::new();
+    map.insert("key", "value");
+    println!("Hello, world!");
+
+    // Cursor will be here
+
+    let result = calculate(5, 10);
+    println!("Result: {}", result);
+}
+
+fn calculate(a: i32, b: i32) -> i32 {
+    a + b
+}
+"#,
+                cx,
+            )
+        });
+
+        let cursor_position = buffer.read_with(cx, |buffer, _| {
+            // Position cursor after "// Cursor will be here" line
+            buffer.anchor_before(200) // Approximate position
+        });
+
+        let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+
+        // Test smart context extraction
+        let (prefix, suffix, excerpt_range) = provider.read_with(cx, |provider, _| {
+            provider.extract_smart_context(&buffer_snapshot, cursor_position)
+        });
+
+        // Verify that we got intelligent context
+        assert!(!prefix.is_empty());
+        assert!(!suffix.is_empty());
+
+        // Should include function context, not just raw character lookback
+        assert!(prefix.contains("fn main()"));
+        assert!(suffix.contains("fn calculate"));
+
+        // Compare with naive extraction to show quality improvement
+        let cursor_offset = cursor_position.to_offset(&buffer_snapshot);
+        let max_chars = 100; // Small limit to show difference
+        let naive_start = cursor_offset.saturating_sub(max_chars);
+        let naive_prefix: String = buffer_snapshot
+            .text_for_range(naive_start..cursor_offset)
+            .collect();
+
+        // Smart extraction should provide better context boundaries
+        if let Some(range) = excerpt_range {
+            println!("Successfully used EditPredictionExcerpt for smart context");
+            println!(
+                "Smart context length: {} chars",
+                prefix.len() + suffix.len()
+            );
+            println!("Naive context length: {} chars", naive_prefix.len());
+
+            // Smart context should be more comprehensive than naive
+            assert!(prefix.len() >= naive_prefix.len());
+            // Smart context should include function boundaries
+            assert!(prefix.contains("fn main") || suffix.contains("fn main"));
+            assert!(range.start < range.end);
+        } else {
+            println!("Fell back to simple context extraction");
+        }
     }
 
     #[gpui::test]

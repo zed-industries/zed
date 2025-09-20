@@ -11529,6 +11529,7 @@ dependencies = [
  "anyhow",
  "client",
  "edit_prediction",
+ "edit_prediction_context",
  "editor",
  "futures 0.3.31",
  "gpui",
