@@ -418,6 +418,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "shlex",
  "smol",
  "streaming_diff",
  "task",
