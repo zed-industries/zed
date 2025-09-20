@@ -32,7 +32,6 @@ use ui::{Color, IntoElement, ListItem, Pixels, Popover, Styled, prelude::*};
 use util::ResultExt;
 
 use crate::CodeActionSource;
-use crate::editor_settings::SnippetSortOrder;
 use crate::hover_popover::{hover_markdown_style, open_markdown_url};
 use crate::{
     CodeActionProvider, CompletionId, CompletionItemKind, CompletionProvider, DisplayRow, Editor,
@@ -40,6 +39,7 @@ use crate::{
     actions::{ConfirmCodeAction, ConfirmCompletion},
     split_words, styled_runs_for_code_label,
 };
+use settings::SnippetSortOrder;
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -1481,6 +1481,8 @@ impl CodeActionsMenu {
     ) -> AnyElement {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
+        let is_quick_action_bar = matches!(self.origin(), ContextMenuOrigin::QuickActionBar);
+
         let list = uniform_list(
             "code_actions_menu",
             self.actions.len(),
@@ -1502,6 +1504,7 @@ impl CodeActionsMenu {
                                     this.child(
                                         h_flex()
                                             .overflow_hidden()
+                                            .when(is_quick_action_bar, |this| this.text_ui(cx))
                                             .child(
                                                 // TASK: It would be good to make lsp_action.title a SharedString to avoid allocating here.
                                                 action.lsp_action.title().replace("\n", ""),

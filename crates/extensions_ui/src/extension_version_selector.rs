@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use client::ExtensionMetadata;
-use extension_host::{ExtensionSettings, ExtensionStore};
+use extension_host::ExtensionStore;
 use fs::Fs;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
 use gpui::{App, DismissEvent, Entity, EventEmitter, Focusable, Task, WeakEntity, prelude::*};
@@ -183,10 +183,13 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             let extension_id = extension_version.id.clone();
             let version = extension_version.manifest.version.clone();
 
-            update_settings_file::<ExtensionSettings>(self.fs.clone(), cx, {
+            update_settings_file(self.fs.clone(), cx, {
                 let extension_id = extension_id.clone();
                 move |settings, _| {
-                    settings.auto_update_extensions.insert(extension_id, false);
+                    settings
+                        .extension
+                        .auto_update_extensions
+                        .insert(extension_id, false);
                 }
             });
 
@@ -207,8 +210,8 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let version_match = &self.matches[ix];
-        let extension_version = &self.extension_versions[version_match.candidate_id];
+        let version_match = &self.matches.get(ix)?;
+        let extension_version = &self.extension_versions.get(version_match.candidate_id)?;
 
         let is_version_compatible =
             extension_host::is_version_compatible(ReleaseChannel::global(cx), extension_version);

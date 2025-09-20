@@ -18,12 +18,9 @@ use gpui::{
 use itertools::Itertools;
 use project::{Fs, Project, ProjectEntryId};
 use search::{BufferSearchBar, buffer_search::DivRegistrar};
-use settings::Settings;
+use settings::{Settings, TerminalDockPosition};
 use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
-use terminal::{
-    Terminal,
-    terminal_settings::{TerminalDockPosition, TerminalSettings},
-};
+use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
     ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable, Tooltip,
     prelude::*,
@@ -385,19 +382,44 @@ impl TerminalPanel {
                 }
                 self.serialize(cx);
             }
-            &pane::Event::Split(direction) => {
-                let fut = self.new_pane_with_cloned_active_terminal(window, cx);
-                let pane = pane.clone();
-                cx.spawn_in(window, async move |panel, cx| {
-                    let Some(new_pane) = fut.await else {
+            &pane::Event::Split {
+                direction,
+                clone_active_item,
+            } => {
+                if clone_active_item {
+                    let fut = self.new_pane_with_cloned_active_terminal(window, cx);
+                    let pane = pane.clone();
+                    cx.spawn_in(window, async move |panel, cx| {
+                        let Some(new_pane) = fut.await else {
+                            return;
+                        };
+                        panel
+                            .update_in(cx, |panel, window, cx| {
+                                panel.center.split(&pane, &new_pane, direction).log_err();
+                                window.focus(&new_pane.focus_handle(cx));
+                            })
+                            .ok();
+                    })
+                    .detach();
+                } else {
+                    let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx))
+                    else {
                         return;
                     };
-                    _ = panel.update_in(cx, |panel, window, cx| {
-                        panel.center.split(&pane, &new_pane, direction).log_err();
-                        window.focus(&new_pane.focus_handle(cx));
+                    let Ok(project) = self
+                        .workspace
+                        .update(cx, |workspace, _| workspace.project().clone())
+                    else {
+                        return;
+                    };
+                    let new_pane =
+                        new_terminal_pane(self.workspace.clone(), project, false, window, cx);
+                    new_pane.update(cx, |pane, cx| {
+                        pane.add_item(item, true, true, None, window, cx);
                     });
-                })
-                .detach();
+                    self.center.split(&pane, &new_pane, direction).log_err();
+                    window.focus(&new_pane.focus_handle(cx));
+                }
             }
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
@@ -446,7 +468,7 @@ impl TerminalPanel {
                 })
                 .ok()?
                 .await
-                .ok()?;
+                .log_err()?;
 
             panel
                 .update_in(cx, move |terminal_panel, window, cx| {
@@ -776,7 +798,7 @@ impl TerminalPanel {
         })
     }
 
-    pub fn add_terminal_shell(
+    fn add_terminal_shell(
         &mut self,
         cwd: Option<PathBuf>,
         reveal_strategy: RevealStrategy,
@@ -786,7 +808,7 @@ impl TerminalPanel {
         let workspace = self.workspace.clone();
         cx.spawn_in(window, async move |terminal_panel, cx| {
             if workspace.update(cx, |workspace, cx| !is_enabled_in_workspace(workspace, cx))? {
-                anyhow::bail!("terminal not yet supported for remote projects");
+                anyhow::bail!("terminal not yet supported for collaborative projects");
             }
             let pane = terminal_panel.update(cx, |terminal_panel, _| {
                 terminal_panel.pending_terminals_to_add += 1;
@@ -1440,18 +1462,14 @@ impl Panel for TerminalPanel {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        settings::update_settings_file::<TerminalSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => TerminalDockPosition::Left,
-                    DockPosition::Bottom => TerminalDockPosition::Bottom,
-                    DockPosition::Right => TerminalDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left => TerminalDockPosition::Left,
+                DockPosition::Bottom => TerminalDockPosition::Bottom,
+                DockPosition::Right => TerminalDockPosition::Right,
+            };
+            settings.terminal.get_or_insert_default().dock = Some(dock);
+        });
     }
 
     fn size(&self, window: &Window, cx: &App) -> Pixels {

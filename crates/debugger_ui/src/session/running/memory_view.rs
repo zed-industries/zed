@@ -1,17 +1,17 @@
 use std::{
-    cell::LazyCell,
+    cell::{LazyCell, RefCell, RefMut},
     fmt::Write,
     ops::RangeInclusive,
+    rc::Rc,
     sync::{Arc, LazyLock},
     time::Duration,
 };
 
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
-    Action, AppContext, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle, Focusable,
-    MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Stateful, Subscription, Task, TextStyle,
-    UniformList, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, point,
-    uniform_list,
+    Action, Along, AppContext, Axis, DismissEvent, DragMoveEvent, Empty, Entity, FocusHandle,
+    Focusable, MouseButton, Point, ScrollStrategy, ScrollWheelEvent, Subscription, Task, TextStyle,
+    UniformList, UniformListScrollHandle, WeakEntity, actions, anchored, deferred, uniform_list,
 };
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::debugger::{MemoryCell, dap_command::DataBreakpointContext, session::Session};
@@ -19,7 +19,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{
     ContextMenu, Divider, DropdownMenu, FluentBuilder, IntoElement, PopoverMenuHandle, Render,
-    Scrollbar, ScrollbarState, StatefulInteractiveElement, Tooltip, prelude::*,
+    ScrollableHandle, StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
 use workspace::Workspace;
 
@@ -29,11 +29,9 @@ actions!(debugger, [GoToSelectedAddress]);
 
 pub(crate) struct MemoryView {
     workspace: WeakEntity<Workspace>,
-    scroll_handle: UniformListScrollHandle,
-    scroll_state: ScrollbarState,
     stack_frame_list: WeakEntity<StackFrameList>,
     focus_handle: FocusHandle,
-    view_state: ViewState,
+    view_state_handle: ViewStateHandle,
     query_editor: Entity<Editor>,
     session: Entity<Session>,
     width_picker_handle: PopoverMenuHandle<ContextMenu>,
@@ -91,17 +89,28 @@ impl SelectedMemoryRange {
 }
 
 #[derive(Clone)]
+struct ViewStateHandle(Rc<RefCell<ViewState>>);
+
+impl ViewStateHandle {
+    fn new(base_row: u64, line_width: ViewWidth) -> Self {
+        Self(Rc::new(RefCell::new(ViewState::new(base_row, line_width))))
+    }
+}
+
+#[derive(Clone)]
 struct ViewState {
     /// Uppermost row index
     base_row: u64,
     /// How many cells per row do we have?
     line_width: ViewWidth,
+    scroll_handle: UniformListScrollHandle,
     selection: Option<SelectedMemoryRange>,
 }
 
 impl ViewState {
     fn new(base_row: u64, line_width: ViewWidth) -> Self {
         Self {
+            scroll_handle: UniformListScrollHandle::new(),
             base_row,
             line_width,
             selection: None,
@@ -119,13 +128,39 @@ impl ViewState {
     fn schedule_scroll_up(&mut self) {
         self.base_row = self.base_row.saturating_sub(1);
     }
+
+    fn set_offset(&mut self, point: Point<Pixels>) {
+        if point.y >= -Pixels::ZERO {
+            self.schedule_scroll_up();
+        } else if point.y <= -self.scroll_handle.max_offset().height {
+            self.schedule_scroll_down();
+        }
+        self.scroll_handle.set_offset(point);
+    }
 }
 
-struct ScrollbarDragging;
+impl ScrollableHandle for ViewStateHandle {
+    fn max_offset(&self) -> gpui::Size<Pixels> {
+        self.0.borrow().scroll_handle.max_offset()
+    }
+
+    fn set_offset(&self, point: Point<Pixels>) {
+        self.0.borrow_mut().set_offset(point);
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        self.0.borrow().scroll_handle.offset()
+    }
+
+    fn viewport(&self) -> gpui::Bounds<Pixels> {
+        self.0.borrow().scroll_handle.viewport()
+    }
+}
 
 static HEX_BYTES_MEMOIZED: LazyLock<[SharedString; 256]> =
     LazyLock::new(|| std::array::from_fn(|byte| SharedString::from(format!("{byte:02X}"))));
 static UNKNOWN_BYTE: SharedString = SharedString::new_static("??");
+
 impl MemoryView {
     pub(crate) fn new(
         session: Entity<Session>,
@@ -134,19 +169,15 @@ impl MemoryView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let view_state = ViewState::new(0, WIDTHS[4].clone());
-        let scroll_handle = UniformListScrollHandle::default();
+        let view_state_handle = ViewStateHandle::new(0, WIDTHS[4].clone());
 
         let query_editor = cx.new(|cx| Editor::single_line(window, cx));
 
-        let scroll_state = ScrollbarState::new(scroll_handle.clone());
         let mut this = Self {
             workspace,
-            scroll_state,
-            scroll_handle,
             stack_frame_list,
             focus_handle: cx.focus_handle(),
-            view_state,
+            view_state_handle,
             query_editor,
             session,
             width_picker_handle: Default::default(),
@@ -162,50 +193,17 @@ impl MemoryView {
         this
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Stateful<Div> {
-        div()
-            .occlude()
-            .id("memory-view-vertical-scrollbar")
-            .on_drag_move(cx.listener(|this, evt, _, cx| {
-                let did_handle = this.handle_scroll_drag(evt);
-                cx.notify();
-                if did_handle {
-                    cx.stop_propagation()
-                }
-            }))
-            .on_drag(ScrollbarDragging, |_, _, _, cx| cx.new(|_| Empty))
-            .on_hover(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_any_mouse_down(|_, _, cx| {
-                cx.stop_propagation();
-            })
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|_, _, _, cx| {
-                    cx.stop_propagation();
-                }),
-            )
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                cx.notify();
-            }))
-            .h_full()
-            .absolute()
-            .right_1()
-            .top_1()
-            .bottom_0()
-            .w(px(12.))
-            .cursor_default()
-            .children(Scrollbar::vertical(self.scroll_state.clone()).map(|s| s.auto_hide(cx)))
+    fn view_state(&self) -> RefMut<'_, ViewState> {
+        self.view_state_handle.0.borrow_mut()
     }
 
     fn render_memory(&self, cx: &mut Context<Self>) -> UniformList {
         let weak = cx.weak_entity();
         let session = self.session.clone();
-        let view_state = self.view_state.clone();
+        let view_state = self.view_state_handle.0.borrow().clone();
         uniform_list(
             "debugger-memory-view",
-            self.view_state.row_count() as usize,
+            view_state.row_count() as usize,
             move |range, _, cx| {
                 let mut line_buffer = Vec::with_capacity(view_state.line_width.width as usize);
                 let memory_start =
@@ -230,22 +228,13 @@ impl MemoryView {
                 rows
             },
         )
-        .track_scroll(self.scroll_handle.clone())
+        .track_scroll(view_state.scroll_handle)
         .on_scroll_wheel(cx.listener(|this, evt: &ScrollWheelEvent, window, _| {
+            let mut view_state = this.view_state();
             let delta = evt.delta.pixel_delta(window.line_height());
-            let scroll_handle = this.scroll_state.scroll_handle();
-            let size = scroll_handle.content_size();
-            let viewport = scroll_handle.viewport();
-            let current_offset = scroll_handle.offset();
-            let first_entry_offset_boundary = size.height / this.view_state.row_count() as f32;
-            let last_entry_offset_boundary = size.height - first_entry_offset_boundary;
-            if first_entry_offset_boundary + viewport.size.height > current_offset.y.abs() {
-                // The topmost entry is visible, hence if we're scrolling up, we need to load extra lines.
-                this.view_state.schedule_scroll_up();
-            } else if last_entry_offset_boundary < current_offset.y.abs() + viewport.size.height {
-                this.view_state.schedule_scroll_down();
-            }
-            scroll_handle.set_offset(current_offset + point(px(0.), delta.y));
+            let current_offset = view_state.scroll_handle.offset();
+            view_state
+                .set_offset(current_offset.apply_along(Axis::Vertical, |offset| offset + delta.y));
         }))
     }
     fn render_query_bar(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -275,7 +264,7 @@ impl MemoryView {
         cx.spawn(async move |this, cx| {
             let access_size = access_size.await.unwrap_or(1);
             this.update(cx, |this, cx| {
-                this.view_state.selection = Some(SelectedMemoryRange::DragComplete(Drag {
+                this.view_state().selection = Some(SelectedMemoryRange::DragComplete(Drag {
                     start_address: as_address,
                     end_address: as_address + access_size - 1,
                 }));
@@ -287,43 +276,23 @@ impl MemoryView {
     }
 
     fn handle_memory_drag(&mut self, evt: &DragMoveEvent<Drag>) {
-        if !self
-            .view_state
+        let mut view_state = self.view_state();
+        if !view_state
             .selection
             .as_ref()
             .is_some_and(|selection| selection.is_dragging())
         {
             return;
         }
-        let row_count = self.view_state.row_count();
+        let row_count = view_state.row_count();
         debug_assert!(row_count > 1);
-        let scroll_handle = self.scroll_state.scroll_handle();
+        let scroll_handle = &view_state.scroll_handle;
         let viewport = scroll_handle.viewport();
 
         if viewport.bottom() < evt.event.position.y {
-            self.view_state.schedule_scroll_down();
+            view_state.schedule_scroll_down();
         } else if viewport.top() > evt.event.position.y {
-            self.view_state.schedule_scroll_up();
-        }
-    }
-
-    fn handle_scroll_drag(&mut self, evt: &DragMoveEvent<ScrollbarDragging>) -> bool {
-        if !self.scroll_state.is_dragging() {
-            return false;
-        }
-        let row_count = self.view_state.row_count();
-        debug_assert!(row_count > 1);
-        let scroll_handle = self.scroll_state.scroll_handle();
-        let viewport = scroll_handle.viewport();
-
-        if viewport.bottom() < evt.event.position.y {
-            self.view_state.schedule_scroll_down();
-            true
-        } else if viewport.top() > evt.event.position.y {
-            self.view_state.schedule_scroll_up();
-            true
-        } else {
-            false
+            view_state.schedule_scroll_up();
         }
     }
 
@@ -354,7 +323,7 @@ impl MemoryView {
 
     fn render_width_picker(&self, window: &mut Window, cx: &mut Context<Self>) -> DropdownMenu {
         let weak = cx.weak_entity();
-        let selected_width = self.view_state.line_width.clone();
+        let selected_width = self.view_state().line_width.clone();
         DropdownMenu::new(
             "memory-view-width-picker",
             selected_width.label.clone(),
@@ -364,24 +333,25 @@ impl MemoryView {
                     let width = width.clone();
                     this = this.entry(width.label.clone(), None, move |_, cx| {
                         _ = weak.update(cx, |this, _| {
+                            let mut view_state = this.view_state();
                             // Convert base ix between 2 line widths to keep the shown memory address roughly the same.
                             // All widths are powers of 2, so the conversion should be lossless.
-                            match this.view_state.line_width.width.cmp(&width.width) {
+                            match view_state.line_width.width.cmp(&width.width) {
                                 std::cmp::Ordering::Less => {
                                     // We're converting up.
                                     let shift = width.width.trailing_zeros()
-                                        - this.view_state.line_width.width.trailing_zeros();
-                                    this.view_state.base_row >>= shift;
+                                        - view_state.line_width.width.trailing_zeros();
+                                    view_state.base_row >>= shift;
                                 }
                                 std::cmp::Ordering::Greater => {
                                     // We're converting down.
-                                    let shift = this.view_state.line_width.width.trailing_zeros()
+                                    let shift = view_state.line_width.width.trailing_zeros()
                                         - width.width.trailing_zeros();
-                                    this.view_state.base_row <<= shift;
+                                    view_state.base_row <<= shift;
                                 }
                                 _ => {}
                             }
-                            this.view_state.line_width = width.clone();
+                            view_state.line_width = width.clone();
                         });
                     });
                 }
@@ -400,18 +370,18 @@ impl MemoryView {
     }
 
     fn page_down(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut Context<Self>) {
-        self.view_state.base_row = self
-            .view_state
+        let mut view_state = self.view_state();
+        view_state.base_row = view_state
             .base_row
-            .overflowing_add(self.view_state.row_count())
+            .overflowing_add(view_state.row_count())
             .0;
         cx.notify();
     }
     fn page_up(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut Context<Self>) {
-        self.view_state.base_row = self
-            .view_state
+        let mut view_state = self.view_state();
+        view_state.base_row = view_state
             .base_row
-            .overflowing_sub(self.view_state.row_count())
+            .overflowing_sub(view_state.row_count())
             .0;
         cx.notify();
     }
@@ -428,14 +398,14 @@ impl MemoryView {
         if !self.is_writing_memory {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);
-                this.set_placeholder_text("Write to Selected Memory Range", cx);
+                this.set_placeholder_text("Write to Selected Memory Range", window, cx);
             });
             self.is_writing_memory = true;
             self.query_editor.focus_handle(cx).focus(window);
         } else {
             self.query_editor.update(cx, |this, cx| {
                 this.clear(window, cx);
-                this.set_placeholder_text("Go to Memory Address / Expression", cx);
+                this.set_placeholder_text("Go to Memory Address / Expression", window, cx);
             });
             self.is_writing_memory = false;
         }
@@ -447,7 +417,8 @@ impl MemoryView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(SelectedMemoryRange::DragComplete(selection)) = self.view_state.selection.clone()
+        let Some(SelectedMemoryRange::DragComplete(selection)) =
+            self.view_state().selection.clone()
         else {
             return;
         };
@@ -484,7 +455,8 @@ impl MemoryView {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(SelectedMemoryRange::DragComplete(drag)) = &self.view_state.selection {
+        let selection = self.view_state().selection.clone();
+        if let Some(SelectedMemoryRange::DragComplete(drag)) = selection {
             // Go into memory writing mode.
             if !self.is_writing_memory {
                 let should_return = self.session.update(cx, |session, cx| {
@@ -558,9 +530,11 @@ impl MemoryView {
     }
 
     fn jump_to_address(&mut self, address: u64, cx: &mut Context<Self>) {
-        self.view_state.base_row = (address & !0xfff) / self.view_state.line_width.width as u64;
-        let line_ix = (address & 0xfff) / self.view_state.line_width.width as u64;
-        self.scroll_handle
+        let mut view_state = self.view_state();
+        view_state.base_row = (address & !0xfff) / view_state.line_width.width as u64;
+        let line_ix = (address & 0xfff) / view_state.line_width.width as u64;
+        view_state
+            .scroll_handle
             .scroll_to_item(line_ix as usize, ScrollStrategy::Center);
         cx.notify();
     }
@@ -595,7 +569,7 @@ impl MemoryView {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut Context<Self>) {
-        self.view_state.selection = None;
+        self.view_state().selection = None;
         cx.notify();
     }
 
@@ -606,7 +580,7 @@ impl MemoryView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(SelectedMemoryRange::DragComplete(drag)) = self.view_state.selection.clone()
+        let Some(SelectedMemoryRange::DragComplete(drag)) = self.view_state().selection.clone()
         else {
             return;
         };
@@ -718,7 +692,7 @@ fn render_single_memory_view_line(
     weak: gpui::WeakEntity<MemoryView>,
     cx: &mut App,
 ) -> AnyElement {
-    let Ok(view_state) = weak.update(cx, |this, _| this.view_state.clone()) else {
+    let Ok(view_state) = weak.update(cx, |this, _| this.view_state().clone()) else {
         return div().into_any();
     };
     let base_address = (view_state.base_row + ix) * view_state.line_width.width as u64;
@@ -799,7 +773,7 @@ fn render_single_memory_view_line(
                                 let weak = weak.clone();
                                 move |drag, _, _, cx| {
                                     _ = weak.update(cx, |this, _| {
-                                        this.view_state.selection =
+                                        this.view_state().selection =
                                             Some(SelectedMemoryRange::DragUnderway(drag.clone()));
                                     });
 
@@ -811,7 +785,7 @@ fn render_single_memory_view_line(
                             let weak = weak.clone();
                             move |drag: &Drag, _, cx| {
                                 _ = weak.update(cx, |this, _| {
-                                    this.view_state.selection =
+                                    this.view_state().selection =
                                         Some(SelectedMemoryRange::DragComplete(Drag {
                                             start_address: drag.start_address,
                                             end_address: base_address + cell_ix as u64,
@@ -821,7 +795,7 @@ fn render_single_memory_view_line(
                         })
                         .drag_over(move |style, drag: &Drag, _, cx| {
                             _ = weak.update(cx, |this, _| {
-                                this.view_state.selection =
+                                this.view_state().selection =
                                     Some(SelectedMemoryRange::DragUnderway(Drag {
                                         start_address: drag.start_address,
                                         end_address: base_address + cell_ix as u64,
@@ -943,7 +917,7 @@ impl Render for MemoryView {
                         )
                         .with_priority(1)
                     }))
-                    .child(self.render_vertical_scrollbar(cx)),
+                    .vertical_scrollbar_for(self.view_state_handle.clone(), window, cx),
             )
     }
 }

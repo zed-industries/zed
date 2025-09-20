@@ -794,6 +794,7 @@ impl Database {
                             scan_id: db_repository.scan_id as u64,
                             is_last_update: true,
                             merge_message: db_repository.merge_message,
+                            stash_entries: Vec::new(),
                         });
                     }
                 }
@@ -1193,7 +1194,6 @@ impl Database {
         self.transaction(|tx| async move {
             self.room_connection_lost(connection, &tx).await?;
             self.channel_buffer_connection_lost(connection, &tx).await?;
-            self.channel_chat_connection_lost(connection, &tx).await?;
             Ok(())
         })
         .await

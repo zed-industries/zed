@@ -52,10 +52,13 @@ members = [
     "crates/debugger_tools",
     "crates/debugger_ui",
     "crates/deepseek",
+    "crates/denoise",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
     "crates/edit_prediction_button",
+    "crates/edit_prediction_context",
+    "crates/edit_prediction_tools",
     "crates/editor",
     "crates/eval",
     "crates/explorer_command_injector",
@@ -94,6 +97,7 @@ members = [
     "crates/language_extension",
     "crates/language_model",
     "crates/language_models",
+    "crates/language_onboarding",
     "crates/language_selector",
     "crates/language_tools",
     "crates/languages",
@@ -143,13 +147,11 @@ members = [
     "crates/rules_library",
     "crates/schema_generator",
     "crates/search",
-    "crates/semantic_index",
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
+    "crates/settings_macros",
     "crates/settings_profile_selector",
-    "crates/settings_ui",
-    "crates/settings_ui_macros",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -218,7 +220,7 @@ members = [
     #
 
     "tooling/workspace-hack",
-    "tooling/xtask",
+    "tooling/xtask", "tooling/perf",
 ]
 default-members = ["crates/zed"]
 
@@ -277,6 +279,7 @@ context_server = { path = "crates/context_server" }
 copilot = { path = "crates/copilot" }
 crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }
+crossbeam = "0.8.4"
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
@@ -311,6 +314,8 @@ icons = { path = "crates/icons" }
 image_viewer = { path = "crates/image_viewer" }
 edit_prediction = { path = "crates/edit_prediction" }
 edit_prediction_button = { path = "crates/edit_prediction_button" }
+edit_prediction_context = { path = "crates/edit_prediction_context" }
+edit_prediction_tools = { path = "crates/edit_prediction_tools" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
 jj = { path = "crates/jj" }
@@ -321,6 +326,7 @@ language = { path = "crates/language" }
 language_extension = { path = "crates/language_extension" }
 language_model = { path = "crates/language_model" }
 language_models = { path = "crates/language_models" }
+language_onboarding = { path = "crates/language_onboarding" }
 language_selector = { path = "crates/language_selector" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
@@ -368,17 +374,15 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
-rodio = { version = "0.21.1", default-features = false }
+rodio = { git = "https://github.com/RustAudio/rodio", branch = "better_wav_output"}
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
 search = { path = "crates/search" }
-semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
 settings_ui = { path = "crates/settings_ui" }
-settings_ui_macros = { path = "crates/settings_ui_macros" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }
@@ -433,9 +437,9 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.2.0-alpha.6", features = ["unstable"]}
+agent-client-protocol = { version = "0.4.0", features = ["unstable"] }
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty.git", branch = "add-hush-login-flag" }
+alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -460,6 +464,7 @@ aws-sdk-bedrockruntime = { version = "1.80.0", features = [
 ] }
 aws-smithy-runtime-api = { version = "1.7.4", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.0", features = ["http-body-1-x"] }
+backtrace = "0.3"
 base64 = "0.22"
 bincode = "1.2.1"
 bitflags = "2.6.0"
@@ -470,6 +475,7 @@ blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
 cargo_toml = "0.21"
+cfg-if = "1.0.3"
 chrono = { version = "0.4", features = ["serde"] }
 ciborium = "0.2"
 circular-buffer = "1.0"
@@ -567,7 +573,6 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 open = "5.0.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
-parking = "2.0"
 parking_lot = "0.12.1"
 partial-json-fixer = "0.5.3"
 parse_int = "0.9"
@@ -580,6 +585,7 @@ pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", re
 pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
+pet-virtualenv = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "845945b830297a50de0e24020b980a65e4820559" }
 portable-pty = "0.9.0"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
@@ -615,9 +621,8 @@ rustls-platform-verifier = "0.5.0"
 scap = { git = "https://github.com/zed-industries/scap", rev = "808aa5c45b41e8f44729d02e38fd00a2fe2722e7", default-features = false }
 schemars = { version = "1.0", features = ["indexmap2"] }
 semver = "1.0"
-serde = { version = "1.0", features = ["derive", "rc"] }
-serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
-serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
+serde = { version = "1.0.221", features = ["derive", "rc"] }
+serde_json = { version = "1.0.144", features = ["preserve_order", "raw_value"] }
 serde_json_lenient = { version = "0.2", features = [
     "preserve_order",
     "raw_value",
@@ -625,10 +630,12 @@ serde_json_lenient = { version = "0.2", features = [
 serde_path_to_error = "0.1.17"
 serde_repr = "0.1"
 serde_urlencoded = "0.7"
+serde_with = "3.4.0"
 sha2 = "0.10"
 shellexpand = "2.1.0"
 shlex = "1.3.0"
 simplelog = "0.12.2"
+slotmap = "1.0.6"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "2.0"
 sqlformat = "0.2"

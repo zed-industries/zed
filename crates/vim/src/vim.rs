@@ -19,7 +19,6 @@ mod state;
 mod surrounds;
 mod visual;
 
-use anyhow::Result;
 use collections::HashMap;
 use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
@@ -31,16 +30,17 @@ use gpui::{
     Render, Subscription, Task, WeakEntity, Window, actions,
 };
 use insert::{NormalBefore, TemporaryNormal};
-use language::{CharKind, CursorShape, Point, Selection, SelectionGoal, TransactionId};
+use language::{
+    CharKind, CharScopeContext, CursorShape, Point, Selection, SelectionGoal, TransactionId,
+};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::search::SearchSubmit;
 use object::Object;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use serde_derive::Serialize;
-use settings::{
-    Settings, SettingsKey, SettingsSources, SettingsStore, SettingsUi, update_settings_file,
+pub use settings::{
+    ModeContent, Settings, SettingsStore, UseSystemClipboard, update_settings_file,
 };
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
@@ -84,6 +84,22 @@ struct PushFindForward {
 struct PushFindBackward {
     after: bool,
     multiline: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+/// Selects the next object.
+struct PushHelixNext {
+    around: bool,
+}
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+/// Selects the previous object.
+struct PushHelixPrevious {
+    around: bool,
 }
 
 #[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
@@ -224,6 +240,8 @@ actions!(
         PushReplaceWithRegister,
         /// Toggles comments.
         PushToggleComments,
+        /// Starts a match operation.
+        PushHelixMatch,
     ]
 );
 
@@ -248,7 +266,7 @@ pub fn init(cx: &mut App) {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
-            update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
+            update_settings_file(fs, cx, move |setting, _| {
                 setting.vim_mode = Some(!currently_enabled)
             })
         });
@@ -498,11 +516,7 @@ impl Vim {
 
         vim.update(cx, |_, cx| {
             Vim::action(editor, cx, |vim, _: &SwitchToNormalMode, window, cx| {
-                if HelixModeSetting::get_global(cx).0 {
-                    vim.switch_mode(Mode::HelixNormal, false, window, cx)
-                } else {
-                    vim.switch_mode(Mode::Normal, false, window, cx)
-                }
+                vim.switch_mode(Mode::Normal, false, window, cx)
             });
 
             Vim::action(editor, cx, |vim, _: &SwitchToInsertMode, window, cx| {
@@ -761,6 +775,27 @@ impl Vim {
             Vim::action(editor, cx, |vim, _: &Enter, window, cx| {
                 vim.input_ignored("\n".into(), window, cx)
             });
+            Vim::action(editor, cx, |vim, _: &PushHelixMatch, window, cx| {
+                vim.push_operator(Operator::HelixMatch, window, cx)
+            });
+            Vim::action(editor, cx, |vim, action: &PushHelixNext, window, cx| {
+                vim.push_operator(
+                    Operator::HelixNext {
+                        around: action.around,
+                    },
+                    window,
+                    cx,
+                );
+            });
+            Vim::action(editor, cx, |vim, action: &PushHelixPrevious, window, cx| {
+                vim.push_operator(
+                    Operator::HelixPrevious {
+                        around: action.around,
+                    },
+                    window,
+                    cx,
+                );
+            });
 
             normal::register(editor, cx);
             insert::register(editor, cx);
@@ -991,6 +1026,13 @@ impl Vim {
                 editor.set_relative_line_number(Some(is_relative), cx)
             });
         }
+        if HelixModeSetting::get_global(cx).0 {
+            if self.mode == Mode::Normal {
+                self.mode = Mode::HelixNormal
+            } else if self.mode == Mode::Visual {
+                self.mode = Mode::HelixSelect
+            }
+        }
 
         if leave_selections {
             return;
@@ -1033,16 +1075,16 @@ impl Vim {
                 }
 
                 let snapshot = s.display_map();
-                if let Some(pending) = s.pending.as_mut()
-                    && pending.selection.reversed
+                if let Some(pending) = s.pending_anchor_mut()
+                    && pending.reversed
                     && mode.is_visual()
                     && !last_mode.is_visual()
                 {
-                    let mut end = pending.selection.end.to_point(&snapshot.buffer_snapshot);
+                    let mut end = pending.end.to_point(&snapshot.buffer_snapshot);
                     end = snapshot
                         .buffer_snapshot
                         .clip_point(end + Point::new(0, 1), Bias::Right);
-                    pending.selection.end = snapshot.buffer_snapshot.anchor_before(end);
+                    pending.end = snapshot.buffer_snapshot.anchor_before(end);
                 }
 
                 s.move_with(|map, selection| {
@@ -1112,7 +1154,7 @@ impl Vim {
             }
             Mode::HelixNormal => cursor_shape.normal.unwrap_or(CursorShape::Block),
             Mode::Replace => cursor_shape.replace.unwrap_or(CursorShape::Underline),
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
                 cursor_shape.visual.unwrap_or(CursorShape::Block)
             }
             Mode::Insert => cursor_shape.insert.unwrap_or({
@@ -1136,7 +1178,8 @@ impl Vim {
             | Mode::Replace
             | Mode::Visual
             | Mode::VisualLine
-            | Mode::VisualBlock => false,
+            | Mode::VisualBlock
+            | Mode::HelixSelect => false,
         }
     }
 
@@ -1151,7 +1194,8 @@ impl Vim {
             | Mode::VisualLine
             | Mode::VisualBlock
             | Mode::Replace
-            | Mode::HelixNormal => false,
+            | Mode::HelixNormal
+            | Mode::HelixSelect => false,
             Mode::Normal => true,
         }
     }
@@ -1163,6 +1207,7 @@ impl Vim {
             Mode::Insert => "insert",
             Mode::Replace => "replace",
             Mode::HelixNormal => "helix_normal",
+            Mode::HelixSelect => "helix_select",
         }
         .to_string();
 
@@ -1188,7 +1233,12 @@ impl Vim {
             }
         }
 
-        if mode == "normal" || mode == "visual" || mode == "operator" || mode == "helix_normal" {
+        if mode == "normal"
+            || mode == "visual"
+            || mode == "operator"
+            || mode == "helix_normal"
+            || mode == "helix_select"
+        {
             context.add("VimControl");
         }
         context.set("vim_mode", mode);
@@ -1282,7 +1332,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, _| {
             editor
                 .selections
-                .disjoint_anchors()
+                .disjoint_anchors_arc()
                 .iter()
                 .map(|selection| selection.tail()..selection.head())
                 .collect()
@@ -1299,7 +1349,8 @@ impl Vim {
             let selection = editor.selections.newest::<usize>(cx);
 
             let snapshot = &editor.snapshot(window, cx).buffer_snapshot;
-            let (range, kind) = snapshot.surrounding_word(selection.start, true);
+            let (range, kind) =
+                snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
             if kind == Some(CharKind::Word) {
                 let text: String = snapshot.text_for_range(range).collect();
                 if !text.trim().is_empty() {
@@ -1483,7 +1534,7 @@ impl Vim {
         cx: &mut Context<Self>,
     ) {
         match self.mode {
-            Mode::VisualLine | Mode::VisualBlock | Mode::Visual => {
+            Mode::VisualLine | Mode::VisualBlock | Mode::Visual | Mode::HelixSelect => {
                 self.update_editor(cx, |vim, editor, cx| {
                     let original_mode = vim.undo_modes.get(transaction_id);
                     editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -1743,21 +1794,19 @@ impl Vim {
     }
 }
 
-/// Controls when to use system clipboard.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum UseSystemClipboard {
-    /// Don't use system clipboard.
-    Never,
-    /// Use system clipboard.
-    Always,
-    /// Use system clipboard for yank operations.
-    OnYank,
+struct VimSettings {
+    pub default_mode: Mode,
+    pub toggle_relative_line_numbers: bool,
+    pub use_system_clipboard: settings::UseSystemClipboard,
+    pub use_smartcase_find: bool,
+    pub custom_digraphs: HashMap<String, Arc<str>>,
+    pub highlight_on_yank_duration: u64,
+    pub cursor_shape: CursorShapeSettings,
 }
 
 /// The settings for cursor shape.
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
-struct CursorShapeSettings {
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct CursorShapeSettings {
     /// Cursor shape for the normal mode.
     ///
     /// Default: block
@@ -1776,85 +1825,38 @@ struct CursorShapeSettings {
     pub insert: Option<CursorShape>,
 }
 
-#[derive(Deserialize)]
-struct VimSettings {
-    pub default_mode: Mode,
-    pub toggle_relative_line_numbers: bool,
-    pub use_system_clipboard: UseSystemClipboard,
-    pub use_smartcase_find: bool,
-    pub custom_digraphs: HashMap<String, Arc<str>>,
-    pub highlight_on_yank_duration: u64,
-    pub cursor_shape: CursorShapeSettings,
+impl From<settings::CursorShapeSettings> for CursorShapeSettings {
+    fn from(settings: settings::CursorShapeSettings) -> Self {
+        Self {
+            normal: settings.normal.map(Into::into),
+            replace: settings.replace.map(Into::into),
+            visual: settings.visual.map(Into::into),
+            insert: settings.insert.map(Into::into),
+        }
+    }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(key = "vim")]
-struct VimSettingsContent {
-    pub default_mode: Option<ModeContent>,
-    pub toggle_relative_line_numbers: Option<bool>,
-    pub use_system_clipboard: Option<UseSystemClipboard>,
-    pub use_smartcase_find: Option<bool>,
-    pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
-    pub highlight_on_yank_duration: Option<u64>,
-    pub cursor_shape: Option<CursorShapeSettings>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ModeContent {
-    #[default]
-    Normal,
-    Insert,
-    Replace,
-    Visual,
-    VisualLine,
-    VisualBlock,
-    HelixNormal,
-}
-
-impl From<ModeContent> for Mode {
+impl From<settings::ModeContent> for Mode {
     fn from(mode: ModeContent) -> Self {
         match mode {
             ModeContent::Normal => Self::Normal,
             ModeContent::Insert => Self::Insert,
-            ModeContent::Replace => Self::Replace,
-            ModeContent::Visual => Self::Visual,
-            ModeContent::VisualLine => Self::VisualLine,
-            ModeContent::VisualBlock => Self::VisualBlock,
             ModeContent::HelixNormal => Self::HelixNormal,
         }
     }
 }
 
 impl Settings for VimSettings {
-    type FileContent = VimSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let settings: VimSettingsContent = sources.json_merge()?;
-
-        Ok(Self {
-            default_mode: settings
-                .default_mode
-                .ok_or_else(Self::missing_default)?
-                .into(),
-            toggle_relative_line_numbers: settings
-                .toggle_relative_line_numbers
-                .ok_or_else(Self::missing_default)?,
-            use_system_clipboard: settings
-                .use_system_clipboard
-                .ok_or_else(Self::missing_default)?,
-            use_smartcase_find: settings
-                .use_smartcase_find
-                .ok_or_else(Self::missing_default)?,
-            custom_digraphs: settings.custom_digraphs.ok_or_else(Self::missing_default)?,
-            highlight_on_yank_duration: settings
-                .highlight_on_yank_duration
-                .ok_or_else(Self::missing_default)?,
-            cursor_shape: settings.cursor_shape.ok_or_else(Self::missing_default)?,
-        })
-    }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {
-        // TODO: translate vim extension settings
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let vim = content.vim.clone().unwrap();
+        Self {
+            default_mode: vim.default_mode.unwrap().into(),
+            toggle_relative_line_numbers: vim.toggle_relative_line_numbers.unwrap(),
+            use_system_clipboard: vim.use_system_clipboard.unwrap(),
+            use_smartcase_find: vim.use_smartcase_find.unwrap(),
+            custom_digraphs: vim.custom_digraphs.unwrap(),
+            highlight_on_yank_duration: vim.highlight_on_yank_duration.unwrap(),
+            cursor_shape: vim.cursor_shape.unwrap().into(),
+        }
     }
 }

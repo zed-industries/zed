@@ -443,7 +443,7 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidates = self.candidates.as_ref()?;
-        let hit = &self.matches[ix];
+        let hit = &self.matches.get(ix)?;
         let (source_kind, resolved_task) = &candidates.get(hit.candidate_id)?;
         let template = resolved_task.original_task();
         let display_label = resolved_task.display_label();
@@ -493,7 +493,7 @@ impl PickerDelegate for TasksModalDelegate {
                 language_name: name,
                 ..
             }
-            | TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
+            | TaskSourceKind::Language { name, .. } => file_icons::FileIcons::get(cx)
                 .get_icon_for_type(&name.to_lowercase(), cx)
                 .map(Icon::from_path),
         }

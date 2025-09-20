@@ -52,10 +52,7 @@ pub use item::{
     ProjectItem, SerializableItem, SerializableItemHandle, WeakItemHandle,
 };
 use itertools::Itertools;
-use language::{
-    Buffer, LanguageRegistry, Rope,
-    language_settings::{AllLanguageSettings, all_language_settings},
-};
+use language::{Buffer, LanguageRegistry, Rope, language_settings::all_language_settings};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
 use notifications::{
@@ -72,6 +69,7 @@ pub use persistence::{
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     toolchain_store::ToolchainStoreEvent,
 };
@@ -79,7 +77,7 @@ use remote::{RemoteClientDelegate, RemoteConnectionOptions, remote_client::Conne
 use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
-use settings::{Settings, update_settings_file};
+use settings::{Settings, SettingsLocation, update_settings_file};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -1694,8 +1692,8 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let fs = self.project().read(cx).fs();
-        settings::update_settings_file::<WorkspaceSettings>(fs.clone(), cx, move |content, _cx| {
-            content.bottom_dock_layout = Some(layout);
+        settings::update_settings_file(fs.clone(), cx, move |content, _cx| {
+            content.workspace.bottom_dock_layout = Some(layout);
         });
 
         cx.notify();
@@ -2039,6 +2037,11 @@ impl Workspace {
 
     pub fn set_titlebar_item(&mut self, item: AnyView, _: &mut Window, cx: &mut Context<Self>) {
         self.titlebar_item = Some(item);
+        cx.notify();
+    }
+
+    pub fn clear_titlebar_item(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.titlebar_item = None;
         cx.notify();
     }
 
@@ -3928,8 +3931,15 @@ impl Workspace {
                     item: item.boxed_clone(),
                 });
             }
-            pane::Event::Split(direction) => {
-                self.split_and_clone(pane.clone(), *direction, window, cx);
+            pane::Event::Split {
+                direction,
+                clone_active_item,
+            } => {
+                if *clone_active_item {
+                    self.split_and_clone(pane.clone(), *direction, window, cx);
+                } else {
+                    self.split_and_move(pane.clone(), *direction, window, cx);
+                }
             }
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane.clone(), window, cx);
@@ -4041,6 +4051,24 @@ impl Workspace {
             .unwrap();
         cx.notify();
         new_pane
+    }
+
+    pub fn split_and_move(
+        &mut self,
+        pane: Entity<Pane>,
+        direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(item) = pane.update(cx, |pane, cx| pane.take_active_item(window, cx)) else {
+            return;
+        };
+        let new_pane = self.add_pane(window, cx);
+        new_pane.update(cx, |pane, cx| {
+            pane.add_item(item, true, true, None, window, cx)
+        });
+        self.center.split(&pane, &new_pane, direction).unwrap();
+        cx.notify();
     }
 
     pub fn split_and_clone(
@@ -4376,7 +4404,19 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
+        for (i, worktree) in project.worktrees(cx).enumerate() {
+            let name = {
+                let settings_location = SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path: Path::new(""),
+                };
+
+                let settings = WorktreeSettings::get(Some(settings_location), cx);
+                match &settings.project_name {
+                    Some(name) => name.as_str(),
+                    None => worktree.read(cx).root_name(),
+                }
+            };
             if i > 0 {
                 title.push_str(", ");
             }
@@ -5971,8 +6011,8 @@ impl Workspace {
     ) {
         let fs = self.project().read(cx).fs().clone();
         let show_edit_predictions = all_language_settings(None, cx).show_edit_predictions(None, cx);
-        update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-            file.defaults.show_edit_predictions = Some(!show_edit_predictions)
+        update_settings_file(fs, cx, move |file, _| {
+            file.project.all_languages.defaults.show_edit_predictions = Some(!show_edit_predictions)
         });
     }
 }
@@ -8635,8 +8675,8 @@ mod tests {
         // Autosave on window change.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnWindowChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnWindowChange);
                 })
             });
             item.is_dirty = true;
@@ -8655,13 +8695,12 @@ mod tests {
         item.update_in(cx, |item, window, cx| {
             cx.focus_self(window);
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
             });
             item.is_dirty = true;
         });
-
         // Blurring the item saves the file.
         item.update_in(cx, |_, window, _| window.blur());
         cx.executor().run_until_parked();
@@ -8678,8 +8717,9 @@ mod tests {
         // Autosave after delay.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave =
+                        Some(AutosaveSetting::AfterDelay { milliseconds: 500 });
                 })
             });
             item.is_dirty = true;
@@ -8694,11 +8734,41 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(250));
         item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
 
+        // Autosave after delay, should save earlier than delay if tab is closed
+        item.update(cx, |item, cx| {
+            item.is_dirty = true;
+            cx.emit(ItemEvent::Edit);
+        });
+        cx.executor().advance_clock(Duration::from_millis(250));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 4));
+
+        // // Ensure auto save with delay saves the item on close, even if the timer hasn't yet run out.
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_items(window, cx, SaveIntent::Close, move |id| id == item_id)
+        })
+        .await
+        .unwrap();
+        assert!(!cx.has_pending_prompt());
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+
+        // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+        item.update_in(cx, |item, _window, cx| {
+            item.is_dirty = true;
+            for project_item in &mut item.project_items {
+                project_item.update(cx, |project_item, _| project_item.is_dirty = true);
+            }
+        });
+        cx.run_until_parked();
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+
         // Autosave on focus change, ensuring closing the tab counts as such.
         item.update(cx, |item, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
-                settings.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                    settings.autosave = Some(AutosaveSetting::OnFocusChange);
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.autosave = Some(AutosaveSetting::OnFocusChange);
                 })
             });
             item.is_dirty = true;
@@ -8713,7 +8783,7 @@ mod tests {
         .await
         .unwrap();
         assert!(!cx.has_pending_prompt());
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
 
         // Add the item again, ensuring autosave is prevented if the underlying file has been deleted.
         workspace.update_in(cx, |workspace, window, cx| {
@@ -8727,7 +8797,7 @@ mod tests {
             window.blur();
         });
         cx.run_until_parked();
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
 
         // Ensure autosave is prevented for deleted files also when closing the buffer.
         let _close_items = pane.update_in(cx, |pane, window, cx| {
@@ -8735,7 +8805,7 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(cx.has_pending_prompt());
-        item.read_with(cx, |item, _| assert_eq!(item.save_count, 5));
+        item.read_with(cx, |item, _| assert_eq!(item.save_count, 6));
     }
 
     #[gpui::test]
@@ -9701,8 +9771,8 @@ mod tests {
 
         // Enable the close_on_disk_deletion setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 
@@ -9769,8 +9839,8 @@ mod tests {
 
         // Ensure close_on_disk_deletion is disabled (default)
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(false);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(false);
             });
         });
 
@@ -9846,8 +9916,8 @@ mod tests {
 
         // Enable the close_on_file_delete setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 
@@ -9919,8 +9989,8 @@ mod tests {
 
         // Enable the close_on_file_delete setting
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
-                settings.close_on_file_delete = Some(true);
+            store.update_user_settings(cx, |settings| {
+                settings.workspace.close_on_file_delete = Some(true);
             });
         });
 

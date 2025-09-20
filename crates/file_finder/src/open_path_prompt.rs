@@ -392,10 +392,11 @@ impl PickerDelegate for OpenPathDelegate {
                 let should_prepend_with_current_dir = this
                     .read_with(cx, |picker, _| {
                         !input_is_empty
-                            && !matches!(
-                                picker.delegate.directory_state,
-                                DirectoryState::Create { .. }
-                            )
+                            && match &picker.delegate.directory_state {
+                                DirectoryState::List { error, .. } => error.is_none(),
+                                DirectoryState::Create { .. } => false,
+                                DirectoryState::None { .. } => false,
+                            }
                     })
                     .unwrap_or(false);
                 if should_prepend_with_current_dir {
@@ -694,14 +695,15 @@ impl PickerDelegate for OpenPathDelegate {
             if !settings.file_icons {
                 return None;
             }
+
+            let path = path::Path::new(&candidate.path.string);
             let icon = if candidate.is_dir {
                 if is_current_dir_candidate {
                     return Some(Icon::new(IconName::ReplyArrowRight).color(Color::Muted));
                 } else {
-                    FileIcons::get_folder_icon(false, cx)?
+                    FileIcons::get_folder_icon(false, path, cx)?
                 }
             } else {
-                let path = path::Path::new(&candidate.path.string);
                 FileIcons::get_icon(path, cx)?
             };
             Some(Icon::from_path(icon).color(Color::Muted))

@@ -17,8 +17,8 @@ use gpui::{
     ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, DiskState, LocalFile, Point, SelectionGoal,
-    proto::serialize_anchor as serialize_text_anchor,
+    Bias, Buffer, BufferRow, CharKind, CharScopeContext, DiskState, LocalFile, Point,
+    SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
 use project::{
@@ -187,7 +187,7 @@ impl FollowableItem for Editor {
         } else if self.focus_handle.is_focused(window) {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
-                    &self.selections.disjoint_anchors(),
+                    &self.selections.disjoint_anchors_arc(),
                     self.selections.line_mode,
                     self.cursor_shape,
                     cx,
@@ -231,7 +231,7 @@ impl FollowableItem for Editor {
             scroll_y: scroll_anchor.offset.y,
             selections: self
                 .selections
-                .disjoint_anchors()
+                .disjoint_anchors_arc()
                 .iter()
                 .map(|s| serialize_selection(s, &snapshot))
                 .collect(),
@@ -310,7 +310,7 @@ impl FollowableItem for Editor {
                     let snapshot = self.buffer.read(cx).snapshot(cx);
                     update.selections = self
                         .selections
-                        .disjoint_anchors()
+                        .disjoint_anchors_arc()
                         .iter()
                         .map(|s| serialize_selection(s, &snapshot))
                         .collect();
@@ -1130,7 +1130,7 @@ impl SerializableItem for Editor {
 
                     // First create the empty buffer
                     let buffer = project
-                        .update(cx, |project, cx| project.create_buffer(cx))?
+                        .update(cx, |project, cx| project.create_buffer(true, cx))?
                         .await?;
 
                     // Then set the text so that the dirty bit is set correctly
@@ -1238,7 +1238,7 @@ impl SerializableItem for Editor {
                 ..
             } => window.spawn(cx, async move |cx| {
                 let buffer = project
-                    .update(cx, |project, cx| project.create_buffer(cx))?
+                    .update(cx, |project, cx| project.create_buffer(true, cx))?
                     .await?;
 
                 cx.update(|window, cx| {
@@ -1573,7 +1573,8 @@ impl SearchableItem for Editor {
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
-                let (range, kind) = snapshot.surrounding_word(selection.start, true);
+                let (range, kind) =
+                    snapshot.surrounding_word(selection.start, Some(CharScopeContext::Completion));
                 if kind == Some(CharKind::Word) {
                     let text: String = snapshot.text_for_range(range).collect();
                     if !text.trim().is_empty() {
@@ -1675,7 +1676,7 @@ impl SearchableItem for Editor {
         cx: &mut Context<Self>,
     ) -> usize {
         let buffer = self.buffer().read(cx).snapshot(cx);
-        let current_index_position = if self.selections.disjoint_anchors().len() == 1 {
+        let current_index_position = if self.selections.disjoint_anchors_arc().len() == 1 {
             self.selections.newest_anchor().head()
         } else {
             matches[current_index].start

@@ -36,10 +36,7 @@ use std::{
     pin::pin,
     sync::Arc,
 };
-use ui::{
-    Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label, LabelCommon, LabelSize,
-    Toggleable, Tooltip, h_flex, prelude::*, utils::SearchInputWidth, v_flex,
-};
+use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
 use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
@@ -682,7 +679,18 @@ impl ProjectSearchView {
         self.included_opened_only = !self.included_opened_only;
     }
 
+    pub fn replacement(&self, cx: &App) -> String {
+        self.replacement_editor.read(cx).text(cx)
+    }
+
     fn replace_next(&mut self, _: &ReplaceNext, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(last_search_query_text) = &self.entity.read(cx).last_search_query_text
+            && self.query_editor.read(cx).text(cx) != *last_search_query_text
+        {
+            // search query has changed, restart search and bail
+            self.search(cx);
+            return;
+        }
         if self.entity.read(cx).match_ranges.is_empty() {
             return;
         }
@@ -702,14 +710,17 @@ impl ProjectSearchView {
             self.select_match(Direction::Next, window, cx)
         }
     }
-    pub fn replacement(&self, cx: &App) -> String {
-        self.replacement_editor.read(cx).text(cx)
-    }
     fn replace_all(&mut self, _: &ReplaceAll, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(last_search_query_text) = &self.entity.read(cx).last_search_query_text
+            && self.query_editor.read(cx).text(cx) != *last_search_query_text
+        {
+            // search query has changed, restart search and bail
+            self.search(cx);
+            return;
+        }
         if self.active_match_index.is_none() {
             return;
         }
-
         let Some(query) = self.entity.read(cx).active_query.as_ref() else {
             return;
         };
@@ -769,7 +780,7 @@ impl ProjectSearchView {
 
         let query_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search all files…", cx);
+            editor.set_placeholder_text("Search all files…", window, cx);
             editor.set_text(query_text, window, cx);
             editor
         });
@@ -792,7 +803,7 @@ impl ProjectSearchView {
         );
         let replacement_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Replace in project…", cx);
+            editor.set_placeholder_text("Replace in project…", window, cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
             }
@@ -818,7 +829,7 @@ impl ProjectSearchView {
 
         let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Include: crates/**/*.toml", cx);
+            editor.set_placeholder_text("Include: crates/**/*.toml", window, cx);
 
             editor
         });
@@ -831,7 +842,7 @@ impl ProjectSearchView {
 
         let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
+            editor.set_placeholder_text("Exclude: vendor/*, *.lock", window, cx);
 
             editor
         });
@@ -1060,18 +1071,12 @@ impl ProjectSearchView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
-        use workspace::AutosaveSetting;
-
         let project = self.entity.read(cx).project.clone();
 
         let can_autosave = self.results_editor.can_autosave(cx);
         let autosave_setting = self.results_editor.workspace_settings(cx).autosave;
 
-        let will_autosave = can_autosave
-            && matches!(
-                autosave_setting,
-                AutosaveSetting::OnFocusChange | AutosaveSetting::OnWindowChange
-            );
+        let will_autosave = can_autosave && autosave_setting.should_save_on_close();
 
         let is_dirty = self.is_dirty(cx);
 
@@ -4117,7 +4122,7 @@ pub mod tests {
         buffer_search_bar
             .update_in(&mut cx, |buffer_search_bar, window, cx| {
                 buffer_search_bar.focus_handle(cx).focus(window);
-                buffer_search_bar.search(buffer_search_query, None, window, cx)
+                buffer_search_bar.search(buffer_search_query, None, true, window, cx)
             })
             .await
             .unwrap();

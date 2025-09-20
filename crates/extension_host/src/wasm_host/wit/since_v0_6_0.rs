@@ -35,7 +35,7 @@ use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 7, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -309,7 +309,14 @@ impl TryFrom<SpawnInTerminal> for ResolvedTask {
             command: value.command.context("missing command")?,
             args: value.args,
             env: value.env.into_iter().collect(),
-            cwd: value.cwd.map(|s| s.to_string_lossy().into_owned()),
+            cwd: value.cwd.map(|s| {
+                let s = s.to_string_lossy();
+                if cfg!(target_os = "windows") {
+                    s.replace('\\', "/")
+                } else {
+                    s.into_owned()
+                }
+            }),
         })
     }
 }

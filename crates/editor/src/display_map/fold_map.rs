@@ -320,13 +320,13 @@ impl FoldMapWriter<'_> {
 /// Decides where the fold indicators should be; also tracks parts of a source file that are currently folded.
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
-pub(crate) struct FoldMap {
+pub struct FoldMap {
     snapshot: FoldSnapshot,
     next_fold_id: FoldId,
 }
 
 impl FoldMap {
-    pub(crate) fn new(inlay_snapshot: InlaySnapshot) -> (Self, FoldSnapshot) {
+    pub fn new(inlay_snapshot: InlaySnapshot) -> (Self, FoldSnapshot) {
         let this = Self {
             snapshot: FoldSnapshot {
                 folds: SumTree::new(&inlay_snapshot.buffer),
@@ -360,7 +360,7 @@ impl FoldMap {
         (self.snapshot.clone(), edits)
     }
 
-    pub fn write(
+    pub(crate) fn write(
         &mut self,
         inlay_snapshot: InlaySnapshot,
         edits: Vec<InlayEdit>,
@@ -529,6 +529,7 @@ impl FoldMap {
                                 },
                                 placeholder: Some(TransformPlaceholder {
                                     text: ELLIPSIS,
+                                    chars: 1,
                                     renderer: ChunkRenderer {
                                         id: ChunkRendererId::Fold(fold.id),
                                         render: Arc::new(move |cx| {
@@ -872,6 +873,14 @@ impl FoldSnapshot {
         .flat_map(|chunk| chunk.text.chars())
     }
 
+    pub fn chunks_at(&self, start: FoldPoint) -> FoldChunks<'_> {
+        self.chunks(
+            start.to_offset(self)..self.len(),
+            false,
+            Highlights::default(),
+        )
+    }
+
     #[cfg(test)]
     pub fn clip_offset(&self, offset: FoldOffset, bias: Bias) -> FoldOffset {
         if offset > self.len() {
@@ -1034,6 +1043,7 @@ struct Transform {
 #[derive(Clone, Debug)]
 struct TransformPlaceholder {
     text: &'static str,
+    chars: u128,
     renderer: ChunkRenderer,
 }
 
@@ -1274,6 +1284,10 @@ pub struct Chunk<'a> {
     pub is_inlay: bool,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
+    /// Bitmap of tab character locations in chunk
+    pub tabs: u128,
+    /// Bitmap of character locations in chunk
+    pub chars: u128,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1391,6 +1405,7 @@ impl<'a> Iterator for FoldChunks<'a> {
             self.output_offset.0 += placeholder.text.len();
             return Some(Chunk {
                 text: placeholder.text,
+                chars: placeholder.chars,
                 renderer: Some(placeholder.renderer.clone()),
                 ..Default::default()
             });
@@ -1429,6 +1444,16 @@ impl<'a> Iterator for FoldChunks<'a> {
             chunk.text = &chunk.text
                 [(self.inlay_offset - buffer_chunk_start).0..(chunk_end - buffer_chunk_start).0];
 
+            let bit_end = (chunk_end - buffer_chunk_start).0;
+            let mask = if bit_end >= 128 {
+                u128::MAX
+            } else {
+                (1u128 << bit_end) - 1
+            };
+
+            chunk.tabs = (chunk.tabs >> (self.inlay_offset - buffer_chunk_start).0) & mask;
+            chunk.chars = (chunk.chars >> (self.inlay_offset - buffer_chunk_start).0) & mask;
+
             if chunk_end == transform_end {
                 self.transform_cursor.next();
             } else if chunk_end == buffer_chunk_end {
@@ -1439,6 +1464,8 @@ impl<'a> Iterator for FoldChunks<'a> {
             self.output_offset.0 += chunk.text.len();
             return Some(Chunk {
                 text: chunk.text,
+                tabs: chunk.tabs,
+                chars: chunk.chars,
                 syntax_highlight_id: chunk.syntax_highlight_id,
                 highlight_style: chunk.highlight_style,
                 diagnostic_severity: chunk.diagnostic_severity,
@@ -2070,6 +2097,97 @@ mod tests {
                 .collect::<Vec<_>>(),
             [Some(6)]
         );
+    }
+
+    #[gpui::test(iterations = 100)]
+    fn test_random_chunk_bitmaps(cx: &mut gpui::App, mut rng: StdRng) {
+        init_test(cx);
+
+        // Generate random buffer using existing test infrastructure
+        let text_len = rng.random_range(0..10000);
+        let buffer = if rng.random() {
+            let text = RandomCharIter::new(&mut rng)
+                .take(text_len)
+                .collect::<String>();
+            MultiBuffer::build_simple(&text, cx)
+        } else {
+            MultiBuffer::build_random(&mut rng, cx)
+        };
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot);
+        let (mut fold_map, _) = FoldMap::new(inlay_snapshot.clone());
+
+        // Perform random mutations
+        let mutation_count = rng.random_range(1..10);
+        for _ in 0..mutation_count {
+            fold_map.randomly_mutate(&mut rng);
+        }
+
+        let (snapshot, _) = fold_map.read(inlay_snapshot, vec![]);
+
+        // Get all chunks and verify their bitmaps
+        let chunks = snapshot.chunks(
+            FoldOffset(0)..FoldOffset(snapshot.len().0),
+            false,
+            Highlights::default(),
+        );
+
+        for chunk in chunks {
+            let chunk_text = chunk.text;
+            let chars_bitmap = chunk.chars;
+            let tabs_bitmap = chunk.tabs;
+
+            // Check empty chunks have empty bitmaps
+            if chunk_text.is_empty() {
+                assert_eq!(
+                    chars_bitmap, 0,
+                    "Empty chunk should have empty chars bitmap"
+                );
+                assert_eq!(tabs_bitmap, 0, "Empty chunk should have empty tabs bitmap");
+                continue;
+            }
+
+            // Verify that chunk text doesn't exceed 128 bytes
+            assert!(
+                chunk_text.len() <= 128,
+                "Chunk text length {} exceeds 128 bytes",
+                chunk_text.len()
+            );
+
+            // Verify chars bitmap
+            let char_indices = chunk_text
+                .char_indices()
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>();
+
+            for byte_idx in 0..chunk_text.len() {
+                let should_have_bit = char_indices.contains(&byte_idx);
+                let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+                if has_bit != should_have_bit {
+                    eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                    eprintln!("Char indices: {:?}", char_indices);
+                    eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+                    assert_eq!(
+                        has_bit, should_have_bit,
+                        "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                        byte_idx, chunk_text, should_have_bit, has_bit
+                    );
+                }
+            }
+
+            // Verify tabs bitmap
+            for (byte_idx, byte) in chunk_text.bytes().enumerate() {
+                let is_tab = byte == b'\t';
+                let has_bit = tabs_bitmap & (1 << byte_idx) != 0;
+
+                assert_eq!(
+                    has_bit, is_tab,
+                    "Tabs bitmap mismatch at byte index {} in chunk {:?}. Byte: {:?}, Expected bit: {}, Got bit: {}",
+                    byte_idx, chunk_text, byte as char, is_tab, has_bit
+                );
+            }
+        }
     }
 
     fn init_test(cx: &mut gpui::App) {

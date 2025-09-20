@@ -25,10 +25,20 @@ pub struct WslConnectionOptions {
     pub user: Option<String>,
 }
 
+impl From<settings::WslConnection> for WslConnectionOptions {
+    fn from(val: settings::WslConnection) -> Self {
+        WslConnectionOptions {
+            distro_name: val.distro_name.into(),
+            user: val.user,
+        }
+    }
+}
+
 pub(crate) struct WslRemoteConnection {
     remote_binary_path: Option<RemotePathBuf>,
     platform: RemotePlatform,
     shell: String,
+    default_system_shell: String,
     connection_options: WslConnectionOptions,
 }
 
@@ -56,6 +66,7 @@ impl WslRemoteConnection {
             remote_binary_path: None,
             platform: RemotePlatform { os: "", arch: "" },
             shell: String::new(),
+            default_system_shell: String::from("/bin/sh"),
         };
         delegate.set_status(Some("Detecting WSL environment"), cx);
         this.platform = this.detect_platform().await?;
@@ -84,7 +95,11 @@ impl WslRemoteConnection {
             .run_wsl_command("sh", &["-c", "echo $SHELL"])
             .await
             .ok()
-            .and_then(|shell_path| shell_path.trim().split('/').next_back().map(str::to_string))
+            .and_then(|shell_path| {
+                Path::new(shell_path.trim())
+                    .file_name()
+                    .map(|it| it.to_str().unwrap().to_owned())
+            })
             .unwrap_or_else(|| "bash".to_string()))
     }
 
@@ -394,7 +409,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--".to_string(),
                 self.shell.clone(),
                 "-c".to_string(),
-                shlex::try_quote(&script)?.to_string(),
+                script,
             ]
         } else {
             vec![
@@ -405,7 +420,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--".to_string(),
                 self.shell.clone(),
                 "-c".to_string(),
-                shlex::try_quote(&script)?.to_string(),
+                script,
             ]
         };
 
@@ -426,6 +441,10 @@ impl RemoteConnection for WslRemoteConnection {
 
     fn shell(&self) -> String {
         self.shell.clone()
+    }
+
+    fn default_system_shell(&self) -> String {
+        self.default_system_shell.clone()
     }
 }
 

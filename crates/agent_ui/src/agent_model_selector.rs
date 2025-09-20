@@ -2,10 +2,8 @@ use crate::{
     ModelUsageContext,
     language_model_selector::{LanguageModelSelector, language_model_selector},
 };
-use agent_settings::AgentSettings;
 use fs::Fs;
 use gpui::{Entity, FocusHandle, SharedString};
-use language_model::{ConfiguredModel, LanguageModelRegistry};
 use picker::popover_menu::PickerPopoverMenu;
 use settings::update_settings_file;
 use std::sync::Arc;
@@ -39,37 +37,13 @@ impl AgentModelSelector {
                         let provider = model.provider_id().0.to_string();
                         let model_id = model.id().0.to_string();
                         match &model_usage_context {
-                            ModelUsageContext::Thread(thread) => {
-                                thread.update(cx, |thread, cx| {
-                                    let registry = LanguageModelRegistry::read_global(cx);
-                                    if let Some(provider) = registry.provider(&model.provider_id())
-                                    {
-                                        thread.set_configured_model(
-                                            Some(ConfiguredModel {
-                                                provider,
-                                                model: model.clone(),
-                                            }),
-                                            cx,
-                                        );
-                                    }
-                                });
-                                update_settings_file::<AgentSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _cx| {
-                                        settings.set_model(model.clone());
-                                    },
-                                );
-                            }
                             ModelUsageContext::InlineAssistant => {
-                                update_settings_file::<AgentSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _cx| {
-                                        settings
-                                            .set_inline_assistant_model(provider.clone(), model_id);
-                                    },
-                                );
+                                update_settings_file(fs.clone(), cx, move |settings, _cx| {
+                                    settings
+                                        .agent
+                                        .get_or_insert_default()
+                                        .set_inline_assistant_model(provider.clone(), model_id);
+                                });
                             }
                         }
                     },

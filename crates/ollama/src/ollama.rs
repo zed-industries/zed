@@ -1,34 +1,12 @@
 use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use settings::KeepAlive;
 use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(untagged)]
-pub enum KeepAlive {
-    /// Keep model alive for N seconds
-    Seconds(isize),
-    /// Keep model alive for a fixed duration. Accepts durations like "5m", "10m", "1h", "1d", etc.
-    Duration(String),
-}
-
-impl KeepAlive {
-    /// Keep model alive until a new model is loaded or until Ollama shuts down
-    fn indefinite() -> Self {
-        Self::Seconds(-1)
-    }
-}
-
-impl Default for KeepAlive {
-    fn default() -> Self {
-        Self::indefinite()
-    }
-}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -46,19 +24,19 @@ fn get_max_tokens(name: &str) -> u64 {
     /// Default context length for unknown models.
     const DEFAULT_TOKENS: u64 = 4096;
     /// Magic number. Lets many Ollama models work with ~16GB of ram.
+    /// Models that support context beyond 16k such as codestral (32k) or devstral (128k) will be clamped down to 16k
     const MAXIMUM_TOKENS: u64 = 16384;
 
     match name.split(':').next().unwrap() {
-        "phi" | "tinyllama" | "granite-code" => 2048,
-        "llama2" | "yi" | "vicuna" | "stablelm2" => 4096,
-        "llama3" | "gemma2" | "gemma" | "codegemma" | "starcoder" | "aya" => 8192,
+        "granite-code" | "phi" | "tinyllama" => 2048,
+        "llama2" | "stablelm2" | "vicuna" | "yi" => 4096,
+        "aya" | "codegemma" | "gemma" | "gemma2" | "llama3" | "starcoder" => 8192,
         "codellama" | "starcoder2" => 16384,
-        "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "qwen2.5-coder"
-        | "dolphin-mixtral" => 32768,
-        "magistral" => 40000,
-        "llama3.1" | "llama3.2" | "llama3.3" | "phi3" | "phi3.5" | "phi4" | "command-r"
-        | "qwen3" | "gemma3" | "deepseek-coder-v2" | "deepseek-v3" | "deepseek-r1" | "yi-coder"
-        | "devstral" | "gpt-oss" => 128000,
+        "codestral" | "dolphin-mixtral" | "llava" | "magistral" | "mistral" | "mixstral"
+        | "qwen2" | "qwen2.5-coder" => 32768,
+        "cogito" | "command-r" | "deepseek-coder-v2" | "deepseek-r1" | "deepseek-v3"
+        | "devstral" | "gemma3" | "gpt-oss" | "granite3.3" | "llama3.1" | "llama3.2"
+        | "llama3.3" | "mistral-nemo" | "phi3" | "phi3.5" | "phi4" | "qwen3" | "yi-coder" => 128000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
@@ -279,15 +257,19 @@ pub async fn complete(
 pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: Option<&str>,
     request: ChatRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    let request_builder = http::Request::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json");
+        .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
 
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -313,15 +295,18 @@ pub async fn stream_chat_completion(
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
+    api_key: Option<&str>,
     _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
-        .header("Accept", "application/json");
-
-    let request = request_builder.body(AsyncBody::default())?;
+        .header("Accept", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::default())?;
 
     let mut response = client.send(request).await?;
 
@@ -340,12 +325,20 @@ pub async fn get_models(
 }
 
 /// Fetch details of a model, used to determine model capabilities
-pub async fn show_model(client: &dyn HttpClient, api_url: &str, model: &str) -> Result<ModelShow> {
+pub async fn show_model(
+    client: &dyn HttpClient,
+    api_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+) -> Result<ModelShow> {
     let uri = format!("{api_url}/api/show");
     let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
         .body(AsyncBody::from(
             serde_json::json!({ "model": model }).to_string(),
         ))?;

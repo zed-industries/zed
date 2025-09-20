@@ -160,7 +160,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let FileMatch { mat, .. } = &self.matches[ix];
+        let FileMatch { mat, .. } = &self.matches.get(ix)?;
 
         Some(
             ListItem::new(ix)
@@ -251,7 +251,7 @@ pub(crate) fn search_files(
             fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 query.as_str(),
-                None,
+                &None,
                 false,
                 100,
                 &cancellation_flag,
@@ -330,7 +330,7 @@ pub fn render_file_context_entry(
     });
 
     let file_icon = if is_directory {
-        FileIcons::get_folder_icon(false, cx)
+        FileIcons::get_folder_icon(false, path, cx)
     } else {
         FileIcons::get_icon(path, cx)
     }

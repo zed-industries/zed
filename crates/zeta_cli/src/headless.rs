@@ -31,10 +31,7 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
     release_channel::init(app_version, cx);
     gpui_tokio::init(cx);
 
-    let mut settings_store = SettingsStore::new(cx);
-    settings_store
-        .set_default_settings(settings::default_settings().as_ref(), cx)
-        .unwrap();
+    let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
     client::init_settings(cx);
 
@@ -110,7 +107,7 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
     language_extension::init(LspAccess::Noop, extension_host_proxy, languages.clone());
     language_model::init(client.clone(), cx);
     language_models::init(user_store.clone(), client.clone(), cx);
-    languages::init(languages.clone(), node_runtime.clone(), cx);
+    languages::init(languages.clone(), fs.clone(), node_runtime.clone(), cx);
     prompt_store::init(cx);
     terminal_view::init(cx);
 
