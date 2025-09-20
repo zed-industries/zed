@@ -497,8 +497,6 @@
       "shift-alt-down": "editor::DuplicateLineDown",
       "shift-alt-right": "editor::SelectLargerSyntaxNode", // Expand selection
       "shift-alt-left": "editor::SelectSmallerSyntaxNode", // Shrink selection
-      "ctrl-shift-right": "editor::SelectLargerSyntaxNode", // Expand selection (VSCode version)
-      "ctrl-shift-left": "editor::SelectSmallerSyntaxNode", // Shrink selection (VSCode version)
       "ctrl-shift-l": "editor::SelectAllMatches", // Select all occurrences of current selection
       "ctrl-f2": "editor::SelectAllMatches", // Select all occurrences of current word
       "ctrl-d": ["editor::SelectNext", { "replace_newest": false }], // editor.action.addSelectionToNextFindMatch  / find_under_expand
