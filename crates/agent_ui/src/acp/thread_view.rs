@@ -1604,7 +1604,7 @@ impl AcpThreadView {
             task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(&login, window, cx)
+                terminal_panel.spawn_task(&task, window, cx)
             })?;
 
             let terminal = terminal.await?;
