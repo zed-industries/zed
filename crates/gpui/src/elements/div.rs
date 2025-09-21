@@ -2988,18 +2988,7 @@ struct ScrollHandleState {
     child_bounds: Vec<Bounds<Pixels>>,
     scroll_to_bottom: bool,
     overflow: Point<Overflow>,
-    active_item: ActiveItem,
-}
-
-/// Tracking if a child item needs to be scrolled to
-/// Having it here ensures that [ScrollHandleState] is in sync
-#[derive(Default, Debug)]
-pub enum ActiveItem {
-    /// We don't need to scroll
-    #[default]
-    Current,
-    /// Active item is stale and we need to scroll to the new index
-    Stale(usize),
+    active_item: Option<usize>,
 }
 
 /// A handle to the scrollable aspects of an element.
@@ -3060,18 +3049,18 @@ impl ScrollHandle {
     }
 
     /// Update [ScrollHandleState]'s active item for scrolling to in prepaint
-    pub fn update_active_item(&self, ix: usize) {
+    pub fn scroll_to_item(&self, ix: usize) {
         let mut state = self.0.borrow_mut();
-        state.active_item = ActiveItem::Stale(ix);
+        state.active_item = Some(ix);
     }
 
     /// Scrolls the minimal amount to ensure that the child is
     /// fully visible
-    pub fn scroll_to_active_item(&self) {
+    fn scroll_to_active_item(&self) {
         let mut state = self.0.borrow_mut();
 
         let active_item = match state.active_item {
-            ActiveItem::Stale(ix) => match state.child_bounds.get(ix) {
+            Some(ix) => match state.child_bounds.get(ix) {
                 Some(bounds) => {
                     let mut scroll_offset = state.offset.borrow_mut();
 
@@ -3090,11 +3079,11 @@ impl ScrollHandle {
                             scroll_offset.x = state.bounds.right() - bounds.right();
                         }
                     }
-                    ActiveItem::Current
+                    None
                 }
-                None => ActiveItem::Stale(ix),
+                None => Some(ix),
             },
-            ActiveItem::Current => ActiveItem::Current,
+            None => None,
         };
         state.active_item = active_item;
     }

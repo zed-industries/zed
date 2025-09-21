@@ -1279,7 +1279,7 @@ impl Pane {
     fn update_active_tab(&mut self, index: usize) {
         if !self.is_tab_pinned(index) {
             self.suppress_scroll = false;
-            self.tab_bar_scroll_handle.update_active_item(index);
+            self.tab_bar_scroll_handle.scroll_to_item(index);
         }
     }
 
