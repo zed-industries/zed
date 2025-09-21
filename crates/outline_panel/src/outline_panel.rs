@@ -2481,7 +2481,6 @@ impl OutlinePanel {
             &OutlineItem {
                 depth,
                 annotation_range: None,
-                signature_range: None,
                 range: search_data.context_range.clone(),
                 text: search_data.context_text.clone(),
                 highlight_ranges: search_data
