@@ -101,9 +101,10 @@ impl Model {
     pub fn max_output_tokens(&self) -> Option<u64> {
         match self {
             Self::Grok3 | Self::Grok3Mini | Self::Grok3Fast | Self::Grok3MiniFast => Some(8_192),
-            Self::Grok4 | Self::GrokCodeFast1 | Self::Grok4FastNonReasoning | Self::Grok4FastReasoning => {
-                Some(64_000)
-            }
+            Self::Grok4
+            | Self::GrokCodeFast1
+            | Self::Grok4FastNonReasoning
+            | Self::Grok4FastReasoning => Some(64_000),
             Self::Grok2Vision => Some(4_096),
             Self::Custom {
                 max_output_tokens, ..
