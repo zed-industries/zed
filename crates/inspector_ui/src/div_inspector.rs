@@ -658,13 +658,13 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String
         }
     }
 
-    let mut code = "fn build() -> Div {\n    div()".to_string();
+    let mut code = String::new();
     let mut style = StyleRefinement::default();
     for method in subset_methods {
         let before_change = style.clone();
         style = method.invoke(style);
         if before_change != style {
-            let _ = write!(code, "\n        .{}()", &method.name);
+            let _ = write!(code, "\n.{}()", &method.name);
         }
     }
 
@@ -677,7 +677,7 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String
                     found_match = true;
                     let _ = write!(
                         code,
-                        "\n        .{}(colors.{})",
+                        "\n.{}(colors.{})",
                         color_method.name,
                         theme_color_field.as_ref().to_case(Case::Snake)
                     );
@@ -688,7 +688,7 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String
                     found_match = true;
                     let _ = write!(
                         code,
-                        "\n        .{}(status.{})",
+                        "\n.{}(status.{})",
                         color_method.name,
                         status_color_field.as_ref().to_case(Case::Snake)
                     );
@@ -699,8 +699,6 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String
             }
         }
     }
-
-    code.push_str("\n}");
 
     (code, style)
 }
