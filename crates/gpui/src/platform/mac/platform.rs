@@ -910,7 +910,7 @@ impl Platform for MacPlatform {
                 .action_menus
                 .iter()
                 .find(|(menu_action, _)| menu_action.partial_eq(action))
-                .map(|(_, menu)| menu.clone())
+                .map(|(_, menu)| *menu)
             else {
                 return;
             };
