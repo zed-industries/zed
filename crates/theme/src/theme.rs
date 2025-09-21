@@ -238,6 +238,14 @@ impl ThemeFamily {
             .map(Into::into)
             .unwrap_or_default();
 
+        #[cfg(debug_assertions)]
+        {
+            use collections::HashMap;
+            let mut color_to_count: HashMap<Hsla, u32> = HashMap::default();
+            make_colors_unique(&mut refined_status_colors, &mut color_to_count);
+            make_colors_unique(&mut refined_theme_colors, &mut color_to_count);
+        }
+
         Theme {
             id: uuid::Uuid::new_v4().to_string(),
             name: theme.name.clone().into(),
@@ -278,6 +286,33 @@ pub fn refine_theme_family(theme_family_content: ThemeFamilyContent) -> ThemeFam
     theme_family.themes = refined_themes;
 
     theme_family
+}
+
+/// Make theme colors unique via tiny adjustments to luminance. This is a hack to provide color
+/// provenance information to the inspector (which is only available in debug builds).
+///
+/// Since luminance is an f32, `next_down` / `next_up` should rarely affect RGB.
+#[cfg(debug_assertions)]
+fn make_colors_unique<T, F>(colors: &mut T, color_to_count: &mut collections::HashMap<Hsla, u32>)
+where
+    F: Copy + strum::IntoEnumIterator,
+    T: util::FieldAccessByEnum<Field = F, FieldValue = Hsla>,
+{
+    for field in F::iter() {
+        let mut color = *colors.get_field_by_enum(field);
+        let count = color_to_count.entry(color).or_default();
+        *count += 1;
+        if color.l > 0.5 {
+            for _ in 0..*count {
+                color.l = color.l.next_down();
+            }
+        } else {
+            for _ in 0..*count {
+                color.l = color.l.next_up();
+            }
+        }
+        colors.set_field_by_enum(field, color);
+    }
 }
 
 /// A theme is the primary mechanism for defining the appearance of the UI.
