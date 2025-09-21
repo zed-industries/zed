@@ -21,7 +21,7 @@ use std::sync::Arc;
 use strum::IntoEnumIterator;
 
 use ui::{CommonAnimationExt, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, TryFutureExt};
 
 use crate::AllLanguageModelSettings;
 
@@ -417,11 +417,16 @@ pub fn count_oca_tokens(
     .boxed()
 }
 
+enum Status {
+    LoadingCredentials { _task: Task<()> },
+    Authenticating { _task: Task<()> },
+    Connected,
+    SignedOut,
+}
+
 struct ConfigurationView {
     state: gpui::Entity<State>,
-    load_credentials_task: Option<Task<()>>,
-    authentication_task: Option<Task<()>>,
-    connecting: bool,
+    status: Status,
 }
 
 impl ConfigurationView {
@@ -431,7 +436,7 @@ impl ConfigurationView {
         })
         .detach();
 
-        let load_credentials_task = Some(cx.spawn_in(window, {
+        let load_task = cx.spawn_in(window, {
             let state = state.clone();
             async move |this, cx| {
                 if let Some(task) = state
@@ -441,71 +446,90 @@ impl ConfigurationView {
                     // We don't log an error, because "not signed in" is also an error.
                     let _ = task.await;
                 }
+                let is_authenticated = state
+                    .update(cx, |state, _| state.is_authenticated())
+                    .log_err()
+                    .unwrap_or(false);
+
                 this.update(cx, |this, cx| {
-                    this.load_credentials_task = None;
+                    this.status = if is_authenticated {
+                        Status::Connected
+                    } else {
+                        Status::SignedOut
+                    };
                     cx.notify();
                 })
                 .log_err();
             }
-        }));
+        });
 
         Self {
             state,
-            load_credentials_task,
-            authentication_task: None,
-            connecting: false,
+            status: Status::LoadingCredentials { _task: load_task },
         }
     }
 
-    fn initate_oauth(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.connecting {
+    fn initiate_oauth(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if matches!(
+            self.status,
+            Status::Authenticating { .. } | Status::LoadingCredentials { .. }
+        ) {
             return;
         }
-        self.connecting = true;
-        cx.notify();
 
         let state = self.state.clone();
+        let http_client = cx.http_client();
         let authentication_task = cx.spawn_in(window, async move |this, cx| {
-            let result = cx
-                .update(|_window, cx| (OracleOAuthClient::initiate_oauth(cx), cx.http_client()))
-                .log_err();
+            let session = cx
+                .update(|_window, cx| OracleOAuthClient::initiate_oauth(cx).log_err())
+                .log_err()
+                .flatten();
 
-            if let Some((oauth_session, http_client)) = result {
-                if let Some(oauth_session) = oauth_session.log_err() {
-                    let auth_result = cx
-                        .background_spawn(async move {
-                            OracleOAuthClient::authenticate(http_client, oauth_session).await
-                        })
-                        .await;
+            if let Some(oauth_session) = session {
+                let token = cx
+                    .background_spawn(async move {
+                        OracleOAuthClient::authenticate(http_client, oauth_session).await
+                    })
+                    .await
+                    .log_err();
 
-                    match auth_result {
-                        Ok(oauth_token) => {
-                            let save_task = state
-                                .update(cx, |state, cx| state.set_oauth_token(oauth_token, cx))
-                                .log_err();
-
-                            if let Some(task) = save_task {
-                                task.await.log_err();
-                            }
-                        }
-                        Err(_) => {}
+                if let Some(oauth_token) = token {
+                    if let Some(task) = state
+                        .update(cx, |state, cx| state.set_oauth_token(oauth_token, cx))
+                        .log_err()
+                    {
+                        task.await.log_err();
                     }
                 }
             }
 
-            // Reset the connecting state and clear the authentication task
+            let is_authenticated = state
+                .update(cx, |state, _| state.is_authenticated())
+                .log_err()
+                .unwrap_or(false);
+
             this.update(cx, |this, cx| {
-                this.connecting = false;
-                this.authentication_task = None;
+                this.status = if is_authenticated {
+                    Status::Connected
+                } else {
+                    Status::SignedOut
+                };
                 cx.notify();
             })
             .log_err();
         });
 
-        self.authentication_task = Some(authentication_task);
+        self.status = Status::Authenticating {
+            _task: authentication_task,
+        };
+        cx.notify();
     }
 
     fn sign_out(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Optimistically update UI state.
+        self.status = Status::SignedOut;
+        cx.notify();
+
         let state = self.state.clone();
         cx.spawn_in(window, async move |_, cx| {
             state
@@ -520,19 +544,22 @@ impl ConfigurationView {
 
 impl Render for ConfigurationView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.load_credentials_task.is_some() {
-            let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(2);
-
-            return h_flex()
-                .gap_2()
-                .child(loading_icon)
-                .child(Label::new("Loading Oracle Code Assist credentials…"));
-        }
-
-        let is_authenticated = self.state.read(cx).is_authenticated();
-
-        if is_authenticated {
-            h_flex()
+        match &self.status {
+            Status::LoadingCredentials { .. } => {
+                let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(2);
+                h_flex()
+                    .gap_2()
+                    .child(loading_icon)
+                    .child(Label::new("Loading Oracle Code Assist credentials…"))
+            }
+            Status::Authenticating { .. } => {
+                let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(2);
+                h_flex()
+                    .gap_2()
+                    .child(loading_icon)
+                    .child(Label::new("Connecting to Oracle Code Assist…"))
+            }
+            Status::Connected => h_flex()
                 .mt_1()
                 .p_1()
                 .justify_between()
@@ -552,18 +579,9 @@ impl Render for ConfigurationView {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.sign_out(window, cx);
                         })),
-                )
-        } else {
-            let loading_icon = Icon::new(IconName::ArrowCircle).with_rotate_animation(2);
-
-            if self.connecting {
-                h_flex()
-                    .gap_2()
-                    .child(loading_icon)
-                    .child(Label::new("Connecting to Oracle Code Assist…"))
-            } else {
+                ),
+            Status::SignedOut => {
                 const DESCRIPTION: &str = "To use Oracle Code Assist language models, you need to authenticate with your Oracle account. This will provide access to advanced AI-powered code completion and assistance features.";
-
                 v_flex().gap_2().child(Label::new(DESCRIPTION)).child(
                     Button::new("connect_oca", "Connect to Oracle Code Assist")
                         .icon_color(Color::Muted)
@@ -572,7 +590,7 @@ impl Render for ConfigurationView {
                         .icon_size(IconSize::Medium)
                         .full_width()
                         .on_click(cx.listener(|this, _, window, cx| {
-                            this.initate_oauth(window, cx);
+                            this.initiate_oauth(window, cx);
                         })),
                 )
             }
