@@ -83,7 +83,7 @@ impl settings::Settings for AllLanguageModelSettings {
             },
             oracle: OracleCodeAssistSettings {
                 api_url: oracle.api_url.unwrap(),
-                available_models: oracle.available_models.unwrap(),
+                available_models: oracle.available_models.unwrap_or_default(),
             },
             open_router: OpenRouterSettings {
                 api_url: open_router.api_url.unwrap(),
