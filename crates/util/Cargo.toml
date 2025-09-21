@@ -13,7 +13,7 @@ path = "src/util.rs"
 doctest = true
 
 [features]
-test-support = ["git2", "rand", "util_macros"]
+test-support = ["git2", "rand"]
 
 [dependencies]
 anyhow.workspace = true
@@ -39,7 +39,7 @@ smol.workspace = true
 take-until.workspace = true
 tempfile.workspace = true
 unicase.workspace = true
-util_macros = { workspace = true, optional = true }
+util_macros = { workspace = true }
 walkdir.workspace = true
 workspace-hack.workspace = true
 
@@ -56,4 +56,3 @@ dunce = "1.0"
 git2.workspace = true
 indoc.workspace = true
 rand.workspace = true
-util_macros.workspace = true

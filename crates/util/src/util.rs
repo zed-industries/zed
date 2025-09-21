@@ -31,8 +31,53 @@ use std::{
 use unicase::UniCase;
 
 pub use take_until::*;
+pub use util_macros::FieldAccessByEnum;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
+
+// todo! dedupe docs
+
+/// Trait for types that can access their fields via an enum.
+///
+/// This trait provides a way to dynamically access and modify fields of a struct
+/// using an enum that represents the field names. It's particularly useful for
+/// implementing generic field access patterns, such as theme color management
+/// or configuration field manipulation.
+///
+/// # Example
+///
+/// ```rust
+/// use util::FieldAccessByEnum;
+///
+/// #[derive(util_macros::FieldAccessByEnum)]
+/// #[field_access_by_enum(enum_name = "ColorField", field_type = "String")]
+/// struct Theme {
+///     background: String,
+///     foreground: String,
+///     border: String,
+/// }
+///
+/// let mut theme = Theme {
+///     background: "white".to_string(),
+///     foreground: "black".to_string(),
+///     border: "gray".to_string(),
+/// };
+///
+/// // Access field via enum
+/// let bg = theme.get(ColorField::Background);
+/// theme.set(ColorField::Foreground, "blue".to_string());
+/// ```
+pub trait FieldAccessByEnum {
+    /// The enum type representing the available fields
+    type Field;
+    /// The type of values stored in the fields
+    type FieldValue;
+
+    /// Get a reference to the value of the specified field
+    fn get_field_by_enum(&self, field: Self::Field) -> &Self::FieldValue;
+    /// Set the value of the specified field
+    fn set_field_by_enum(&mut self, field: Self::Field, value: Self::FieldValue);
+}
 
 #[macro_export]
 macro_rules! debug_panic {
