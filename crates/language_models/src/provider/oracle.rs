@@ -18,10 +18,11 @@ use oracle_code_assist::{Model, stream_completion};
 pub use settings::OracleAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
+use std::time::Instant;
 use strum::IntoEnumIterator;
 
 use ui::{CommonAnimationExt, prelude::*};
-use util::{ResultExt, TryFutureExt};
+use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 
@@ -42,16 +43,13 @@ pub struct OracleCodeAssistModelProvider {
 pub struct State {
     oauth_token: Option<OAuthToken>,
     _subscription: Subscription,
+    // Task that schedules and performs proactive token refresh before expiry.
+    refresh_task: Option<Task<()>>,
 }
 
 impl State {
     fn is_authenticated(&self) -> bool {
         self.oauth_token.is_some()
-            && self
-                .oauth_token
-                .as_ref()
-                .map(|token| !token.is_expired())
-                .unwrap()
     }
 
     fn reset_oauth_token(&self, cx: &mut Context<Self>) -> Task<Result<()>> {
@@ -67,6 +65,7 @@ impl State {
                 .log_err();
             this.update(cx, |this, cx| {
                 this.oauth_token = None;
+                this.refresh_task = None;
                 cx.notify();
             })
         })
@@ -100,6 +99,7 @@ impl State {
                 .log_err();
             this.update(cx, |this, cx| {
                 this.oauth_token = Some(oauth_token);
+                this.schedule_oauth_refresh(cx);
                 cx.notify();
             })
         })
@@ -116,7 +116,6 @@ impl State {
             .api_url
             .clone();
 
-        let client = cx.http_client();
         cx.spawn(async move |this, cx| {
             let (_, credential_data) = credentials_provider
                 .read_credentials(&api_url, &cx)
@@ -125,21 +124,62 @@ impl State {
             let oauth_str =
                 String::from_utf8(credential_data).context("Invalid OAuth data format")?;
 
-            let mut oauth_token: OAuthToken =
+            let oauth_token: OAuthToken =
                 serde_json::from_str(&oauth_str).context("Invalid OAuth Token JSON format")?;
 
             if !oauth_token.refresh_token.is_empty() && !oauth_token.access_token.is_empty() {
-                if oauth_token.is_expired() {
-                    oauth_token = oauth_token.refresh(client).await?;
-                }
                 this.update(cx, |this, cx| {
                     this.oauth_token = Some(oauth_token);
+                    this.schedule_oauth_refresh(cx);
                     cx.notify();
                 })?;
             }
 
             Ok(())
         })
+    }
+
+    fn schedule_oauth_refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(token) = self.oauth_token.clone() else {
+            return;
+        };
+
+        // Drop any existing scheduled task.
+        self.refresh_task = None;
+
+        let http_client = cx.http_client();
+        let task = cx.spawn(async move |handle, cx| {
+            let delay = token
+                .expires_at
+                .saturating_duration_since(Instant::now() + OAuthToken::RENEW_BUFFER);
+
+            if !delay.is_zero() {
+                cx.background_spawn(async move {
+                    std::thread::sleep(delay);
+                })
+                .await;
+            }
+
+            let refreshed = cx
+                .background_spawn(async move { token.refresh(http_client).await })
+                .await
+                .log_err();
+
+            let task = match refreshed {
+                None => handle
+                    .update(cx, |state, cx| state.reset_oauth_token(cx))
+                    .log_err(),
+                Some(new_token) => handle
+                    .update(cx, |state, cx| state.set_oauth_token(new_token, cx))
+                    .log_err(),
+            };
+
+            if let Some(task) = task {
+                task.await.log_err();
+            }
+        });
+
+        self.refresh_task = Some(task);
     }
 }
 
@@ -150,6 +190,7 @@ impl OracleCodeAssistModelProvider {
             _subscription: cx.observe_global::<SettingsStore>(|_this: &mut State, cx| {
                 cx.notify();
             }),
+            refresh_task: None,
         });
 
         Self { http_client, state }

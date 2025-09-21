@@ -231,7 +231,7 @@ pub struct OAuthToken {
 }
 
 impl OAuthToken {
-    const RENEW_BUFFER: Duration = Duration::from_secs(180);
+    pub const RENEW_BUFFER: Duration = Duration::from_secs(180);
 
     pub fn new(
         refresh_token: impl Into<String>,
