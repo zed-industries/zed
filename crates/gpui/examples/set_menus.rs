@@ -1,8 +1,7 @@
 use gpui::{
-    App, Application, AsyncApp, Context, FocusHandle, KeyBinding, Menu, MenuItem, PromptLevel,
+    App, Application, Context, FocusHandle, KeyBinding, Menu, MenuItem, PromptLevel,
     SystemMenuType, Window, WindowOptions, actions, div, prelude::*, rgb,
 };
-use util::TryFutureExt;
 
 struct SetMenus {
     focus_handle: FocusHandle,
