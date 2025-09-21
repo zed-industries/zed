@@ -28,6 +28,18 @@ pub async fn parse_markdown(
     }
 }
 
+fn cleanup_html(source: &str) -> Vec<u8> {
+    let mut w = std::io::Cursor::new(vec![]);
+    let mut r = std::io::Cursor::new(source);
+    let mut minify = crate::markdown_minifier::Minifier::new(&mut w);
+    minify.omit_doctype(true);
+    if let Ok(()) = minify.minify(&mut r) {
+        w.into_inner()
+    } else {
+        source.bytes().collect()
+    }
+}
+
 struct MarkdownParser<'a> {
     tokens: Vec<(Event<'a>, Range<usize>)>,
     /// The current index in the tokens array
@@ -771,19 +783,10 @@ impl<'a> MarkdownParser<'a> {
             let source_range = source_range.clone();
             match current {
                 Event::Html(html) => {
-                    let mut cursor = std::io::Cursor::new(html.as_bytes());
-                    let Some(dom) = parse_document(RcDom::default(), ParseOpts::default())
-                        .from_utf8()
-                        .read_from(&mut cursor)
-                        .ok()
-                    else {
-                        self.cursor += 1;
-                        continue;
-                    };
-
+                    html_source_range_start.get_or_insert(source_range.start);
+                    html_source_range_end = Some(source_range.end);
+                    html_buffer.push_str(html);
                     self.cursor += 1;
-
-                    self.parse_html_node(source_range, &dom.document, &mut elements);
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     self.cursor += 1;
@@ -793,6 +796,17 @@ impl<'a> MarkdownParser<'a> {
                     break;
                 }
             }
+        }
+
+        let bytes = cleanup_html(&html_buffer);
+
+        let mut cursor = std::io::Cursor::new(bytes);
+        if let Ok(dom) = parse_document(RcDom::default(), ParseOpts::default())
+            .from_utf8()
+            .read_from(&mut cursor)
+            && let Some((start, end)) = html_source_range_start.zip(html_source_range_end)
+        {
+            self.parse_html_node(start..end, &dom.document, &mut elements);
         }
 
         elements
