@@ -184,7 +184,7 @@ impl LanguageModelProvider for OracleCodeAssistModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::AiOpenAiCompat
+        IconName::AiOracle
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
@@ -567,7 +567,7 @@ impl Render for ConfigurationView {
                 v_flex().gap_2().child(Label::new(DESCRIPTION)).child(
                     Button::new("connect_oca", "Connect to Oracle Code Assist")
                         .icon_color(Color::Muted)
-                        .icon(IconName::Ai)
+                        .icon(IconName::AiOracle)
                         .icon_position(IconPosition::Start)
                         .icon_size(IconSize::Medium)
                         .full_width()
