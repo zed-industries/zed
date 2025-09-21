@@ -267,8 +267,8 @@ impl LanguageModel for XAiLanguageModel {
     fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
         match self.model {
             x_ai::Model::Grok4
-            | x_ai::Model::Grok4Fast
-            | x_ai::Model::Grok4FastThinking
+            | x_ai::Model::Grok4FastNonReasoning
+            | x_ai::Model::Grok4FastReasoning
             | x_ai::Model::GrokCodeFast1 => LanguageModelToolSchemaFormat::JsonSchemaSubset,
             _ => LanguageModelToolSchemaFormat::JsonSchema,
         }
