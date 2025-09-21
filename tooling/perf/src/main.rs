@@ -4,7 +4,7 @@
 //!
 //! # Setup
 //! Make sure `hyperfine` is installed and in the shell path, then run
-//! `cargo build --bin perf --workspace --release` to build the profiler.
+//! `cargo build -p perf --release` to build the profiler.
 //!
 //! # Usage
 //! Calling this tool rebuilds the targeted crate(s) with some cfg flags set for the
@@ -30,6 +30,16 @@
 //! Similarly, to skip outputting progress to the command line, pass `-- --quiet`.
 //! These flags can be combined.
 //!
+//! ## Comparing runs
+//! Passing `--json=ident` will save per-crate run files in `.perf-runs`, e.g.
+//! `cargo perf-test -p gpui -- --json=blah` will result in `.perf-runs/blah.gpui.json`
+//! being created (unless no tests were run). These results can be automatically
+//! compared. To do so, run `cargo perf-compare new-ident old-ident`.
+//!
+//! NB: All files matching `.perf-runs/ident.*.json` will be considered when
+//! doing this comparison, so ensure there aren't leftover files in your `.perf-runs`
+//! directory that might match that!
+//!
 //! # Notes
 //! This should probably not be called manually unless you're working on the profiler
 //! itself; use the `cargo perf-test` alias (after building this crate) instead.
@@ -38,6 +48,9 @@
 use perf::*;
 
 use std::{
+    fs::OpenOptions,
+    io::Write,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
@@ -46,8 +59,6 @@ use std::{
 const DEFAULT_ITER_COUNT: usize = 3;
 /// Multiplier for the iteration count when a test doesn't pass the noise cutoff.
 const ITER_COUNT_MUL: usize = 4;
-/// How long a test must have run to be assumed to be reliable-ish.
-const NOISE_CUTOFF: Duration = Duration::from_millis(250);
 
 /// Report a failure into the output and skip an iteration.
 macro_rules! fail {
@@ -65,277 +76,143 @@ macro_rules! fail {
     }};
 }
 
-/// Why or when did this test fail?
-#[derive(Clone, Debug)]
-enum FailKind {
-    /// Failed while triaging it to determine the iteration count.
-    Triage,
-    /// Failed while profiling it.
-    Profile,
-    /// Failed due to an incompatible version for the test.
-    VersionMismatch,
-    /// Skipped due to filters applied on the perf run.
-    Skipped,
+/// How does this perf run return its output?
+enum OutputKind<'a> {
+    /// Print markdown to the terminal.
+    Markdown,
+    /// Save JSON to a file.
+    Json(&'a Path),
 }
 
-impl std::fmt::Display for FailKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FailKind::Triage => f.write_str("failed in triage"),
-            FailKind::Profile => f.write_str("failed while profiling"),
-            FailKind::VersionMismatch => f.write_str("test version mismatch"),
-            FailKind::Skipped => f.write_str("skipped"),
+/// Runs a given metadata-returning function from a test handler, parsing its
+/// output into a `TestMdata`.
+fn parse_mdata(test_bin: &str, mdata_fn: &str) -> Result<TestMdata, FailKind> {
+    let mut cmd = Command::new(test_bin);
+    cmd.args([mdata_fn, "--exact", "--nocapture"]);
+    let out = cmd
+        .output()
+        .expect("FATAL: Could not run test binary {test_bin}");
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut version = None;
+    let mut iterations = None;
+    let mut importance = Importance::default();
+    let mut weight = consts::WEIGHT_DEFAULT;
+    for line in stdout
+        .lines()
+        .filter_map(|l| l.strip_prefix(consts::MDATA_LINE_PREF))
+    {
+        let mut items = line.split_whitespace();
+        // For v0, we know the ident always comes first, then one field.
+        match items.next().unwrap() {
+            consts::VERSION_LINE_NAME => {
+                let v = items.next().unwrap().parse::<u32>().unwrap();
+                if v > consts::MDATA_VER {
+                    return Err(FailKind::VersionMismatch);
+                }
+                version = Some(v);
+            }
+            consts::ITER_COUNT_LINE_NAME => {
+                iterations = Some(items.next().unwrap().parse::<usize>().unwrap());
+            }
+            consts::IMPORTANCE_LINE_NAME => {
+                importance = match items.next().unwrap() {
+                    "critical" => Importance::Critical,
+                    "important" => Importance::Important,
+                    "average" => Importance::Average,
+                    "iffy" => Importance::Iffy,
+                    "fluff" => Importance::Fluff,
+                    _ => unreachable!(),
+                };
+            }
+            consts::WEIGHT_LINE_NAME => {
+                weight = items.next().unwrap().parse::<u8>().unwrap();
+            }
+            _ => unreachable!(),
         }
     }
+
+    Ok(TestMdata {
+        version: version.unwrap(),
+        // Iterations may be determined by us and thus left unspecified.
+        iterations,
+        // In principle this should always be set, but just for the sake of
+        // stability allow the potentially-breaking change of not reporting the
+        // importance without erroring. Maybe we want to change this.
+        importance,
+        // Same with weight.
+        weight,
+    })
 }
 
-/// Information about a given perf test.
-#[derive(Clone, Debug)]
-struct TestMdata {
-    /// A version number for when the test was generated. If this is greater
-    /// than the version this test handler expects, one of the following will
-    /// happen in an unspecified manner:
-    /// - The test is skipped silently.
-    /// - The handler exits with an error message indicating the version mismatch
-    ///   or inability to parse the metadata.
-    ///
-    /// INVARIANT: If `version` <= `MDATA_VER`, this tool *must* be able to
-    /// correctly parse the output of this test.
-    _version: u32,
-    /// How many iterations to pass this test, if this is preset.
-    iterations: Option<usize>,
-    /// The importance of this particular test. See the docs on `Importance` for
-    /// details.
-    importance: Importance,
-    /// The weight of this particular test within its importance category. Used
-    /// when comparing across runs.
-    weight: u8,
-}
+/// Compares the perf results of two profiles as per the arguments passed in.
+fn compare_profiles(args: &[String]) {
+    let ident_new = args.first().expect("FATAL: missing identifier for new run");
+    let ident_old = args.get(1).expect("FATAL: missing identifier for old run");
+    // TODO: move this to a constant also tbh
+    let wspace_dir = std::env::var("CARGO_WORKSPACE_DIR").unwrap();
+    let runs_dir = PathBuf::from(&wspace_dir).join(consts::RUNS_DIR);
 
-impl TestMdata {
-    /// Runs a given metadata-returning function from a test handler, parsing its
-    /// output into a `TestMdata`.
-    fn parse(test_bin: &str, mdata_fn: &str) -> Result<Self, FailKind> {
-        let mut cmd = Command::new(test_bin);
-        cmd.args([mdata_fn, "--exact", "--nocapture"]);
-        let out = cmd
-            .output()
-            .expect("FATAL: Could not run test binary {test_bin}");
-        assert!(out.status.success());
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let mut version = None;
-        let mut iterations = None;
-        let mut importance = Importance::default();
-        let mut weight = WEIGHT_DEFAULT;
-        for line in stdout
-            .lines()
-            .filter_map(|l| l.strip_prefix(MDATA_LINE_PREF))
-        {
-            let mut items = line.split_whitespace();
-            // For v0, we know the ident always comes first, then one field.
-            match items.next().unwrap() {
-                VERSION_LINE_NAME => {
-                    let v = items.next().unwrap().parse::<u32>().unwrap();
-                    if v > MDATA_VER {
-                        return Err(FailKind::VersionMismatch);
-                    }
-                    version = Some(v);
-                }
-                ITER_COUNT_LINE_NAME => {
-                    iterations = Some(items.next().unwrap().parse::<usize>().unwrap());
-                }
-                IMPORTANCE_LINE_NAME => {
-                    importance = match items.next().unwrap() {
-                        "critical" => Importance::Critical,
-                        "important" => Importance::Important,
-                        "average" => Importance::Average,
-                        "iffy" => Importance::Iffy,
-                        "fluff" => Importance::Fluff,
-                        _ => unreachable!(),
-                    };
-                }
-                WEIGHT_LINE_NAME => {
-                    weight = items.next().unwrap().parse::<u8>().unwrap();
-                }
-                _ => unreachable!(),
+    // Use the blank outputs initially, so we can merge into these with prefixes.
+    let mut outputs_new = Output::blank();
+    let mut outputs_old = Output::blank();
+
+    for e in runs_dir.read_dir().unwrap() {
+        let Ok(entry) = e else {
+            continue;
+        };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.is_file() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+
+            // A little helper to avoid code duplication. Reads the `output` from
+            // a json file, then merges it into what we have so far.
+            let read_into = |output: &mut Output| {
+                let mut elems = name.split('.').skip(1);
+                let prefix = elems.next().unwrap();
+                assert_eq!("json", elems.next().unwrap());
+                assert!(elems.next().is_none());
+                let handle = OpenOptions::new().read(true).open(entry.path()).unwrap();
+                let o_other: Output = serde_json::from_reader(handle).unwrap();
+                output.merge(o_other, prefix);
+            };
+
+            if name.starts_with(ident_old) {
+                read_into(&mut outputs_old);
+            } else if name.starts_with(ident_new) {
+                read_into(&mut outputs_new);
             }
         }
-
-        Ok(TestMdata {
-            _version: version.unwrap(),
-            // Iterations may be determined by us and thus left unspecified.
-            iterations,
-            // In principle this should always be set, but just for the sake of
-            // stability allow the potentially-breaking change of not reporting the
-            // importance without erroring. Maybe we want to change this.
-            importance,
-            // Same with weight.
-            weight,
-        })
-    }
-}
-
-/// Aggregate output of all tests run by this handler.
-#[derive(Clone, Debug, Default)]
-struct Output {
-    /// A list of test outputs. Format is `(test_name, iter_count, timings)`.
-    /// The latter being set indicates the test succeeded.
-    ///
-    /// INVARIANT: If the test succeeded, the second field is `Some(mdata)` and
-    /// `mdata.iterations` is `Some(_)`.
-    tests: Vec<(String, Option<TestMdata>, Result<Timings, FailKind>)>,
-}
-
-impl Output {
-    /// Reports a success and adds it to this run's `Output`.
-    fn success(
-        &mut self,
-        name: impl AsRef<str>,
-        mut mdata: TestMdata,
-        iters: usize,
-        timings: Timings,
-    ) {
-        mdata.iterations = Some(iters);
-        self.tests
-            .push((name.as_ref().to_string(), Some(mdata), Ok(timings)));
     }
 
-    /// Reports a failure and adds it to this run's `Output`. If this test was tried
-    /// with some number of iterations (i.e. this was not a version mismatch or skipped
-    /// test), it should be reported also.
-    ///
-    /// Using the `fail!()` macro is usually more convenient.
-    fn failure(
-        &mut self,
-        name: impl AsRef<str>,
-        mut mdata: Option<TestMdata>,
-        attempted_iters: Option<usize>,
-        kind: FailKind,
-    ) {
-        if let Some(ref mut mdata) = mdata {
-            mdata.iterations = attempted_iters;
-        }
-        self.tests
-            .push((name.as_ref().to_string(), mdata, Err(kind)));
-    }
-
-    /// Sorts the runs in the output in the order that we want it printed.
-    fn sort(&mut self) {
-        self.tests.sort_unstable_by(|a, b| match (a, b) {
-            // Tests where we got no metadata go at the end.
-            ((_, Some(_), _), (_, None, _)) => std::cmp::Ordering::Greater,
-            ((_, None, _), (_, Some(_), _)) => std::cmp::Ordering::Less,
-            // Then sort by importance, then weight.
-            ((_, Some(a_mdata), _), (_, Some(b_mdata), _)) => {
-                let c = a_mdata.importance.cmp(&b_mdata.importance);
-                if matches!(c, std::cmp::Ordering::Equal) {
-                    a_mdata.weight.cmp(&b_mdata.weight)
-                } else {
-                    c
-                }
-            }
-            // Lastly by name.
-            ((a_name, ..), (b_name, ..)) => a_name.cmp(b_name),
-        });
-    }
-}
-
-impl std::fmt::Display for Output {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Don't print the header for an empty run.
-        if self.tests.is_empty() {
-            return Ok(());
-        }
-
-        // We want to print important tests at the top, then alphabetical.
-        let mut sorted = self.clone();
-        sorted.sort();
-        // Markdown header for making a nice little table :>
-        f.write_str(
-            "| Command | Iter/sec | Mean [ms] | SD [ms] | Iterations | Importance (weight) |\n",
-        )?;
-        f.write_str("|:---|---:|---:|---:|---:|---:|\n")?;
-        for (name, metadata, timings) in &sorted.tests {
-            match metadata {
-                Some(metadata) => match timings {
-                    // Happy path.
-                    Ok(timings) => {
-                        // If the test succeeded, then metadata.iterations is Some(_).
-                        f.write_str(&format!(
-                            "| {} | {:.2} | {} | {:.2} | {} | {} ({}) |\n",
-                            name,
-                            timings.iters_per_sec(metadata.iterations.unwrap()),
-                            {
-                                // Very small mean runtimes will give inaccurate
-                                // results. Should probably also penalise weight.
-                                let mean = timings.mean.as_secs_f64() * 1000.;
-                                if mean < NOISE_CUTOFF.as_secs_f64() * 1000. / 8. {
-                                    format!("{mean:.2} (unreliable)")
-                                } else {
-                                    format!("{mean:.2}")
-                                }
-                            },
-                            timings.stddev.as_secs_f64() * 1000.,
-                            metadata.iterations.unwrap(),
-                            metadata.importance,
-                            metadata.weight,
-                        ))?;
-                    }
-                    // We have (some) metadata, but the test errored.
-                    Err(err) => f.write_str(&format!(
-                        "| ({}) {} | N/A | N/A | N/A | {} | {} ({}) |\n",
-                        err,
-                        name,
-                        metadata
-                            .iterations
-                            .map_or_else(|| "N/A".to_owned(), |i| format!("{i}")),
-                        metadata.importance,
-                        metadata.weight
-                    ))?,
-                },
-                // No metadata, couldn't even parse the test output.
-                None => f.write_str(&format!(
-                    "| ({}) {} | N/A | N/A | N/A | N/A | N/A |\n",
-                    timings.as_ref().unwrap_err(),
-                    name
-                ))?,
-            }
-        }
-        f.write_str("\n")?;
-        Ok(())
-    }
-}
-
-/// The actual timings of a test, as measured by Hyperfine.
-#[derive(Clone, Debug)]
-struct Timings {
-    /// Mean runtime for `self.iter_total` runs of this test.
-    mean: Duration,
-    /// Standard deviation for the above.
-    stddev: Duration,
-}
-
-impl Timings {
-    /// How many iterations does this test seem to do per second?
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "We only care about a couple sig figs anyways"
-    )]
-    fn iters_per_sec(&self, total_iters: usize) -> f64 {
-        (1000. / self.mean.as_millis() as f64) * total_iters as f64
-    }
+    let res = outputs_new.compare_perf(outputs_old);
+    println!("{res}");
 }
 
 #[expect(clippy::too_many_lines, reason = "This will be split up soon!")]
 fn main() {
     let args = std::env::args().collect::<Vec<_>>();
     // We get passed the test we need to run as the 1st argument after our own name.
-    let test_bin = &args[1];
+    let test_bin = args
+        .get(1)
+        .expect("FATAL: No test binary or command; this shouldn't be manually invoked!");
+
+    // We're being asked to compare two results, not run the profiler.
+    if test_bin == "compare" {
+        compare_profiles(&args[2..]);
+        return;
+    }
 
     // Whether to skip printing some information to stderr.
     let mut quiet = false;
     // Minimum test importance we care about this run.
     let mut thresh = Importance::Iffy;
+    // Where to print the output of this run.
+    let mut out_kind = OutputKind::Markdown;
 
     for arg in args.iter().skip(2) {
         match arg.as_str() {
@@ -345,11 +222,17 @@ fn main() {
             "--iffy" => thresh = Importance::Iffy,
             "--fluff" => thresh = Importance::Fluff,
             "--quiet" => quiet = true,
+            s if s.starts_with("--json") => {
+                out_kind = OutputKind::Json(Path::new(
+                    s.strip_prefix("--json=")
+                        .expect("FATAL: Invalid json parameter; pass --json=filename"),
+                ));
+            }
             _ => (),
         }
     }
     if !quiet {
-        eprintln!("Starting perf check...");
+        eprintln!("Starting perf check");
     }
 
     let mut cmd = Command::new(test_bin);
@@ -380,7 +263,9 @@ fn main() {
             }
         })
         // Exclude tests that aren't marked for perf triage based on suffix.
-        .filter(|t_name| t_name.ends_with(SUF_NORMAL) || t_name.ends_with(SUF_MDATA))
+        .filter(|t_name| {
+            t_name.ends_with(consts::SUF_NORMAL) || t_name.ends_with(consts::SUF_MDATA)
+        })
         .collect();
 
     // Pulling itertools just for .dedup() would be quite a big dependency that's
@@ -406,16 +291,16 @@ fn main() {
             eprint!("\rProfiling test {}/{}", idx + 1, len / 2);
         }
         // Be resilient against changes to these constants.
-        let (t_name, t_mdata) = if SUF_NORMAL < SUF_MDATA {
+        let (t_name, t_mdata) = if consts::SUF_NORMAL < consts::SUF_MDATA {
             (t_pair[0], t_pair[1])
         } else {
             (t_pair[1], t_pair[0])
         };
         // Pretty-printable stripped name for the test.
-        let t_name_pretty = t_name.replace(SUF_NORMAL, "");
+        let t_name_pretty = t_name.replace(consts::SUF_NORMAL, "");
 
         // Get the metadata this test reports for us.
-        let t_mdata = match TestMdata::parse(test_bin, t_mdata) {
+        let t_mdata = match parse_mdata(test_bin, t_mdata) {
             Ok(mdata) => mdata,
             Err(err) => fail!(output, t_name_pretty, err),
         };
@@ -433,7 +318,7 @@ fn main() {
             loop {
                 let mut cmd = Command::new(test_bin);
                 cmd.args([t_name, "--exact"]);
-                cmd.env(ITER_ENV_VAR, format!("{iter_count}"));
+                cmd.env(consts::ITER_ENV_VAR, format!("{iter_count}"));
                 // Don't let the child muck up our stdin/out/err.
                 cmd.stdin(Stdio::null());
                 cmd.stdout(Stdio::null());
@@ -446,7 +331,7 @@ fn main() {
                     errored = true;
                     break iter_count;
                 }
-                if post - pre > NOISE_CUTOFF {
+                if post - pre > consts::NOISE_CUTOFF {
                     break iter_count;
                 } else if let Some(c) = iter_count.checked_mul(ITER_COUNT_MUL) {
                     iter_count = c;
@@ -478,7 +363,7 @@ fn main() {
             "-",
             &format!("{test_bin} {t_name}"),
         ]);
-        perf_cmd.env(ITER_ENV_VAR, format!("{final_iter_count}"));
+        perf_cmd.env(consts::ITER_ENV_VAR, format!("{final_iter_count}"));
         let p_out = perf_cmd.output().unwrap();
         if p_out.status.success() {
             let cmd_output = String::from_utf8_lossy(&p_out.stdout);
@@ -510,13 +395,57 @@ fn main() {
         }
     }
     if !quiet {
-        if output.tests.is_empty() {
+        if output.is_empty() {
             eprintln!("Nothing to do.");
         } else {
             // If stdout and stderr are on the same terminal, move us after the
-            // output from above (with an extra newline for good measure).
-            eprintln!("\n");
+            // output from above.
+            eprintln!();
         }
     }
-    print!("{output}");
+
+    // No need making an empty json file on every empty test bin.
+    if output.is_empty() {
+        return;
+    }
+
+    match out_kind {
+        OutputKind::Markdown => print!("{output}"),
+        OutputKind::Json(user_path) => {
+            let wspace_dir = std::env::var("CARGO_WORKSPACE_DIR").unwrap();
+            let runs_dir = PathBuf::from(&wspace_dir).join(consts::RUNS_DIR);
+            std::fs::create_dir_all(&runs_dir).unwrap();
+            assert!(
+                !user_path.to_string_lossy().is_empty(),
+                "FATAL: Empty filename specified!"
+            );
+            // Get the test binary's crate's name; a path like
+            // target/release-fast/deps/gpui-061ff76c9b7af5d7
+            // would be reduced to just "gpui".
+            let test_bin_stripped = Path::new(test_bin)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .rsplit_once('-')
+                .unwrap()
+                .0;
+            let mut file_path = runs_dir.join(user_path);
+            file_path
+                .as_mut_os_string()
+                .push(format!(".{test_bin_stripped}.json"));
+            let mut out_file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&file_path)
+                .unwrap();
+            out_file
+                .write_all(&serde_json::to_vec(&output).unwrap())
+                .unwrap();
+            if !quiet {
+                eprintln!("JSON output written to {}", file_path.display());
+            }
+        }
+    }
 }

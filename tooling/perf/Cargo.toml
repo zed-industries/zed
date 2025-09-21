@@ -24,4 +24,7 @@ undocumented_unsafe_blocks = "forbid"
 missing_safety_doc = "forbid"
 
 [dependencies]
+collections.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 workspace-hack.workspace = true

@@ -198,6 +198,9 @@ pub fn perf(our_attr: TokenStream, input: TokenStream) -> TokenStream {
     attrs_main.push(parse_quote!(#[allow(non_snake_case)]));
 
     let fns = if cfg!(perf_enabled) {
+        #[allow(clippy::wildcard_imports, reason = "We control the other side")]
+        use consts::*;
+
         // Make the ident obvious when calling, for the test parser.
         // Also set up values for the second metadata-returning "test".
         let mut new_ident_main = sig_main.ident.to_string();
