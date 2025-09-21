@@ -378,7 +378,7 @@ impl Platform for TestPlatform {
 
     fn on_validate_app_menu_command(&self, _callback: Box<dyn FnMut(&dyn crate::Action) -> bool>) {}
 
-    fn on_action_triggered(&self, action: &dyn Action) {}
+    fn on_action_triggered(&self, _action: &dyn Action) {}
 
     fn app_path(&self) -> Result<std::path::PathBuf> {
         unimplemented!()
