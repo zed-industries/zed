@@ -776,6 +776,10 @@ impl<'a> MarkdownParser<'a> {
             return elements;
         };
 
+        let mut html_source_range_start = None;
+        let mut html_source_range_end = None;
+        let mut html_buffer = String::new();
+
         while !self.eof() {
             let Some((current, source_range)) = self.current() else {
                 break;
@@ -865,6 +869,55 @@ impl<'a> MarkdownParser<'a> {
                                 _ => unreachable!(),
                             },
                             contents: paragraph,
+                        }));
+                    }
+                } else if local_name!("table") == name.local {
+                    let mut header_columns = Vec::new();
+                    let mut body_rows = Vec::new();
+
+                    // node should be a thead or tbody element
+                    for node in node.children.borrow().iter() {
+                        match &node.data {
+                            markup5ever_rcdom::NodeData::Element { name, .. } => {
+                                if local_name!("thead") == name.local {
+                                    // node should be a tr element
+                                    for node in node.children.borrow().iter() {
+                                        let mut paragraph = MarkdownParagraph::new();
+                                        self.consume_paragraph(
+                                            source_range.clone(),
+                                            node,
+                                            &mut paragraph,
+                                        );
+
+                                        for paragraph in paragraph.into_iter() {
+                                            header_columns.push(vec![paragraph]);
+                                        }
+                                    }
+                                } else if local_name!("tbody") == name.local {
+                                    // node should be a tr element
+                                    for node in node.children.borrow().iter() {
+                                        let mut row = MarkdownParagraph::new();
+                                        self.consume_paragraph(
+                                            source_range.clone(),
+                                            node,
+                                            &mut row,
+                                        );
+                                        body_rows.push(ParsedMarkdownTableRow::with_children(
+                                            row.into_iter().map(|column| vec![column]).collect(),
+                                        ));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    if !header_columns.is_empty() || !body_rows.is_empty() {
+                        elements.push(ParsedMarkdownElement::Table(ParsedMarkdownTable {
+                            source_range,
+                            header: ParsedMarkdownTableRow::with_children(header_columns),
+                            body: body_rows,
+                            column_alignments: Vec::default(),
                         }));
                     }
                 } else {
@@ -1341,6 +1394,45 @@ mod tests {
         assert_eq!(
             MarkdownParser::parse_length("42.0"),
             Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0))))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_html_table() {
+        let parsed = parse(
+            "<table>
+          <thead>
+            <tr>
+              <th>Id</th>
+              <th>Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>Chris</td>
+            </tr>
+            <tr>
+              <td>2</td>
+              <td>Dennis</td>
+            </tr>
+          </tbody>
+        </table>",
+        )
+        .await;
+
+        assert_eq!(
+            ParsedMarkdown {
+                children: vec![ParsedMarkdownElement::Table(table(
+                    0..366,
+                    row(vec![text("Id", 0..366), text("Name ", 0..366)]),
+                    vec![
+                        row(vec![text("1", 0..366), text("Chris", 0..366)]),
+                        row(vec![text("2", 0..366), text("Dennis", 0..366)]),
+                    ],
+                ))],
+            },
+            parsed
         );
     }
 
