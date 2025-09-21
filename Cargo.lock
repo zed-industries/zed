@@ -18586,6 +18586,7 @@ dependencies = [
 name = "util_macros"
 version = "0.1.0"
 dependencies = [
+ "perf",
  "quote",
  "syn 2.0.101",
  "workspace-hack",
