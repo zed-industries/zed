@@ -641,6 +641,15 @@ impl DebugPanel {
                 .tooltip(Tooltip::text("Open Debug Adapter Logs"))
         };
 
+        let edit_debug_json_button = || {
+            IconButton::new("debug-edit-debug-json", IconName::Code)
+                .icon_size(IconSize::Small)
+                .on_click(move |_, window, cx| {
+                    window.dispatch_action(zed_actions::OpenProjectDebugTasks.boxed_clone(), cx);
+                })
+                .tooltip(Tooltip::text("Edit debug.json"))
+        };
+
         Some(
             div.w_full()
                 .py_1()
@@ -901,6 +910,7 @@ impl DebugPanel {
                             this.child(new_session_button())
                                 .child(logs_button())
                                 .child(documentation_button())
+                                .child(edit_debug_json_button())
                         }),
                 )
                 .child(
@@ -953,6 +963,7 @@ impl DebugPanel {
                                     this.child(new_session_button())
                                         .child(logs_button())
                                         .child(documentation_button())
+                                        .child(edit_debug_json_button())
                                 }),
                         ),
                 ),
