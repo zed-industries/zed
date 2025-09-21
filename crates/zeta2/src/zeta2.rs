@@ -194,6 +194,13 @@ impl Zeta {
 
                     // TODO telemetry: duration, etc
 
+                    // TODO produce smaller edits by diffing against snapshot first
+                    //
+                    // Cloud returns entire snippets/excerpts ranges as they were included
+                    // in the request, but we should display smaller edits to the user.
+                    //
+                    // We can do this by computing a diff of each one against the snapshot.
+                    // Similar to zeta::Zeta::compute_edits, but per edit.
                     let edits = response
                         .edits
                         .into_iter()
