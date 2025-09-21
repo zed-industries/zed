@@ -1,9 +1,11 @@
 use anyhow::{Result, anyhow};
+use convert_case::{Case, Casing};
 use editor::{
     Bias, CompletionProvider, Editor, EditorEvent, EditorMode, ExcerptId, MinimapVisibility,
     MultiBuffer,
 };
 use fuzzy::StringMatch;
+use gpui::Hsla;
 use gpui::{
     AsyncWindowContext, DivInspectorState, Entity, InspectorElementId, IntoElement,
     StyleRefinement, Task, Window, inspector_reflection::FunctionReflection, styled_reflection,
@@ -11,7 +13,7 @@ use gpui::{
 use language::language_settings::SoftWrap;
 use language::{
     Anchor, Buffer, BufferSnapshot, CodeLabel, Diagnostic, DiagnosticEntry, DiagnosticSet,
-    DiagnosticSeverity, LanguageServerId, Point, ToOffset as _, ToPoint as _,
+    DiagnosticSeverity, LanguageServerId, ToOffset as _,
 };
 use project::lsp_store::CompletionDocumentation;
 use project::{
@@ -23,8 +25,10 @@ use std::ops::Range;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::LazyLock;
+use strum::IntoEnumIterator;
+use theme::{StatusColorField, ThemeColorField};
 use ui::{Label, LabelSize, Tooltip, prelude::*, styled_ext_reflection, v_flex};
-use util::split_str_with_ranges;
+use util::{FieldAccessByEnum, TakeUntilExt, split_str_with_ranges};
 
 /// Path used for unsaved buffer that contains style json. To support the json language server, this
 /// matches the name used in the generated schemas.
@@ -210,6 +214,7 @@ impl DivInspector {
                         Ok(new_style) => {
                             let (rust_style, _) = this.style_from_rust_buffer_snapshot(
                                 &rust_style_buffer.read(cx).snapshot(),
+                                cx,
                             );
 
                             let mut unconvertible_plus_rust = this.unconvertible_style.clone();
@@ -301,11 +306,11 @@ impl DivInspector {
             }
         };
 
-        let (rust_code, rust_style) = guess_rust_code_from_style(&self.initial_style);
+        let (rust_code, rust_style) = guess_rust_code_from_style(&self.initial_style, cx);
         rust_style_buffer.update(cx, |rust_style_buffer, cx| {
             rust_style_buffer.set_text(rust_code, cx);
             let snapshot = rust_style_buffer.snapshot();
-            let (_, unrecognized_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
+            let (_, unrecognized_ranges) = self.style_from_rust_buffer_snapshot(&snapshot, cx);
             Self::set_rust_buffer_diagnostics(
                 unrecognized_ranges,
                 rust_style_buffer,
@@ -348,7 +353,8 @@ impl DivInspector {
     ) {
         let rust_style = rust_style_buffer.update(cx, |rust_style_buffer, cx| {
             let snapshot = rust_style_buffer.snapshot();
-            let (rust_style, unrecognized_ranges) = self.style_from_rust_buffer_snapshot(&snapshot);
+            let (rust_style, unrecognized_ranges) =
+                self.style_from_rust_buffer_snapshot(&snapshot, cx);
             Self::set_rust_buffer_diagnostics(
                 unrecognized_ranges,
                 rust_style_buffer,
@@ -385,6 +391,7 @@ impl DivInspector {
     fn style_from_rust_buffer_snapshot(
         &self,
         snapshot: &BufferSnapshot,
+        cx: &App,
     ) -> (StyleRefinement, Vec<Range<Anchor>>) {
         let method_names = if let Some((completion, completion_range)) = self
             .rust_completion
@@ -418,18 +425,7 @@ impl DivInspector {
                 .collect::<Vec<_>>()
         };
 
-        let mut style = StyleRefinement::default();
-        let mut unrecognized_ranges = Vec::new();
-        for (range, name) in method_names {
-            if let Some((_, method)) = STYLE_METHODS.iter().find(|(_, m)| m.name == name) {
-                style = method.invoke(style);
-            } else if let Some(range) = range {
-                unrecognized_ranges
-                    .push(snapshot.anchor_before(range.start)..snapshot.anchor_before(range.end));
-            }
-        }
-
-        (style, unrecognized_ranges)
+        guess_style_from_rust_code(method_names, snapshot, cx)
     }
 
     fn set_rust_buffer_diagnostics(
@@ -602,7 +598,59 @@ static STYLE_METHODS: LazyLock<Vec<(Box<StyleRefinement>, FunctionReflection<Sty
             .collect()
     });
 
-fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> (String, StyleRefinement) {
+static COLOR_METHODS: &[ColorMethod] = &[
+    ColorMethod {
+        name: "border_color",
+        set: |style, color| style.border_color(color),
+        get: |style| style.border_color,
+    },
+    ColorMethod {
+        name: "text_color",
+        set: |style, color| style.text_color(color),
+        get: |style| style.text.as_ref().and_then(|text_style| text_style.color),
+    },
+    ColorMethod {
+        name: "text_decoration_color",
+        set: |style, color| style.text_decoration_color(color),
+        get: |style| {
+            style.text.as_ref().and_then(|text_style| {
+                text_style
+                    .underline
+                    .as_ref()
+                    .and_then(|underline| underline.color)
+            })
+        },
+    },
+    ColorMethod {
+        name: "text_bg",
+        set: |style, color| style.text_bg(color),
+        get: |style| {
+            style
+                .text
+                .as_ref()
+                .and_then(|text_style| text_style.background_color)
+        },
+    },
+    ColorMethod {
+        name: "bg",
+        set: |style, color| style.bg(color),
+        get: |style| {
+            style.background.as_ref().and_then(|background| {
+                background
+                    .color()
+                    .and_then(|background| background.as_solid())
+            })
+        },
+    },
+];
+
+struct ColorMethod {
+    name: &'static str,
+    set: fn(StyleRefinement, Hsla) -> StyleRefinement,
+    get: fn(&StyleRefinement) -> Option<Hsla>,
+}
+
+fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String, StyleRefinement) {
     let mut subset_methods = Vec::new();
     for (style, method) in STYLE_METHODS.iter() {
         if goal_style.is_superset_of(style) {
@@ -619,9 +667,87 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement) -> (String, StyleRef
             let _ = write!(code, "\n        .{}()", &method.name);
         }
     }
+
+    let theme = cx.theme();
+    for color_method in COLOR_METHODS {
+        if let Some(color) = (color_method.get)(&goal_style) {
+            let mut found_match = false;
+            for theme_color_field in ThemeColorField::iter() {
+                if *theme.colors().get_field_by_enum(theme_color_field) == color {
+                    found_match = true;
+                    let _ = write!(
+                        code,
+                        "\n        .{}(colors.{})",
+                        color_method.name,
+                        theme_color_field.as_ref().to_case(Case::Snake)
+                    );
+                }
+            }
+            for status_color_field in StatusColorField::iter() {
+                if *theme.status().get_field_by_enum(status_color_field) == color {
+                    found_match = true;
+                    let _ = write!(
+                        code,
+                        "\n        .{}(status.{})",
+                        color_method.name,
+                        status_color_field.as_ref().to_case(Case::Snake)
+                    );
+                }
+            }
+            if found_match {
+                style = (color_method.set)(style, color);
+            }
+        }
+    }
+
     code.push_str("\n}");
 
     (code, style)
+}
+
+fn guess_style_from_rust_code(
+    method_names: Vec<(Option<Range<usize>>, String)>,
+    snapshot: &BufferSnapshot,
+    cx: &App,
+) -> (StyleRefinement, Vec<Range<Anchor>>) {
+    let theme = cx.theme();
+    let mut style = StyleRefinement::default();
+    let mut unrecognized_ranges = Vec::new();
+    let mut preceded_by_color_method: Option<&ColorMethod> = None;
+    for (range, name) in method_names {
+        if name == "colors" || name == "status" {
+            continue;
+        }
+        if let Some(color_method) = preceded_by_color_method {
+            if let Some(field) = ThemeColorField::iter()
+                .find(|field| name == field.as_ref().to_case(Case::Snake).as_str())
+            {
+                style = (color_method.set)(style, *theme.colors().get_field_by_enum(field));
+                continue;
+            }
+            if let Some(field) = StatusColorField::iter()
+                .find(|field| name == field.as_ref().to_case(Case::Snake).as_str())
+            {
+                style = (color_method.set)(style, *theme.status().get_field_by_enum(field));
+                continue;
+            }
+        }
+        if let Some((_, method)) = STYLE_METHODS.iter().find(|(_, m)| m.name == name) {
+            preceded_by_color_method = None;
+            style = method.invoke(style);
+            continue;
+        }
+        if let Some(color_method) = COLOR_METHODS.iter().find(|m| m.name == name) {
+            preceded_by_color_method = Some(color_method);
+            continue;
+        }
+        if let Some(range) = range {
+            unrecognized_ranges
+                .push(snapshot.anchor_before(range.start)..snapshot.anchor_before(range.end));
+        }
+    }
+
+    (style, unrecognized_ranges)
 }
 
 fn is_not_identifier_char(c: char) -> bool {
@@ -642,34 +768,102 @@ impl CompletionProvider for RustStyleCompletionProvider {
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
-        let Some(replace_range) = completion_replace_range(&buffer.read(cx).snapshot(), &position)
-        else {
+        let snapshot: &text::BufferSnapshot = &buffer.read(cx);
+        let Some(replace_range) = completion_replace_range(snapshot, &position) else {
             return Task::ready(Ok(Vec::new()));
         };
+
+        let preceded_by_colors;
+        let preceded_by_status;
+        {
+            let rev_chars_before = snapshot
+                .reversed_chars_at(position)
+                .take(50)
+                .collect::<String>();
+            let mut rev_words_before = rev_chars_before.split(is_not_identifier_char);
+            let rev_first_word_before = rev_words_before.next();
+            let rev_second_word_before = rev_words_before.next();
+            preceded_by_colors =
+                rev_first_word_before == Some("sroloc") || rev_second_word_before == Some("sroloc");
+            preceded_by_status =
+                rev_first_word_before == Some("sutats") || rev_second_word_before == Some("sutats");
+        }
 
         self.div_inspector.update(cx, |div_inspector, _cx| {
             div_inspector.rust_completion_replace_range = Some(replace_range.clone());
         });
 
-        Task::ready(Ok(vec![CompletionResponse {
-            completions: STYLE_METHODS
-                .iter()
-                .map(|(_, method)| Completion {
-                    replace_range: replace_range.clone(),
-                    new_text: format!(".{}()", method.name),
-                    label: CodeLabel::plain(method.name.to_string(), None),
-                    icon_path: None,
-                    documentation: method.documentation.map(|documentation| {
-                        CompletionDocumentation::MultiLineMarkdown(documentation.into())
-                    }),
-                    source: CompletionSource::Custom,
-                    insert_text_mode: None,
-                    confirm: None,
-                })
-                .collect(),
-            display_options: CompletionDisplayOptions::default(),
-            is_incomplete: false,
-        }]))
+        if preceded_by_colors {
+            Task::ready(Ok(vec![CompletionResponse {
+                completions: ThemeColorField::iter()
+                    .map(|color_field| {
+                        let name = color_field.as_ref().to_case(Case::Snake);
+                        Completion {
+                            replace_range: replace_range.clone(),
+                            new_text: format!(".{}", name),
+                            label: CodeLabel::plain(name, None),
+                            icon_path: None,
+                            documentation: None,
+                            source: CompletionSource::Custom,
+                            insert_text_mode: None,
+                            confirm: None,
+                        }
+                    })
+                    .collect(),
+                display_options: CompletionDisplayOptions::default(),
+                is_incomplete: false,
+            }]))
+        } else if preceded_by_status {
+            Task::ready(Ok(vec![CompletionResponse {
+                completions: StatusColorField::iter()
+                    .map(|color_field| {
+                        let name = color_field.as_ref().to_case(Case::Snake);
+                        Completion {
+                            replace_range: replace_range.clone(),
+                            new_text: format!(".{}", name),
+                            label: CodeLabel::plain(name, None),
+                            icon_path: None,
+                            documentation: None,
+                            source: CompletionSource::Custom,
+                            insert_text_mode: None,
+                            confirm: None,
+                        }
+                    })
+                    .collect(),
+                display_options: CompletionDisplayOptions::default(),
+                is_incomplete: false,
+            }]))
+        } else {
+            Task::ready(Ok(vec![CompletionResponse {
+                completions: STYLE_METHODS
+                    .iter()
+                    .map(|(_, method)| Completion {
+                        replace_range: replace_range.clone(),
+                        new_text: format!(".{}()", method.name),
+                        label: CodeLabel::plain(method.name.to_string(), None),
+                        icon_path: None,
+                        documentation: method.documentation.map(|documentation| {
+                            CompletionDocumentation::MultiLineMarkdown(documentation.into())
+                        }),
+                        source: CompletionSource::Custom,
+                        insert_text_mode: None,
+                        confirm: None,
+                    })
+                    .chain(COLOR_METHODS.iter().map(|method| Completion {
+                        replace_range: replace_range.clone(),
+                        new_text: format!(".{}(colors.", method.name),
+                        label: CodeLabel::plain(method.name.to_string(), None),
+                        icon_path: None,
+                        documentation: None,
+                        source: CompletionSource::Custom,
+                        insert_text_mode: None,
+                        confirm: None,
+                    }))
+                    .collect(),
+                display_options: CompletionDisplayOptions::default(),
+                is_incomplete: false,
+            }]))
+        }
     }
 
     fn is_completion_trigger(
@@ -681,7 +875,8 @@ impl CompletionProvider for RustStyleCompletionProvider {
         _menu_is_open: bool,
         cx: &mut Context<Editor>,
     ) -> bool {
-        completion_replace_range(&buffer.read(cx).snapshot(), &position).is_some()
+        let snapshot: &text::BufferSnapshot = &buffer.read(cx);
+        completion_replace_range(snapshot, &position).is_some()
     }
 
     fn selection_changed(&self, mat: Option<&StringMatch>, _window: &mut Window, cx: &mut App) {
@@ -699,27 +894,21 @@ impl CompletionProvider for RustStyleCompletionProvider {
     }
 }
 
-fn completion_replace_range(snapshot: &BufferSnapshot, anchor: &Anchor) -> Option<Range<Anchor>> {
-    let point = anchor.to_point(snapshot);
-    let offset = point.to_offset(snapshot);
-    let line_start = Point::new(point.row, 0).to_offset(snapshot);
-    let line_end = Point::new(point.row, snapshot.line_len(point.row)).to_offset(snapshot);
-    let mut lines = snapshot.text_for_range(line_start..line_end).lines();
-    let line = lines.next()?;
-
-    let start_in_line = &line[..offset - line_start]
-        .rfind(|c| is_not_identifier_char(c) && c != '.')
-        .map(|ix| ix + 1)
-        .unwrap_or(0);
-    let end_in_line = &line[offset - line_start..]
-        .rfind(|c| is_not_identifier_char(c) && c != '(' && c != ')')
-        .unwrap_or(line_end - line_start);
-
-    if end_in_line > start_in_line {
-        let replace_start = snapshot.anchor_before(line_start + start_in_line);
-        let replace_end = snapshot.anchor_after(line_start + end_in_line);
-        Some(replace_start..replace_end)
-    } else {
-        None
-    }
+fn completion_replace_range(
+    snapshot: &text::BufferSnapshot,
+    anchor: &Anchor,
+) -> Option<Range<Anchor>> {
+    let offset = anchor.to_offset(snapshot);
+    let start: usize = snapshot
+        .reversed_chars_at(offset)
+        .take_until(|c| is_not_identifier_char(*c))
+        .map(|char| char.len_utf8())
+        .sum();
+    let end: usize = snapshot
+        .chars_at(offset)
+        .take_until(|c| is_not_identifier_char(*c))
+        .skip(1)
+        .map(|char| char.len_utf8())
+        .sum();
+    Some(snapshot.anchor_after(offset - start)..snapshot.anchor_before(offset + end))
 }
