@@ -673,6 +673,8 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String
         if let Some(color) = (color_method.get)(&goal_style) {
             let mut found_match = false;
             for theme_color_field in ThemeColorField::iter() {
+                // TODO: If proper color provenance information is added, then the
+                // `make_colors_unique` hack in the theme loading code can be removed.
                 if *theme.colors().get_field_by_enum(theme_color_field) == color {
                     found_match = true;
                     let _ = write!(
