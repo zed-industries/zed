@@ -5,7 +5,7 @@ use cloud_llm_client::predict_edits_v3::{self, Signature};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
-use edit_prediction::{DataCollectionState, Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction::{DataCollectionState, Direction, EditPredictionProvider};
 use edit_prediction_context::{
     DeclarationId, EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
     SyntaxIndexState,
@@ -16,11 +16,12 @@ use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, http_client,
     prelude::*,
 };
-use language::BufferSnapshot;
 use language::{Anchor, Buffer, OffsetRangeExt as _, ToPoint};
+use language::{BufferSnapshot, EditPreview};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::Project;
 use release_channel::AppVersion;
+use std::cmp;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr as _;
@@ -28,6 +29,7 @@ use std::time::{Duration, Instant};
 use std::{ops::Range, sync::Arc};
 use thiserror::Error;
 use util::ResultExt as _;
+use uuid::Uuid;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
 #[derive(Clone)]
@@ -215,20 +217,22 @@ impl Zeta {
                         .collect::<Vec<_>>()
                         .into();
 
-                    let Some((edits, edit_preview_task)) = buffer.read_with(cx, |buffer, cx| {
-                        let new_snapshot = buffer.snapshot();
-                        let edits: Arc<[_]> = interpolate(&snapshot, &new_snapshot, edits)?.into();
-                        Some((edits.clone().to_vec(), buffer.preview_edits(edits, cx)))
-                    })?
+                    let Some((edits, snapshot, edit_preview_task)) =
+                        buffer.read_with(cx, |buffer, cx| {
+                            let new_snapshot = buffer.snapshot();
+                            let edits: Arc<[_]> =
+                                interpolate(&snapshot, &new_snapshot, edits)?.into();
+                            Some((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                        })?
                     else {
                         return Ok(None);
                     };
 
                     Ok(Some(EditPrediction {
-                        // todo!
-                        id: None,
+                        id: EditPredictionId(response.request_id),
                         edits,
-                        edit_preview: Some(edit_preview_task.await),
+                        snapshot,
+                        edit_preview: edit_preview_task.await,
                     }))
                 }
                 Ok(None) => Ok(None),
@@ -414,6 +418,35 @@ impl CurrentEditPrediction {
     }
 }
 
+#[derive(Copy, Clone, Default, Debug, PartialEq, Eq, Hash)]
+pub struct EditPredictionId(Uuid);
+
+impl From<EditPredictionId> for gpui::ElementId {
+    fn from(value: EditPredictionId) -> Self {
+        gpui::ElementId::Uuid(value.0)
+    }
+}
+
+impl std::fmt::Display for EditPredictionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone)]
+pub struct EditPrediction {
+    id: EditPredictionId,
+    edits: Arc<[(Range<Anchor>, String)]>,
+    snapshot: BufferSnapshot,
+    edit_preview: EditPreview,
+}
+
+impl EditPrediction {
+    fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
+        interpolate(&self.snapshot, new_snapshot, self.edits.clone())
+    }
+}
+
 struct PendingPrediction {
     id: usize,
     _task: Task<()>,
@@ -487,7 +520,16 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         //     return;
         // }
 
-        // TODO [zeta2] try to interpolate current request
+        if let Some(current_prediction) = self.current_prediction.as_ref() {
+            let snapshot = buffer.read(cx).snapshot();
+            if current_prediction
+                .prediction
+                .interpolate(&snapshot)
+                .is_some()
+            {
+                return;
+            }
+        }
 
         let pending_prediction_id = self.next_pending_prediction_id;
         self.next_pending_prediction_id += 1;
@@ -591,18 +633,62 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
     fn suggest(
         &mut self,
         buffer: &Entity<language::Buffer>,
-        _cursor_position: language::Anchor,
-        _cx: &mut Context<Self>,
-    ) -> Option<EditPrediction> {
-        let current_prediction = self.current_prediction.take()?;
+        cursor_position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) -> Option<edit_prediction::EditPrediction> {
+        let CurrentEditPrediction {
+            buffer_id,
+            prediction,
+            ..
+        } = self.current_prediction.as_mut()?;
 
-        if current_prediction.buffer_id != buffer.entity_id() {
+        // Invalidate previous prediction if it was generated for a different buffer.
+        if *buffer_id != buffer.entity_id() {
+            self.current_prediction.take();
             return None;
         }
 
-        // TODO [zeta2] interpolate
+        let buffer = buffer.read(cx);
+        let Some(edits) = prediction.interpolate(&buffer.snapshot()) else {
+            self.current_prediction.take();
+            return None;
+        };
 
-        Some(current_prediction.prediction)
+        let cursor_row = cursor_position.to_point(buffer).row;
+        let (closest_edit_ix, (closest_edit_range, _)) =
+            edits.iter().enumerate().min_by_key(|(_, (range, _))| {
+                let distance_from_start = cursor_row.abs_diff(range.start.to_point(buffer).row);
+                let distance_from_end = cursor_row.abs_diff(range.end.to_point(buffer).row);
+                cmp::min(distance_from_start, distance_from_end)
+            })?;
+
+        let mut edit_start_ix = closest_edit_ix;
+        for (range, _) in edits[..edit_start_ix].iter().rev() {
+            let distance_from_closest_edit =
+                closest_edit_range.start.to_point(buffer).row - range.end.to_point(buffer).row;
+            if distance_from_closest_edit <= 1 {
+                edit_start_ix -= 1;
+            } else {
+                break;
+            }
+        }
+
+        let mut edit_end_ix = closest_edit_ix + 1;
+        for (range, _) in &edits[edit_end_ix..] {
+            let distance_from_closest_edit =
+                range.start.to_point(buffer).row - closest_edit_range.end.to_point(buffer).row;
+            if distance_from_closest_edit <= 1 {
+                edit_end_ix += 1;
+            } else {
+                break;
+            }
+        }
+
+        Some(edit_prediction::EditPrediction {
+            id: Some(prediction.id.to_string().into()),
+            edits: edits[edit_start_ix..edit_end_ix].to_vec(),
+            edit_preview: Some(prediction.edit_preview.clone()),
+        })
     }
 }
 

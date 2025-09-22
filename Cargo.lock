@@ -21655,6 +21655,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.12",
  "util",
+ "uuid",
  "workspace",
  "workspace-hack",
  "worktree",
