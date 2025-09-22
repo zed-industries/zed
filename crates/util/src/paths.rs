@@ -379,6 +379,8 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
         \:+(\d+)\:(\d+)\:*$  # filename:row:column
         |
         \:+(\d+)\:*()$       # filename:row
+        |
+        \:+()()$
     )";
 
 /// A representation of a path-like string with optional row and column numbers.
@@ -455,8 +457,8 @@ impl PathWithPosition {
     ///     row: None,
     ///     column: None,
     /// });
-    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::"), PathWithPosition {
-    ///     path: PathBuf::from("test_file.rs::"),
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
     ///     row: None,
     ///     column: None,
     /// });
@@ -998,7 +1000,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file.rs:"),
             PathWithPosition {
-                path: PathBuf::from("test_file.rs:"),
+                path: PathBuf::from("test_file.rs"),
                 row: None,
                 column: None
             }
