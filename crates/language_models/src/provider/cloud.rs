@@ -988,8 +988,15 @@ impl RenderOnce for ZedAiConfiguration {
             (Some(Plan::V1(PlanV1::ZedProTrial) | Plan::V2(PlanV2::ZedProTrial)), Some(_)) => {
                 "You have access to Zed's hosted models through your Pro trial."
             }
-            (Some(Plan::V1(PlanV1::ZedFree) | Plan::V2(PlanV2::ZedFree)), Some(_)) => {
+            (Some(Plan::V1(PlanV1::ZedFree)), Some(_)) => {
                 "You have basic access to Zed's hosted models through the Free plan."
+            }
+            (Some(Plan::V2(PlanV2::ZedFree)), Some(_)) => {
+                if self.eligible_for_trial {
+                    "Subscribe for access to Zed's hosted models. Start with a 14 day free trial."
+                } else {
+                    "Subscribe for access to Zed's hosted models."
+                }
             }
             _ => {
                 if self.eligible_for_trial {
