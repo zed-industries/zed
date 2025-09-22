@@ -1458,7 +1458,7 @@ where
         self.current_chunk.as_ref().and_then(|(chunk, idx)| {
             let mut idx = *idx;
             let mut diff = 0;
-            while idx > 0 && chunk.chars & (1 << idx) == 0 {
+            while idx > 0 && chunk.chars & (1u128.unbounded_shl(idx)) == 0 {
                 idx -= 1;
                 diff += 1;
             }
@@ -1478,7 +1478,7 @@ where
     fn is_char_boundary(&self) -> bool {
         self.current_chunk
             .as_ref()
-            .is_some_and(|(chunk, idx)| (chunk.chars & (1 << *idx.min(&127))) != 0)
+            .is_some_and(|(chunk, idx)| (chunk.chars & 1u128.unbounded_shl(*idx)) != 0)
     }
 
     /// distance: length to move forward while searching for the next tab stop
