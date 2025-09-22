@@ -84,13 +84,22 @@ impl Vim {
                     let display_point = if line_mode {
                         if action.before {
                             movement::line_beginning(&display_map, sel.start, false)
-                        } else if sel.end.column() == 0 {
+                        } else if sel.start.column() > 0
+                            && sel.end.column() == 0
+                            && sel.start != sel.end
+                        {
                             sel.end
                         } else {
-                            movement::right(
-                                &display_map,
-                                movement::line_end(&display_map, sel.end, false),
-                            )
+                            let point = movement::line_end(&display_map, sel.end, false);
+                            if sel.end.column() == 0 && point.column() > 0 {
+                                // If the selection ends at the beginning of the next line, and the current line
+                                // under the cursor is not empty, we paste at the selection's end.
+                                sel.end
+                            } else {
+                                // If however the current line under the cursor is empty, we need to move
+                                // to the beginning of the next line to avoid pasting above the end of current selection.
+                                movement::right(&display_map, point)
+                            }
                         }
                     } else if action.before {
                         sel.start
@@ -123,6 +132,12 @@ impl Vim {
                         let offset = anchor.to_offset(&snapshot);
                         if action.before {
                             offset.saturating_sub(len)..offset
+                        } else if line_mode {
+                            // In line mode, we always move the cursor to the end of the inserted text.
+                            // Otherwise, while it looks fine visually, inserting/appending ends up
+                            // in the next logical line which is not desirable.
+                            debug_assert!(len > 0);
+                            offset..(offset + len - 1)
                         } else {
                             offset..(offset + len)
                         }
@@ -386,8 +401,8 @@ mod test {
             indoc! {"
             The quick brown
             fox jumps over
-            «n
-            ˇ»the lazy dog."},
+            «nˇ»
+            the lazy dog."},
             Mode::HelixNormal,
         );
 
@@ -405,8 +420,27 @@ mod test {
             indoc! {"
             The quick brown
             fox jumps over
-            «n
-            ˇ»the lazy dog."},
+            «nˇ»
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+
+        cx.set_state(
+            indoc! {"
+
+            The quick brown
+            fox jumps overˇ
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x y up up p");
+        cx.assert_state(
+            indoc! {"
+
+            «fox jumps overˇ»
+            The quick brown
+            fox jumps over
+            the lazy dog."},
             Mode::HelixNormal,
         );
     }
