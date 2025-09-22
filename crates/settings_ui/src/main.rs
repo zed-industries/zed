@@ -48,10 +48,13 @@ fn main() {
         .detach();
 
         let handle = open_settings_editor(cx).unwrap();
-        handle
-            .update(cx, |_, window, _cx| {
-                window.activate_window();
-            })
-            .unwrap();
+        cx.spawn(async move |cx| {
+            handle
+                .update(cx, |_, window, _cx| {
+                    window.activate_window();
+                })
+                .unwrap();
+        })
+        .detach();
     });
 }
