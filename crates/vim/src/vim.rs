@@ -616,6 +616,7 @@ impl Vim {
                     vim.push_operator(
                         Operator::ChangeSurrounds {
                             target: action.target,
+                            character: None,
                         },
                         window,
                         cx,
@@ -883,6 +884,19 @@ impl Vim {
                 self.update_editor(cx, |_, editor, cx| {
                     editor.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx)
                 });
+
+                // If the active operator is `ChangeSurrounds` and the target
+                // object has already been determined, keep track of the
+                // character that originated the object, so we can later
+                // determine if we're dealing with opening or closing bracket.
+                match self.active_operator_mut() {
+                    Some(Operator::ChangeSurrounds {
+                        target: Some(_),
+                        character,
+                    }) => *character = Some(keystroke_event.keystroke.key.clone()),
+                    _ => {}
+                }
+
                 return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
@@ -1506,6 +1520,10 @@ impl Vim {
         self.operator_stack.last().cloned()
     }
 
+    fn active_operator_mut(&mut self) -> Option<&mut Operator> {
+        self.operator_stack.last_mut()
+    }
+
     fn transaction_begun(
         &mut self,
         transaction_id: TransactionId,
@@ -1715,10 +1733,10 @@ impl Vim {
                 }
                 _ => self.clear_operator(window, cx),
             },
-            Some(Operator::ChangeSurrounds { target }) => match self.mode {
+            Some(Operator::ChangeSurrounds { target, character }) => match self.mode {
                 Mode::Normal => {
                     if let Some(target) = target {
-                        self.change_surrounds(text, target, window, cx);
+                        self.change_surrounds(text, target, character, window, cx);
                         self.clear_operator(window, cx);
                     }
                 }

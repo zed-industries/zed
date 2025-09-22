@@ -257,6 +257,7 @@ impl Vim {
         &mut self,
         text: Arc<str>,
         target: Object,
+        target_text: Option<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -278,12 +279,8 @@ impl Vim {
                     };
 
                     let from_quote = will_replace_pair.start == will_replace_pair.end;
-                    let from_opening_bracket = match target {
-                        Object::CurlyBrackets { bracket } => {
-                            bracket.is_some_and(|ch| ch.to_string() == will_replace_pair.start)
-                        }
-                        _ => false,
-                    };
+                    let from_opening_bracket =
+                        !from_quote && target_text.is_some_and(|s| s == will_replace_pair.start);
 
                     let to_quote = pair.start == pair.end;
                     let to_opening_bracket = pair.end != surround_alias((*text).as_ref());
@@ -295,7 +292,7 @@ impl Vim {
                         to_opening_bracket,
                     ) {
                         (false, true, true, _) => SurroundWhiteSpace::Clear,
-                        (false, false, true, true) => SurroundWhiteSpace::Clear,
+                        (false, false, true, true) => SurroundWhiteSpace::Single,
                         (true, false, true, true) => SurroundWhiteSpace::Single,
                         (_, false, false, true) => SurroundWhiteSpace::Add,
                         (true, true, _, _) | (_, _, false, false) => SurroundWhiteSpace::Keep,
@@ -683,7 +680,7 @@ fn pair_to_object(pair: &BracketPair) -> Option<Object> {
         "|" => Some(Object::VerticalBars),
         "(" => Some(Object::Parentheses),
         "[" => Some(Object::SquareBrackets),
-        "{" => Some(Object::CurlyBrackets { bracket: None }),
+        "{" => Some(Object::CurlyBrackets),
         "<" => Some(Object::AngleBrackets),
         _ => None,
     }
@@ -1421,7 +1418,7 @@ mod test {
         // * closing → closing – does not change space.
         cx.set_state(indoc! {"{   ˇa   }"}, Mode::Normal);
         cx.simulate_keystrokes("c s { [");
-        cx.assert_state(indoc! {"ˇ[a]"}, Mode::Normal);
+        cx.assert_state(indoc! {"ˇ[ a ]"}, Mode::Normal);
 
         cx.set_state(indoc! {"{   ˇa   }"}, Mode::Normal);
         cx.simulate_keystrokes("c s { ]");

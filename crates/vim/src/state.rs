@@ -108,6 +108,10 @@ pub enum Operator {
     },
     ChangeSurrounds {
         target: Option<Object>,
+        /// Represents the character that originated the `target` object.
+        /// Necessary in order to correctly determine how to handle whitespace
+        /// when running the change surround command.
+        character: Option<String>,
     },
     DeleteSurrounds,
     Mark,
@@ -1075,7 +1079,9 @@ impl Operator {
             | Operator::Replace
             | Operator::Digraph { .. }
             | Operator::Literal { .. }
-            | Operator::ChangeSurrounds { target: Some(_) }
+            | Operator::ChangeSurrounds {
+                target: Some(_), ..
+            }
             | Operator::DeleteSurrounds => true,
             Operator::Change
             | Operator::Delete
@@ -1092,7 +1098,7 @@ impl Operator {
             | Operator::ReplaceWithRegister
             | Operator::Exchange
             | Operator::Object { .. }
-            | Operator::ChangeSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None, .. }
             | Operator::OppositeCase
             | Operator::ToggleComments
             | Operator::HelixMatch
@@ -1119,7 +1125,7 @@ impl Operator {
             | Operator::Rewrap
             | Operator::ShellCommand
             | Operator::AddSurrounds { target: None }
-            | Operator::ChangeSurrounds { target: None }
+            | Operator::ChangeSurrounds { target: None, .. }
             | Operator::DeleteSurrounds
             | Operator::Exchange
             | Operator::HelixNext { .. }
