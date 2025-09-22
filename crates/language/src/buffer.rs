@@ -4198,8 +4198,8 @@ impl BufferSnapshot {
         range: Range<T>,
         options: TreeSitterOptions,
     ) -> impl Iterator<Item = (Range<usize>, TextObject)> + '_ {
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range =
+            range.start.to_previous_offset(self)..self.len().min(range.end.to_next_offset(self));
 
         let mut matches =
             self.syntax

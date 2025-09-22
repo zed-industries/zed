@@ -2128,7 +2128,7 @@ impl BufferSnapshot {
         let row_end_offset = if row >= self.max_point().row {
             self.len()
         } else {
-            Point::new(row + 1, 0).to_offset(self) - 1
+            Point::new(row + 1, 0).to_previous_offset(self)
         };
         (row_end_offset - row_start_offset) as u32
     }
@@ -3076,11 +3076,13 @@ impl operation_queue::Operation for Operation {
 
 pub trait ToOffset {
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize;
+    /// Turns this point into the next offset in the buffer that comes after this, respecting utf8 boundaries.
     fn to_next_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot
             .visible_text
             .ceil_char_boundary(self.to_offset(snapshot) + 1)
     }
+    /// Turns this point into the previous offset in the buffer that comes before this, respecting utf8 boundaries.
     fn to_previous_offset(&self, snapshot: &BufferSnapshot) -> usize {
         snapshot
             .visible_text

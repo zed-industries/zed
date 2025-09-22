@@ -459,26 +459,10 @@ impl Rope {
             })
     }
 
-    pub fn clip_offset(&self, mut offset: usize, bias: Bias) -> usize {
-        let mut cursor = self.chunks.cursor::<usize>(&());
-        cursor.seek(&offset, Bias::Left);
-        if let Some(chunk) = cursor.item() {
-            let mut ix = offset - cursor.start();
-            while !chunk.text.is_char_boundary(ix) {
-                match bias {
-                    Bias::Left => {
-                        ix -= 1;
-                        offset -= 1;
-                    }
-                    Bias::Right => {
-                        ix += 1;
-                        offset += 1;
-                    }
-                }
-            }
-            offset
-        } else {
-            self.summary().len
+    pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
+        match bias {
+            Bias::Left => self.floor_char_boundary(offset),
+            Bias::Right => self.ceil_char_boundary(offset),
         }
     }
 
