@@ -409,5 +409,24 @@ mod test {
             ˇ»the lazy dog."},
             Mode::HelixNormal,
         );
+
+        cx.set_state(
+            indoc! {"
+
+            The quick brown
+            fox jumps overˇ
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("x y up up p");
+        cx.assert_state(
+            indoc! {"
+
+            «fox jumps overˇ»
+            The quick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal,
+        );
     }
 }
