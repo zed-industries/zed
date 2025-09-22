@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::{cmp, path::PathBuf, sync::Arc};
 use util::paths::PathMatcher;
+use util::rel_path::RelPath;
 
 /// Fast file path pattern matching tool that works with any codebase size
 ///
@@ -156,7 +157,7 @@ impl AgentTool for FindPathTool {
 }
 
 fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
-    let path_style = project.read(cx).path_style();
+    let path_style = project.read(cx).path_style(cx);
     let path_matcher = match PathMatcher::new(
         [
             // Sometimes models try to search for "". In this case, return all paths in the project.
@@ -177,9 +178,13 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         let mut results = Vec::new();
         for snapshot in snapshots {
             for entry in snapshot.entries(false, 0) {
-                let root_name = PathBuf::from(snapshot.root_name());
-                if path_matcher.is_match(root_name.join(&entry.path)) {
-                    results.push(snapshot.abs_path().join(entry.path.as_ref()));
+                if path_matcher.is_match(
+                    RelPath::new(snapshot.root_name())
+                        .unwrap()
+                        .join(&entry.path)
+                        .as_std_path(),
+                ) {
+                    results.push(snapshot.absolutize(&entry.path));
                 }
             }
         }

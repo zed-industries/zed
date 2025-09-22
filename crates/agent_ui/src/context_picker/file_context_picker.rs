@@ -10,7 +10,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{ListItem, Tooltip, prelude::*};
-use util::ResultExt as _;
+use util::{ResultExt as _, rel_path::RelPath};
 use workspace::Workspace;
 
 use crate::context_picker::ContextPicker;
@@ -269,10 +269,15 @@ pub(crate) fn search_files(
 }
 
 pub fn extract_file_name_and_directory(
-    path: &Path,
-    path_prefix: &str,
+    path: &RelPath,
+    path_prefix: &RelPath,
+    path_style: PathStyle,
 ) -> (SharedString, Option<SharedString>) {
-    if path == Path::new("") {
+    let full_path = path_prefix.join(path);
+    let file_name = full_path.file_name().unwrap_or_default();
+    let directory = full_path.strip_suffix(filename);
+
+    if path.is_empty() {
         (
             SharedString::from(
                 path_prefix
@@ -282,12 +287,7 @@ pub fn extract_file_name_and_directory(
             None,
         )
     } else {
-        let file_name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-            .into();
+        let file_name = path.file_name().unwrap_or_default().to_string().into();
 
         let mut directory = path_prefix
             .trim_end_matches(std::path::MAIN_SEPARATOR)
@@ -308,7 +308,7 @@ pub fn render_file_context_entry(
     id: ElementId,
     worktree_id: WorktreeId,
     path: &Arc<Path>,
-    path_prefix: &Arc<str>,
+    path_prefix: &Arc<RelPath>,
     is_directory: bool,
     context_store: WeakEntity<ContextStore>,
     cx: &App,

@@ -110,7 +110,7 @@ impl AgentTool for GrepTool {
         const CONTEXT_LINES: u32 = 2;
         const MAX_ANCESTOR_LINES: u32 = 10;
 
-        let path_style = self.project.read(cx).path_style();
+        let path_style = self.project.read(cx).path_style(cx);
 
         let include_matcher = match PathMatcher::new(
             input

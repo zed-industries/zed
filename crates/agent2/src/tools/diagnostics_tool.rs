@@ -147,9 +147,7 @@ impl AgentTool for DiagnosticsTool {
                         has_diagnostics = true;
                         output.push_str(&format!(
                             "{}: {} error(s), {} warning(s)\n",
-                            Path::new(worktree.read(cx).root_name())
-                                .join(project_path.path)
-                                .display(),
+                            worktree.read(cx).absolutize(&project_path.path).display(),
                             summary.error_count,
                             summary.warning_count
                         ));

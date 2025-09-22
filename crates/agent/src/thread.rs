@@ -234,7 +234,6 @@ impl MessageSegment {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ProjectSnapshot {
     pub worktree_snapshots: Vec<WorktreeSnapshot>,
-    pub unsaved_buffer_paths: Vec<String>,
     pub timestamp: DateTime<Utc>,
 }
 
@@ -2857,27 +2856,11 @@ impl Thread {
             .map(|worktree| Self::worktree_snapshot(worktree, git_store.clone(), cx))
             .collect();
 
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |_, _| {
             let worktree_snapshots = futures::future::join_all(worktree_snapshots).await;
-
-            let mut unsaved_buffers = Vec::new();
-            cx.update(|app_cx| {
-                let buffer_store = project.read(app_cx).buffer_store();
-                for buffer_handle in buffer_store.read(app_cx).buffers() {
-                    let buffer = buffer_handle.read(app_cx);
-                    if buffer.is_dirty()
-                        && let Some(file) = buffer.file()
-                    {
-                        let path = file.path().as_str().into();
-                        unsaved_buffers.push(path);
-                    }
-                }
-            })
-            .ok();
 
             Arc::new(ProjectSnapshot {
                 worktree_snapshots,
-                unsaved_buffer_paths: unsaved_buffers,
                 timestamp: Utc::now(),
             })
         })

@@ -17,10 +17,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::stream::StreamExt as _;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::SharedString;
 use util::ResultExt;
+use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
@@ -150,10 +152,9 @@ impl EditFileTool {
         // the editor in ways beyond the project source, so prompt.
         let local_settings_folder = paths::local_settings_folder_name();
         let path = Path::new(&input.path);
-        if path
-            .components()
-            .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
-        {
+        if path.components().any(|component| {
+            component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
+        }) {
             return event_stream.authorize(
                 format!("{} (local settings)", input.display_description),
                 cx,
@@ -162,6 +163,7 @@ impl EditFileTool {
 
         // It's also possible that the global config dir is configured to be inside the project,
         // so check for that edge case too.
+        // TODO this is broken when remoting
         if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
             && canonical_path.starts_with(paths::config_dir())
         {
@@ -216,7 +218,7 @@ impl AgentTool for EditFileTool {
                         .read(cx)
                         .short_full_path_for_project_path(&project_path, cx)
                 })
-                .unwrap_or(input.path.into())
+                .unwrap_or(input.path.to_string_lossy().to_string().into())
                 .into(),
             Err(raw_input) => {
                 if let Some(input) =
@@ -474,7 +476,7 @@ impl AgentTool for EditFileTool {
     ) -> Result<()> {
         event_stream.update_diff(cx.new(|cx| {
             Diff::finalized(
-                output.input_path,
+                output.input_path.to_string_lossy().to_string(),
                 Some(output.old_text.to_string()),
                 output.new_text,
                 self.language_registry.clone(),
@@ -538,6 +540,8 @@ fn resolve_path(
             let file_name = input
                 .path
                 .file_name()
+                .and_then(|file_name| file_name.to_str())
+                .and_then(|file_name| RelPath::new(file_name).ok())
                 .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
@@ -561,7 +565,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, paths::PathStyle};
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -690,9 +694,8 @@ mod tests {
         let actual = path
             .expect("Should return valid path")
             .path
-            .to_str()
-            .unwrap()
-            .replace("\\", "/"); // Naive Windows paths normalization
+            .display(PathStyle::local())
+            .into_owned();
         assert_eq!(actual, expected);
     }
 
