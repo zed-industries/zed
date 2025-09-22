@@ -21749,10 +21749,12 @@ fn edit_for_markdown_paste<'a>(
         return (range, Cow::Borrowed(to_insert));
     };
 
-    let new_text = if range.is_empty() {
+    let old_text = buffer.text_for_range(range.clone()).collect::<String>();
+    dbg!(&old_text);
+
+    let new_text = if range.is_empty() || url::Url::parse(&old_text).is_ok() {
         Cow::Borrowed(to_insert)
     } else {
-        let old_text = buffer.text_for_range(range.clone()).collect::<String>();
         Cow::Owned(format!("[{old_text}]({to_insert})"))
     };
     (range, new_text)
