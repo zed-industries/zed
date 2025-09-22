@@ -1,12 +1,19 @@
 use crate::paths::PathStyle;
 use anyhow::{Context as _, Result, anyhow, bail};
-use serde::Serialize;
-use std::{borrow::Cow, ffi::OsStr, ops::Deref, path::Path, sync::Arc};
+use serde::{Deserialize, Serialize};
+use std::{
+    borrow::Cow,
+    ffi::OsStr,
+    ops::Deref,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[repr(transparent)]
 #[derive(PartialEq, Debug, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct RelPath(str);
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct RelPathBuf(String);
 
 impl RelPath {
@@ -207,6 +214,18 @@ impl RelPathBuf {
 
     pub fn as_rel_path(&self) -> &RelPath {
         unsafe { RelPath::new_unchecked(self.0.as_str()) }
+    }
+
+    pub fn set_extension(&mut self, extension: &str) -> bool {
+        if let Some(filename) = self.file_name() {
+            let mut filename = PathBuf::from(filename);
+            filename.set_extension(extension);
+            self.pop();
+            self.0.push_str(filename.to_str().unwrap());
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -695,7 +695,6 @@ impl WorktreeStore {
         &mut self,
         worktrees: Vec<proto::WorktreeMetadata>,
         replica_id: ReplicaId,
-        path_style: PathStyle,
         cx: &mut Context<Self>,
     ) -> Result<()> {
         let mut old_worktrees_by_id = self
@@ -728,7 +727,7 @@ impl WorktreeStore {
                         replica_id,
                         worktree,
                         client.clone(),
-                        path_style,
+                        self.path_style(),
                         cx,
                     ),
                     cx,

@@ -27,7 +27,11 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-use util::{ResultExt, path};
+use util::{
+    ResultExt, path,
+    paths::{PathMatcher, PathStyle},
+    rel_path::{RelPath, RelPathBuf, rel_path},
+};
 
 #[gpui::test(
     iterations = 100,
@@ -66,7 +70,7 @@ enum ClientOperation {
     OpenBuffer {
         project_root_name: String,
         is_local: bool,
-        full_path: PathBuf,
+        full_path: RelPathBuf,
     },
     SearchProject {
         project_root_name: String,
@@ -77,24 +81,24 @@ enum ClientOperation {
     EditBuffer {
         project_root_name: String,
         is_local: bool,
-        full_path: PathBuf,
+        full_path: RelPathBuf,
         edits: Vec<(Range<usize>, Arc<str>)>,
     },
     CloseBuffer {
         project_root_name: String,
         is_local: bool,
-        full_path: PathBuf,
+        full_path: RelPathBuf,
     },
     SaveBuffer {
         project_root_name: String,
         is_local: bool,
-        full_path: PathBuf,
+        full_path: RelPathBuf,
         detach: bool,
     },
     RequestLspDataInBuffer {
         project_root_name: String,
         is_local: bool,
-        full_path: PathBuf,
+        full_path: RelPathBuf,
         offset: usize,
         kind: LspRequestKind,
         detach: bool,
@@ -102,7 +106,7 @@ enum ClientOperation {
     CreateWorktreeEntry {
         project_root_name: String,
         is_local: bool,
-        full_path: PathBuf,
+        full_path: RelPathBuf,
         is_dir: bool,
     },
     WriteFsEntry {
@@ -119,7 +123,7 @@ enum ClientOperation {
 enum GitOperation {
     WriteGitIndex {
         repo_path: PathBuf,
-        contents: Vec<(PathBuf, String)>,
+        contents: Vec<(RelPathBuf, String)>,
     },
     WriteGitBranch {
         repo_path: PathBuf,
@@ -127,7 +131,7 @@ enum GitOperation {
     },
     WriteGitStatuses {
         repo_path: PathBuf,
-        statuses: Vec<(PathBuf, FileStatus)>,
+        statuses: Vec<(RelPathBuf, FileStatus)>,
     },
 }
 
@@ -311,8 +315,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let Some(worktree) = worktree else { continue };
                             let is_dir = rng.random::<bool>();
                             let mut full_path =
-                                worktree.read_with(cx, |w, _| PathBuf::from(w.root_name_str()));
-                            full_path.push(gen_file_name(rng));
+                                worktree.read_with(cx, |w, _| w.root_name().to_rel_path_buf());
+                            full_path.push(rel_path(&gen_file_name(rng)));
                             if !is_dir {
                                 full_path.set_extension("rs");
                             }
@@ -346,8 +350,18 @@ impl RandomizedTest for ProjectCollaborationTest {
                                 continue;
                             };
 
-                            let full_path = buffer
-                                .read_with(cx, |buffer, cx| buffer.file().unwrap().full_path(cx));
+                            let full_path = buffer.read_with(cx, |buffer, cx| {
+                                let file = buffer.file().unwrap();
+                                let worktree = project
+                                    .read(cx)
+                                    .worktree_for_id(file.worktree_id(cx), cx)
+                                    .unwrap();
+                                worktree
+                                    .read(cx)
+                                    .root_name()
+                                    .join(file.path())
+                                    .to_rel_path_buf()
+                            });
 
                             match rng.random_range(0..100_u32) {
                                 // Close the buffer
@@ -445,7 +459,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             break ClientOperation::OpenBuffer {
                                 project_root_name,
                                 is_local,
-                                full_path,
+                                full_path: full_path.to_rel_path_buf(),
                             };
                         }
                     }
@@ -872,6 +886,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     if detach { "detaching" } else { "awaiting" }
                 );
 
+                let path_style = PathStyle::local();
                 let search = project.update(cx, |project, cx| {
                     project.search(
                         SearchQuery::text(
@@ -879,8 +894,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                             false,
                             false,
                             false,
-                            Default::default(),
-                            Default::default(),
+                            PathMatcher::empty(path_style),
+                            PathMatcher::empty(path_style),
                             false,
                             None,
                         )
@@ -940,7 +955,11 @@ impl RandomizedTest for ProjectCollaborationTest {
                     }
 
                     for (path, _) in contents.iter() {
-                        if !client.fs().files().contains(&repo_path.join(path)) {
+                        if !client
+                            .fs()
+                            .files()
+                            .contains(&repo_path.join(path.as_std_path()))
+                        {
                             return Err(TestError::Inapplicable);
                         }
                     }
@@ -954,8 +973,8 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let dot_git_dir = repo_path.join(".git");
                     let contents = contents
-                        .into_iter()
-                        .map(|(path, contents)| (path.into(), contents))
+                        .iter()
+                        .map(|(path, contents)| (path.as_str(), contents.clone()))
                         .collect::<Vec<_>>();
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
                         client.fs().create_dir(&dot_git_dir).await?;
@@ -993,7 +1012,11 @@ impl RandomizedTest for ProjectCollaborationTest {
                         return Err(TestError::Inapplicable);
                     }
                     for (path, _) in statuses.iter() {
-                        if !client.fs().files().contains(&repo_path.join(path)) {
+                        if !client
+                            .fs()
+                            .files()
+                            .contains(&repo_path.join(path.as_std_path()))
+                        {
                             return Err(TestError::Inapplicable);
                         }
                     }
@@ -1009,7 +1032,7 @@ impl RandomizedTest for ProjectCollaborationTest {
 
                     let statuses = statuses
                         .iter()
-                        .map(|(path, val)| (path.as_path(), *val))
+                        .map(|(path, val)| (path.as_str(), *val))
                         .collect::<Vec<_>>();
 
                     if client.fs().metadata(&dot_git_dir).await?.is_none() {
@@ -1426,7 +1449,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
         repo_path: &Path,
         rng: &mut StdRng,
         client: &TestClient,
-    ) -> Vec<PathBuf> {
+    ) -> Vec<RelPathBuf> {
         let mut paths = client
             .fs()
             .files()
@@ -1440,7 +1463,11 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
         paths
             .iter()
-            .map(|path| path.strip_prefix(repo_path).unwrap().to_path_buf())
+            .map(|path| {
+                RelPath::from_std_path(path.strip_prefix(repo_path).unwrap(), PathStyle::local())
+                    .unwrap()
+                    .to_rel_path_buf()
+            })
             .collect::<Vec<_>>()
     }
 
@@ -1487,7 +1514,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 fn buffer_for_full_path(
     client: &TestClient,
     project: &Entity<Project>,
-    full_path: &PathBuf,
+    full_path: &RelPath,
     cx: &TestAppContext,
 ) -> Option<Entity<language::Buffer>> {
     client
@@ -1495,7 +1522,12 @@ fn buffer_for_full_path(
         .iter()
         .find(|buffer| {
             buffer.read_with(cx, |buffer, cx| {
-                buffer.file().unwrap().full_path(cx) == *full_path
+                let file = buffer.file().unwrap();
+                let Some(worktree) = project.read(cx).worktree_for_id(file.worktree_id(cx), cx)
+                else {
+                    return false;
+                };
+                worktree.read(cx).root_name().join(&file.path()).as_ref() == full_path
             })
         })
         .cloned()
@@ -1536,23 +1568,23 @@ fn root_name_for_project(project: &Entity<Project>, cx: &TestAppContext) -> Stri
             .next()
             .unwrap()
             .read(cx)
-            .root_name()
+            .root_name_str()
             .to_string()
     })
 }
 
 fn project_path_for_full_path(
     project: &Entity<Project>,
-    full_path: &Path,
+    full_path: &RelPath,
     cx: &TestAppContext,
 ) -> Option<ProjectPath> {
     let mut components = full_path.components();
-    let root_name = components.next().unwrap().as_os_str().to_str().unwrap();
-    let path = components.as_path().into();
+    let root_name = components.next().unwrap();
+    let path = components.rest().into();
     let worktree_id = project.read_with(cx, |project, cx| {
         project.worktrees(cx).find_map(|worktree| {
             let worktree = worktree.read(cx);
-            if worktree.root_name() == root_name {
+            if worktree.root_name_str() == root_name {
                 Some(worktree.id())
             } else {
                 None
