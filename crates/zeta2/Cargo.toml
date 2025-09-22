@@ -32,3 +32,6 @@ uuid.workspace = true
 workspace.workspace = true
 workspace-hack.workspace = true
 worktree.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

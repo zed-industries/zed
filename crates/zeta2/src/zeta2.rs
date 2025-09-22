@@ -848,3 +848,152 @@ fn interpolate(
 
     if edits.is_empty() { None } else { Some(edits) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use language::ToOffset as _;
+
+    #[gpui::test]
+    async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
+        let buffer = cx.new(|cx| Buffer::local("Lorem ipsum dolor", cx));
+        let edits: Arc<[(Range<Anchor>, String)]> = cx.update(|cx| {
+            to_prediction_edits(
+                [(2..5, "REM".to_string()), (9..11, "".to_string())],
+                &buffer,
+                cx,
+            )
+            .into()
+        });
+
+        let edit_preview = cx
+            .read(|cx| buffer.read(cx).preview_edits(edits.clone(), cx))
+            .await;
+
+        let prediction = EditPrediction {
+            id: EditPredictionId(Uuid::new_v4()),
+            edits,
+            snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
+            edit_preview,
+        };
+
+        cx.update(|cx| {
+            assert_eq!(
+                from_prediction_edits(
+                    &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "")], None, cx));
+            assert_eq!(
+                from_prediction_edits(
+                    &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(2..2, "REM".to_string()), (6..8, "".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.undo(cx));
+            assert_eq!(
+                from_prediction_edits(
+                    &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(2..5, "REM".to_string()), (9..11, "".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(2..5, "R")], None, cx));
+            assert_eq!(
+                from_prediction_edits(
+                    &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(3..3, "EM".to_string()), (7..9, "".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(3..3, "E")], None, cx));
+            assert_eq!(
+                from_prediction_edits(
+                    &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..4, "M")], None, cx));
+            assert_eq!(
+                from_prediction_edits(
+                    &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(9..11, "".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..5, "")], None, cx));
+            assert_eq!(
+                from_prediction_edits(
+                    &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(4..4, "M".to_string()), (8..10, "".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(8..10, "")], None, cx));
+            assert_eq!(
+                from_prediction_edits(
+                    &prediction.interpolate(&buffer.read(cx).snapshot()).unwrap(),
+                    &buffer,
+                    cx
+                ),
+                vec![(4..4, "M".to_string())]
+            );
+
+            buffer.update(cx, |buffer, cx| buffer.edit([(4..6, "")], None, cx));
+            assert_eq!(prediction.interpolate(&buffer.read(cx).snapshot()), None);
+        })
+    }
+
+    fn to_prediction_edits(
+        iterator: impl IntoIterator<Item = (Range<usize>, String)>,
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> Vec<(Range<Anchor>, String)> {
+        let buffer = buffer.read(cx);
+        iterator
+            .into_iter()
+            .map(|(range, text)| {
+                (
+                    buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                    text,
+                )
+            })
+            .collect()
+    }
+
+    fn from_prediction_edits(
+        editor_edits: &[(Range<Anchor>, String)],
+        buffer: &Entity<Buffer>,
+        cx: &App,
+    ) -> Vec<(Range<usize>, String)> {
+        let buffer = buffer.read(cx);
+        editor_edits
+            .iter()
+            .map(|(range, text)| {
+                (
+                    range.start.to_offset(buffer)..range.end.to_offset(buffer),
+                    text.clone(),
+                )
+            })
+            .collect()
+    }
+}
