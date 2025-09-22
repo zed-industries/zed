@@ -134,7 +134,8 @@ Or explicitly include escaped quotes like so:
 
 ### Task filtering based on variables
 
-Zed filters tasks based on what is currently able to be run. To do this, Zed will consider the presence or absence of environment variables. For example, the following task is only available to be run when text is selected in the editor.
+Task definitions with variables which are not present at the moment the task list is determined are filtered out.
+For example, the following task will appear in the spawn modal only if there is a text selection:
 
 ```json
 {
