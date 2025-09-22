@@ -17195,7 +17195,6 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "indexmap 2.9.0",
  "log",
  "palette",
  "parking_lot",

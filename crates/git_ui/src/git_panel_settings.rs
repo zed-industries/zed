@@ -10,14 +10,6 @@ use ui::{
 use workspace::dock::DockPosition;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct ScrollbarSettingsContent {
-    /// When to show the scrollbar in the git panel.
-    ///
-    /// Default: inherits editor scrollbar settings
-    pub show: Option<Option<ShowScrollbar>>,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     pub show: Option<ShowScrollbar>,
 }
