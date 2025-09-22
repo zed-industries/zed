@@ -154,7 +154,7 @@ mod test {
             indoc! {
             "22
              11
-             34ˇ43"
+             4ˇ433"
             },
             Mode::Normal,
         );
@@ -163,7 +163,7 @@ mod test {
             indoc! {
             "2ˇ2
              11
-             3443"
+             4433"
             },
             Mode::Normal,
         );

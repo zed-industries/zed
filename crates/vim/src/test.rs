@@ -158,11 +158,133 @@ async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
     // goes to end by default
     cx.set_state(indoc! {"aˇa\nbb\ncc"}, Mode::Normal);
     cx.simulate_keystrokes("shift-g");
-    cx.assert_editor_state("aa\nbb\ncˇc");
+    cx.assert_editor_state("aa\nbb\nˇcc");
 
     // can go to line 1 (https://github.com/zed-industries/zed/issues/5812)
     cx.simulate_keystrokes("1 shift-g");
-    cx.assert_editor_state("aˇa\nbb\ncc");
+    cx.assert_editor_state("ˇaa\nbb\ncc");
+}
+
+#[gpui::test]
+async fn test_gg_with_indent(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // Test gg with simple indented first line
+    cx.set_state("    hello ˇworld", Mode::Normal);
+    cx.simulate_keystrokes("g g");
+    cx.assert_editor_state("    ˇhello world");
+
+    // Test gg with multiple lines, indented first line
+    cx.set_state(
+        indoc! {"
+            fn main() {
+                println!(\"Hello\");
+                let x = ˇ42;
+            }"},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g g");
+    cx.assert_editor_state(indoc! {"
+        ˇfn main() {
+            println!(\"Hello\");
+            let x = 42;
+        }"});
+
+    // Test gg with first line having leading spaces
+    cx.set_state(
+        indoc! {"
+                // This is indented
+                let y = ˇ10;
+            "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("g g");
+    cx.assert_editor_state(indoc! {"
+            ˇ// This is indented
+            let y = 10;
+        "});
+}
+
+#[gpui::test]
+async fn test_capital_g_with_indent(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // Test G with indented last line
+    cx.set_state(
+        indoc! {"
+            fn main() {
+                ˇprintln!(\"Hello\");
+                    return 42;
+            }"},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("shift-g");
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            println!(\"Hello\");
+                return 42;
+        ˇ}"});
+
+    // Test G with last line having leading spaces
+    cx.set_state("let x = ˇ1;\n    let y = 2;", Mode::Normal);
+    cx.simulate_keystrokes("shift-g");
+    cx.assert_editor_state("let x = 1;\n    ˇlet y = 2;");
+
+    // Test G when last line is all spaces (should go to beginning of line)
+    cx.set_state("line1\nˇ    ", Mode::Normal);
+    cx.simulate_keystrokes("shift-g");
+    cx.assert_editor_state("line1\nˇ    ");
+}
+
+#[gpui::test]
+async fn test_numbered_g_with_indent(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    // Test 2G with indented second line
+    cx.set_state(
+        indoc! {"
+            fn main() {
+                ˇprintln!(\"Hello\");
+                    return 42;
+            }"},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("2 shift-g");
+    cx.assert_editor_state(indoc! {"
+        fn main() {
+            ˇprintln!(\"Hello\");
+                return 42;
+        }"});
+
+    // Test 3G with indented third line
+    cx.set_state(
+        indoc! {"
+            let x = ˇ1;
+            let y = 2;
+                let z = 3;
+            "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("3 shift-g");
+    cx.assert_editor_state(indoc! {"
+        let x = 1;
+        let y = 2;
+            ˇlet z = 3;
+        "});
+
+    // Test 1G (equivalent to gg)
+    cx.set_state(
+        indoc! {"
+                // Indented comment
+                let x = ˇ42;
+            "},
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("1 shift-g");
+    cx.assert_editor_state(indoc! {"
+            ˇ// Indented comment
+            let x = 42;
+        "});
 }
 
 #[perf]
