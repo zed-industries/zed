@@ -21750,7 +21750,6 @@ fn edit_for_markdown_paste<'a>(
     };
 
     let old_text = buffer.text_for_range(range.clone()).collect::<String>();
-    dbg!(&old_text);
 
     let new_text = if range.is_empty() || url::Url::parse(&old_text).is_ok() {
         Cow::Borrowed(to_insert)
