@@ -180,8 +180,8 @@ impl PickerDelegate for IconThemeSelectorDelegate {
 
         let appearance = Appearance::from(window.appearance());
 
-        update_settings_file::<ThemeSettings>(self.fs.clone(), cx, move |settings, _| {
-            settings.set_icon_theme(theme_name.to_string(), appearance);
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            theme::set_icon_theme(settings, theme_name.to_string(), appearance);
         });
 
         self.selector

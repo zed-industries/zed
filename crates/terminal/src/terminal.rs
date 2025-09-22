@@ -364,6 +364,7 @@ impl TerminalBuilder {
         env.insert("ZED_TERM".to_string(), "true".to_string());
         env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
         env.insert("TERM".to_string(), "xterm-256color".to_string());
+        env.insert("COLORTERM".to_string(), "truecolor".to_string());
         env.insert(
             "TERM_PROGRAM_VERSION".to_string(),
             release_channel::AppVersion::global(cx).to_string(),
@@ -426,9 +427,8 @@ impl TerminalBuilder {
                 working_directory: working_directory.clone(),
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
-                // Don't know what the correct value for Zed to use here is, just making it compile for now.
-                #[cfg(target_os = "windows")]
-                escape_args: false,
+                #[cfg(windows)]
+                escape_args: true,
             }
         };
 
@@ -535,14 +535,10 @@ impl TerminalBuilder {
             child_exited: None,
         };
 
-        if !activation_script.is_empty() && no_task {
+        if cfg!(not(target_os = "windows")) && !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
                 terminal.input(activation_script.into_bytes());
-                terminal.write_to_pty(if cfg!(windows) {
-                    &b"\r\n"[..]
-                } else {
-                    &b"\n"[..]
-                });
+                terminal.write_to_pty(b"\n");
             }
             terminal.clear();
         }

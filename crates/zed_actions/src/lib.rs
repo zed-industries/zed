@@ -512,4 +512,13 @@ pub mod wsl_actions {
         #[serde(default)]
         pub create_new_window: bool,
     }
+
+    /// Open a wsl distro.
+    #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = projects)]
+    #[serde(deny_unknown_fields)]
+    pub struct OpenWsl {
+        #[serde(default)]
+        pub create_new_window: bool,
+    }
 }

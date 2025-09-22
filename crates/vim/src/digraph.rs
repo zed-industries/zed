@@ -224,7 +224,6 @@ mod test {
     use settings::SettingsStore;
 
     use crate::{
-        VimSettings,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -294,11 +293,11 @@ mod test {
         let mut cx: VimTestContext = VimTestContext::new(cx, true).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
+            store.update_user_settings(cx, |s| {
                 let mut custom_digraphs = HashMap::default();
                 custom_digraphs.insert("|-".into(), "⊢".into());
                 custom_digraphs.insert(":)".into(), "👨‍💻".into());
-                s.custom_digraphs = Some(custom_digraphs);
+                s.vim.get_or_insert_default().custom_digraphs = Some(custom_digraphs);
             });
         });
 

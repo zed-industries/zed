@@ -564,7 +564,6 @@ impl PickerDelegate for BranchListDelegate {
                                     let show_author_name = ProjectSettings::get_global(cx)
                                         .git
                                         .branch_picker
-                                        .unwrap_or_default()
                                         .show_author_name;
 
                                     subject.map_or("no commits found".into(), |subject| {

@@ -2128,7 +2128,7 @@ impl BufferSnapshot {
         let row_end_offset = if row >= self.max_point().row {
             self.len()
         } else {
-            Point::new(row + 1, 0).to_offset(self) - 1
+            Point::new(row + 1, 0).to_previous_offset(self)
         };
         (row_end_offset - row_start_offset) as u32
     }
@@ -2400,6 +2400,17 @@ impl BufferSnapshot {
         } else if bias == Bias::Right && offset == self.len() {
             Anchor::MAX
         } else {
+            if !self.visible_text.is_char_boundary(offset) {
+                // find the character
+                let char_start = self.visible_text.floor_char_boundary(offset);
+                // `char_start` must be less than len and a char boundary
+                let ch = self.visible_text.chars_at(char_start).next().unwrap();
+                let char_range = char_start..char_start + ch.len_utf8();
+                panic!(
+                    "byte index {} is not a char boundary; it is inside {:?} (bytes {:?})",
+                    offset, ch, char_range,
+                );
+            }
             let mut fragment_cursor = self.fragments.cursor::<usize>(&None);
             fragment_cursor.seek(&offset, bias);
             let fragment = fragment_cursor.item().unwrap();
@@ -3065,6 +3076,18 @@ impl operation_queue::Operation for Operation {
 
 pub trait ToOffset {
     fn to_offset(&self, snapshot: &BufferSnapshot) -> usize;
+    /// Turns this point into the next offset in the buffer that comes after this, respecting utf8 boundaries.
+    fn to_next_offset(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot
+            .visible_text
+            .ceil_char_boundary(self.to_offset(snapshot) + 1)
+    }
+    /// Turns this point into the previous offset in the buffer that comes before this, respecting utf8 boundaries.
+    fn to_previous_offset(&self, snapshot: &BufferSnapshot) -> usize {
+        snapshot
+            .visible_text
+            .floor_char_boundary(self.to_offset(snapshot).saturating_sub(1))
+    }
 }
 
 impl ToOffset for Point {

@@ -482,7 +482,6 @@ impl PickerDelegate for TasksModalDelegate {
         let highlighted_location = HighlightedMatch {
             text: hit.string.clone(),
             highlight_positions: hit.positions.clone(),
-            char_count: hit.string.chars().count(),
             color: Color::Default,
         };
         let icon = match source_kind {
@@ -493,7 +492,7 @@ impl PickerDelegate for TasksModalDelegate {
                 language_name: name,
                 ..
             }
-            | TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
+            | TaskSourceKind::Language { name, .. } => file_icons::FileIcons::get(cx)
                 .get_icon_for_type(&name.to_lowercase(), cx)
                 .map(Icon::from_path),
         }

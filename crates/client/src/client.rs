@@ -29,9 +29,8 @@ use proxy::connect_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::{Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -96,35 +95,22 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-pub struct ClientSettingsContent {
-    server_url: Option<String>,
-}
-
 #[derive(Deserialize)]
 pub struct ClientSettings {
     pub server_url: String,
 }
 
 impl Settings for ClientSettings {
-    type FileContent = ClientSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let mut result = sources.json_merge::<Self>()?;
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         if let Some(server_url) = &*ZED_SERVER_URL {
-            result.server_url.clone_from(server_url)
+            return Self {
+                server_url: server_url.clone(),
+            };
         }
-        Ok(result)
+        Self {
+            server_url: content.server_url.clone().unwrap(),
+        }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
-}
-
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-pub struct ProxySettingsContent {
-    proxy: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -147,19 +133,13 @@ impl ProxySettings {
 }
 
 impl Settings for ProxySettings {
-    type FileContent = ProxySettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self {
-            proxy: sources
-                .user
-                .or(sources.server)
-                .and_then(|value| value.proxy.clone())
-                .or(sources.default.proxy.clone()),
-        })
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            proxy: content.proxy.clone(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
         vscode.string_setting("http.proxy", &mut current.proxy);
     }
 }
@@ -538,37 +518,33 @@ pub struct TelemetrySettings {
     pub metrics: bool,
 }
 
-/// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
-#[settings_key(key = "telemetry")]
-pub struct TelemetrySettingsContent {
-    /// Send debug info like crash reports.
-    ///
-    /// Default: true
-    pub diagnostics: Option<bool>,
-    /// Send anonymized usage data like what languages you're using Zed with.
-    ///
-    /// Default: true
-    pub metrics: Option<bool>,
-}
-
 impl settings::Settings for TelemetrySettings {
-    type FileContent = TelemetrySettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            diagnostics: content.telemetry.as_ref().unwrap().diagnostics.unwrap(),
+            metrics: content.telemetry.as_ref().unwrap().metrics.unwrap(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.enum_setting("telemetry.telemetryLevel", &mut current.metrics, |s| {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
+        let mut telemetry = settings::TelemetrySettingsContent::default();
+        vscode.enum_setting("telemetry.telemetryLevel", &mut telemetry.metrics, |s| {
             Some(s == "all")
         });
-        vscode.enum_setting("telemetry.telemetryLevel", &mut current.diagnostics, |s| {
-            Some(matches!(s, "all" | "error" | "crash"))
-        });
+        vscode.enum_setting(
+            "telemetry.telemetryLevel",
+            &mut telemetry.diagnostics,
+            |s| Some(matches!(s, "all" | "error" | "crash")),
+        );
         // we could translate telemetry.telemetryLevel, but just because users didn't want
         // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
         // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
+        if let Some(diagnostics) = telemetry.diagnostics {
+            current.telemetry.get_or_insert_default().diagnostics = Some(diagnostics)
+        }
+        if let Some(metrics) = telemetry.metrics {
+            current.telemetry.get_or_insert_default().metrics = Some(metrics)
+        }
     }
 }
 

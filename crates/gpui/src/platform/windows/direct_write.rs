@@ -723,11 +723,10 @@ impl DirectWriteState {
             dx: 0.0,
             dy: 0.0,
         };
-        let subpixel_shift = params
-            .subpixel_variant
-            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
-        let baseline_origin_x = subpixel_shift.x / params.scale_factor;
-        let baseline_origin_y = subpixel_shift.y / params.scale_factor;
+        let baseline_origin_x =
+            params.subpixel_variant.x as f32 / SUBPIXEL_VARIANTS_X as f32 / params.scale_factor;
+        let baseline_origin_y =
+            params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor;
 
         let mut rendering_mode = DWRITE_RENDERING_MODE1::default();
         let mut grid_fit_mode = DWRITE_GRID_FIT_MODE::default();
@@ -859,7 +858,7 @@ impl DirectWriteState {
         let bitmap_size = glyph_bounds.size;
         let subpixel_shift = params
             .subpixel_variant
-            .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+            .map(|v| v as f32 / SUBPIXEL_VARIANTS_X as f32);
         let baseline_origin_x = subpixel_shift.x / params.scale_factor;
         let baseline_origin_y = subpixel_shift.y / params.scale_factor;
 
