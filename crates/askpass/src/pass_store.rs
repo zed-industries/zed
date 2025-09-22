@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use anyhow::{Context, Result};
+use anyhow::{Result};
 use zeroize::Zeroize;
 
 type LengthWithoutPadding = u32;
@@ -53,6 +53,7 @@ impl TryFrom<&str> for EncryptedPassword {
 pub(crate) fn decrypt_password(mut password: EncryptedPassword) -> Result<String> {
     #[cfg(windows)]
     {
+        use anyhow::Context;
         use windows::Win32::Security::Cryptography::{
             CRYPTPROTECTMEMORY_BLOCK_SIZE, CRYPTPROTECTMEMORY_SAME_PROCESS, CryptUnprotectMemory,
         };
