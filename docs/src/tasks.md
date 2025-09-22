@@ -132,6 +132,19 @@ Or explicitly include escaped quotes like so:
 }
 ```
 
+### Task filtering based on variables
+
+Zed filters tasks based on what is currently able to be run. To do this, Zed will consider the presence or absence of environmental variables. For example, the following task is only available to be run when text is selected in the editor.
+
+```json
+{
+  "label": "selected text",
+  "command": "echo \"$ZED_SELECTED_TEXT\""
+}
+```
+
+If you would like to define a task that works both when text is selected and when text is not selected, you need to create 2 tasks, one with `$ZED_SELECTED_TEXT` present and one without.
+
 ## Oneshot tasks
 
 The same task modal opened via `task: spawn` supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.
