@@ -249,19 +249,32 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in &OllamaLanguageModelProvider::settings(cx).available_models {
-            models.insert(
-                model.name.clone(),
-                ollama::Model {
-                    name: model.name.clone(),
-                    display_name: model.display_name.clone(),
-                    max_tokens: model.max_tokens,
-                    keep_alive: model.keep_alive.clone(),
-                    supports_tools: model.supports_tools,
-                    supports_vision: model.supports_images,
-                    supports_thinking: model.supports_thinking,
-                },
-            );
+        for setting_model in &OllamaLanguageModelProvider::settings(cx).available_models {
+            let setting_base = setting_model.name.split(':').next().unwrap();
+            if let Some(model) = models
+                .values_mut()
+                .find(|m| m.name.split(':').next().unwrap() == setting_base)
+            {
+                model.max_tokens = setting_model.max_tokens;
+                model.display_name = setting_model.display_name.clone();
+                model.keep_alive = setting_model.keep_alive.clone();
+                model.supports_tools = setting_model.supports_tools;
+                model.supports_vision = setting_model.supports_images;
+                model.supports_thinking = setting_model.supports_thinking;
+            } else {
+                models.insert(
+                    setting_model.name.clone(),
+                    ollama::Model {
+                        name: setting_model.name.clone(),
+                        display_name: setting_model.display_name.clone(),
+                        max_tokens: setting_model.max_tokens,
+                        keep_alive: setting_model.keep_alive.clone(),
+                        supports_tools: setting_model.supports_tools,
+                        supports_vision: setting_model.supports_images,
+                        supports_thinking: setting_model.supports_thinking,
+                    },
+                );
+            }
         }
 
         let mut models = models
