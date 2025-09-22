@@ -1501,18 +1501,20 @@ where
 
                     self.byte_offset += overshoot;
                     self.char_offset += get_char_offset(
-                        chunk_position..(chunk_position + overshoot).saturating_sub(1).min(127),
+                        chunk_position..(chunk_position + overshoot).saturating_sub(1),
                         chunk.chars,
                     );
 
-                    self.current_chunk = Some((chunk, chunk_position + overshoot));
+                    if chunk_position + overshoot < 128 {
+                        self.current_chunk = Some((chunk, chunk_position + overshoot));
+                    }
 
                     return None;
                 }
 
                 self.byte_offset += chunk_distance;
                 self.char_offset += get_char_offset(
-                    chunk_position..(chunk_position + chunk_distance).saturating_sub(1).min(127),
+                    chunk_position..(chunk_position + chunk_distance).saturating_sub(1),
                     chunk.chars,
                 );
                 distance_traversed += chunk_distance;
@@ -1564,8 +1566,6 @@ where
 
 #[inline(always)]
 fn get_char_offset(range: Range<u32>, bit_map: u128) -> u32 {
-    // This edge case can happen when we're at chunk position 128
-
     if range.start == range.end {
         return if (1u128 << range.start) & bit_map == 0 {
             0
@@ -1573,7 +1573,7 @@ fn get_char_offset(range: Range<u32>, bit_map: u128) -> u32 {
             1
         };
     }
-    let end_shift: u128 = 127u128 - range.end.min(127) as u128;
+    let end_shift: u128 = 127u128 - range.end as u128;
     let mut bit_mask = (u128::MAX >> range.start) << range.start;
     bit_mask = (bit_mask << end_shift) >> end_shift;
     let bit_map = bit_map & bit_mask;
