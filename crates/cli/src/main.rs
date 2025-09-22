@@ -309,7 +309,7 @@ fn main() -> Result<()> {
     #[cfg(not(target_os = "windows"))]
     let wsl = None;
 
-    let prefixes = ["zed://", "http://", "https://", "file://", "ssh://"];
+    const let prefixes = ["zed://", "http://", "https://", "file://", "ssh://"];
     for path in args.paths_with_position.iter() {
         if prefixes.iter().any(|&prefix| path.starts_with(prefix)) {
             urls.push(path.to_string());
