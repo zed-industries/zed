@@ -508,17 +508,16 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
             return;
         };
 
-        // TODO [zeta2] check account
-        // if self
-        //     .zeta
-        //     .read(cx)
-        //     .user_store
-        //     .read_with(cx, |user_store, _cx| {
-        //         user_store.account_too_young() || user_store.has_overdue_invoices()
-        //     })
-        // {
-        //     return;
-        // }
+        if self
+            .zeta
+            .read(cx)
+            .user_store
+            .read_with(cx, |user_store, _cx| {
+                user_store.account_too_young() || user_store.has_overdue_invoices()
+            })
+        {
+            return;
+        }
 
         if let Some(current_prediction) = self.current_prediction.as_ref() {
             let snapshot = buffer.read(cx).snapshot();
