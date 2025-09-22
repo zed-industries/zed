@@ -1006,7 +1006,7 @@ impl Motion {
                 SelectionGoal::None,
             ),
             FirstNonWhitespace { display_lines } => (
-                first_non_whitespace(map, *display_lines, point),
+                first_non_whitespace_for_caret(map, *display_lines, point),
                 SelectionGoal::None,
             ),
             StartOfLine { display_lines } => (
@@ -2028,21 +2028,48 @@ pub(crate) fn first_non_whitespace(
     display_lines: bool,
     from: DisplayPoint,
 ) -> DisplayPoint {
-    let mut start_offset = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
+    let line_start = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
     let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
-    for (ch, offset) in map.buffer_chars_at(start_offset) {
+    let mut first_non_ws_offset = None;
+
+    for (ch, offset) in map.buffer_chars_at(line_start) {
         if ch == '\n' {
-            return from;
+            break;
         }
-
-        start_offset = offset;
-
         if classifier.kind(ch) != CharKind::Whitespace {
+            first_non_ws_offset = Some(offset);
             break;
         }
     }
 
-    start_offset.to_display_point(map)
+    first_non_ws_offset
+        .unwrap_or(line_start)
+        .to_display_point(map)
+}
+
+pub(crate) fn first_non_whitespace_for_caret(
+    map: &DisplaySnapshot,
+    display_lines: bool,
+    from: DisplayPoint,
+) -> DisplayPoint {
+    let line_start = start_of_line(map, display_lines, from).to_offset(map, Bias::Left);
+    let classifier = map.buffer_snapshot.char_classifier_at(from.to_point(map));
+    let mut first_non_ws_offset = None;
+
+    for (ch, offset) in map.buffer_chars_at(line_start) {
+        if ch == '\n' {
+            break;
+        }
+        if classifier.kind(ch) != CharKind::Whitespace {
+            first_non_ws_offset = Some(offset);
+            break;
+        }
+    }
+
+    // For ^ motion: if no non-whitespace found, stay at current position
+    first_non_ws_offset
+        .unwrap_or_else(|| from.to_offset(map, Bias::Left))
+        .to_display_point(map)
 }
 
 pub(crate) fn last_non_whitespace(
@@ -2266,17 +2293,18 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
     let Some(mut excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
         return display_point;
     };
-    let offset = excerpt.buffer().point_to_offset(
-        excerpt
-            .buffer()
-            .clip_point(Point::new((line - 1) as u32, point.column), Bias::Left),
-    );
+    let target_point = Point::new((line - 1) as u32, 0);
+    let offset = excerpt
+        .buffer()
+        .point_to_offset(excerpt.buffer().clip_point(target_point, Bias::Left));
     let buffer_range = excerpt.buffer_range();
     if offset >= buffer_range.start && offset <= buffer_range.end {
         let point = map
             .buffer_snapshot
             .offset_to_point(excerpt.map_offset_from_buffer(offset));
-        return map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
+        let display_point =
+            map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
+        return first_non_whitespace(map, false, display_point);
     }
     let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot.excerpts() {
@@ -2285,10 +2313,12 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
         if offset >= excerpt_range.start && offset <= excerpt_range.end {
             let text_anchor = buffer.anchor_after(offset);
             let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
-            return anchor.to_display_point(map);
+            let display_point = anchor.to_display_point(map);
+            return first_non_whitespace(map, false, display_point);
         } else if offset <= excerpt_range.start {
             let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), range.context.start);
-            return anchor.to_display_point(map);
+            let display_point = anchor.to_display_point(map);
+            return first_non_whitespace(map, false, display_point);
         } else {
             last_position = Some(Anchor::in_buffer(
                 excerpt,
@@ -2299,15 +2329,17 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
     }
 
     let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot);
-    last_point.column = point.column;
+    last_point.column = 0;
 
-    map.clip_point(
+    let display_point = map.clip_point(
         map.point_to_display_point(
-            map.buffer_snapshot.clip_point(point, Bias::Left),
+            map.buffer_snapshot
+                .clip_point(Point::new((line - 1) as u32, 0), Bias::Left),
             Bias::Left,
         ),
         Bias::Left,
-    )
+    );
+    first_non_whitespace(map, false, display_point)
 }
 
 fn start_of_document(
@@ -2319,13 +2351,14 @@ fn start_of_document(
         return go_to_line(map, display_point, times);
     }
 
-    map.clip_point(
+    let first_line = map.clip_point(
         map.point_to_display_point(
             map.buffer_snapshot.clip_point(Point::zero(), Bias::Left),
             Bias::Left,
         ),
         Bias::Left,
-    )
+    );
+    first_non_whitespace(map, false, first_line)
 }
 
 fn end_of_document(
@@ -2339,13 +2372,14 @@ fn end_of_document(
     let mut last_point = map.buffer_snapshot.max_point();
     last_point.column = 0;
 
-    map.clip_point(
+    let last_line = map.clip_point(
         map.point_to_display_point(
             map.buffer_snapshot.clip_point(last_point, Bias::Left),
             Bias::Left,
         ),
         Bias::Left,
-    )
+    );
+    first_non_whitespace(map, false, last_line)
 }
 
 fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoint> {
