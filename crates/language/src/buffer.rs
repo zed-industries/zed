@@ -4066,8 +4066,7 @@ impl BufferSnapshot {
         range: Range<T>,
     ) -> impl Iterator<Item = BracketMatch> + '_ {
         // Find bracket pairs that *inclusively* contain the given range.
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
         self.all_bracket_ranges(range)
             .filter(|pair| !pair.newline_only)
     }
@@ -4076,8 +4075,7 @@ impl BufferSnapshot {
         &self,
         range: Range<T>,
     ) -> impl Iterator<Item = (Range<usize>, DebuggerTextObject)> + '_ {
-        let range = range.start.to_offset(self).saturating_sub(1)
-            ..self.len().min(range.end.to_offset(self) + 1);
+        let range = range.start.to_previous_offset(self)..range.end.to_next_offset(self);
 
         let mut matches = self.syntax.matches_with_options(
             range.clone(),
