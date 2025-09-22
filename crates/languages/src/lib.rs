@@ -429,44 +429,10 @@ fn load_queries(name: &str) -> LanguageQueries {
             }
         }
     }
-    LanguageInfo::update_injections(name, &mut result);
+    LanguageInfo::update_injections(&paths::injections_dir(), name, &mut result);
     result
 }
 
-// Enable handling of tagged comments for supported languages built into Zed.
-// `LanguageInfo` reprepresents a language built into Zed.
-impl CommentInjection for LanguageInfo {
-    // NOTE: Alternatively a language's `injections.scm` file could be modified to directly include the comment language injection.
-    const LANGUAGE_COMMENT_INJECTIONS: &[(&'static str, CommentInjectionQuery)] = &[
-        ("bash", Self::Q_COMMENT),
-        ("c", Self::Q_COMMENT),
-        ("cpp", Self::Q_COMMENT),
-        ("css", Self::Q_COMMENT),
-        ("diff", Self::Q_COMMENT),
-        ("go", Self::Q_COMMENT),
-        ("gomod", Self::Q_COMMENT),
-        ("json", Self::Q_COMMENT),
-        ("jsonc", Self::Q_COMMENT),
-        // Skip Markdown.
-        // While some Markdown dialects support comments, tree-sitter-markdown seems not to.
-        ("python", Self::Q_COMMENT),
-        (
-            "rust",
-            CommentInjectionQuery::Clause {
-                // Match both block- and line-comments, but do not match doc-comments.
-                clause: "[(block_comment !doc) (line_comment !doc)]",
-            },
-        ),
-        ("tsx", Self::Q_TYPESCRIPT),
-        ("typescript", Self::Q_TYPESCRIPT),
-        ("yaml", Self::Q_COMMENT),
-    ];
-}
-
-impl LanguageInfo {
-    const Q_TYPESCRIPT: CommentInjectionQuery = CommentInjectionQuery::ClauseAndExp {
-        clause: Self::C_COMMENT,
-        // Do not match JSDoc comments (which start with /**).
-        exp: r#""^/(?:/|[*][^*])""#,
-    };
-}
+// Enable updating injection queries based on user configuration.
+// `LanguageInfo` represents a language built into Zed.
+impl UpdateInjections for LanguageInfo {}

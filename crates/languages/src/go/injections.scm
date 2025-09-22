@@ -372,3 +372,5 @@
     (#match? @comment "^\\/\\*\\s*csv\\s*\\*\\/") ; /* csv */ or /*csv*/
     (#set! injection.language "csv")
 )
+
+((comment) @injection.content (#set! injection.language "comment"))

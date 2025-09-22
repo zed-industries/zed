@@ -15,3 +15,5 @@
     (attribute_name) @_attribute_name (#match? @_attribute_name "^on[a-z]+$")
     (quoted_attribute_value (attribute_value) @injection.content)
     (#set! injection.language "javascript"))
+
+((comment) @injection.content (#set! injection.language "comment"))

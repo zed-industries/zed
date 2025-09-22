@@ -79,7 +79,7 @@ impl Comment {
         // So just remove any old tagged comment language entry and eventually add new one using new queries.
         // This also disables tagged comment support, if the user decides to remove/clear the tagged comment configuration.
         registry.remove_languages(&[Self::LANGUAGE_NAME], &[]);
-        let queries = Self::queryies_from_config(config);
+        let queries = Self::queries_from_config(config);
 
         let state = if let Some((highlights, outline)) = queries {
             let language = Language::new(
@@ -101,18 +101,18 @@ impl Comment {
         log::info!("tagged comment support {state}abled");
     }
 
-    fn grammar_name() -> Arc<str> {
-        // The grammar name is needed multiple times, so clone a static value.
+    fn grammar_name() -> &'static Arc<str> {
+        // The grammar name is needed multiple times, so use a static value.
         static NAME: OnceLock<Arc<str>> = OnceLock::new();
-        NAME.get_or_init(|| Self::NAME.into()).clone()
+        NAME.get_or_init(|| Self::NAME.into())
     }
 
     fn language_config() -> LanguageConfig {
         LanguageConfig {
             name: Self::LANGUAGE_NAME,
-            grammar: Some(Self::grammar_name()),
+            grammar: Some(Self::grammar_name().clone()),
             hidden: true,
-            // Can't just use LanguageMatcher::default() (see Self::matcher).
+            // Can't just use LanguageMatcher::default().
             matcher: Self::language_matcher(),
             ..Default::default()
         }
@@ -131,7 +131,7 @@ impl Comment {
     // Parses the given tagged comment configuration and creates the Tree-sitter queries based on it.
     // Returns strings containing the queries similar to the contents of a "highlights.scm" and "outline.scm" file.
     // Returns `None` if tagged comment support is disabled (config is empty or containing an empty array of groups).
-    fn queryies_from_config(config: &str) -> Option<(String, Option<String>)> {
+    fn queries_from_config(config: &str) -> Option<(String, Option<String>)> {
         let config = config.trim();
         if config.is_empty() {
             return None;
