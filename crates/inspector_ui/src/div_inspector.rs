@@ -664,7 +664,7 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String
         let before_change = style.clone();
         style = method.invoke(style);
         if before_change != style {
-            let _ = write!(code, "\n.{}()", &method.name);
+            let _ = write!(code, ".{}()\n", &method.name);
         }
     }
 
@@ -677,7 +677,7 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String
                     found_match = true;
                     let _ = write!(
                         code,
-                        "\n.{}(colors.{})",
+                        ".{}(colors.{})\n",
                         color_method.name,
                         theme_color_field.as_ref().to_case(Case::Snake)
                     );
@@ -688,7 +688,7 @@ fn guess_rust_code_from_style(goal_style: &StyleRefinement, cx: &App) -> (String
                     found_match = true;
                     let _ = write!(
                         code,
-                        "\n.{}(status.{})",
+                        ".{}(status.{})\n",
                         color_method.name,
                         status_color_field.as_ref().to_case(Case::Snake)
                     );
