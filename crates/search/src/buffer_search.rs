@@ -28,7 +28,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use zed_actions::outline::ToggleOutline;
+use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
 use ui::{
     BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
@@ -423,6 +423,16 @@ impl Render for BufferSearchBar {
             .on_action(cx.listener(|this, _: &ToggleOutline, window, cx| {
                 if let Some(active_searchable_item) = &mut this.active_searchable_item {
                     active_searchable_item.relay_action(Box::new(ToggleOutline), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CopyPath, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(CopyPath), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CopyRelativePath, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(CopyRelativePath), window, cx);
                 }
             }))
             .when(replacement, |this| {
@@ -1480,7 +1490,7 @@ mod tests {
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
-    use settings::SettingsStore;
+    use settings::{SearchSettingsContent, SettingsStore};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -2866,8 +2876,14 @@ mod tests {
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<EditorSettings>(cx, |settings| {
-                    settings.search = Some(search_settings);
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.search = Some(SearchSettingsContent {
+                        button: Some(search_settings.button),
+                        whole_word: Some(search_settings.whole_word),
+                        case_sensitive: Some(search_settings.case_sensitive),
+                        include_ignored: Some(search_settings.include_ignored),
+                        regex: Some(search_settings.regex),
+                    });
                 });
             });
         });

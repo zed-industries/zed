@@ -3272,7 +3272,7 @@ mod tests {
 
     // Test-specific constants
     const TEST_RATE_LIMIT_RETRY_SECS: u64 = 30;
-    use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
+    use agent_settings::{AgentProfileId, AgentSettings};
     use assistant_tool::ToolRegistry;
     use assistant_tools;
     use futures::StreamExt;
@@ -3289,7 +3289,7 @@ mod tests {
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
-    use settings::{Settings, SettingsStore};
+    use settings::{LanguageModelParameters, Settings, SettingsStore};
     use std::sync::Arc;
     use std::time::Duration;
     use theme::ThemeSettings;

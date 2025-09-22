@@ -1,8 +1,7 @@
 use crate::{
     remote_connections::{
-        Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettingsContent,
-        SshConnection, SshConnectionHeader, SshProject, SshSettings, connect, connect_over_ssh,
-        open_remote_project,
+        Connection, RemoteConnectionModal, RemoteConnectionPrompt, SshConnection,
+        SshConnectionHeader, SshSettings, connect, connect_over_ssh, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -22,7 +21,10 @@ use remote::{
     RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
     remote_client::ConnectionIdentifier,
 };
-use settings::{Settings, SettingsStore, update_settings_file, watch_config_file};
+use settings::{
+    RemoteSettingsContent, Settings as _, SettingsStore, SshProject, update_settings_file,
+    watch_config_file,
+};
 use smol::stream::StreamExt as _;
 use std::{
     borrow::Cow,
@@ -233,14 +235,15 @@ impl ProjectPicker {
 
                     cx.update(|_, cx| {
                         let fs = app_state.fs.clone();
-                        update_settings_file::<SshSettings>(fs, cx, {
+                        update_settings_file(fs, cx, {
                             let paths = paths
                                 .iter()
                                 .map(|path| path.to_string_lossy().to_string())
                                 .collect();
-                            move |setting, _| match index {
+                            move |settings, _| match index {
                                 ServerIndex::Ssh(index) => {
-                                    if let Some(server) = setting
+                                    if let Some(server) = settings
+                                        .remote
                                         .ssh_connections
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
@@ -249,7 +252,8 @@ impl ProjectPicker {
                                     };
                                 }
                                 ServerIndex::Wsl(index) => {
-                                    if let Some(server) = setting
+                                    if let Some(server) = settings
+                                        .remote
                                         .wsl_connections
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
@@ -522,7 +526,43 @@ impl Mode {
 }
 
 impl RemoteServerProjects {
+    #[cfg(target_os = "windows")]
+    pub fn wsl(
+        create_new_window: bool,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::AddWslDistro(AddWslDistro::new(window, cx)),
+            create_new_window,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
     pub fn new(
+        create_new_window: bool,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::default_mode(&BTreeSet::new(), cx),
+            create_new_window,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
+    fn new_inner(
+        mode: Mode,
         create_new_window: bool,
         fs: Arc<dyn Fs>,
         window: &mut Window,
@@ -558,7 +598,7 @@ impl RemoteServerProjects {
             });
 
         Self {
-            mode: Mode::default_mode(&BTreeSet::new(), cx),
+            mode,
             focus_handle,
             workspace,
             retained_connections: Vec::new(),
@@ -1281,7 +1321,7 @@ impl RemoteServerProjects {
         else {
             return;
         };
-        update_settings_file::<SshSettings>(fs, cx, move |setting, cx| f(setting, cx));
+        update_settings_file(fs, cx, move |setting, cx| f(&mut setting.remote, cx));
     }
 
     fn delete_ssh_server(&mut self, server: SshServerIndex, cx: &mut Context<Self>) {
@@ -1320,7 +1360,7 @@ impl RemoteServerProjects {
             setting
                 .wsl_connections
                 .get_or_insert(Default::default())
-                .push(crate::remote_connections::WslConnection {
+                .push(settings::WslConnection {
                     distro_name: SharedString::from(connection_options.distro_name),
                     user: connection_options.user,
                     projects: BTreeSet::new(),
@@ -1845,41 +1885,27 @@ impl RemoteServerProjects {
         let ssh_settings = SshSettings::get_global(cx);
         let mut should_rebuild = false;
 
-        let ssh_connections_changed =
-            ssh_settings
-                .ssh_connections
-                .as_ref()
-                .is_some_and(|connections| {
-                    state
-                        .servers
-                        .iter()
-                        .filter_map(|server| match server {
-                            RemoteEntry::Project {
-                                connection: Connection::Ssh(connection),
-                                ..
-                            } => Some(connection),
-                            _ => None,
-                        })
-                        .ne(connections.iter())
-                });
+        let ssh_connections_changed = ssh_settings.ssh_connections.0.iter().ne(state
+            .servers
+            .iter()
+            .filter_map(|server| match server {
+                RemoteEntry::Project {
+                    connection: Connection::Ssh(connection),
+                    ..
+                } => Some(connection),
+                _ => None,
+            }));
 
-        let wsl_connections_changed =
-            ssh_settings
-                .wsl_connections
-                .as_ref()
-                .is_some_and(|connections| {
-                    state
-                        .servers
-                        .iter()
-                        .filter_map(|server| match server {
-                            RemoteEntry::Project {
-                                connection: Connection::Wsl(connection),
-                                ..
-                            } => Some(connection),
-                            _ => None,
-                        })
-                        .ne(connections.iter())
-                });
+        let wsl_connections_changed = ssh_settings.wsl_connections.0.iter().ne(state
+            .servers
+            .iter()
+            .filter_map(|server| match server {
+                RemoteEntry::Project {
+                    connection: Connection::Wsl(connection),
+                    ..
+                } => Some(connection),
+                _ => None,
+            }));
 
         if ssh_connections_changed || wsl_connections_changed {
             should_rebuild = true;

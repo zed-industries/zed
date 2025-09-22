@@ -31,14 +31,14 @@ pub struct EditPredictionExcerptOptions {
     pub include_parent_signatures: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EditPredictionExcerpt {
     pub range: Range<usize>,
     pub parent_signature_ranges: Vec<Range<usize>>,
     pub size: usize,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct EditPredictionExcerptText {
     pub body: String,
     pub parent_signatures: Vec<String>,
@@ -114,13 +114,13 @@ impl EditPredictionExcerpt {
             options,
         };
 
-        if let Some(excerpt_ranges) = excerpt_selector.select_tree_sitter_nodes() {
-            if excerpt_ranges.size >= options.min_bytes {
-                return Some(excerpt_ranges);
+        if let Some(excerpt) = excerpt_selector.select_tree_sitter_nodes() {
+            if excerpt.size >= options.min_bytes {
+                return Some(excerpt);
             }
             log::debug!(
                 "tree-sitter excerpt was {} bytes, smaller than min of {}, falling back on line-based selection",
-                excerpt_ranges.size,
+                excerpt.size,
                 options.min_bytes
             );
         } else {

@@ -261,8 +261,8 @@ mod tests {
     use super::*;
     use alacritty_terminal::{
         event::VoidListener,
-        index::{Boundary, Column, Line, Point as AlacPoint},
-        term::{Config, cell::Flags, search::Match, test::TermSize},
+        index::{Boundary, Point as AlacPoint},
+        term::{Config, cell::Flags, test::TermSize},
         vte::ansi::Handler,
     };
     use std::{cell::RefCell, ops::RangeInclusive, path::PathBuf};

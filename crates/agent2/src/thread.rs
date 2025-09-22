@@ -2477,8 +2477,11 @@ impl ToolCallEventStream {
             "always_allow" => {
                 if let Some(fs) = fs.clone() {
                     cx.update(|cx| {
-                        update_settings_file::<AgentSettings>(fs, cx, |settings, _| {
-                            settings.set_always_allow_tool_actions(true);
+                        update_settings_file(fs, cx, |settings, _| {
+                            settings
+                                .agent
+                                .get_or_insert_default()
+                                .set_always_allow_tool_actions(true);
                         });
                     })?;
                 }

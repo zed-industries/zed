@@ -12,7 +12,6 @@ use crate::{
 use anyhow::{Context as _, Result, anyhow};
 use collections::IndexMap;
 use dap::adapters::DebugAdapterName;
-use dap::debugger_settings::DebugPanelDockPosition;
 use dap::{DapRegistry, StartDebuggingRequestArguments};
 use dap::{client::SessionId, debugger_settings::DebuggerSettings};
 use editor::Editor;
@@ -133,6 +132,10 @@ impl DebugPanel {
     pub(crate) fn running_state(&self, cx: &mut App) -> Option<Entity<RunningState>> {
         self.active_session()
             .map(|session| session.read(cx).running_state().clone())
+    }
+
+    pub fn project(&self) -> &Entity<Project> {
+        &self.project
     }
 
     pub fn load(
@@ -622,6 +625,15 @@ impl DebugPanel {
                 })
         };
 
+        let edit_debug_json_button = || {
+            IconButton::new("debug-edit-debug-json", IconName::Code)
+                .icon_size(IconSize::Small)
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(zed_actions::OpenProjectDebugTasks.boxed_clone(), cx);
+                })
+                .tooltip(Tooltip::text("Edit debug.json"))
+        };
+
         let documentation_button = || {
             IconButton::new("debug-open-documentation", IconName::CircleHelp)
                 .icon_size(IconSize::Small)
@@ -896,8 +908,9 @@ impl DebugPanel {
                         )
                         .when(is_side, |this| {
                             this.child(new_session_button())
-                                .child(logs_button())
+                                .child(edit_debug_json_button())
                                 .child(documentation_button())
+                                .child(logs_button())
                         }),
                 )
                 .child(
@@ -948,8 +961,9 @@ impl DebugPanel {
                                 ))
                                 .when(!is_side, |this| {
                                     this.child(new_session_button())
-                                        .child(logs_button())
+                                        .child(edit_debug_json_button())
                                         .child(documentation_button())
+                                        .child(logs_button())
                                 }),
                         ),
                 ),
@@ -1400,11 +1414,7 @@ impl Panel for DebugPanel {
     }
 
     fn position(&self, _window: &Window, cx: &App) -> DockPosition {
-        match DebuggerSettings::get_global(cx).dock {
-            DebugPanelDockPosition::Left => DockPosition::Left,
-            DebugPanelDockPosition::Bottom => DockPosition::Bottom,
-            DebugPanelDockPosition::Right => DockPosition::Right,
-        }
+        DebuggerSettings::get_global(cx).dock.into()
     }
 
     fn position_is_valid(&self, _: DockPosition) -> bool {
@@ -1426,18 +1436,9 @@ impl Panel for DebugPanel {
             });
         }
 
-        settings::update_settings_file::<DebuggerSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left => DebugPanelDockPosition::Left,
-                    DockPosition::Bottom => DebugPanelDockPosition::Bottom,
-                    DockPosition::Right => DebugPanelDockPosition::Right,
-                };
-                settings.dock = dock;
-            },
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.debugger.get_or_insert_default().dock = Some(position.into());
+        });
     }
 
     fn size(&self, _window: &Window, _: &App) -> Pixels {
