@@ -306,16 +306,24 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 return;
             };
             let path_style = worktree.read(cx).path_style();
-            let project_path =
-                RelPath::from_std_path(Path::new(&action.filename), path_style).map(|path| {
-                    ProjectPath {
-                        worktree_id: worktree.read(cx).id(),
-                        path,
-                    }
-                });
+            let Ok(project_path) = RelPath::from_std_path(Path::new(&action.filename), path_style)
+                .map(|path| ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path,
+                })
+            else {
+                // TODO implement save_as with absolute path
+                window.prompt(
+                    gpui::PromptLevel::Critical,
+                    "Cannot save buffer with absolute path",
+                    None,
+                    &["Ok"],
+                    cx,
+                );
+                return;
+            };
 
-            if let Ok(project_path) = &project_path
-                && project.read(cx).entry_for_path(&project_path, cx).is_some()
+            if project.read(cx).entry_for_path(&project_path, cx).is_some()
                 && action.save_intent != Some(SaveIntent::Overwrite)
             {
                 let answer = window.prompt(
@@ -461,9 +469,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
                 return;
             };
+            let path_style = worktree.read(cx).path_style();
+            let Some(path) =
+                RelPath::from_std_path(Path::new(&action.filename), path_style).log_err()
+            else {
+                return;
+            };
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path: Arc::from(Path::new(&action.filename)),
+                path,
             };
 
             let _ = workspace.update(cx, |workspace, cx| {
@@ -1729,9 +1743,8 @@ impl Vim {
                         if let Some((_, buffer, _)) = editor.active_excerpt(cx)
                             && let Some(file) = buffer.read(cx).file()
                             && let Some(local) = file.as_local()
-                            && let Some(str) = local.path().to_str()
                         {
-                            ret.push_str(str)
+                            ret.push_str(&*local.path().display(local.path_style(cx)));
                         }
                     });
                 }

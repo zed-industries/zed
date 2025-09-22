@@ -34,6 +34,7 @@ use ui::{
     StyledTypography, Window, h_flex, rems,
 };
 use util::ResultExt;
+use util::rel_path::RelPath;
 use workspace::searchable::Direction;
 use workspace::{Workspace, WorkspaceDb, WorkspaceId};
 
@@ -343,9 +344,11 @@ impl MarksState {
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
+                    let path = RelPath::from_std_path(relative, worktree.read(cx).path_style())
+                        .log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: relative.into(),
+                        path,
                     })
                 })
                 .next();
@@ -872,7 +875,7 @@ impl VimGlobals {
                     buffer
                         .read(cx)
                         .file()
-                        .map(|file| file.path().to_string_lossy().to_string().into())
+                        .map(|file| file.path().display(file.path_style(cx)).into_owned().into())
                 } else {
                     None
                 }

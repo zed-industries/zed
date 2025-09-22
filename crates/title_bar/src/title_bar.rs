@@ -33,7 +33,7 @@ use onboarding_banner::OnboardingBanner;
 use project::{Project, WorktreeSettings};
 use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use theme::ActiveTheme;
 use title_bar_settings::{TitleBarSettings, TitleBarVisibility};
 use ui::{

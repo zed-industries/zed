@@ -38,6 +38,7 @@ use settings::Settings;
 use std::{
     cmp::Reverse,
     collections::HashSet,
+    ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -45,7 +46,7 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{CommonAnimationExt, Disclosure, Tooltip, prelude::*};
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::Workspace;
 
 pub struct EditFileTool;
@@ -150,7 +151,7 @@ impl Tool for EditFileTool {
         let path = Path::new(&input.path);
         if path
             .components()
-            .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
+            .any(|c| c.as_os_str() == <str as AsRef<OsStr>>::as_ref(local_settings_folder))
         {
             return true;
         }
@@ -198,7 +199,7 @@ impl Tool for EditFileTool {
                 let local_settings_folder = paths::local_settings_folder_name();
                 if path
                     .components()
-                    .any(|c| c.as_os_str() == local_settings_folder.as_os_str())
+                    .any(|c| c.as_os_str() == <str as AsRef<OsStr>>::as_ref(local_settings_folder))
                 {
                     description.push_str(" (local settings)");
                 } else if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
@@ -377,7 +378,7 @@ impl Tool for EditFileTool {
                 .await;
 
             let output = EditFileToolOutput {
-                original_path: project_path.path.to_path_buf(),
+                original_path: project_path.path.as_std_path().to_owned(),
                 new_text,
                 old_text,
                 raw_output: Some(agent_output),
@@ -549,10 +550,11 @@ fn resolve_path(
             let file_name = input
                 .path
                 .file_name()
+                .and_then(|file_name| file_name.to_str())
                 .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: Arc::from(parent.path.join(file_name)),
+                path: Arc::from(parent.path.join(RelPath::new(file_name).unwrap())),
                 ..parent
             });
 
@@ -1236,7 +1238,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::fs;
-    use util::path;
+    use util::{path, paths::PathStyle};
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -1359,9 +1361,8 @@ mod tests {
         let actual = path
             .expect("Should return valid path")
             .path
-            .to_str()
-            .unwrap()
-            .replace("\\", "/"); // Naive Windows paths normalization
+            .display(PathStyle::local())
+            .into_owned();
         assert_eq!(actual, expected);
     }
 
@@ -1984,20 +1985,17 @@ mod tests {
         // Test various config path patterns
         let test_cases = vec![
             (
-                format!("{}/settings.json", local_settings_folder.display()),
+                format!("{local_settings_folder}/settings.json"),
                 true,
                 "Top-level local settings file".to_string(),
             ),
             (
-                format!(
-                    "myproject/{}/settings.json",
-                    local_settings_folder.display()
-                ),
+                format!("myproject/{local_settings_folder}/settings.json"),
                 true,
                 "Local settings in project path".to_string(),
             ),
             (
-                format!("src/{}/config.toml", local_settings_folder.display()),
+                format!("src/{local_settings_folder}/config.toml"),
                 true,
                 "Local settings in subdirectory".to_string(),
             ),

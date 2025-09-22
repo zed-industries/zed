@@ -18,6 +18,7 @@ use anyhow::Result;
 use jupyter_protocol::JupyterKernelspec;
 use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
 use ui::{Icon, IconName, SharedString};
+use util::rel_path::RelPath;
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
