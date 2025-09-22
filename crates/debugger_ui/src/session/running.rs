@@ -1228,9 +1228,8 @@ impl RunningState {
 
             terminal.read_with(cx, |terminal, _| {
                 terminal
-                    .pty_info
-                    .pid()
-                    .map(|pid| pid.as_u32())
+                    .pty_info()
+                    .and_then(|info| info.pid().map(|pid| pid.as_u32()))
                     .context("Terminal was spawned but PID was not available")
             })?
         });

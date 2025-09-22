@@ -64,8 +64,8 @@ use std::{
 use thiserror::Error;
 
 use gpui::{
-    App, AppContext as _, Bounds, ClipboardItem, Context, EventEmitter, Hsla, Keystroke, Modifiers,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
+    App, AppContext as _, Bounds, ClipboardItem, Context, Entity, EventEmitter, Hsla, Keystroke,
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, Rgba,
     ScrollWheelEvent, SharedString, Size, Task, TouchPhase, Window, actions, black, px,
 };
 
@@ -338,6 +338,73 @@ pub struct TerminalBuilder {
 }
 
 impl TerminalBuilder {
+    /// Creates a display-only terminal without a real PTY process
+    pub fn new_display_only(
+        title: Option<SharedString>,
+        cursor_shape: CursorShape,
+        alternate_scroll: AlternateScroll,
+        max_scroll_history_lines: Option<usize>,
+        cx: &mut App,
+    ) -> Result<Entity<Terminal>> {
+        let (events_tx, events_rx) = unbounded();
+
+        let max_scroll_history_lines =
+            max_scroll_history_lines.unwrap_or(DEFAULT_SCROLL_HISTORY_LINES);
+        let config = Config {
+            scrolling_history: max_scroll_history_lines,
+            ..Default::default()
+        };
+
+        let listener = ZedListener(events_tx.clone());
+        let term = Arc::new(FairMutex::new(Term::new(
+            config.clone(),
+            &TerminalBounds::default(),
+            listener.clone(),
+        )));
+
+        let terminal = Terminal {
+            mode: TerminalMode::DisplayOnly,
+            task: None,
+            completion_tx: None,
+            term,
+            term_config: config,
+            title_override: title.clone(),
+            events: VecDeque::with_capacity(10),
+            last_content: Default::default(),
+            last_mouse: None,
+            matches: Vec::new(),
+            selection_head: None,
+            breadcrumb_text: title.map(|t| t.to_string()).unwrap_or_default(),
+            scroll_px: px(0.),
+            next_link_id: 0,
+            selection_phase: SelectionPhase::Ended,
+            hyperlink_regex_searches: RegexSearches::new(),
+            vi_mode_enabled: false,
+            is_ssh_terminal: false,
+            last_mouse_move_time: Instant::now(),
+            last_hyperlink_search_position: None,
+            #[cfg(windows)]
+            shell_program: None,
+            activation_script: Vec::new(),
+            template: CopyTemplate {
+                shell: Shell::System,
+                env: HashMap::default(),
+                cursor_shape,
+                alternate_scroll,
+                max_scroll_history_lines: Some(max_scroll_history_lines),
+                window_id: 0, // Not used for display-only terminals
+            },
+            child_exited: None,
+        };
+
+        let builder = TerminalBuilder {
+            terminal,
+            events_rx,
+        };
+
+        Ok(cx.new(|cx| builder.subscribe(cx)))
+    }
+
     pub fn new(
         working_directory: Option<PathBuf>,
         task: Option<TaskState>,
@@ -497,8 +564,11 @@ impl TerminalBuilder {
         let no_task = task.is_none();
 
         let mut terminal = Terminal {
+            mode: TerminalMode::Shell {
+                pty_tx: Notifier(pty_tx),
+                pty_info,
+            },
             task,
-            pty_tx: Notifier(pty_tx),
             completion_tx,
             term,
             term_config: config,
@@ -508,7 +578,6 @@ impl TerminalBuilder {
             last_mouse: None,
             matches: Vec::new(),
             selection_head: None,
-            pty_info,
             breadcrumb_text: String::new(),
             scroll_px: px(0.),
             next_link_id: 0,
@@ -698,8 +767,16 @@ pub enum SelectionPhase {
     Ended,
 }
 
+pub enum TerminalMode {
+    Shell {
+        pty_tx: Notifier,
+        pty_info: PtyProcessInfo,
+    },
+    DisplayOnly,
+}
+
 pub struct Terminal {
-    pty_tx: Notifier,
+    mode: TerminalMode,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
@@ -710,7 +787,6 @@ pub struct Terminal {
     pub last_content: TerminalContent,
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
-    pub pty_info: PtyProcessInfo,
     title_override: Option<SharedString>,
     scroll_px: Pixels,
     next_link_id: usize,
@@ -833,8 +909,10 @@ impl Terminal {
             AlacTermEvent::Wakeup => {
                 cx.emit(Event::Wakeup);
 
-                if self.pty_info.has_changed() {
-                    cx.emit(Event::TitleChanged);
+                if let TerminalMode::Shell { pty_info, .. } = &mut self.mode {
+                    if pty_info.has_changed() {
+                        cx.emit(Event::TitleChanged);
+                    }
                 }
             }
             AlacTermEvent::ColorRequest(index, format) => {
@@ -875,7 +953,9 @@ impl Terminal {
 
                 self.last_content.terminal_bounds = new_bounds;
 
-                self.pty_tx.0.send(Msg::Resize(new_bounds.into())).ok();
+                if let TerminalMode::Shell { pty_tx, .. } = &self.mode {
+                    pty_tx.0.send(Msg::Resize(new_bounds.into())).ok();
+                }
 
                 term.resize(new_bounds);
             }
@@ -1237,7 +1317,35 @@ impl Terminal {
 
     ///Write the Input payload to the tty.
     fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
-        self.pty_tx.notify(input.into());
+        if let TerminalMode::Shell { pty_tx, .. } = &self.mode {
+            pty_tx.notify(input.into());
+        }
+    }
+
+    /// Write output directly to a display-only terminal
+    pub fn write_output(&mut self, data: &[u8], cx: &mut Context<Self>) {
+        if !matches!(self.mode, TerminalMode::DisplayOnly) {
+            return;
+        }
+
+        {
+            let mut term = self.term.lock();
+            let text = String::from_utf8_lossy(data);
+            for ch in text.chars() {
+                term.input(ch);
+            }
+        }
+
+        // Notify that content has changed
+        cx.notify();
+    }
+
+    pub fn is_display_only(&self) -> bool {
+        matches!(self.mode, TerminalMode::DisplayOnly)
+    }
+
+    pub fn mode(&self) -> &TerminalMode {
+        &self.mode
     }
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
@@ -1541,7 +1649,9 @@ impl Terminal {
                 && let Some(bytes) =
                     mouse_moved_report(point, e.pressed_button, e.modifiers, self.last_content.mode)
             {
-                self.pty_tx.notify(bytes);
+                if let TerminalMode::Shell { pty_tx, .. } = &self.mode {
+                    pty_tx.notify(bytes);
+                }
             }
         } else if e.modifiers.secondary() {
             self.word_from_position(e.position);
@@ -1648,7 +1758,9 @@ impl Terminal {
             if let Some(bytes) =
                 mouse_button_report(point, e.button, e.modifiers, true, self.last_content.mode)
             {
-                self.pty_tx.notify(bytes);
+                if let TerminalMode::Shell { pty_tx, .. } = &self.mode {
+                    pty_tx.notify(bytes);
+                }
             }
         } else {
             match e.button {
@@ -1707,7 +1819,9 @@ impl Terminal {
             if let Some(bytes) =
                 mouse_button_report(point, e.button, e.modifiers, false, self.last_content.mode)
             {
-                self.pty_tx.notify(bytes);
+                if let TerminalMode::Shell { pty_tx, .. } = &self.mode {
+                    pty_tx.notify(bytes);
+                }
             }
         } else {
             if e.button == MouseButton::Left && setting.copy_on_select {
@@ -1745,8 +1859,10 @@ impl Terminal {
 
                 if let Some(scrolls) = scroll_report(point, scroll_lines, e, self.last_content.mode)
                 {
-                    for scroll in scrolls {
-                        self.pty_tx.notify(scroll);
+                    if let TerminalMode::Shell { pty_tx, .. } = &self.mode {
+                        for scroll in scrolls {
+                            pty_tx.notify(scroll);
+                        }
                     }
                 };
             } else if self
@@ -1755,7 +1871,9 @@ impl Terminal {
                 .contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
                 && !e.shift
             {
-                self.pty_tx.notify(alt_scroll(scroll_lines))
+                if let TerminalMode::Shell { pty_tx, .. } = &self.mode {
+                    pty_tx.notify(alt_scroll(scroll_lines))
+                }
             } else if scroll_lines != 0 {
                 let scroll = AlacScroll::Delta(scroll_lines);
 
@@ -1826,10 +1944,12 @@ impl Terminal {
     /// This does *not* return the working directory of the shell that runs on the
     /// remote host, in case Zed is connected to a remote host.
     fn client_side_working_directory(&self) -> Option<PathBuf> {
-        self.pty_info
-            .current
-            .as_ref()
-            .map(|process| process.cwd.clone())
+        match &self.mode {
+            TerminalMode::Shell { pty_info, .. } => {
+                pty_info.current.as_ref().map(|info| info.cwd.clone())
+            }
+            TerminalMode::DisplayOnly => None,
+        }
     }
 
     pub fn title(&self, truncate: bool) -> String {
@@ -1847,38 +1967,46 @@ impl Terminal {
                 .as_ref()
                 .map(|title_override| title_override.to_string())
                 .unwrap_or_else(|| {
-                    self.pty_info
-                        .current
-                        .as_ref()
-                        .map(|fpi| {
-                            let process_file = fpi
-                                .cwd
-                                .file_name()
-                                .map(|name| name.to_string_lossy().to_string())
-                                .unwrap_or_default();
+                    match &self.mode {
+                        TerminalMode::Shell { pty_info, .. } => pty_info.current.as_ref(),
+                        TerminalMode::DisplayOnly => None,
+                    }
+                    .map(|fpi| {
+                        let process_file = fpi
+                            .cwd
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string())
+                            .unwrap_or_default();
 
-                            let argv = fpi.argv.as_slice();
-                            let process_name = format!(
-                                "{}{}",
-                                fpi.name,
-                                if !argv.is_empty() {
-                                    format!(" {}", (argv[1..]).join(" "))
-                                } else {
-                                    "".to_string()
-                                }
-                            );
-                            let (process_file, process_name) = if truncate {
-                                (
-                                    truncate_and_trailoff(&process_file, MAX_CHARS),
-                                    truncate_and_trailoff(&process_name, MAX_CHARS),
-                                )
+                        let argv = fpi.argv.as_slice();
+                        let process_name = format!(
+                            "{}{}",
+                            fpi.name,
+                            if !argv.is_empty() {
+                                format!(" {}", (argv[1..]).join(" "))
                             } else {
-                                (process_file, process_name)
-                            };
-                            format!("{process_file} — {process_name}")
-                        })
-                        .unwrap_or_else(|| "Terminal".to_string())
+                                "".to_string()
+                            }
+                        );
+                        let (process_file, process_name) = if truncate {
+                            (
+                                truncate_and_trailoff(&process_file, MAX_CHARS),
+                                truncate_and_trailoff(&process_name, MAX_CHARS),
+                            )
+                        } else {
+                            (process_file, process_name)
+                        };
+                        format!("{process_file} — {process_name}")
+                    })
+                    .unwrap_or_else(|| "Terminal".to_string())
                 }),
+        }
+    }
+
+    pub fn pty_info(&self) -> Option<&PtyProcessInfo> {
+        match &self.mode {
+            TerminalMode::Shell { pty_info, .. } => Some(pty_info),
+            TerminalMode::DisplayOnly => None,
         }
     }
 
@@ -1886,7 +2014,9 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-            self.pty_info.kill_current_process();
+            if let TerminalMode::Shell { pty_info, .. } = &mut self.mode {
+                pty_info.kill_current_process();
+            }
         }
     }
 
@@ -1896,6 +2026,11 @@ impl Terminal {
 
     pub fn wait_for_completed_task(&self, cx: &App) -> Task<Option<ExitStatus>> {
         if let Some(task) = self.task() {
+            if matches!(self.mode, TerminalMode::DisplayOnly) {
+                // Display-only terminals don't have a real process, so there's no exit status
+                return Task::ready(None);
+            }
+
             if task.status == TaskStatus::Running {
                 let completion_receiver = task.completion_rx.clone();
                 return cx.spawn(async move |_| completion_receiver.recv().await.ok().flatten());
@@ -2073,7 +2208,9 @@ unsafe fn append_text_to_term(term: &mut Term<ZedListener>, text_lines: &[&str])
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        self.pty_tx.0.send(Msg::Shutdown).ok();
+        if let TerminalMode::Shell { pty_tx, .. } = &self.mode {
+            pty_tx.0.send(Msg::Shutdown).ok();
+        }
     }
 }
 

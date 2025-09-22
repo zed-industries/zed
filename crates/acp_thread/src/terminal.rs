@@ -82,6 +82,70 @@ impl Terminal {
         }
     }
 
+    pub fn new_display_only(
+        id: acp::TerminalId,
+        command_label: &str,
+        working_dir: Option<PathBuf>,
+        output_byte_limit: Option<usize>,
+        terminal: Entity<terminal::Terminal>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        // Display-only terminals don't have a real process, so there's no exit status
+        let command_task = Task::ready(None);
+
+        Self {
+            id,
+            command: cx.new(|_cx| {
+                // For display-only terminals, we don't need the markdown wrapper
+                // The terminal itself will handle the display
+                Markdown::new(
+                    format!("```\n{}\n```", command_label).into(),
+                    None,
+                    None,
+                    _cx,
+                )
+            }),
+            working_dir,
+            terminal,
+            started_at: Instant::now(),
+            output: None,
+            output_byte_limit,
+            _output_task: cx
+                .spawn(async move |this, cx| {
+                    // Display-only terminals don't really exit, but we need to handle this
+                    let exit_status = command_task.await;
+
+                    this.update(cx, |this, cx| {
+                        let (content, original_content_len) = this.truncated_output(cx);
+                        let content_line_count = this.terminal.read(cx).total_lines();
+
+                        this.output = Some(TerminalOutput {
+                            ended_at: Instant::now(),
+                            exit_status,
+                            content,
+                            original_content_len,
+                            content_line_count,
+                        });
+                        cx.notify();
+                    })
+                    .ok();
+
+                    acp::TerminalExitStatus {
+                        exit_code: None,
+                        signal: None,
+                        meta: None,
+                    }
+                })
+                .shared(),
+        }
+    }
+
+    pub fn write_output(&mut self, data: &[u8], cx: &mut Context<Self>) {
+        self.terminal.update(cx, |terminal, cx| {
+            terminal.write_output(data, cx);
+        });
+    }
+
     pub fn id(&self) -> &acp::TerminalId {
         &self.id
     }

@@ -3,11 +3,11 @@ use ui::{Divider, prelude::*, tooltip_container};
 
 pub struct TerminalTooltip {
     title: SharedString,
-    pid: u32,
+    pid: Option<u32>,
 }
 
 impl TerminalTooltip {
-    pub fn new(title: impl Into<SharedString>, pid: u32) -> Self {
+    pub fn new(title: impl Into<SharedString>, pid: Option<u32>) -> Self {
         Self {
             title: title.into(),
             pid,
@@ -25,11 +25,13 @@ impl Render for TerminalTooltip {
                         .gap_1()
                         .child(Label::new(self.title.clone()))
                         .child(Divider::horizontal())
-                        .child(
-                            Label::new(format!("Process ID (PID): {}", self.pid))
-                                .color(Color::Muted)
-                                .size(LabelSize::Small),
-                        ),
+                        .when_some(self.pid, |this, pid| {
+                            this.child(
+                                Label::new(format!("Process ID (PID): {}", pid))
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                        }),
                 )
         })
     }

@@ -3,6 +3,8 @@ mod diff;
 mod mention;
 mod terminal;
 
+use ::terminal::TerminalBuilder;
+use ::terminal::terminal_settings::{AlternateScroll, CursorShape};
 use agent_settings::AgentSettings;
 use collections::HashSet;
 pub use connection::*;
@@ -1144,8 +1146,32 @@ impl AcpThread {
 
         match update {
             ToolCallUpdate::UpdateFields(update) => {
+                // Check if there's terminal output in the meta field
+                let terminal_output_result = update
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.get("terminal_output"))
+                    .and_then(|terminal_output| {
+                        match (
+                            terminal_output.get("terminal_id").and_then(|v| v.as_str()),
+                            terminal_output.get("data").and_then(|v| v.as_str()),
+                        ) {
+                            (Some(terminal_id_str), Some(data_str)) => {
+                                let data = data_str.as_bytes().to_vec();
+                                let terminal_id = acp::TerminalId(terminal_id_str.into());
+                                Some((terminal_id, data))
+                            }
+                            _ => None,
+                        }
+                    });
+
                 let location_updated = update.fields.locations.is_some();
                 call.update_fields(update.fields, languages, &self.terminals, cx)?;
+
+                if let Some((terminal_id, data)) = terminal_output_result {
+                    // Silently ignore errors - terminal output streaming is best-effort
+                    let _ = self.write_terminal_output(terminal_id, &data, cx);
+                }
                 if location_updated {
                     self.resolve_locations(update.id, cx);
                 }
@@ -1991,32 +2017,16 @@ impl AcpThread {
                 .redirect_stdin_to_dev_null()
                 .build(Some(command), &args);
 
-                // For display-only terminals, create a terminal that doesn't actually execute
                 let terminal = if is_display_only {
-                    // Create a display-only terminal that just shows a header
-                    // The actual output will be streamed from the agent
-                    project
-                        .update(cx, |project, cx| {
-                            project.create_terminal_task(
-                                task::SpawnInTerminal {
-                                    // Use a simple command that shows the header and waits
-                                    // We use sleep to keep the terminal alive for output streaming
-                                    command: Some("sh".to_string()),
-                                    args: vec![
-                                        "-c".to_string(),
-                                        format!(
-                                            "echo '\\033[1;34m[Display Terminal]\\033[0m {}' && sleep 86400",
-                                            command
-                                        ),
-                                    ],
-                                    cwd: cwd.clone(),
-                                    env: Default::default(),  // Don't pass environment to avoid printing it
-                                    ..Default::default()
-                                },
-                                cx,
-                            )
-                        })?
-                        .await?
+                    cx.update(|cx| {
+                        TerminalBuilder::new_display_only(
+                            Some(format!("Display: {}", command).into()),
+                            CursorShape::Block,
+                            AlternateScroll::On,
+                            Some(10_000),
+                            cx,
+                        )
+                    })??
                 } else {
                     project
                         .update(cx, |project, cx| {
@@ -2034,17 +2044,31 @@ impl AcpThread {
                         .await?
                 };
 
-                cx.new(|cx| {
-                    Terminal::new(
-                        terminal_id,
-                        &format!("{} {}", command, args.join(" ")),
-                        cwd,
-                        output_byte_limit.map(|l| l as usize),
-                        terminal,
-                        language_registry,
-                        cx,
-                    )
-                })
+                if is_display_only {
+                    // For display-only terminals, we need special handling
+                    cx.new(|cx| {
+                        Terminal::new_display_only(
+                            terminal_id,
+                            &format!("{} {}", command, args.join(" ")),
+                            cwd,
+                            output_byte_limit.map(|l| l as usize),
+                            terminal,
+                            cx,
+                        )
+                    })
+                } else {
+                    cx.new(|cx| {
+                        Terminal::new(
+                            terminal_id,
+                            &format!("{} {}", command, args.join(" ")),
+                            cwd,
+                            output_byte_limit.map(|l| l as usize),
+                            terminal,
+                            language_registry,
+                            cx,
+                        )
+                    })
+                }
             }
         });
 
@@ -2090,8 +2114,26 @@ impl AcpThread {
     pub fn terminal(&self, terminal_id: acp::TerminalId) -> Result<Entity<Terminal>> {
         self.terminals
             .get(&terminal_id)
-            .context("Terminal not found")
             .cloned()
+            .context("Terminal not found")
+    }
+
+    pub fn write_terminal_output(
+        &mut self,
+        terminal_id: acp::TerminalId,
+        output: &[u8],
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let terminal = self
+            .terminals
+            .get(&terminal_id)
+            .context("Terminal not found")?;
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(output, cx);
+        });
+
+        Ok(())
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
