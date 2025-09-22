@@ -1433,7 +1433,6 @@ impl GitPanel {
                         window,
                         cx,
                     );
-                    self.set_amend_pending(false, cx);
                 }
             }
         } else {
@@ -1599,6 +1598,9 @@ impl GitPanel {
         });
 
         self.pending_commit = Some(task);
+        if options.amend {
+            self.set_amend_pending(false, cx);
+        }
     }
 
     pub(crate) fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3450,7 +3452,6 @@ impl GitPanel {
                                     window,
                                     cx,
                                 );
-                                git_panel.set_amend_pending(false, cx);
                             })
                             .ok();
                     }
