@@ -31,7 +31,7 @@ impl PlanDefinitions {
                 .child(ListBulletItem::new("$20 of tokens"))
                 .when(period, |this| {
                     this.child(ListBulletItem::new(
-                        "Try it out for 14 days for free, no credit card required",
+                        "Try it out for 14 days, no credit card required",
                     ))
                 })
         } else {
@@ -42,7 +42,7 @@ impl PlanDefinitions {
                 ))
                 .when(period, |this| {
                     this.child(ListBulletItem::new(
-                        "Try it out for 14 days for free, no credit card required",
+                        "Try it out for 14 days, no credit card required",
                     ))
                 })
         }
