@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use collections::HashMap;
@@ -195,6 +195,8 @@ impl EditPredictionTools {
                     .timer(Duration::from_millis(50))
                     .await;
 
+                let mut start_time = None;
+
                 let Ok(task) = this.update(cx, |this, cx| {
                     fn number_input_value<T: FromStr + Default>(
                         input: &Entity<SingleLineInput>,
@@ -216,15 +218,16 @@ impl EditPredictionTools {
                             &this.cursor_context_ratio_input,
                             cx,
                         ),
-                        // TODO Display and add to options
-                        include_parent_signatures: false,
                     };
 
-                    EditPredictionContext::gather(
+                    start_time = Some(Instant::now());
+
+                    // TODO use global zeta instead
+                    EditPredictionContext::gather_context_in_background(
                         cursor_position,
                         current_buffer_snapshot,
                         options,
-                        this.syntax_index.clone(),
+                        Some(this.syntax_index.clone()),
                         cx,
                     )
                 }) else {
@@ -243,6 +246,7 @@ impl EditPredictionTools {
                     .ok();
                     return;
                 };
+                let retrieval_duration = start_time.unwrap().elapsed();
 
                 let mut languages = HashMap::default();
                 for snippet in context.snippets.iter() {
@@ -320,7 +324,7 @@ impl EditPredictionTools {
 
                     this.last_context = Some(ContextState {
                         context_editor,
-                        retrieval_duration: context.retrieval_duration,
+                        retrieval_duration,
                     });
                     cx.notify();
                 })

@@ -3216,6 +3216,7 @@ name = "cloud_llm_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "pretty_assertions",
  "serde",
  "serde_json",
@@ -5177,6 +5178,7 @@ dependencies = [
  "anyhow",
  "arrayvec",
  "clap",
+ "cloud_llm_client",
  "collections",
  "futures 0.3.31",
  "gpui",
@@ -21370,6 +21372,7 @@ dependencies = [
  "zed_actions",
  "zed_env_vars",
  "zeta",
+ "zeta2",
  "zlog",
  "zlog_settings",
 ]
@@ -21645,6 +21648,32 @@ dependencies = [
  "worktree",
  "zed_actions",
  "zlog",
+]
+
+[[package]]
+name = "zeta2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arrayvec",
+ "client",
+ "cloud_llm_client",
+ "edit_prediction",
+ "edit_prediction_context",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "language_model",
+ "log",
+ "project",
+ "release_channel",
+ "serde_json",
+ "thiserror 2.0.12",
+ "util",
+ "uuid",
+ "workspace",
+ "workspace-hack",
+ "worktree",
 ]
 
 [[package]]

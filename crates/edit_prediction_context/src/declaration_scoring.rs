@@ -1,10 +1,11 @@
+use cloud_llm_client::predict_edits_v3::ScoreComponents;
 use itertools::Itertools as _;
 use language::BufferSnapshot;
 use ordered_float::OrderedFloat;
 use serde::Serialize;
 use std::{collections::HashMap, ops::Range};
 use strum::EnumIter;
-use text::{OffsetRangeExt, Point, ToPoint};
+use text::{Point, ToPoint};
 
 use crate::{
     Declaration, EditPredictionExcerpt, EditPredictionExcerptText, Identifier,
@@ -15,19 +16,14 @@ use crate::{
 
 const MAX_IDENTIFIER_DECLARATION_COUNT: usize = 16;
 
-// TODO:
-//
-// * Consider adding declaration_file_count
-
 #[derive(Clone, Debug)]
 pub struct ScoredSnippet {
     pub identifier: Identifier,
     pub declaration: Declaration,
-    pub score_components: ScoreInputs,
+    pub score_components: ScoreComponents,
     pub scores: Scores,
 }
 
-// TODO: Consider having "Concise" style corresponding to `concise_text`
 #[derive(EnumIter, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum SnippetStyle {
     Signature,
@@ -90,8 +86,8 @@ pub fn scored_snippets(
             let declaration_count = declarations.len();
 
             declarations
-                .iter()
-                .filter_map(|declaration| match declaration {
+                .into_iter()
+                .filter_map(|(declaration_id, declaration)| match declaration {
                     Declaration::Buffer {
                         buffer_id,
                         declaration: buffer_declaration,
@@ -100,24 +96,29 @@ pub fn scored_snippets(
                         let is_same_file = buffer_id == &current_buffer.remote_id();
 
                         if is_same_file {
-                            range_intersection(
-                                &buffer_declaration.item_range.to_offset(&current_buffer),
-                                &excerpt.range,
-                            )
-                            .is_none()
-                            .then(|| {
+                            let overlaps_excerpt =
+                                range_intersection(&buffer_declaration.item_range, &excerpt.range)
+                                    .is_some();
+                            if overlaps_excerpt
+                                || excerpt
+                                    .parent_declarations
+                                    .iter()
+                                    .any(|(excerpt_parent, _)| excerpt_parent == &declaration_id)
+                            {
+                                None
+                            } else {
                                 let declaration_line = buffer_declaration
                                     .item_range
                                     .start
                                     .to_point(current_buffer)
                                     .row;
-                                (
+                                Some((
                                     true,
                                     (cursor_point.row as i32 - declaration_line as i32)
                                         .unsigned_abs(),
                                     declaration,
-                                )
-                            })
+                                ))
+                            }
                         } else {
                             Some((false, u32::MAX, declaration))
                         }
@@ -238,7 +239,8 @@ fn score_snippet(
     let adjacent_vs_signature_weighted_overlap =
         weighted_overlap_coefficient(adjacent_identifier_occurrences, &item_signature_occurrences);
 
-    let score_components = ScoreInputs {
+    // TODO: Consider adding declaration_file_count
+    let score_components = ScoreComponents {
         is_same_file,
         is_referenced_nearby,
         is_referenced_in_breadcrumb,
@@ -261,30 +263,9 @@ fn score_snippet(
     Some(ScoredSnippet {
         identifier: identifier.clone(),
         declaration: declaration,
-        scores: score_components.score(),
+        scores: Scores::score(&score_components),
         score_components,
     })
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct ScoreInputs {
-    pub is_same_file: bool,
-    pub is_referenced_nearby: bool,
-    pub is_referenced_in_breadcrumb: bool,
-    pub reference_count: usize,
-    pub same_file_declaration_count: usize,
-    pub declaration_count: usize,
-    pub reference_line_distance: u32,
-    pub declaration_line_distance: u32,
-    pub declaration_line_distance_rank: usize,
-    pub containing_range_vs_item_jaccard: f32,
-    pub containing_range_vs_signature_jaccard: f32,
-    pub adjacent_vs_item_jaccard: f32,
-    pub adjacent_vs_signature_jaccard: f32,
-    pub containing_range_vs_item_weighted_overlap: f32,
-    pub containing_range_vs_signature_weighted_overlap: f32,
-    pub adjacent_vs_item_weighted_overlap: f32,
-    pub adjacent_vs_signature_weighted_overlap: f32,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -293,19 +274,19 @@ pub struct Scores {
     pub declaration: f32,
 }
 
-impl ScoreInputs {
-    fn score(&self) -> Scores {
+impl Scores {
+    fn score(components: &ScoreComponents) -> Scores {
         // Score related to how likely this is the correct declaration, range 0 to 1
-        let accuracy_score = if self.is_same_file {
+        let accuracy_score = if components.is_same_file {
             // TODO: use declaration_line_distance_rank
-            1.0 / self.same_file_declaration_count as f32
+            1.0 / components.same_file_declaration_count as f32
         } else {
-            1.0 / self.declaration_count as f32
+            1.0 / components.declaration_count as f32
         };
 
         // Score related to the distance between the reference and cursor, range 0 to 1
-        let distance_score = if self.is_referenced_nearby {
-            1.0 / (1.0 + self.reference_line_distance as f32 / 10.0).powf(2.0)
+        let distance_score = if components.is_referenced_nearby {
+            1.0 / (1.0 + components.reference_line_distance as f32 / 10.0).powf(2.0)
         } else {
             // same score as ~14 lines away, rationale is to not overly penalize references from parent signatures
             0.5
@@ -315,10 +296,12 @@ impl ScoreInputs {
         let combined_score = 10.0 * accuracy_score * distance_score;
 
         Scores {
-            signature: combined_score * self.containing_range_vs_signature_weighted_overlap,
+            signature: combined_score * components.containing_range_vs_signature_weighted_overlap,
             // declaration score gets boosted both by being multiplied by 2 and by there being more
             // weighted overlap.
-            declaration: 2.0 * combined_score * self.containing_range_vs_item_weighted_overlap,
+            declaration: 2.0
+                * combined_score
+                * components.containing_range_vs_item_weighted_overlap,
         }
     }
 }

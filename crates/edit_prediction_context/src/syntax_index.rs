@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use collections::{HashMap, HashSet};
 use futures::lock::Mutex;
 use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity};
@@ -8,19 +6,16 @@ use project::buffer_store::{BufferStore, BufferStoreEvent};
 use project::worktree_store::{WorktreeStore, WorktreeStoreEvent};
 use project::{PathChange, Project, ProjectEntryId, ProjectPath};
 use slotmap::SlotMap;
+use std::iter;
+use std::ops::Range;
+use std::sync::Arc;
 use text::BufferId;
-use util::{debug_panic, some_or_debug_panic};
+use util::{RangeExt as _, debug_panic, some_or_debug_panic};
 
 use crate::declaration::{
     BufferDeclaration, Declaration, DeclarationId, FileDeclaration, Identifier,
 };
 use crate::outline::declarations_in_buffer;
-
-// TODO:
-//
-// * Skip for remote projects
-//
-// * Consider making SyntaxIndex not an Entity.
 
 // Potential future improvements:
 //
@@ -40,7 +35,6 @@ use crate::outline::declarations_in_buffer;
 // * Concurrent slotmap
 //
 // * Use queue for parsing
-//
 
 pub struct SyntaxIndex {
     state: Arc<Mutex<SyntaxIndexState>>,
@@ -432,7 +426,7 @@ impl SyntaxIndexState {
     pub fn declarations_for_identifier<const N: usize>(
         &self,
         identifier: &Identifier,
-    ) -> Vec<Declaration> {
+    ) -> Vec<(DeclarationId, &Declaration)> {
         // make sure to not have a large stack allocation
         assert!(N < 32);
 
@@ -454,7 +448,7 @@ impl SyntaxIndexState {
                     project_entry_id, ..
                 } => {
                     included_buffer_entry_ids.push(*project_entry_id);
-                    result.push(declaration.clone());
+                    result.push((*declaration_id, declaration));
                     if result.len() == N {
                         return Vec::new();
                     }
@@ -463,19 +457,19 @@ impl SyntaxIndexState {
                     project_entry_id, ..
                 } => {
                     if !included_buffer_entry_ids.contains(&project_entry_id) {
-                        file_declarations.push(declaration.clone());
+                        file_declarations.push((*declaration_id, declaration));
                     }
                 }
             }
         }
 
-        for declaration in file_declarations {
+        for (declaration_id, declaration) in file_declarations {
             match declaration {
                 Declaration::File {
                     project_entry_id, ..
                 } => {
                     if !included_buffer_entry_ids.contains(&project_entry_id) {
-                        result.push(declaration);
+                        result.push((declaration_id, declaration));
 
                         if result.len() == N {
                             return Vec::new();
@@ -487,6 +481,35 @@ impl SyntaxIndexState {
         }
 
         result
+    }
+
+    pub fn buffer_declarations_containing_range(
+        &self,
+        buffer_id: BufferId,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = (DeclarationId, &BufferDeclaration)> {
+        let Some(buffer_state) = self.buffers.get(&buffer_id) else {
+            return itertools::Either::Left(iter::empty());
+        };
+
+        let iter = buffer_state
+            .declarations
+            .iter()
+            .filter_map(move |declaration_id| {
+                let Some(declaration) = self
+                    .declarations
+                    .get(*declaration_id)
+                    .and_then(|d| d.as_buffer())
+                else {
+                    log::error!("bug: missing buffer outline declaration");
+                    return None;
+                };
+                if declaration.item_range.contains_inclusive(&range) {
+                    return Some((*declaration_id, declaration));
+                }
+                return None;
+            });
+        itertools::Either::Right(iter)
     }
 
     pub fn file_declaration_count(&self, declaration: &Declaration) -> usize {
@@ -553,11 +576,11 @@ mod tests {
             let decls = index_state.declarations_for_identifier::<8>(&main);
             assert_eq!(decls.len(), 2);
 
-            let decl = expect_file_decl("c.rs", &decls[0], &project, cx);
+            let decl = expect_file_decl("c.rs", &decls[0].1, &project, cx);
             assert_eq!(decl.identifier, main.clone());
             assert_eq!(decl.item_range_in_file, 32..280);
 
-            let decl = expect_file_decl("a.rs", &decls[1], &project, cx);
+            let decl = expect_file_decl("a.rs", &decls[1].1, &project, cx);
             assert_eq!(decl.identifier, main);
             assert_eq!(decl.item_range_in_file, 0..98);
         });
@@ -577,7 +600,7 @@ mod tests {
             let decls = index_state.declarations_for_identifier::<8>(&test_process_data);
             assert_eq!(decls.len(), 1);
 
-            let decl = expect_file_decl("c.rs", &decls[0], &project, cx);
+            let decl = expect_file_decl("c.rs", &decls[0].1, &project, cx);
             assert_eq!(decl.identifier, test_process_data);
 
             let parent_id = decl.parent.unwrap();
@@ -618,7 +641,7 @@ mod tests {
             let decls = index_state.declarations_for_identifier::<8>(&test_process_data);
             assert_eq!(decls.len(), 1);
 
-            let decl = expect_buffer_decl("c.rs", &decls[0], &project, cx);
+            let decl = expect_buffer_decl("c.rs", &decls[0].1, &project, cx);
             assert_eq!(decl.identifier, test_process_data);
 
             let parent_id = decl.parent.unwrap();
@@ -676,11 +699,11 @@ mod tests {
             cx.update(|cx| {
                 let decls = index_state.declarations_for_identifier::<8>(&main);
                 assert_eq!(decls.len(), 2);
-                let decl = expect_buffer_decl("c.rs", &decls[0], &project, cx);
+                let decl = expect_buffer_decl("c.rs", &decls[0].1, &project, cx);
                 assert_eq!(decl.identifier, main);
                 assert_eq!(decl.item_range.to_offset(&buffer.read(cx)), 32..280);
 
-                expect_file_decl("a.rs", &decls[1], &project, cx);
+                expect_file_decl("a.rs", &decls[1].1, &project, cx);
             });
         }
 
@@ -695,8 +718,8 @@ mod tests {
         cx.update(|cx| {
             let decls = index_state.declarations_for_identifier::<8>(&main);
             assert_eq!(decls.len(), 2);
-            expect_file_decl("c.rs", &decls[0], &project, cx);
-            expect_file_decl("a.rs", &decls[1], &project, cx);
+            expect_file_decl("c.rs", &decls[0].1, &project, cx);
+            expect_file_decl("a.rs", &decls[1].1, &project, cx);
         });
     }
 

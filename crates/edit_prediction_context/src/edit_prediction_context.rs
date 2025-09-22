@@ -6,62 +6,82 @@ mod reference;
 mod syntax_index;
 mod text_similarity;
 
-use std::time::Instant;
-
-pub use declaration::{BufferDeclaration, Declaration, FileDeclaration, Identifier};
-pub use declaration_scoring::SnippetStyle;
-pub use excerpt::{EditPredictionExcerpt, EditPredictionExcerptOptions, EditPredictionExcerptText};
-
 use gpui::{App, AppContext as _, Entity, Task};
 use language::BufferSnapshot;
-pub use reference::references_in_excerpt;
-pub use syntax_index::SyntaxIndex;
 use text::{Point, ToOffset as _};
 
-use crate::declaration_scoring::{ScoredSnippet, scored_snippets};
+pub use declaration::*;
+pub use declaration_scoring::*;
+pub use excerpt::*;
+pub use reference::*;
+pub use syntax_index::*;
 
 #[derive(Debug)]
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
+    pub cursor_offset_in_excerpt: usize,
     pub snippets: Vec<ScoredSnippet>,
-    pub retrieval_duration: std::time::Duration,
 }
 
 impl EditPredictionContext {
-    pub fn gather(
+    pub fn gather_context_in_background(
         cursor_point: Point,
         buffer: BufferSnapshot,
         excerpt_options: EditPredictionExcerptOptions,
-        syntax_index: Entity<SyntaxIndex>,
+        syntax_index: Option<Entity<SyntaxIndex>>,
         cx: &mut App,
     ) -> Task<Option<Self>> {
-        let start = Instant::now();
-        let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
-        cx.background_spawn(async move {
-            let index_state = index_state.lock().await;
+        if let Some(syntax_index) = syntax_index {
+            let index_state = syntax_index.read_with(cx, |index, _cx| index.state().clone());
+            cx.background_spawn(async move {
+                let index_state = index_state.lock().await;
+                Self::gather_context(cursor_point, &buffer, &excerpt_options, Some(&index_state))
+            })
+        } else {
+            cx.background_spawn(async move {
+                Self::gather_context(cursor_point, &buffer, &excerpt_options, None)
+            })
+        }
+    }
 
-            let excerpt =
-                EditPredictionExcerpt::select_from_buffer(cursor_point, &buffer, &excerpt_options)?;
-            let excerpt_text = excerpt.text(&buffer);
-            let references = references_in_excerpt(&excerpt, &excerpt_text, &buffer);
-            let cursor_offset = cursor_point.to_offset(&buffer);
+    pub fn gather_context(
+        cursor_point: Point,
+        buffer: &BufferSnapshot,
+        excerpt_options: &EditPredictionExcerptOptions,
+        index_state: Option<&SyntaxIndexState>,
+    ) -> Option<Self> {
+        let excerpt = EditPredictionExcerpt::select_from_buffer(
+            cursor_point,
+            buffer,
+            excerpt_options,
+            index_state,
+        )?;
+        let excerpt_text = excerpt.text(buffer);
+        let cursor_offset_in_file = cursor_point.to_offset(buffer);
+        // TODO fix this to not need saturating_sub
+        let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
 
-            let snippets = scored_snippets(
+        let snippets = if let Some(index_state) = index_state {
+            let references = references_in_excerpt(&excerpt, &excerpt_text, buffer);
+
+            scored_snippets(
                 &index_state,
                 &excerpt,
                 &excerpt_text,
                 references,
-                cursor_offset,
-                &buffer,
-            );
+                cursor_offset_in_file,
+                buffer,
+            )
+        } else {
+            vec![]
+        };
 
-            Some(Self {
-                excerpt,
-                excerpt_text,
-                snippets,
-                retrieval_duration: start.elapsed(),
-            })
+        Some(Self {
+            excerpt,
+            excerpt_text,
+            cursor_offset_in_excerpt,
+            snippets,
         })
     }
 }
@@ -101,24 +121,28 @@ mod tests {
 
         let context = cx
             .update(|cx| {
-                EditPredictionContext::gather(
+                EditPredictionContext::gather_context_in_background(
                     cursor_point,
                     buffer_snapshot,
                     EditPredictionExcerptOptions {
-                        max_bytes: 40,
+                        max_bytes: 60,
                         min_bytes: 10,
                         target_before_cursor_over_total_bytes: 0.5,
-                        include_parent_signatures: false,
                     },
-                    index,
+                    Some(index),
                     cx,
                 )
             })
             .await
             .unwrap();
 
-        assert_eq!(context.snippets.len(), 1);
-        assert_eq!(context.snippets[0].identifier.name.as_ref(), "process_data");
+        let mut snippet_identifiers = context
+            .snippets
+            .iter()
+            .map(|snippet| snippet.identifier.name.as_ref())
+            .collect::<Vec<_>>();
+        snippet_identifiers.sort();
+        assert_eq!(snippet_identifiers, vec!["main", "process_data"]);
         drop(buffer);
     }
 

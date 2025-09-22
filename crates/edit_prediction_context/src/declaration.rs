@@ -41,6 +41,20 @@ impl Declaration {
         }
     }
 
+    pub fn parent(&self) -> Option<DeclarationId> {
+        match self {
+            Declaration::File { declaration, .. } => declaration.parent,
+            Declaration::Buffer { declaration, .. } => declaration.parent,
+        }
+    }
+
+    pub fn as_buffer(&self) -> Option<&BufferDeclaration> {
+        match self {
+            Declaration::File { .. } => None,
+            Declaration::Buffer { declaration, .. } => Some(declaration),
+        }
+    }
+
     pub fn project_entry_id(&self) -> ProjectEntryId {
         match self {
             Declaration::File {
@@ -49,6 +63,13 @@ impl Declaration {
             Declaration::Buffer {
                 project_entry_id, ..
             } => *project_entry_id,
+        }
+    }
+
+    pub fn item_range(&self) -> Range<usize> {
+        match self {
+            Declaration::File { declaration, .. } => declaration.item_range_in_file.clone(),
+            Declaration::Buffer { declaration, .. } => declaration.item_range.clone(),
         }
     }
 
@@ -81,6 +102,16 @@ impl Declaration {
                     .collect::<Cow<str>>(),
                 declaration.signature_range_is_truncated,
             ),
+        }
+    }
+
+    pub fn signature_range_in_item_text(&self) -> Range<usize> {
+        match self {
+            Declaration::File { declaration, .. } => declaration.signature_range_in_text.clone(),
+            Declaration::Buffer { declaration, .. } => {
+                declaration.signature_range.start - declaration.item_range.start
+                    ..declaration.signature_range.end - declaration.item_range.start
+            }
         }
     }
 }
