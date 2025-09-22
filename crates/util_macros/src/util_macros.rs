@@ -91,43 +91,6 @@ pub fn line_endings(input: TokenStream) -> TokenStream {
     })
 }
 
-/// Derive macro that generates an enum and implements `FieldAccessByEnum`. Only works for structs
-/// with named fields where every field has the same type.
-///
-/// # Example
-///
-/// ```rust
-/// #[derive(FieldAccessByEnum)]
-/// #[field_access_by_enum(
-///     enum_name = "ColorField",
-///     enum_attrs = [
-///         derive(Debug, Clone, Copy, EnumIter, AsRefStr),
-///         strum(serialize_all = "snake_case")
-///     ],
-/// )]
-/// struct Theme {
-///     background: Hsla,
-///     foreground: Hsla,
-///     border_color: Hsla,
-/// }
-/// ```
-///
-/// This generates:
-/// ```rust
-/// #[derive(Debug, Clone, Copy, EnumIter, AsRefStr)]
-/// #[strum(serialize_all = "snake_case")]
-/// enum ColorField {
-///     Background,
-///     Foreground,
-///     BorderColor,
-/// }
-///
-/// impl FieldAccessByEnum for Theme {
-///     type Field = ColorField;
-///     type FieldValue = Hsla;
-///     // ... get and set methods
-/// }
-/// ```
 #[proc_macro_derive(FieldAccessByEnum, attributes(field_access_by_enum))]
 pub fn derive_field_access_by_enum(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -160,6 +123,12 @@ pub fn derive_field_access_by_enum(input: TokenStream) -> TokenStream {
                             }
                         }
                         _ => panic!("Expected array literal in enum_attr attribute"),
+                    }
+                } else {
+                    if let Some(ident) = name_value.path.get_ident() {
+                        panic!("Unrecognized argument name {}", ident);
+                    } else {
+                        panic!("Unrecognized argument {:?}", name_value.path);
                     }
                 }
             }
@@ -220,17 +189,16 @@ pub fn derive_field_access_by_enum(input: TokenStream) -> TokenStream {
             #(#enum_variants),*
         }
 
-        impl util::FieldAccessByEnum for #struct_name {
+        impl util::FieldAccessByEnum<#field_value_type> for #struct_name {
             type Field = #enum_ident;
-            type FieldValue = #field_value_type;
 
-            fn get_field_by_enum(&self, field: Self::Field) -> &Self::FieldValue {
+            fn get_field_by_enum(&self, field: Self::Field) -> &#field_value_type {
                 match field {
                     #(#get_match_arms)*
                 }
             }
 
-            fn set_field_by_enum(&mut self, field: Self::Field, value: Self::FieldValue) {
+            fn set_field_by_enum(&mut self, field: Self::Field, value: #field_value_type) {
                 match field {
                     #(#set_match_arms)*
                 }

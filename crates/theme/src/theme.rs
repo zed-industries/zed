@@ -296,7 +296,7 @@ pub fn refine_theme_family(theme_family_content: ThemeFamilyContent) -> ThemeFam
 fn make_colors_unique<T, F>(colors: &mut T, color_to_count: &mut collections::HashMap<Hsla, u32>)
 where
     F: Copy + strum::IntoEnumIterator,
-    T: util::FieldAccessByEnum<Field = F, FieldValue = Hsla>,
+    T: util::FieldAccessByEnum<Hsla, Field = F>,
 {
     for field in F::iter() {
         let mut color = *colors.get_field_by_enum(field);
