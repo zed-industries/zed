@@ -25975,7 +25975,9 @@ let result = variable * 2;",
 }
 
 #[gpui::test]
-async fn test_paste_url_in_markdown_copied_from_other_app(cx: &mut gpui::TestAppContext) {
+async fn test_paste_url_from_other_app_creates_markdown_link_over_selected_text(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx, |_| {});
 
     let url = "https://zed.dev";
@@ -26003,7 +26005,9 @@ async fn test_paste_url_in_markdown_copied_from_other_app(cx: &mut gpui::TestApp
 }
 
 #[gpui::test]
-async fn test_paste_url_in_markdown_copied_from_zed(cx: &mut gpui::TestAppContext) {
+async fn test_paste_url_from_zed_copy_creates_markdown_link_over_selected_text(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx, |_| {});
 
     let url = "https://zed.dev";
@@ -26040,7 +26044,7 @@ async fn test_paste_url_in_markdown_copied_from_zed(cx: &mut gpui::TestAppContex
 }
 
 #[gpui::test]
-async fn test_paste_url_replaces_existing_url_without_creating_markdown_link(
+async fn test_paste_url_from_other_app_replaces_existing_url_without_creating_markdown_link(
     cx: &mut gpui::TestAppContext,
 ) {
     init_test(cx, |_| {});
@@ -26068,7 +26072,9 @@ async fn test_paste_url_replaces_existing_url_without_creating_markdown_link(
 }
 
 #[gpui::test]
-async fn test_paste_non_url_in_markdown_copied_from_other_app(cx: &mut gpui::TestAppContext) {
+async fn test_paste_plain_text_from_other_app_replaces_selection_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx, |_| {});
 
     let text = "Awesome";
@@ -26094,7 +26100,9 @@ async fn test_paste_non_url_in_markdown_copied_from_other_app(cx: &mut gpui::Tes
 }
 
 #[gpui::test]
-async fn test_paste_url_in_rust_copied_from_other_app(cx: &mut gpui::TestAppContext) {
+async fn test_paste_url_from_other_app_without_creating_markdown_link_in_non_markdown_language(
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx, |_| {});
 
     let url = "https://zed.dev";
@@ -26122,7 +26130,9 @@ async fn test_paste_url_in_rust_copied_from_other_app(cx: &mut gpui::TestAppCont
 }
 
 #[gpui::test]
-async fn test_paste_markdown_url_in_multi_buffer_from_other_app(cx: &mut TestAppContext) {
+async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_multi_buffer(
+    cx: &mut TestAppContext,
+) {
     init_test(cx, |_| {});
 
     let url = "https://zed.dev";
