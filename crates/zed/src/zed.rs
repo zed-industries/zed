@@ -1597,7 +1597,7 @@ fn open_project_settings_file(
 ) {
     open_local_file(
         workspace,
-        local_settings_file_relative_path(),
+        local_settings_file_relative_path().as_std_path(),
         initial_project_settings_content(),
         window,
         cx,
@@ -1612,7 +1612,7 @@ fn open_project_tasks_file(
 ) {
     open_local_file(
         workspace,
-        local_tasks_file_relative_path(),
+        local_tasks_file_relative_path().as_std_path(),
         initial_tasks_content(),
         window,
         cx,
@@ -1627,7 +1627,7 @@ fn open_project_debug_tasks_file(
 ) {
     open_local_file(
         workspace,
-        local_debug_file_relative_path(),
+        local_debug_file_relative_path().as_std_path(),
         initial_local_debug_tasks_content(),
         window,
         cx,

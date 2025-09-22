@@ -311,7 +311,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let Some(worktree) = worktree else { continue };
                             let is_dir = rng.random::<bool>();
                             let mut full_path =
-                                worktree.read_with(cx, |w, _| PathBuf::from(w.root_name()));
+                                worktree.read_with(cx, |w, _| PathBuf::from(w.root_name_str()));
                             full_path.push(gen_file_name(rng));
                             if !is_dir {
                                 full_path.set_extension("rs");
@@ -436,10 +436,10 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     .filter(|e| e.is_file())
                                     .choose(rng)
                                     .unwrap();
-                                if entry.path.as_ref() == Path::new("") {
-                                    Path::new(worktree.root_name()).into()
+                                if entry.path.as_ref().is_empty() {
+                                    worktree.root_name().into()
                                 } else {
-                                    Path::new(worktree.root_name()).join(&entry.path)
+                                    worktree.root_name().join(&entry.path)
                                 }
                             });
                             break ClientOperation::OpenBuffer {

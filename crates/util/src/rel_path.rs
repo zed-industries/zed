@@ -269,7 +269,7 @@ pub struct RelPathAncestors<'a>(Option<&'a str>);
 const SEPARATOR: char = '/';
 
 impl<'a> RelPathComponents<'a> {
-    fn rest(&self) -> &'a RelPath {
+    pub fn rest(&self) -> &'a RelPath {
         unsafe { RelPath::new_unchecked(self.0) }
     }
 }
