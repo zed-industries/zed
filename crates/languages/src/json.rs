@@ -157,12 +157,16 @@ impl JsonLspAdapter {
     ) -> Value {
         let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
-        let theme_names = &ThemeRegistry::global(cx).list_names();
-        let icon_theme_names = &ThemeRegistry::global(cx)
-            .list_icon_themes()
-            .into_iter()
-            .map(|icon_theme| icon_theme.name)
-            .collect::<Vec<SharedString>>();
+        let themes = ThemeRegistry::try_global(cx);
+        let theme_names = &themes.clone().map(|t| t.list_names()).unwrap_or_default();
+        let icon_theme_names = &themes
+            .map(|t| {
+                t.list_icon_themes()
+                    .into_iter()
+                    .map(|icon_theme| icon_theme.name)
+                    .collect::<Vec<SharedString>>()
+            })
+            .unwrap_or_default();
         let settings_schema = cx
             .global::<SettingsStore>()
             .json_schema(&SettingsJsonSchemaParams {
