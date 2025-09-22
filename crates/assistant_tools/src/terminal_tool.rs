@@ -1,4 +1,5 @@
 use crate::{
+    command_safety::{CommandSafety, CommandSafetyChecker, CommandSafetyConfig},
     schema::json_schema_for,
     ui::{COLLAPSED_LINES, ToolOutputPreview},
 };
@@ -57,8 +58,35 @@ impl Tool for TerminalTool {
         Self::NAME.to_string()
     }
 
-    fn needs_confirmation(&self, _: &serde_json::Value, _: &Entity<Project>, _: &App) -> bool {
-        true
+    fn needs_confirmation(&self, input: &serde_json::Value, _: &Entity<Project>, cx: &App) -> bool {
+        // Parse the input to get the command
+        let input: TerminalToolInput = match serde_json::from_value(input.clone()) {
+            Ok(input) => input,
+            Err(_) => return true, // If we can't parse, be safe and require confirmation
+        };
+
+        let agent_settings = agent_settings::AgentSettings::get_global(cx);
+        
+        // If user has globally disabled tool confirmations, respect that
+        if agent_settings.always_allow_tool_actions {
+            return false;
+        }
+
+        // Create command safety config from settings
+        let safety_config = CommandSafetyConfig {
+            whitelist: agent_settings.command_safety.whitelist.iter().cloned().collect(),
+            blacklist: agent_settings.command_safety.blacklist.iter().cloned().collect(),
+            use_builtin_blacklist: agent_settings.command_safety.use_builtin_blacklist.unwrap_or(true),
+        };
+
+        let checker = CommandSafetyChecker::new(safety_config);
+        let safety = checker.check_command(&input.command);
+
+        match safety {
+            CommandSafety::Safe => false,           // No confirmation needed for safe commands
+            CommandSafety::Whitelisted => false,   // No confirmation needed for whitelisted commands
+            CommandSafety::Dangerous(_) => true,   // Confirmation required for dangerous commands
+        }
     }
 
     fn may_perform_edits(&self) -> bool {
@@ -83,7 +111,8 @@ impl Tool for TerminalTool {
                 let mut lines = input.command.lines();
                 let first_line = lines.next().unwrap_or_default();
                 let remaining_line_count = lines.count();
-                match remaining_line_count {
+                
+                let base_text = match remaining_line_count {
                     0 => MarkdownInlineCode(first_line).to_string(),
                     1 => MarkdownInlineCode(&format!(
                         "{} - {} more line",
@@ -92,6 +121,25 @@ impl Tool for TerminalTool {
                     .to_string(),
                     n => MarkdownInlineCode(&format!("{} - {} more lines", first_line, n))
                         .to_string(),
+                };
+
+                // Add safety information
+                let safety_config = CommandSafetyConfig {
+                    whitelist: std::collections::HashSet::new(),
+                    blacklist: std::collections::HashSet::new(),
+                    use_builtin_blacklist: true,
+                };
+                let checker = CommandSafetyChecker::new(safety_config);
+                let safety = checker.check_command(&input.command);
+
+                match safety {
+                    CommandSafety::Dangerous(reason) => {
+                        format!("{} ⚠️ {} ({})", base_text, reason.category(), reason.description())
+                    }
+                    CommandSafety::Whitelisted => {
+                        format!("{} ✅ Whitelisted", base_text)
+                    }
+                    CommandSafety::Safe => base_text,
                 }
             }
             Err(_) => "Run terminal command".to_string(),

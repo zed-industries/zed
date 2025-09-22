@@ -109,6 +109,10 @@ pub struct AgentSettingsContent {
     ///
     /// Default: 4
     pub message_editor_min_lines: Option<usize>,
+    /// Configuration for command safety checking when executing terminal commands.
+    ///
+    /// Default: {}
+    pub command_safety: Option<CommandSafetySettingsContent>,
 }
 
 impl AgentSettingsContent {
@@ -334,4 +338,26 @@ pub struct CustomAgentServerSettings {
     ///
     /// Default: None
     pub default_mode: Option<String>,
+}
+
+#[skip_serializing_none]
+#[derive(Debug, PartialEq, Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct CommandSafetySettingsContent {
+    /// Commands that are explicitly allowed to run without confirmation.
+    /// Supports exact matches and simple wildcard patterns with *.
+    /// 
+    /// Example: ["git *", "npm install", "ls -la"]
+    #[serde(default)]
+    pub whitelist: Vec<String>,
+    /// Commands that are explicitly blocked and will never be allowed.
+    /// Supports exact matches and simple wildcard patterns with *.
+    /// 
+    /// Example: ["rm -rf *", "format *", "del /s *"]
+    #[serde(default)]
+    pub blacklist: Vec<String>,
+    /// Whether to use the built-in dangerous command detection.
+    /// When enabled, known dangerous commands will require user approval.
+    /// 
+    /// Default: true
+    pub use_builtin_blacklist: Option<bool>,
 }
