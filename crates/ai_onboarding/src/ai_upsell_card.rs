@@ -215,7 +215,7 @@ impl RenderOnce for AiUpsellCard {
                             .child(
                                 footer_container
                                     .child(
-                                        Button::new("start_trial", "Start 14-day Free Pro Trial")
+                                        Button::new("start_trial", "Start Pro Trial")
                                             .full_width()
                                             .style(ButtonStyle::Tinted(ui::TintColor::Accent))
                                             .when_some(self.tab_index, |this, tab_index| {
@@ -230,7 +230,7 @@ impl RenderOnce for AiUpsellCard {
                                             }),
                                     )
                                     .child(
-                                        Label::new("No credit card required")
+                                        Label::new("14 days, no credit card required")
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     ),
