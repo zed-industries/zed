@@ -3,7 +3,7 @@
 
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{num::NonZero, time::Duration};
 
 pub mod consts {
     //! Preset idenitifiers and constants so that the profiler and proc macro agree
@@ -80,6 +80,8 @@ pub enum FailKind {
     Profile,
     /// Failed due to an incompatible version for the test.
     VersionMismatch,
+    /// Could not parse metadata for a test.
+    BadMetadata,
     /// Skipped due to filters applied on the perf run.
     Skipped,
 }
@@ -87,9 +89,10 @@ pub enum FailKind {
 impl std::fmt::Display for FailKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FailKind::Triage => f.write_str("failed in triage"),
-            FailKind::Profile => f.write_str("failed while profiling"),
+            FailKind::Triage => f.write_str("errored in triage"),
+            FailKind::Profile => f.write_str("errored while profiling"),
             FailKind::VersionMismatch => f.write_str("test version mismatch"),
+            FailKind::BadMetadata => f.write_str("bad test metadata"),
             FailKind::Skipped => f.write_str("skipped"),
         }
     }
@@ -108,8 +111,9 @@ pub struct TestMdata {
     /// INVARIANT: If `version` <= `MDATA_VER`, this tool *must* be able to
     /// correctly parse the output of this test.
     pub version: u32,
-    /// How many iterations to pass this test, if this is preset.
-    pub iterations: Option<usize>,
+    /// How many iterations to pass this test if this is preset, or how many
+    /// iterations a test ended up running afterwards if determined at runtime.
+    pub iterations: Option<NonZero<usize>>,
     /// The importance of this particular test. See the docs on `Importance` for
     /// details.
     pub importance: Importance,
@@ -134,16 +138,20 @@ impl Timings {
         reason = "We only care about a couple sig figs anyways"
     )]
     #[must_use]
-    pub fn iters_per_sec(&self, total_iters: usize) -> f64 {
-        (1000. / self.mean.as_millis() as f64) * total_iters as f64
+    pub fn iters_per_sec(&self, total_iters: NonZero<usize>) -> f64 {
+        (1000. / self.mean.as_millis() as f64) * total_iters.get() as f64
     }
 }
+
+/// Aggregate results, meant to be used for a given importance category. Each
+/// test name corresponds to its benchmark results, iteration count, and weight.
+type CategoryInfo = HashMap<String, (Timings, NonZero<usize>, u8)>;
 
 /// Aggregate output of all tests run by this handler.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Output {
-    /// A list of test outputs. Format is `(test_name, iter_count, timings)`.
-    /// The latter being set indicates the test succeeded.
+    /// A list of test outputs. Format is `(test_name, mdata, timings)`.
+    /// The latter being `Ok(_)` indicates the test succeeded.
     ///
     /// INVARIANT: If the test succeeded, the second field is `Some(mdata)` and
     /// `mdata.iterations` is `Some(_)`.
@@ -162,7 +170,7 @@ impl Output {
         &mut self,
         name: impl AsRef<str>,
         mut mdata: TestMdata,
-        iters: usize,
+        iters: NonZero<usize>,
         timings: Timings,
     ) {
         mdata.iterations = Some(iters);
@@ -179,7 +187,7 @@ impl Output {
         &mut self,
         name: impl AsRef<str>,
         mut mdata: Option<TestMdata>,
-        attempted_iters: Option<usize>,
+        attempted_iters: Option<NonZero<usize>>,
         kind: FailKind,
     ) {
         if let Some(ref mut mdata) = mdata {
@@ -195,7 +203,7 @@ impl Output {
         self.tests.is_empty()
     }
 
-    /// Sorts the runs in the output in the order that we want it printed.
+    /// Sorts the runs in the output in the order that we want them printed.
     pub fn sort(&mut self) {
         self.tests.sort_unstable_by(|a, b| match (a, b) {
             // Tests where we got no metadata go at the end.
@@ -218,16 +226,20 @@ impl Output {
     /// Merges the output of two runs, appending a prefix to the results of the new run.
     /// To be used in conjunction with `Output::blank()`, or else only some tests will have
     /// a prefix set.
-    pub fn merge(&mut self, other: Self, pref_other: impl AsRef<str>) {
+    pub fn merge<'a>(&mut self, other: Self, pref_other: impl Into<Option<&'a str>>) {
+        let pref = if let Some(pref) = pref_other.into() {
+            "crates/".to_string() + pref + "::"
+        } else {
+            String::new()
+        };
         self.tests = std::mem::take(&mut self.tests)
             .into_iter()
-            .chain(other.tests.into_iter().map(|(name, md, tm)| {
-                let mut new_name = "crates/".to_string();
-                new_name.push_str(pref_other.as_ref());
-                new_name.push_str("::");
-                new_name.push_str(&name);
-                (new_name, md, tm)
-            }))
+            .chain(
+                other
+                    .tests
+                    .into_iter()
+                    .map(|(name, md, tm)| (pref.clone() + &name, md, tm)),
+            )
             .collect();
     }
 
@@ -273,8 +285,8 @@ impl Output {
                     r_total_denominator += u32::from(weight);
                 }
                 let mean = r_total_numerator / f64::from(r_total_denominator);
-                // TODO: also aggregate standard deviation? that's harder to keep
-                // meaningful, though, since we dk which tests are correlated
+                // TODO: also aggregate standard deviation? That's harder to keep
+                // meaningful, though, since we dk which tests are correlated.
                 Some((cat, PerfDelta { max, mean, min }))
             })
             .collect();
@@ -282,9 +294,9 @@ impl Output {
         PerfReport { deltas }
     }
 
-    /// Collapses the `PerfReport` into a `HashMap` of `Importance` <-> tests
-    /// each represented as a map of `name, (Timings, iterations, weight)`.
-    fn collapse(self) -> HashMap<Importance, HashMap<String, (Timings, usize, u8)>> {
+    /// Collapses the `PerfReport` into a `HashMap` over `Importance`, with
+    /// each importance category having its tests contained.
+    fn collapse(self) -> HashMap<Importance, CategoryInfo> {
         let mut categories = HashMap::<Importance, HashMap<String, _>>::default();
         for entry in self.tests {
             if let Some(mdata) = entry.1
@@ -402,10 +414,28 @@ impl std::fmt::Display for PerfReport {
         // a little jankily like this.
         write!(f, "|:---|---:|---:|---:|")?;
         for (cat, delta) in sorted.into_iter().rev() {
+            const SIGN_POS: &str = "↑";
+            const SIGN_NEG: &str = "↓";
+            const SIGN_NEUTRAL: &str = "±";
+
+            let prettify = |time: f64| {
+                let sign = if time > 0.05 {
+                    SIGN_POS
+                } else if time < 0.05 && time > -0.05 {
+                    SIGN_NEUTRAL
+                } else {
+                    SIGN_NEG
+                };
+                format!("{} {:.1}%", sign, time.abs() * 100.)
+            };
+
+            // Pretty-print these instead of just using the float display impl.
             write!(
                 f,
-                "\n| {cat} | {:.3} | {:.3} | {:.3} |",
-                delta.max, delta.mean, delta.min
+                "\n| {cat} | {} | {} | {} |",
+                prettify(delta.max),
+                prettify(delta.mean),
+                prettify(delta.min)
             )?;
         }
         Ok(())
