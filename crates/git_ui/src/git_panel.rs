@@ -1425,7 +1425,6 @@ impl GitPanel {
                     self.load_last_commit_message_if_empty(cx);
                 } else {
                     telemetry::event!("Git Amended", source = "Git Panel");
-                    self.set_amend_pending(false, cx);
                     self.commit_changes(
                         CommitOptions {
                             amend: true,
@@ -1434,6 +1433,7 @@ impl GitPanel {
                         window,
                         cx,
                     );
+                    self.set_amend_pending(false, cx);
                 }
             }
         } else {
@@ -3445,12 +3445,12 @@ impl GitPanel {
                         telemetry::event!("Git Committed", source = "Git Panel");
                         git_panel
                             .update(cx, |git_panel, cx| {
-                                git_panel.set_amend_pending(false, cx);
                                 git_panel.commit_changes(
                                     CommitOptions { amend, signoff },
                                     window,
                                     cx,
                                 );
+                                git_panel.set_amend_pending(false, cx);
                             })
                             .ok();
                     }
