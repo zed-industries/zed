@@ -18,11 +18,12 @@ use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{ops::Range, sync::Arc, time::Duration};
+use theme::ThemeSettings;
 use ui::{
-    Color, Divider, Label, ListItem, ListItemSpacing, ScrollAxes, Scrollbars, WithScrollbar,
-    prelude::*, v_flex,
+    Color, Divider, DocumentationAside, DocumentationEdge, DocumentationSide, Label, ListItem,
+    ListItemSpacing, ScrollAxes, Scrollbars, WithScrollbar, prelude::*, utils::WithRemSize, v_flex,
 };
-use workspace::ModalView;
+use workspace::{ModalView, item::Settings};
 
 enum ElementContainer {
     List(ListState),
@@ -220,6 +221,14 @@ pub trait PickerDelegate: Sized + 'static {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
+        None
+    }
+
+    fn documentation_aside(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<DocumentationAside> {
         None
     }
 }
@@ -781,8 +790,15 @@ impl<D: PickerDelegate> ModalView for Picker<D> {}
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
+        let window_size = window.viewport_size();
+        let rem_size = window.rem_size();
+        let is_wide_window = window_size.width / rem_size > rems_from_px(800.).0;
+
+        let aside = self.delegate.documentation_aside(window, cx);
+
         let editor_position = self.delegate.editor_position();
-        v_flex()
+        let menu = v_flex()
             .key_context("Picker")
             .size_full()
             .when_some(self.width, |el, width| el.w(width))
@@ -865,6 +881,47 @@ impl<D: PickerDelegate> Render for Picker<D> {
                     }
                 }
                 Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
-            })
+            });
+
+        let Some(aside) = aside else {
+            return menu;
+        };
+
+        let render_aside = |aside: DocumentationAside, cx: &mut Context<Self>| {
+            WithRemSize::new(ui_font_size)
+                .occlude()
+                .elevation_2(cx)
+                .w_full()
+                .p_2()
+                .overflow_hidden()
+                .when(is_wide_window, |this| this.max_w_96())
+                .when(!is_wide_window, |this| this.max_w_48())
+                .child((aside.render)(cx))
+        };
+
+        if is_wide_window {
+            div().relative().child(menu).child(
+                h_flex()
+                    .absolute()
+                    .when(aside.side == DocumentationSide::Left, |this| {
+                        this.right_full().mr_1()
+                    })
+                    .when(aside.side == DocumentationSide::Right, |this| {
+                        this.left_full().ml_1()
+                    })
+                    .when(aside.edge == DocumentationEdge::Top, |this| this.top_0())
+                    .when(aside.edge == DocumentationEdge::Bottom, |this| {
+                        this.bottom_0()
+                    })
+                    .child(render_aside(aside, cx)),
+            )
+        } else {
+            v_flex()
+                .w_full()
+                .gap_1()
+                .justify_end()
+                .child(render_aside(aside, cx))
+                .child(menu)
+        }
     }
 }
