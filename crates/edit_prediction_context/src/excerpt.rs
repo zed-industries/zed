@@ -1,4 +1,4 @@
-use language::BufferSnapshot;
+use language::{BufferSnapshot, LanguageId};
 use std::ops::Range;
 use text::{Point, ToOffset as _, ToPoint as _};
 use tree_sitter::{Node, TreeCursor};
@@ -31,6 +31,7 @@ pub struct EditPredictionExcerptOptions {
     pub target_before_cursor_over_total_bytes: f32,
 }
 
+// TODO: consider merging these
 #[derive(Debug, Clone)]
 pub struct EditPredictionExcerpt {
     pub range: Range<usize>,
@@ -42,6 +43,7 @@ pub struct EditPredictionExcerpt {
 pub struct EditPredictionExcerptText {
     pub body: String,
     pub parent_signatures: Vec<String>,
+    pub language_id: Option<LanguageId>,
 }
 
 impl EditPredictionExcerpt {
@@ -54,9 +56,11 @@ impl EditPredictionExcerpt {
             .iter()
             .map(|(_, range)| buffer.text_for_range(range.clone()).collect::<String>())
             .collect();
+        let language_id = buffer.language().map(|l| l.id());
         EditPredictionExcerptText {
             body,
             parent_signatures,
+            language_id,
         }
     }
 

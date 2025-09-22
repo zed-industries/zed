@@ -16,7 +16,7 @@ pub use excerpt::*;
 pub use reference::*;
 pub use syntax_index::*;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct EditPredictionContext {
     pub excerpt: EditPredictionExcerpt,
     pub excerpt_text: EditPredictionExcerptText,
