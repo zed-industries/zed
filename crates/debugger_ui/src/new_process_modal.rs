@@ -32,7 +32,7 @@ use ui::{
     SharedString, Styled, StyledExt, ToggleButton, ToggleState, Toggleable, Tooltip, Window, div,
     h_flex, relative, rems, v_flex,
 };
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr, pane};
 
 use crate::{attach_modal::AttachModal, debugger_panel::DebugPanel};
@@ -1073,7 +1073,7 @@ impl DebugDelegate {
                         id: _,
                         directory_in_worktree: dir,
                         id_base: _,
-                    } => dir.ends_with(".zed"),
+                    } => dir.ends_with(RelPath::new(".zed").unwrap()),
                     _ => false,
                 });
 
@@ -1092,7 +1092,10 @@ impl DebugDelegate {
                                     id: _,
                                     directory_in_worktree: dir,
                                     id_base: _,
-                                } => !(hide_vscode && dir.ends_with(".vscode")),
+                                } => {
+                                    !(hide_vscode
+                                        && dir.ends_with(RelPath::new(".vscode").unwrap()))
+                                }
                                 _ => true,
                             })
                             .filter(|(_, scenario)| valid_adapters.contains(&scenario.adapter))

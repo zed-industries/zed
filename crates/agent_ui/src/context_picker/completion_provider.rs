@@ -13,6 +13,7 @@ use http_client::HttpClientWithUrl;
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
+use project::lsp_store::SymbolLocation;
 use project::{
     Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, ProjectPath,
     Symbol, WorktreeId,
@@ -22,6 +23,8 @@ use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
 use ui::prelude::*;
 use util::ResultExt as _;
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use agent::{
@@ -574,11 +577,12 @@ impl ContextPickerCompletionProvider {
 
     fn completion_for_path(
         project_path: ProjectPath,
-        path_prefix: &str,
+        path_prefix: &RelPath,
         is_recent: bool,
         is_directory: bool,
         excerpt_id: ExcerptId,
         source_range: Range<Anchor>,
+        path_style: PathStyle,
         editor: Entity<Editor>,
         context_store: Entity<ContextStore>,
         cx: &App,
@@ -586,6 +590,7 @@ impl ContextPickerCompletionProvider {
         let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
             &project_path.path,
             path_prefix,
+            path_style,
         );
 
         let label =
@@ -657,17 +662,22 @@ impl ContextPickerCompletionProvider {
         workspace: Entity<Workspace>,
         cx: &mut App,
     ) -> Option<Completion> {
+        let path_style = workspace.read(cx).path_style(cx);
+        let SymbolLocation::InProject(symbol_path) = &symbol.path else {
+            return None;
+        };
         let path_prefix = workspace
             .read(cx)
             .project()
             .read(cx)
-            .worktree_for_id(symbol.path.worktree_id, cx)?
+            .worktree_for_id(symbol_path.worktree_id, cx)?
             .read(cx)
             .root_name();
 
         let (file_name, directory) = super::file_context_picker::extract_file_name_and_directory(
-            &symbol.path.path,
+            &symbol_path.path,
             path_prefix,
+            path_style,
         );
         let full_path = if let Some(directory) = directory {
             format!("{}{}", directory, file_name)
@@ -769,6 +779,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         let text_thread_store = self.text_thread_store.clone();
         let editor = self.editor.clone();
         let http_client = workspace.read(cx).client().http_client();
+        let path_style = workspace.read(cx).path_style(cx);
 
         let MentionCompletion { mode, argument, .. } = state;
         let query = argument.unwrap_or_else(|| "".to_string());
@@ -835,6 +846,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
                                 mat.is_dir,
                                 excerpt_id,
                                 source_range.clone(),
+                                path_style,
                                 editor.clone(),
                                 context_store.clone(),
                                 cx,
@@ -1065,7 +1077,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::{ops::Deref, rc::Rc};
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::{AppState, Item};
 
     #[test]
@@ -1216,14 +1228,14 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
-            path!("b/eight.txt"),
+            rel_path("a/one.txt"),
+            rel_path("a/two.txt"),
+            rel_path("a/three.txt"),
+            rel_path("a/four.txt"),
+            rel_path("b/five.txt"),
+            rel_path("b/six.txt"),
+            rel_path("b/seven.txt"),
+            rel_path("b/eight.txt"),
         ];
 
         let mut opened_editors = Vec::new();
@@ -1233,7 +1245,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: Path::new(path).into(),
+                            path: path.into(),
                         },
                         None,
                         false,

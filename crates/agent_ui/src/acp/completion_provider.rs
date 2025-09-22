@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::ops::Range;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -13,7 +14,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{App, Entity, Task, WeakEntity};
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::lsp_store::CompletionDocumentation;
+use project::lsp_store::{CompletionDocumentation, SymbolLocation};
 use project::{
     Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, Project,
     ProjectPath, Symbol, WorktreeId,
@@ -22,6 +23,7 @@ use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, ToPoint as _};
 use ui::prelude::*;
+use util::rel_path::RelPath;
 use workspace::Workspace;
 
 use crate::AgentPanel;
@@ -252,7 +254,15 @@ impl ContextPickerCompletionProvider {
 
         let label = CodeLabel::plain(symbol.name.clone(), None);
 
-        let abs_path = project.read(cx).absolute_path(&symbol.path, cx)?;
+        let abs_path = match &symbol.path {
+            SymbolLocation::InProject(project_path) => {
+                project.read(cx).absolute_path(&project_path, cx)?
+            }
+            SymbolLocation::OutsideProject {
+                abs_path,
+                signature: _,
+            } => PathBuf::from(abs_path.as_ref()),
+        };
         let uri = MentionUri::Symbol {
             abs_path,
             name: symbol.name.clone(),

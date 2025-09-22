@@ -247,7 +247,7 @@ impl PathStyle {
     }
 
     #[inline]
-    pub fn separator(&self) -> &str {
+    pub fn separator(&self) -> &'static str {
         match self {
             PathStyle::Posix => "/",
             PathStyle::Windows => "\\",

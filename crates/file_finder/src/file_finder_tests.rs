@@ -713,13 +713,13 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         assert_eq!(
             matches.search,
             vec![
-                PathBuf::from("ignored-root/hi"),
-                PathBuf::from("tracked-root/hi"),
-                PathBuf::from("ignored-root/hiccup"),
-                PathBuf::from("tracked-root/hiccup"),
-                PathBuf::from("ignored-root/height"),
-                PathBuf::from("ignored-root/happiness"),
-                PathBuf::from("tracked-root/happiness"),
+                rel_path("ignored-root/hi").into(),
+                rel_path("tracked-root/hi").into(),
+                rel_path("ignored-root/hiccup").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("ignored-root/height").into(),
+                rel_path("ignored-root/happiness").into(),
+                rel_path("tracked-root/happiness").into(),
             ],
             "All ignored files that were indexed are found for default ignored mode"
         );

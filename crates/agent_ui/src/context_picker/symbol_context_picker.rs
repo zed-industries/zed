@@ -2,13 +2,14 @@ use std::cmp::Reverse;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     App, AppContext, DismissEvent, Entity, FocusHandle, Focusable, Stateful, Task, WeakEntity,
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
+use project::lsp_store::SymbolLocation;
 use project::{DocumentSymbol, Symbol};
 use ui::{ListItem, prelude::*};
 use util::ResultExt as _;
@@ -191,7 +192,10 @@ pub(crate) fn add_symbol(
 ) -> Task<Result<(Option<AgentContextHandle>, bool)>> {
     let project = workspace.read(cx).project().clone();
     let open_buffer_task = project.update(cx, |project, cx| {
-        project.open_buffer(symbol.path.clone(), cx)
+        let SymbolLocation::InProject(symbol_path) = &symbol.path else {
+            return Task::ready(Err(anyhow!("can't add symbol from outside of project")));
+        };
+        project.open_buffer(symbol_path.clone(), cx)
     });
     cx.spawn(async move |cx| {
         let buffer = open_buffer_task.await?;
@@ -291,10 +295,11 @@ pub(crate) fn search_symbols(
                         .map(|(id, symbol)| {
                             StringMatchCandidate::new(id, symbol.label.filter_text())
                         })
-                        .partition(|candidate| {
-                            project
-                                .entry_for_path(&symbols[candidate.id].path, cx)
-                                .is_some_and(|e| !e.is_ignored)
+                        .partition(|candidate| match &symbols[candidate.id].path {
+                            SymbolLocation::InProject(project_path) => project
+                                .entry_for_path(project_path, cx)
+                                .is_some_and(|e| !e.is_ignored),
+                            SymbolLocation::OutsideProject { .. } => false,
                         })
                 })
                 .log_err()

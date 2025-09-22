@@ -473,7 +473,10 @@ impl MessageEditor {
         abs_path: PathBuf,
         cx: &mut Context<Self>,
     ) -> Task<Result<Mention>> {
-        fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
+        fn collect_files_in_path(
+            worktree: &Worktree,
+            path: &RelPath,
+        ) -> Vec<(Arc<RelPath>, PathBuf)> {
             let mut files = Vec::new();
 
             for entry in worktree.child_entries(path) {
@@ -1039,6 +1042,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
@@ -1051,10 +1055,11 @@ impl MessageEditor {
             let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
+            let abs_path = worktree.read(cx).absolutize(&path.path);
             let (file_name, _) =
                 crate::context_picker::file_context_picker::extract_file_name_and_directory(
                     &path.path,
-                    RelPath::new(worktree.read(cx).root_name().unwrap()),
+                    worktree.read(cx).root_name(),
                     path_style,
                 );
 
@@ -1260,7 +1265,7 @@ impl MessageEditor {
     }
 }
 
-fn render_directory_contents(entries: Vec<(Arc<Path>, PathBuf, String)>) -> String {
+fn render_directory_contents(entries: Vec<(Arc<RelPath>, PathBuf, String)>) -> String {
     let mut output = String::new();
     for (_relative_path, full_path, content) in entries {
         let fence = codeblock_fence_for_path(Some(&full_path), None);
@@ -1590,7 +1595,7 @@ mod tests {
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::{path, uri};
+    use util::{path, rel_path::rel_path, uri};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -2100,14 +2105,14 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window, cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
-            path!("b/eight.txt"),
+            rel_path("a/one.txt"),
+            rel_path("a/two.txt"),
+            rel_path("a/three.txt"),
+            rel_path("a/four.txt"),
+            rel_path("b/five.txt"),
+            rel_path("b/six.txt"),
+            rel_path("b/seven.txt"),
+            rel_path("b/eight.txt"),
         ];
 
         let mut opened_editors = Vec::new();
@@ -2117,7 +2122,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: Path::new(path).into(),
+                            path: path.into(),
                         },
                         None,
                         false,

@@ -5017,9 +5017,7 @@ fn toggle_expand_dir(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTe
     panel.update_in(cx, |panel, window, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) =
-                path.strip_prefix(&RelPath::new(worktree.root_name()).unwrap())
-            {
+            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
                 panel.toggle_expanded(entry_id, window, cx);
                 return;
@@ -6471,9 +6469,7 @@ fn find_project_entry(
     panel.update(cx, |panel, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) =
-                path.strip_prefix(RelPath::new(worktree.root_name()).unwrap())
-            {
+            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                 return worktree.entry_for_path(relative_path).map(|entry| entry.id);
             }
         }

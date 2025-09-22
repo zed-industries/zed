@@ -161,6 +161,8 @@ impl PickerDelegate for FileContextPickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let FileMatch { mat, .. } = &self.matches.get(ix)?;
+        let workspace = self.workspace.upgrade()?;
+        let path_style = workspace.read(cx).path_style(cx);
 
         Some(
             ListItem::new(ix)
@@ -172,6 +174,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                     &mat.path,
                     &mat.path_prefix,
                     mat.is_dir,
+                    path_style,
                     self.context_store.clone(),
                     cx,
                 )),
@@ -214,14 +217,13 @@ pub(crate) fn search_files(
 
         let file_matches = project.worktrees(cx).flat_map(|worktree| {
             let worktree = worktree.read(cx);
-            let path_prefix: Arc<str> = worktree.root_name().into();
             worktree.entries(false, 0).map(move |entry| FileMatch {
                 mat: PathMatch {
                     score: 0.,
                     positions: Vec::new(),
                     worktree_id: worktree.id().to_usize(),
                     path: entry.path.clone(),
-                    path_prefix: path_prefix.clone(),
+                    path_prefix: worktree.root_name().into(),
                     distance_to_relative_ancestor: 0,
                     is_dir: entry.is_dir(),
                 },
@@ -288,10 +290,11 @@ pub fn render_file_context_entry(
     path: &Arc<RelPath>,
     path_prefix: &Arc<RelPath>,
     is_directory: bool,
+    path_style: PathStyle,
     context_store: WeakEntity<ContextStore>,
     cx: &App,
 ) -> Stateful<Div> {
-    let (file_name, directory) = extract_file_name_and_directory(path, path_prefix);
+    let (file_name, directory) = extract_file_name_and_directory(path, path_prefix, path_style);
 
     let added = context_store.upgrade().and_then(|context_store| {
         let project_path = ProjectPath {
@@ -308,9 +311,9 @@ pub fn render_file_context_entry(
     });
 
     let file_icon = if is_directory {
-        FileIcons::get_folder_icon(false, path, cx)
+        FileIcons::get_folder_icon(false, path.as_std_path(), cx)
     } else {
-        FileIcons::get_icon(path, cx)
+        FileIcons::get_icon(path.as_std_path(), cx)
     }
     .map(Icon::from_path)
     .unwrap_or_else(|| Icon::new(IconName::File));

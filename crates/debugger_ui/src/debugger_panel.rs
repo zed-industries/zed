@@ -34,6 +34,7 @@ use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tab, Tooltip, prelude::*};
+use util::rel_path::RelPath;
 use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
 use workspace::item::SaveOptions;
@@ -1047,10 +1048,10 @@ impl DebugPanel {
                 directory_in_worktree: dir,
                 ..
             } => {
-                let relative_path = if dir.ends_with(".vscode") {
-                    dir.join("launch.json")
+                let relative_path = if dir.ends_with(RelPath::new(".vscode").unwrap()) {
+                    dir.join(RelPath::new("launch.json").unwrap())
                 } else {
-                    dir.join("debug.json")
+                    dir.join(RelPath::new("debug.json").unwrap())
                 };
                 ProjectPath {
                     worktree_id: id,

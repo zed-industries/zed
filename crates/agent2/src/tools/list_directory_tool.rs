@@ -144,7 +144,7 @@ impl AgentTool for ListDirectoryTool {
         }
 
         let worktree_snapshot = worktree.read(cx).snapshot();
-        let worktree_root_name = worktree.read(cx).root_name().to_string();
+        let worktree_root_name = worktree.read(cx).root_name();
 
         let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
             return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
@@ -173,8 +173,7 @@ impl AgentTool for ListDirectoryTool {
                 continue;
             }
 
-            let full_path = RelPath::new(&worktree_root_name)
-                .unwrap()
+            let full_path = worktree_root_name
                 .join(&entry.path)
                 .display(worktree_snapshot.path_style())
                 .into_owned();

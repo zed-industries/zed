@@ -72,7 +72,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
     worktree.update(cx, |worktree, _cx| {
         assert_eq!(
-            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             vec![
                 rel_path("README.md"),
                 rel_path("src"),
@@ -129,12 +129,12 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     cx.executor().run_until_parked();
     worktree.update(cx, |worktree, _cx| {
         assert_eq!(
-            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             vec![
-                Path::new("README.md"),
-                Path::new("src"),
-                Path::new("src/lib.rs"),
-                Path::new("src/main.rs"),
+                rel_path("README.md"),
+                rel_path("src"),
+                rel_path("src/lib.rs"),
+                rel_path("src/main.rs"),
             ]
         );
     });
