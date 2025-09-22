@@ -7,8 +7,8 @@ use std::time::Duration;
 use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
-    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, SelectionEffects,
-    actions::DeleteLine, code_context_menus::CodeContextMenu, display_map::DisplayRow,
+    AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
+    code_context_menus::CodeContextMenu, display_map::DisplayRow,
     test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
@@ -16,7 +16,6 @@ use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
-use text::SelectionGoal;
 use ui::Pixels;
 use util::test::marked_text_ranges;
 pub use vim_test_context::*;
