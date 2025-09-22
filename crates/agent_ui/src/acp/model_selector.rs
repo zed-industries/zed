@@ -1,7 +1,6 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::{AgentModelInfo, AgentModelList, AgentModelSelector};
-use agent_client_protocol as acp;
 use anyhow::Result;
 use collections::IndexMap;
 use futures::FutureExt;
@@ -10,20 +9,19 @@ use gpui::{Action, AsyncWindowContext, BackgroundExecutor, DismissEvent, Task, W
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use ui::{
-    AnyElement, App, Context, IntoElement, ListItem, ListItemSpacing, SharedString, Window,
-    prelude::*, rems,
+    AnyElement, App, Context, DocumentationAside, DocumentationEdge, DocumentationSide,
+    IntoElement, ListItem, ListItemSpacing, SharedString, Window, prelude::*, rems,
 };
 use util::ResultExt;
 
 pub type AcpModelSelector = Picker<AcpModelPickerDelegate>;
 
 pub fn acp_model_selector(
-    session_id: acp::SessionId,
     selector: Rc<dyn AgentModelSelector>,
     window: &mut Window,
     cx: &mut Context<AcpModelSelector>,
 ) -> AcpModelSelector {
-    let delegate = AcpModelPickerDelegate::new(session_id, selector, window, cx);
+    let delegate = AcpModelPickerDelegate::new(selector, window, cx);
     Picker::list(delegate, window, cx)
         .show_scrollbar(true)
         .width(rems(20.))
@@ -36,61 +34,63 @@ enum AcpModelPickerEntry {
 }
 
 pub struct AcpModelPickerDelegate {
-    session_id: acp::SessionId,
     selector: Rc<dyn AgentModelSelector>,
     filtered_entries: Vec<AcpModelPickerEntry>,
     models: Option<AgentModelList>,
     selected_index: usize,
+    selected_description: Option<(usize, SharedString)>,
     selected_model: Option<AgentModelInfo>,
     _refresh_models_task: Task<()>,
 }
 
 impl AcpModelPickerDelegate {
     fn new(
-        session_id: acp::SessionId,
         selector: Rc<dyn AgentModelSelector>,
         window: &mut Window,
         cx: &mut Context<AcpModelSelector>,
     ) -> Self {
-        let mut rx = selector.watch(cx);
-        let refresh_models_task = cx.spawn_in(window, {
-            let session_id = session_id.clone();
-            async move |this, cx| {
-                async fn refresh(
-                    this: &WeakEntity<Picker<AcpModelPickerDelegate>>,
-                    session_id: &acp::SessionId,
-                    cx: &mut AsyncWindowContext,
-                ) -> Result<()> {
-                    let (models_task, selected_model_task) = this.update(cx, |this, cx| {
-                        (
-                            this.delegate.selector.list_models(cx),
-                            this.delegate.selector.selected_model(session_id, cx),
-                        )
-                    })?;
+        let rx = selector.watch(cx);
+        let refresh_models_task = {
+            cx.spawn_in(window, {
+                async move |this, cx| {
+                    async fn refresh(
+                        this: &WeakEntity<Picker<AcpModelPickerDelegate>>,
+                        cx: &mut AsyncWindowContext,
+                    ) -> Result<()> {
+                        let (models_task, selected_model_task) = this.update(cx, |this, cx| {
+                            (
+                                this.delegate.selector.list_models(cx),
+                                this.delegate.selector.selected_model(cx),
+                            )
+                        })?;
 
-                    let (models, selected_model) = futures::join!(models_task, selected_model_task);
+                        let (models, selected_model) =
+                            futures::join!(models_task, selected_model_task);
 
-                    this.update_in(cx, |this, window, cx| {
-                        this.delegate.models = models.ok();
-                        this.delegate.selected_model = selected_model.ok();
-                        this.refresh(window, cx)
-                    })
+                        this.update_in(cx, |this, window, cx| {
+                            this.delegate.models = models.ok();
+                            this.delegate.selected_model = selected_model.ok();
+                            this.refresh(window, cx)
+                        })
+                    }
+
+                    refresh(&this, cx).await.log_err();
+                    if let Some(mut rx) = rx {
+                        while let Ok(()) = rx.recv().await {
+                            refresh(&this, cx).await.log_err();
+                        }
+                    }
                 }
-
-                refresh(&this, &session_id, cx).await.log_err();
-                while let Ok(()) = rx.recv().await {
-                    refresh(&this, &session_id, cx).await.log_err();
-                }
-            }
-        });
+            })
+        };
 
         Self {
-            session_id,
             selector,
             filtered_entries: Vec::new(),
             models: None,
             selected_model: None,
             selected_index: 0,
+            selected_description: None,
             _refresh_models_task: refresh_models_task,
         }
     }
@@ -182,7 +182,7 @@ impl PickerDelegate for AcpModelPickerDelegate {
             self.filtered_entries.get(self.selected_index)
         {
             self.selector
-                .select_model(self.session_id.clone(), model_info.id.clone(), cx)
+                .select_model(model_info.id.clone(), cx)
                 .detach_and_log_err(cx);
             self.selected_model = Some(model_info.clone());
             let current_index = self.selected_index;
@@ -233,31 +233,46 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 };
 
                 Some(
-                    ListItem::new(ix)
-                        .inset(true)
-                        .spacing(ListItemSpacing::Sparse)
-                        .toggle_state(selected)
-                        .start_slot::<Icon>(model_info.icon.map(|icon| {
-                            Icon::new(icon)
-                                .color(model_icon_color)
-                                .size(IconSize::Small)
-                        }))
+                    div()
+                        .id(("model-picker-menu-child", ix))
+                        .when_some(model_info.description.clone(), |this, description| {
+                            this
+                                .on_hover(cx.listener(move |menu, hovered, _, cx| {
+                                    if *hovered {
+                                        menu.delegate.selected_description = Some((ix, description.clone()));
+                                    } else if matches!(menu.delegate.selected_description, Some((id, _)) if id == ix) {
+                                        menu.delegate.selected_description = None;
+                                    }
+                                    cx.notify();
+                                }))
+                        })
                         .child(
-                            h_flex()
-                                .w_full()
-                                .pl_0p5()
-                                .gap_1p5()
-                                .w(px(240.))
-                                .child(Label::new(model_info.name.clone()).truncate()),
+                            ListItem::new(ix)
+                                .inset(true)
+                                .spacing(ListItemSpacing::Sparse)
+                                .toggle_state(selected)
+                                .start_slot::<Icon>(model_info.icon.map(|icon| {
+                                    Icon::new(icon)
+                                        .color(model_icon_color)
+                                        .size(IconSize::Small)
+                                }))
+                                .child(
+                                    h_flex()
+                                        .w_full()
+                                        .pl_0p5()
+                                        .gap_1p5()
+                                        .w(px(240.))
+                                        .child(Label::new(model_info.name.clone()).truncate()),
+                                )
+                                .end_slot(div().pr_3().when(is_selected, |this| {
+                                    this.child(
+                                        Icon::new(IconName::Check)
+                                            .color(Color::Accent)
+                                            .size(IconSize::Small),
+                                    )
+                                })),
                         )
-                        .end_slot(div().pr_3().when(is_selected, |this| {
-                            this.child(
-                                Icon::new(IconName::Check)
-                                    .color(Color::Accent)
-                                    .size(IconSize::Small),
-                            )
-                        }))
-                        .into_any_element(),
+                        .into_any_element()
                 )
             }
         }
@@ -291,6 +306,21 @@ impl PickerDelegate for AcpModelPickerDelegate {
                 )
                 .into_any(),
         )
+    }
+
+    fn documentation_aside(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) -> Option<ui::DocumentationAside> {
+        self.selected_description.as_ref().map(|(_, description)| {
+            let description = description.clone();
+            DocumentationAside::new(
+                DocumentationSide::Left,
+                DocumentationEdge::Bottom,
+                Rc::new(move |_| Label::new(description.clone()).into_any_element()),
+            )
+        })
     }
 }
 
@@ -371,6 +401,7 @@ async fn fuzzy_search(
 
 #[cfg(test)]
 mod tests {
+    use agent_client_protocol as acp;
     use gpui::TestAppContext;
 
     use super::*;
@@ -383,8 +414,9 @@ mod tests {
                     models
                         .into_iter()
                         .map(|model| acp_thread::AgentModelInfo {
-                            id: acp_thread::AgentModelId(model.to_string().into()),
+                            id: acp::ModelId(model.to_string().into()),
                             name: model.to_string().into(),
+                            description: None,
                             icon: None,
                         })
                         .collect::<Vec<_>>(),

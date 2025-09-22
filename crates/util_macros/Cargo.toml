@@ -17,5 +17,9 @@ doctest = false
 convert_case.workspace = true
 quote.workspace = true
 syn.workspace = true
-workspace-hack.workspace = true
+perf.workspace = true
 proc-macro2.workspace = true
+workspace-hack.workspace = true
+
+[features]
+perf-enabled = []

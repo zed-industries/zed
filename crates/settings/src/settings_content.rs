@@ -16,7 +16,7 @@ pub use terminal::*;
 pub use theme::*;
 pub use workspace::*;
 
-use collections::HashMap;
+use collections::{HashMap, IndexMap};
 use gpui::{App, SharedString};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
@@ -167,13 +167,6 @@ impl SettingsContent {
 }
 
 #[skip_serializing_none]
-#[derive(Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct ServerSettingsContent {
-    #[serde(flatten)]
-    pub project: ProjectSettingsContent,
-}
-
-#[skip_serializing_none]
 #[derive(Debug, Default, PartialEq, Clone, Serialize, Deserialize, JsonSchema, MergeFrom)]
 pub struct UserSettingsContent {
     #[serde(flatten)]
@@ -189,7 +182,7 @@ pub struct UserSettingsContent {
     pub linux: Option<Box<SettingsContent>>,
 
     #[serde(default)]
-    pub profiles: HashMap<String, SettingsContent>,
+    pub profiles: IndexMap<String, SettingsContent>,
 }
 
 pub struct ExtensionsSettingsContent {
@@ -827,6 +820,14 @@ pub struct ReplSettingsContent {
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// An ExtendingVec in the settings can only accumulate new values.
+///
+/// This is useful for things like private files where you only want
+/// to allow new values to be added.
+///
+/// Consider using a HashMap<String, bool> instead of this type
+/// (like auto_install_extensions) so that user settings files can both add
+/// and remove values from the set.
 pub struct ExtendingVec<T>(pub Vec<T>);
 
 impl<T> Into<Vec<T>> for ExtendingVec<T> {
@@ -841,13 +842,15 @@ impl<T> From<Vec<T>> for ExtendingVec<T> {
 }
 
 impl<T: Clone> merge_from::MergeFrom for ExtendingVec<T> {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(other) = other {
-            self.0.extend_from_slice(other.0.as_slice());
-        }
+    fn merge_from(&mut self, other: &Self) {
+        self.0.extend_from_slice(other.0.as_slice());
     }
 }
 
+/// A SaturatingBool in the settings can only ever be set to true,
+/// later attempts to set it to false will be ignored.
+///
+/// Used by `disable_ai`.
 #[derive(Debug, Default, Copy, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SaturatingBool(pub bool);
 
@@ -858,9 +861,7 @@ impl From<bool> for SaturatingBool {
 }
 
 impl merge_from::MergeFrom for SaturatingBool {
-    fn merge_from(&mut self, other: Option<&Self>) {
-        if let Some(other) = other {
-            self.0 |= other.0
-        }
+    fn merge_from(&mut self, other: &Self) {
+        self.0 |= other.0
     }
 }

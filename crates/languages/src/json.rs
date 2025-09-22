@@ -181,7 +181,7 @@ impl JsonLspAdapter {
         #[allow(unused_mut)]
         let mut schemas = serde_json::json!([
             {
-                "fileMatch": ["tsconfig.json"],
+                "fileMatch": ["tsconfig*.json"],
                 "schema":tsconfig_schema
             },
             {

@@ -427,6 +427,8 @@ impl TerminalBuilder {
                 working_directory: working_directory.clone(),
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
+                #[cfg(windows)]
+                escape_args: true,
             }
         };
 

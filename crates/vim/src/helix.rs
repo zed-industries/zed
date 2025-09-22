@@ -1,5 +1,6 @@
 mod boundary;
 mod object;
+mod paste;
 mod select;
 
 use editor::display_map::DisplaySnapshot;
@@ -40,6 +41,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_append);
     Vim::action(editor, cx, Vim::helix_yank);
     Vim::action(editor, cx, Vim::helix_goto_last_modification);
+    Vim::action(editor, cx, Vim::helix_paste);
 }
 
 impl Vim {
