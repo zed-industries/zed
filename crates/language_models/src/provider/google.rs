@@ -612,6 +612,24 @@ impl GoogleEventMapper {
                 convert_usage(&self.usage),
             )))
         }
+
+        if let Some(prompt_feedback) = event.prompt_feedback
+            && let Some(block_reason) = prompt_feedback.block_reason.as_deref()
+        {
+            self.stop_reason = match block_reason {
+                "SAFETY" | "OTHER" | "BLOCKLIST" | "PROHIBITED_CONTENT" | "IMAGE_SAFETY" => {
+                    StopReason::Refusal
+                }
+                _ => {
+                    log::error!("Unexpected Google block_reason: {block_reason}");
+                    StopReason::Refusal
+                }
+            };
+            events.push(Ok(LanguageModelCompletionEvent::Stop(self.stop_reason)));
+
+            return events;
+        }
+
         if let Some(candidates) = event.candidates {
             for candidate in candidates {
                 if let Some(finish_reason) = candidate.finish_reason.as_deref() {
