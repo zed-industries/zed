@@ -19308,6 +19308,8 @@ impl Editor {
             && let Some(path) = path.to_str()
         {
             cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
+        } else {
+            cx.propagate();
         }
     }
 
@@ -19321,6 +19323,8 @@ impl Editor {
             && let Some(path) = path.to_str()
         {
             cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
+        } else {
+            cx.propagate();
         }
     }
 
