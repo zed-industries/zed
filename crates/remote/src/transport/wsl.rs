@@ -409,7 +409,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--".to_string(),
                 self.shell.clone(),
                 "-c".to_string(),
-                script,
+                shlex::try_quote(&script)?.to_string(),
             ]
         } else {
             vec![
@@ -420,7 +420,7 @@ impl RemoteConnection for WslRemoteConnection {
                 "--".to_string(),
                 self.shell.clone(),
                 "-c".to_string(),
-                script,
+                shlex::try_quote(&script)?.to_string(),
             ]
         };
 
