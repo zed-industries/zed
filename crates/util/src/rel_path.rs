@@ -107,6 +107,23 @@ impl RelPath {
         Err(())
     }
 
+    pub fn len(&self) -> usize {
+        self.0.matches('/').count() + 1
+    }
+
+    pub fn last_n_components(&self, count: usize) -> Option<&Self> {
+        let len = self.len();
+        if len >= count {
+            let mut components = self.components();
+            for _ in 0..(len - count) {
+                components.next()?;
+            }
+            Some(components.rest())
+        } else {
+            None
+        }
+    }
+
     pub fn push(&self, component: &str) -> Result<Arc<Self>> {
         if component.is_empty() {
             bail!("pushed component is empty");

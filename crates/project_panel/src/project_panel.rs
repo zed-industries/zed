@@ -75,7 +75,7 @@ const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 struct VisibleEntriesForWorktree {
     worktree_id: WorktreeId,
     entries: Vec<GitEntry>,
-    index: OnceCell<HashSet<Arc<Path>>>,
+    index: OnceCell<HashSet<Arc<RelPath>>>,
 }
 
 pub struct ProjectPanel {
@@ -107,7 +107,7 @@ pub struct ProjectPanel {
     workspace: WeakEntity<Workspace>,
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
-    diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
+    diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
     max_width_item_index: Option<usize>,
     diagnostic_summary_update: Task<()>,
     // We keep track of the mouse down state on entries so we don't flash the UI
@@ -153,7 +153,7 @@ struct EditState {
     leaf_entry_id: Option<ProjectEntryId>,
     is_dir: bool,
     depth: usize,
-    processing_filename: Option<String>,
+    processing_filename: Option<Arc<RelPath>>,
     previously_focused: Option<SelectedEntry>,
     validation_state: ValidationState,
 }
@@ -1402,6 +1402,7 @@ impl ProjectPanel {
                 cx.notify();
                 return;
             }
+            let trimmed_filename = trimmed_filename.trim_start_matches('/');
 
             let Ok(filename) = RelPath::new(trimmed_filename) else {
                 edit_state.validation_state = ValidationState::Warning(
@@ -1419,12 +1420,8 @@ impl ProjectPanel {
             {
                 let mut already_exists = false;
                 if edit_state.is_new_entry() {
-                    let new_path = entry.path.join(filename.trim_start_matches('/'));
-                    if worktree
-                        .read(cx)
-                        .entry_for_path(new_path.as_path())
-                        .is_some()
-                    {
+                    let new_path = entry.path.join(filename);
+                    if worktree.read(cx).entry_for_path(&new_path).is_some() {
                         already_exists = true;
                     }
                 } else {
@@ -1433,7 +1430,7 @@ impl ProjectPanel {
                     } else {
                         filename.clone().into()
                     };
-                    if let Some(existing) = worktree.read(cx).entry_for_path(new_path.as_path())
+                    if let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
                         && existing.id != entry.id
                     {
                         already_exists = true;
@@ -1442,7 +1439,7 @@ impl ProjectPanel {
                 if already_exists {
                     edit_state.validation_state = ValidationState::Error(format!(
                         "File or directory '{}' already exists at location. Please choose a different name.",
-                        filename
+                        filename.as_str()
                     ));
                     cx.notify();
                     return;
@@ -3612,7 +3609,7 @@ impl ProjectPanel {
                                         .take(prefix_components)
                                         .collect::<PathBuf>();
                                     if let Some(last_component) =
-                                        Path::new(processing_filename).components().next_back()
+                                        processing_filename.components().next_back()
                                     {
                                         new_path.push(last_component);
                                         previous_components.next();
@@ -3627,7 +3624,7 @@ impl ProjectPanel {
                                     }
                                 } else {
                                     details.filename.clear();
-                                    details.filename.push_str(processing_filename);
+                                    details.filename.push_str(processing_filename.as_str());
                                 }
                             } else {
                                 if edit_state.is_new_entry() {
@@ -3893,7 +3890,7 @@ impl ProjectPanel {
 
     fn calculate_depth_and_difference(
         entry: &Entry,
-        visible_worktree_entries: &HashSet<Arc<Path>>,
+        visible_worktree_entries: &HashSet<Arc<RelPath>>,
     ) -> (usize, usize) {
         let (depth, difference) = entry
             .path
@@ -4710,7 +4707,7 @@ impl ProjectPanel {
         entry: &Entry,
         worktree_id: WorktreeId,
         root_name: &OsStr,
-        entries_paths: &HashSet<Arc<Path>>,
+        entries_paths: &HashSet<Arc<RelPath>>,
         git_status: GitSummary,
         sticky: Option<StickyDetails>,
         _window: &mut Window,
@@ -4731,37 +4728,37 @@ impl ProjectPanel {
         let icon = match entry.kind {
             EntryKind::File => {
                 if show_file_icons {
-                    FileIcons::get_icon(&entry.path, cx)
+                    FileIcons::get_icon(entry.path.as_std_path(), cx)
                 } else {
                     None
                 }
             }
             _ => {
                 if show_folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, &entry.path, cx)
+                    FileIcons::get_folder_icon(is_expanded, entry.path.as_std_path(), cx)
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
             }
         };
 
+        let path_style = self.project.read(cx).path_style(cx);
         let (depth, difference) =
             ProjectPanel::calculate_depth_and_difference(entry, entries_paths);
 
-        let filename = match difference {
-            diff if diff > 1 => entry
+        let filename = if difference > 1 {
+            entry
                 .path
-                .iter()
-                .skip(entry.path.components().count() - diff)
-                .collect::<PathBuf>()
-                .to_str()
-                .unwrap_or_default()
-                .to_string(),
-            _ => entry
+                .last_n_components(difference)
+                .map_or(String::new(), |suffix| {
+                    suffix.display(path_style).to_string()
+                })
+        } else {
+            entry
                 .path
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| root_name.to_string_lossy().to_string())
         };
 
         let selection = SelectedEntry {
@@ -4773,7 +4770,7 @@ impl ProjectPanel {
 
         let diagnostic_severity = self
             .diagnostics
-            .get(&(worktree_id, entry.path.to_path_buf()))
+            .get(&(worktree_id, entry.path.clone()))
             .cloned();
 
         let filename_text_color =
