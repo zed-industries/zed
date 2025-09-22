@@ -6,7 +6,7 @@ use project::{FakeFs, WorktreeSettings};
 use serde_json::json;
 use settings::SettingsStore;
 use std::path::{Path, PathBuf};
-use util::path;
+use util::{path, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, Pane,
     item::{Item, ProjectItem},
@@ -3073,7 +3073,7 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
             let target_entry = this
                 .project
                 .read(cx)
-                .entry_for_path(&(worktree_id, "").into(), cx)
+                .entry_for_path(&(worktree_id, rel_path("")).into(), cx)
                 .unwrap();
             this.drag_onto(&drag, target_entry.id, false, window, cx);
         });
@@ -3217,7 +3217,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
             .next()
             .unwrap()
             .read(cx)
-            .entry_for_path("target_destination")
+            .entry_for_path(rel_path("target_destination"))
             .unwrap();
         panel.drag_onto(&drag, target_entry.id, false, window, cx);
     });
@@ -3250,7 +3250,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
             .next()
             .unwrap()
             .read(cx)
-            .entry_for_path("a/b/c")
+            .entry_for_path(rel_path("a/b/c"))
             .unwrap();
         panel.drag_onto(&drag, target_entry.id, false, window, cx);
     });
@@ -3273,7 +3273,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
             .next()
             .unwrap()
             .read(cx)
-            .entry_for_path("target_destination")
+            .entry_for_path(rel_path("target_destination"))
             .unwrap();
         panel.drag_onto(&drag, target_entry.id, false, window, cx);
     });
@@ -3302,7 +3302,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
             .next()
             .unwrap()
             .read(cx)
-            .entry_for_path("a")
+            .entry_for_path(rel_path("a"))
             .unwrap();
         panel.drag_onto(&drag, target_entry.id, false, window, cx);
     });
@@ -3325,7 +3325,7 @@ async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
             .next()
             .unwrap()
             .read(cx)
-            .entry_for_path("target_destination")
+            .entry_for_path(rel_path("target_destination"))
             .unwrap();
         panel.drag_onto(&drag, target_entry.id, false, window, cx);
     });
@@ -3984,7 +3984,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
                 .clone();
             assert_eq!(
                 active_entry_path.path.as_ref(),
-                Path::new(excluded_file_path),
+                rel_path(excluded_file_path),
                 "Should open the excluded file"
             );
 
@@ -5012,16 +5012,14 @@ async fn test_selection_fallback_to_next_highest_worktree(cx: &mut gpui::TestApp
     );
 }
 
-fn toggle_expand_dir(
-    panel: &Entity<ProjectPanel>,
-    path: impl AsRef<Path>,
-    cx: &mut VisualTestContext,
-) {
-    let path = path.as_ref();
+fn toggle_expand_dir(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
+    let path = rel_path(path);
     panel.update_in(cx, |panel, window, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+            if let Ok(relative_path) =
+                path.strip_prefix(&RelPath::new(worktree.root_name()).unwrap())
+            {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
                 panel.toggle_expanded(entry_id, window, cx);
                 return;
@@ -5650,7 +5648,7 @@ async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
         let worktree = worktree.read(cx);
 
         // Test 1: Target is a directory, should highlight the directory itself
-        let dir_entry = worktree.entry_for_path("dir1").unwrap();
+        let dir_entry = worktree.entry_for_path(rel_path("dir1")).unwrap();
         let result = panel.highlight_entry_for_external_drag(dir_entry, worktree);
         assert_eq!(
             result,
@@ -5659,8 +5657,10 @@ async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
         );
 
         // Test 2: Target is nested file, should highlight immediate parent
-        let nested_file = worktree.entry_for_path("dir1/dir2/file2.txt").unwrap();
-        let nested_parent = worktree.entry_for_path("dir1/dir2").unwrap();
+        let nested_file = worktree
+            .entry_for_path(rel_path("dir1/dir2/file2.txt"))
+            .unwrap();
+        let nested_parent = worktree.entry_for_path(rel_path("dir1/dir2")).unwrap();
         let result = panel.highlight_entry_for_external_drag(nested_file, worktree);
         assert_eq!(
             result,
@@ -5669,7 +5669,7 @@ async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
         );
 
         // Test 3: Target is root level file, should highlight root
-        let root_file = worktree.entry_for_path("file3.txt").unwrap();
+        let root_file = worktree.entry_for_path(rel_path("file3.txt")).unwrap();
         let result = panel.highlight_entry_for_external_drag(root_file, worktree);
         assert_eq!(
             result,
@@ -5721,16 +5721,20 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
         let worktree_id = worktree.read(cx).id();
         let worktree = worktree.read(cx);
 
-        let parent_dir = worktree.entry_for_path("parent_dir").unwrap();
+        let parent_dir = worktree.entry_for_path(rel_path("parent_dir")).unwrap();
         let child_file = worktree
-            .entry_for_path("parent_dir/child_file.txt")
+            .entry_for_path(rel_path("parent_dir/child_file.txt"))
             .unwrap();
         let sibling_file = worktree
-            .entry_for_path("parent_dir/sibling_file.txt")
+            .entry_for_path(rel_path("parent_dir/sibling_file.txt"))
             .unwrap();
-        let child_dir = worktree.entry_for_path("parent_dir/child_dir").unwrap();
-        let other_dir = worktree.entry_for_path("other_dir").unwrap();
-        let other_file = worktree.entry_for_path("other_dir/other_file.txt").unwrap();
+        let child_dir = worktree
+            .entry_for_path(rel_path("parent_dir/child_dir"))
+            .unwrap();
+        let other_dir = worktree.entry_for_path(rel_path("other_dir")).unwrap();
+        let other_file = worktree
+            .entry_for_path(rel_path("other_dir/other_file.txt"))
+            .unwrap();
 
         // Test 1: Single item drag, don't highlight parent directory
         let dragged_selection = DraggedSelection {
@@ -5855,11 +5859,17 @@ async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::T
         let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
 
         let worktree_a = &worktrees[0];
-        let main_rs_from_a = worktree_a.read(cx).entry_for_path("src/main.rs").unwrap();
+        let main_rs_from_a = worktree_a
+            .read(cx)
+            .entry_for_path(rel_path("src/main.rs"))
+            .unwrap();
 
         let worktree_b = &worktrees[1];
-        let src_dir_from_b = worktree_b.read(cx).entry_for_path("src").unwrap();
-        let main_rs_from_b = worktree_b.read(cx).entry_for_path("src/main.rs").unwrap();
+        let src_dir_from_b = worktree_b.read(cx).entry_for_path(rel_path("src")).unwrap();
+        let main_rs_from_b = worktree_b
+            .read(cx)
+            .entry_for_path(rel_path("src/main.rs"))
+            .unwrap();
 
         // Test dragging file from worktree A onto parent of file with same relative path in worktree B
         let dragged_selection = DraggedSelection {
@@ -5944,14 +5954,14 @@ async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::Test
 
         let root1_entry = worktree1.root_entry().unwrap();
         let root2_entry = worktree2.root_entry().unwrap();
-        let _parent_dir = worktree1.entry_for_path("parent_dir").unwrap();
+        let _parent_dir = worktree1.entry_for_path(rel_path("parent_dir")).unwrap();
         let child_file = worktree1
-            .entry_for_path("parent_dir/child_file.txt")
+            .entry_for_path(rel_path("parent_dir/child_file.txt"))
             .unwrap();
         let nested_file = worktree1
-            .entry_for_path("parent_dir/nested_dir/nested_file.txt")
+            .entry_for_path(rel_path("parent_dir/nested_dir/nested_file.txt"))
             .unwrap();
-        let root_file = worktree1.entry_for_path("root_file.txt").unwrap();
+        let root_file = worktree1.entry_for_path(rel_path("root_file.txt")).unwrap();
 
         // Test 1: Multiple entries - should always highlight background
         let multiple_dragged_selection = DraggedSelection {
@@ -6412,12 +6422,14 @@ async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     }
 }
 
-fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut VisualTestContext) {
-    let path = path.as_ref();
+fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
+    let path = rel_path(path);
     panel.update(cx, |panel, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+            if let Ok(relative_path) =
+                path.strip_prefix(RelPath::new(worktree.root_name()).unwrap())
+            {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
                 panel.selection = Some(crate::SelectedEntry {
                     worktree_id: worktree.id(),
@@ -6430,16 +6442,14 @@ fn select_path(panel: &Entity<ProjectPanel>, path: impl AsRef<Path>, cx: &mut Vi
     });
 }
 
-fn select_path_with_mark(
-    panel: &Entity<ProjectPanel>,
-    path: impl AsRef<Path>,
-    cx: &mut VisualTestContext,
-) {
-    let path = path.as_ref();
+fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestContext) {
+    let path = rel_path(path);
     panel.update(cx, |panel, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+            if let Ok(relative_path) =
+                path.strip_prefix(RelPath::new(worktree.root_name()).unwrap())
+            {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
                 let entry = crate::SelectedEntry {
                     worktree_id: worktree.id(),
@@ -6458,14 +6468,16 @@ fn select_path_with_mark(
 
 fn find_project_entry(
     panel: &Entity<ProjectPanel>,
-    path: impl AsRef<Path>,
+    path: &str,
     cx: &mut VisualTestContext,
 ) -> Option<ProjectEntryId> {
-    let path = path.as_ref();
+    let path = rel_path(path);
     panel.update(cx, |panel, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
+            if let Ok(relative_path) =
+                path.strip_prefix(RelPath::new(worktree.root_name()).unwrap())
+            {
                 return worktree.entry_for_path(relative_path).map(|entry| entry.id);
             }
         }
@@ -6597,7 +6609,7 @@ fn ensure_single_file_is_opened(
                 open_project_paths,
                 vec![ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new(expected_path))
+                    path: Arc::from(rel_path(expected_path))
                 }],
                 "Should have opened file, selected in project panel"
             );

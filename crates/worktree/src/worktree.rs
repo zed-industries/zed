@@ -196,32 +196,6 @@ pub enum WorkDirectory {
 }
 
 impl WorkDirectory {
-    #[cfg(test)]
-    fn in_project(path: &str) -> Self {
-        use util::rel_path::rel_path;
-
-        let path = rel_path(path);
-        Self::InProject {
-            relative_path: path.into(),
-        }
-    }
-
-    //#[cfg(test)]
-    //fn canonicalize(&self) -> Self {
-    //    match self {
-    //        WorkDirectory::InProject { relative_path } => WorkDirectory::InProject {
-    //            relative_path: relative_path.clone(),
-    //        },
-    //        WorkDirectory::AboveProject {
-    //            absolute_path,
-    //            location_in_repo,
-    //        } => WorkDirectory::AboveProject {
-    //            absolute_path: absolute_path.canonicalize().unwrap().into(),
-    //            location_in_repo: location_in_repo.clone(),
-    //        },
-    //    }
-    //}
-
     fn path_key(&self) -> PathKey {
         match self {
             WorkDirectory::InProject { relative_path } => PathKey(relative_path.clone()),

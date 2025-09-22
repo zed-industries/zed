@@ -1354,7 +1354,7 @@ pub mod test {
         InteractiveElement, IntoElement, Render, SharedString, Task, WeakEntity, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
-    use std::{any::Any, cell::Cell, path::Path};
+    use std::{any::Any, cell::Cell};
     use util::rel_path::rel_path;
 
     pub struct TestProjectItem {

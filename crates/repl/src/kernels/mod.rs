@@ -84,7 +84,7 @@ pub fn python_env_kernel_specifications(
     let toolchains = project.read(cx).available_toolchains(
         ProjectPath {
             worktree_id,
-            path: Arc::from("".as_ref()),
+            path: RelPath::empty().into(),
         },
         python_language,
         cx,

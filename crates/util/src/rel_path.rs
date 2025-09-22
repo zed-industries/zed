@@ -1,5 +1,5 @@
 use crate::paths::PathStyle;
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use serde::Serialize;
 use std::{borrow::Cow, ffi::OsStr, ops::Deref, path::Path, sync::Arc};
 
@@ -28,9 +28,16 @@ impl RelPath {
     }
 
     pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Arc<Self>> {
-        let mut string = Cow::Borrowed(path.to_str().context("non utf-8 path")?);
+        let path = path.to_str().context("non utf-8 path")?;
+        let mut string = Cow::Borrowed(path);
 
         if path_style == PathStyle::Windows {
+            if path.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && let Some(path) = path[1..].strip_prefix(':')
+                && let Some(_) = path.strip_prefix('\\')
+            {
+                return Err(anyhow!("absolute path not allowed: {path:?}"));
+            }
             string = Cow::Owned(string.as_ref().replace('\\', "/"))
         }
 
@@ -96,7 +103,7 @@ impl RelPath {
         false
     }
 
-    pub fn strip_prefix(&self, other: &Self) -> Result<&Self, ()> {
+    pub fn strip_prefix(&self, other: &Self) -> Result<&Self> {
         if let Some(suffix) = self.0.strip_prefix(&other.0) {
             if suffix.starts_with('/') {
                 return Ok(unsafe { Self::new_unchecked(&suffix[1..]) });
@@ -104,7 +111,7 @@ impl RelPath {
                 return Ok(Self::empty());
             }
         }
-        Err(())
+        Err(anyhow!("failed to strip prefix"))
     }
 
     pub fn len(&self) -> usize {
@@ -383,6 +390,7 @@ mod tests {
         assert_eq!(rel_path("foo").parent(), Some(RelPath::empty()));
         assert_eq!(rel_path("").parent(), None);
     }
+
     #[test]
     fn test_rel_path_partial_ord_is_compatible_with_std() {
         let test_cases = ["a/b/c", "relative/path/with/dot.", "relative/path/with.dot"];
@@ -392,5 +400,13 @@ mod tests {
                 RelPath::new(lhs).unwrap().cmp(RelPath::new(rhs).unwrap())
             );
         }
+    }
+
+    #[test]
+    fn test_rel_path_constructors_absolute_path() {
+        assert!(RelPath::from_std_path(Path::new("/a/b"), PathStyle::Windows).is_err());
+        assert!(RelPath::from_std_path(Path::new("/a/b"), PathStyle::Posix).is_err());
+        assert!(RelPath::from_std_path(Path::new("C:/a/b"), PathStyle::Windows).is_err());
+        assert!(RelPath::from_std_path(Path::new("C:/a/b"), PathStyle::Posix).is_ok());
     }
 }

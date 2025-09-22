@@ -18,6 +18,7 @@ use std::process::exit;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use util::rel_path::RelPath;
 use zeta::{GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
 
 use crate::headless::ZetaCliAppState;
@@ -205,12 +206,12 @@ async fn get_context(
 pub async fn open_buffer_with_language_server(
     project: &Entity<Project>,
     worktree: &Entity<Worktree>,
-    path: &Path,
+    path: &RelPath,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Entity<Buffer>>, Entity<Buffer>)> {
     let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
         worktree_id: worktree.id(),
-        path: path.to_path_buf().into(),
+        path: Arc::from(path),
     })?;
 
     let buffer = project

@@ -32,7 +32,6 @@ use std::{
     any::{Any, TypeId},
     mem,
     ops::{Not, Range},
-    path::Path,
     pin::pin,
     sync::Arc,
 };
@@ -2346,7 +2345,7 @@ pub mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::{path, rel_path::rel_path};
+    use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::DeploySearch;
 
     #[gpui::test]
@@ -3234,7 +3233,7 @@ pub mod tests {
                     search_view.included_files_editor.update(cx, |editor, cx| {
                         assert_eq!(
                             editor.display_text(cx),
-                            a_dir_entry.path.to_str().unwrap(),
+                            a_dir_entry.path.display(PathStyle::local()),
                             "New search in directory should have included dir entry path"
                         );
                     });
@@ -3630,7 +3629,7 @@ pub mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_path(
-                    (worktree_id, "one.rs"),
+                    (worktree_id, rel_path("one.rs")),
                     Some(first_pane.downgrade()),
                     true,
                     window,
@@ -3847,7 +3846,7 @@ pub mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_path(
-                    (worktree_id, "one.rs"),
+                    (worktree_id, rel_path("one.rs")),
                     Some(first_pane.downgrade()),
                     true,
                     window,
