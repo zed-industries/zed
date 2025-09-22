@@ -2319,13 +2319,9 @@ fn start_of_document(
         return go_to_line(map, display_point, times);
     }
 
-    let point = map.display_point_to_point(display_point, Bias::Left);
-    let mut first_point = Point::zero();
-    first_point.column = point.column;
-
     map.clip_point(
         map.point_to_display_point(
-            map.buffer_snapshot.clip_point(first_point, Bias::Left),
+            map.buffer_snapshot.clip_point(Point::zero(), Bias::Left),
             Bias::Left,
         ),
         Bias::Left,
