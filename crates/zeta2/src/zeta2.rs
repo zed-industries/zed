@@ -390,31 +390,25 @@ struct CurrentEditPrediction {
 }
 
 impl CurrentEditPrediction {
-    fn should_replace_prediction(
-        &self,
-        _old_completion: &Self,
-        _snapshot: &BufferSnapshot,
-    ) -> bool {
-        true
-        // TODO
-        // if self.buffer_id != old_completion.buffer_id {
-        //     return true;
-        // }
+    fn should_replace_prediction(&self, old_prediction: &Self, snapshot: &BufferSnapshot) -> bool {
+        if self.buffer_id != old_prediction.buffer_id {
+            return true;
+        }
 
-        // let Some(old_edits) = old_completion.completion.interpolate(snapshot) else {
-        //     return true;
-        // };
-        // let Some(new_edits) = self.completion.interpolate(snapshot) else {
-        //     return false;
-        // };
+        let Some(old_edits) = old_prediction.prediction.interpolate(snapshot) else {
+            return true;
+        };
+        let Some(new_edits) = self.prediction.interpolate(snapshot) else {
+            return false;
+        };
 
-        // if old_edits.len() == 1 && new_edits.len() == 1 {
-        //     let (old_range, old_text) = &old_edits[0];
-        //     let (new_range, new_text) = &new_edits[0];
-        //     new_range == old_range && new_text.starts_with(old_text)
-        // } else {
-        //     true
-        // }
+        if old_edits.len() == 1 && new_edits.len() == 1 {
+            let (old_range, old_text) = &old_edits[0];
+            let (new_range, new_text) = &new_edits[0];
+            new_range == old_range && new_text.starts_with(old_text)
+        } else {
+            true
+        }
     }
 }
 
