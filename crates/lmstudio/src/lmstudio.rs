@@ -240,7 +240,7 @@ pub struct ChoiceDelta {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct ToolCallChunk {
-    pub index: usize,
+    pub index: Option<isize>,
     pub id: Option<String>,
 
     // There is also an optional `type` field that would determine if a

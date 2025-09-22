@@ -558,7 +558,11 @@ impl OpenAiEventMapper {
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
             for tool_call in tool_calls {
-                let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+                let mut index = tool_call.index.unwrap_or_default();
+                if index < 0 {
+                    index = 0;
+                }
+                let entry = self.tool_calls_by_index.entry(index as usize).or_default();
 
                 if let Some(tool_id) = tool_call.id.clone() {
                     entry.id = tool_id;
