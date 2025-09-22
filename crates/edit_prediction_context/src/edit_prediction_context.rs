@@ -59,7 +59,7 @@ impl EditPredictionContext {
         )?;
         let excerpt_text = excerpt.text(buffer);
         let cursor_offset_in_file = cursor_point.to_offset(buffer);
-        // todo! fix this to not need saturating_sub
+        // TODO fix this to not need saturating_sub
         let cursor_offset_in_excerpt = cursor_offset_in_file.saturating_sub(excerpt.range.start);
 
         let snippets = if let Some(index_state) = index_state {

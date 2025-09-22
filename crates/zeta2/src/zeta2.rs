@@ -899,7 +899,6 @@ fn make_cloud_request(
         referenced_declarations,
         signatures,
         excerpt_parent,
-        // todo!
         events,
         can_collect_data,
         diagnostic_groups,

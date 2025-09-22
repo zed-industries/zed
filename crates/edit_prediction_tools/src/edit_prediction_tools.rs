@@ -222,7 +222,7 @@ impl EditPredictionTools {
 
                     start_time = Some(Instant::now());
 
-                    // TODO! use global zeta instead
+                    // TODO use global zeta instead
                     EditPredictionContext::gather_context_in_background(
                         cursor_position,
                         current_buffer_snapshot,
