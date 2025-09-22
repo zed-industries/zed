@@ -14,8 +14,8 @@ impl YoungAccountBanner {
 
 impl RenderOnce for YoungAccountBanner {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        const YOUNG_ACCOUNT_DISCLAIMER: &str = "To prevent abuse of our service, GitHub accounts created fewer than 30 days ago are not eligible for free plan usage or Pro plan free trial. To request an exception, reach out to billing-support@zed.dev.";
-        const YOUNG_ACCOUNT_DISCLAIMER_V2: &str = "To prevent abuse of our service, GitHub accounts created fewer than 30 days ago are not eligible for the Pro plan free trial. To request an exception, reach out to billing-support@zed.dev.";
+        const YOUNG_ACCOUNT_DISCLAIMER: &str = "To prevent abuse of our service, GitHub accounts created fewer than 30 days ago are not eligible for free plan usage or Pro plan free trial. You can request an exception by reaching out to billing-support@zed.dev";
+        const YOUNG_ACCOUNT_DISCLAIMER_V2: &str = "To prevent abuse of our service, GitHub accounts created fewer than 30 days ago are not eligible for the Pro trial. You can request an exception by reaching out to billing-support@zed.dev";
 
         let label = div()
             .w_full()
