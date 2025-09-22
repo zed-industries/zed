@@ -413,33 +413,15 @@
     "experimental.rodio_audio": false,
     // Requires 'rodio_audio: true'
     //
-    // Automatically increase or decrease you microphone's volume. This affects how
-    // loud you sound to others.
-    //
-    // Recommended: off (default)
-    // Microphones are too quite in zed, until everyone is on experimental
-    // audio and has auto speaker volume on this will make you very loud
-    // compared to other speakers.
-    "experimental.auto_microphone_volume": false,
+    // Use the new audio systems automatic gain control for your microphone.
+    // This affects how loud you sound to others.
+    "experimental.control_input_volume": false,
     // Requires 'rodio_audio: true'
     //
-    // Automatically increate or decrease the volume of other call members.
-    // This only affects how things sound for you.
-    "experimental.auto_speaker_volume": true,
-    // Requires 'rodio_audio: true'
-    //
-    // Remove background noises. Works great for typing, cars, dogs, AC. Does
-    // not work well on music.
-    "experimental.denoise": true,
-    // Requires 'rodio_audio: true'
-    //
-    // Use audio parameters compatible with the previous versions of
-    // experimental audio and non-experimental audio. When this is false you
-    // will sound strange to anyone not on the latest experimental audio. In
-    // the future we will migrate by setting this to false
-    //
-    // You need to rejoin a call for this setting to apply
-    "experimental.legacy_audio_compatible": true
+    // Use the new audio systems automatic gain control on everyone in the
+    // call. This makes call members who are too quite louder and those who are
+    // too loud quieter. This only affects how things sound for you.
+    "experimental.control_output_volume": false
   },
   // Scrollbar related settings
   "scrollbar": {

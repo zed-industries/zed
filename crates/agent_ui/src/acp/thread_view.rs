@@ -9,7 +9,7 @@ use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
 use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -577,23 +577,21 @@ impl AcpThreadView {
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
-                        this.model_selector =
-                            thread
-                                .read(cx)
-                                .connection()
-                                .model_selector()
-                                .map(|selector| {
-                                    cx.new(|cx| {
-                                        AcpModelSelectorPopover::new(
-                                            thread.read(cx).session_id().clone(),
-                                            selector,
-                                            PopoverMenuHandle::default(),
-                                            this.focus_handle(cx),
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                });
+                        this.model_selector = thread
+                            .read(cx)
+                            .connection()
+                            .model_selector(thread.read(cx).session_id())
+                            .map(|selector| {
+                                cx.new(|cx| {
+                                    AcpModelSelectorPopover::new(
+                                        selector,
+                                        PopoverMenuHandle::default(),
+                                        this.focus_handle(cx),
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            });
 
                         let mode_selector = thread
                             .read(cx)
@@ -1582,6 +1580,19 @@ impl AcpThreadView {
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
+            task.command = task
+                .command
+                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
+                .transpose()?;
+            task.args = task
+                .args
+                .iter()
+                .map(|arg| {
+                    Ok(shlex::try_quote(arg)
+                        .context("Failed to quote argument")?
+                        .to_string())
+                })
+                .collect::<Result<Vec<_>>>()?;
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
@@ -1591,7 +1602,7 @@ impl AcpThreadView {
             task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(&login, window, cx)
+                terminal_panel.spawn_task(&task, window, cx)
             })?;
 
             let terminal = terminal.await?;
@@ -5667,23 +5678,6 @@ pub(crate) mod tests {
                 "Expected refusal error to be set"
             );
         });
-    }
-
-    #[gpui::test]
-    async fn test_spawn_external_agent_login_handles_spaces(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        // Verify paths with spaces aren't pre-quoted
-        let path_with_spaces = "/Users/test/Library/Application Support/Zed/cli.js";
-        let login_task = task::SpawnInTerminal {
-            command: Some("node".to_string()),
-            args: vec![path_with_spaces.to_string(), "/login".to_string()],
-            ..Default::default()
-        };
-
-        // Args should be passed as-is, not pre-quoted
-        assert!(!login_task.args[0].starts_with('"'));
-        assert!(!login_task.args[0].starts_with('\''));
     }
 
     #[gpui::test]

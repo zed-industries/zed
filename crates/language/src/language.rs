@@ -780,6 +780,9 @@ pub struct LanguageConfig {
     /// A list of characters that Zed should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
+    /// A list of characters that Zed should treat as word characters for linked edit operations.
+    #[serde(default)]
+    pub linked_edit_characters: HashSet<char>,
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
@@ -916,6 +919,8 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
+    pub linked_edit_characters: Override<HashSet<char>>,
+    #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
     #[serde(default)]
     pub prefer_label_for_snippet: Option<bool>,
@@ -974,6 +979,7 @@ impl Default for LanguageConfig {
             hidden: false,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
+            linked_edit_characters: Default::default(),
             debuggers: Default::default(),
         }
     }
@@ -2008,6 +2014,15 @@ impl LanguageScope {
             self.config_override()
                 .map(|o| &o.completion_query_characters),
             Some(&self.language.config.completion_query_characters),
+        )
+    }
+
+    /// Returns a list of language-specific characters that are considered part of
+    /// identifiers during linked editing operations.
+    pub fn linked_edit_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override().map(|o| &o.linked_edit_characters),
+            Some(&self.language.config.linked_edit_characters),
         )
     }
 

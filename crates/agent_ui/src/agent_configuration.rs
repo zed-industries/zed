@@ -543,35 +543,23 @@ impl AgentConfiguration {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut registry_descriptors = self
+        let mut context_server_ids = self
             .context_server_store
             .read(cx)
-            .all_registry_descriptor_ids(cx);
-        let server_count = registry_descriptors.len();
+            .server_ids(cx)
+            .into_iter()
+            .collect::<Vec<_>>();
 
-        // Sort context servers: non-mcp-server ones first, then mcp-server ones
-        registry_descriptors.sort_by(|a, b| {
-            let has_mcp_prefix_a = a.0.starts_with("mcp-server-");
-            let has_mcp_prefix_b = b.0.starts_with("mcp-server-");
-
-            match (has_mcp_prefix_a, has_mcp_prefix_b) {
+        // Sort context servers: ones without mcp-server- prefix first, then prefixed ones
+        context_server_ids.sort_by(|a, b| {
+            const MCP_PREFIX: &str = "mcp-server-";
+            match (a.0.strip_prefix(MCP_PREFIX), b.0.strip_prefix(MCP_PREFIX)) {
                 // If one has mcp-server- prefix and other doesn't, non-mcp comes first
-                (true, false) => std::cmp::Ordering::Greater,
-                (false, true) => std::cmp::Ordering::Less,
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, Some(_)) => std::cmp::Ordering::Less,
                 // If both have same prefix status, sort by appropriate key
-                _ => {
-                    let get_sort_key = |server_id: &str| -> String {
-                        if let Some(suffix) = server_id.strip_prefix("mcp-server-") {
-                            suffix.to_string()
-                        } else {
-                            server_id.to_string()
-                        }
-                    };
-
-                    let key_a = get_sort_key(&a.0);
-                    let key_b = get_sort_key(&b.0);
-                    key_a.cmp(&key_b)
-                }
+                (Some(a), Some(b)) => a.cmp(b),
+                (None, None) => a.0.cmp(&b.0),
             }
         });
 
@@ -636,8 +624,8 @@ impl AgentConfiguration {
                     )
                     .child(add_server_popover),
             )
-            .child(v_flex().w_full().gap_1().map(|parent| {
-                if registry_descriptors.is_empty() {
+            .child(v_flex().w_full().gap_1().map(|mut parent| {
+                if context_server_ids.is_empty() {
                     parent.child(
                         h_flex()
                             .p_4()
@@ -653,26 +641,18 @@ impl AgentConfiguration {
                             ),
                     )
                 } else {
-                    {
-                        parent.children(registry_descriptors.into_iter().enumerate().flat_map(
-                            |(index, context_server_id)| {
-                                let mut elements: Vec<AnyElement> = vec![
-                                    self.render_context_server(context_server_id, window, cx)
-                                        .into_any_element(),
-                                ];
-
-                                if index < server_count - 1 {
-                                    elements.push(
-                                        Divider::horizontal()
-                                            .color(DividerColor::BorderFaded)
-                                            .into_any_element(),
-                                    );
-                                }
-
-                                elements
-                            },
-                        ))
+                    for (index, context_server_id) in context_server_ids.into_iter().enumerate() {
+                        if index > 0 {
+                            parent = parent.child(
+                                Divider::horizontal()
+                                    .color(DividerColor::BorderFaded)
+                                    .into_any_element(),
+                            );
+                        }
+                        parent =
+                            parent.child(self.render_context_server(context_server_id, window, cx));
                     }
+                    parent
                 }
             }))
     }
@@ -1106,7 +1086,13 @@ impl AgentConfiguration {
                         IconName::AiClaude,
                         "Claude Code",
                     ))
-                    .children(user_defined_agents),
+                    .map(|mut parent| {
+                        for agent in user_defined_agents {
+                            parent = parent.child(Divider::horizontal().color(DividerColor::BorderFaded))
+                                .child(agent);
+                        }
+                        parent
+                    })
             )
     }
 

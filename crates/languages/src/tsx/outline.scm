@@ -124,4 +124,26 @@
     )
 ) @item
 
+; Arrow functions in variable declarations (anywhere in the tree, including nested in functions)
+(lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+        name: (_) @name
+        value: (arrow_function)) @item)
+
+; Async arrow functions in variable declarations
+(lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+        name: (_) @name
+        value: (arrow_function
+            "async" @context)) @item)
+
+; Named function expressions in variable declarations
+(lexical_declaration
+    ["let" "const"] @context
+    (variable_declarator
+        name: (_) @name
+        value: (function_expression)) @item)
+
 (comment) @annotation

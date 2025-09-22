@@ -18,7 +18,6 @@ async-tar.workspace = true
 collections.workspace = true
 crossbeam.workspace = true
 gpui.workspace = true
-denoise = { path = "../denoise" }
 log.workspace = true
 parking_lot.workspace = true
 rodio = { workspace = true, features = [ "wav", "playback", "wav_output" ] }

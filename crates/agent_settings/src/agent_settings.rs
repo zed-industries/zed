@@ -5,6 +5,7 @@ use std::sync::Arc;
 use collections::IndexMap;
 use gpui::{App, Pixels, px};
 use language_model::LanguageModel;
+use project::DisableAiSettings;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{
@@ -53,6 +54,10 @@ pub struct AgentSettings {
 }
 
 impl AgentSettings {
+    pub fn enabled(&self, cx: &App) -> bool {
+        self.enabled && !DisableAiSettings::get_global(cx).disable_ai
+    }
+
     pub fn temperature_for_model(model: &Arc<dyn LanguageModel>, cx: &App) -> Option<f32> {
         let settings = Self::get_global(cx);
         for setting in settings.model_parameters.iter().rev() {
