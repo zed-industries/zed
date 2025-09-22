@@ -426,6 +426,9 @@ impl Render for EditPredictionTools {
                             .gap_2()
                             .bg(cx.theme().colors().editor_background)
                             // todo! fix layout
+                            // should we use an editor instead of markdown?
+                            // I don't want to use a label, because I want it to be selectable
+                            // and maybe an editor would make sense later too if we make it editable
                             .child(
                                 v_flex()
                                     .flex_1()
