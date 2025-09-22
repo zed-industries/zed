@@ -24,19 +24,26 @@ use syn::{
 #[proc_macro]
 pub fn path(input: TokenStream) -> TokenStream {
     let path = parse_macro_input!(input as LitStr);
-    let mut path = path.value();
 
     #[cfg(target_os = "windows")]
     {
+        let mut path = path.value();
         path = path.replace("/", "\\");
         if path.starts_with("\\") {
             path = format!("C:{}", path);
         }
+        return TokenStream::from(quote! {
+            #path
+        });
     }
 
-    TokenStream::from(quote! {
-        #path
-    })
+    #[cfg(not(target_os = "windows"))]
+    {
+        let path = path.value();
+        return TokenStream::from(quote! {
+            #path
+        });
+    }
 }
 
 /// This macro replaces the path prefix `file:///` with `file:///C:/` for Windows.
