@@ -198,7 +198,7 @@ You can disable format-on-save for Python files in your `settings.json`:
 {
   "languages": {
     "Python": {
-      "format_on_save": false
+      "format_on_save": "off"
     }
   }
 }

@@ -12,7 +12,7 @@ use gpui::{
     Action as _, AppContext, Context, Corner, Entity, FocusHandle, Focusable, HighlightStyle, Hsla,
     Render, Subscription, Task, TextStyle, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, CodeLabel, TextBufferSnapshot, ToOffset};
+use language::{Anchor, Buffer, CharScopeContext, CodeLabel, TextBufferSnapshot, ToOffset};
 use menu::{Confirm, SelectNext, SelectPrevious};
 use project::{
     Completion, CompletionDisplayOptions, CompletionResponse,
@@ -575,7 +575,9 @@ impl CompletionProvider for ConsoleQueryBarCompletionProvider {
             return false;
         }
 
-        let classifier = snapshot.char_classifier_at(position).for_completion(true);
+        let classifier = snapshot
+            .char_classifier_at(position)
+            .scope_context(Some(CharScopeContext::Completion));
         if trigger_in_words && classifier.is_word(char) {
             return true;
         }

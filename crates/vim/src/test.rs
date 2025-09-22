@@ -25,6 +25,9 @@ use search::BufferSearchBar;
 
 use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
 
+use util_macros::perf;
+
+#[perf]
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, false).await;
@@ -44,6 +47,7 @@ async fn test_neovim(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("ˇtest");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -80,6 +84,7 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     assert_eq!(cx.mode(), Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_cancel_selection(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -104,6 +109,7 @@ async fn test_cancel_selection(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("The quick brown fox juˇmps over the lazy dog");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -132,6 +138,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     })
 }
 
+#[perf]
 #[gpui::test]
 async fn test_count_down(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -143,6 +150,7 @@ async fn test_count_down(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aa\nbb\ncc\ndd\neˇe");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -157,6 +165,7 @@ async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aˇa\nbb\ncc");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -175,6 +184,7 @@ async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aa\nbb\ncˇc");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -241,6 +251,7 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     cx.assert_state("aˇbc\n", Mode::Insert);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -251,6 +262,7 @@ async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
     cx.assert_state("aˇbc", Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -289,6 +301,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
     cx.assert_state(indoc! {"aa\nbb\nˇcc\ncc\ncc\n"}, Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_word_characters(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new_typescript(cx).await;
@@ -315,6 +328,7 @@ async fn test_word_characters(cx: &mut gpui::TestAppContext) {
     )
 }
 
+#[perf]
 #[gpui::test]
 async fn test_kebab_case(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new_html(cx).await;
@@ -821,6 +835,7 @@ async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
         two"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_select_all_issue_2170(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -881,6 +896,7 @@ fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
     });
 }
 
+#[perf]
 #[gpui::test]
 async fn test_jk_multi(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -972,6 +988,7 @@ async fn test_comma_w(cx: &mut gpui::TestAppContext) {
         .assert_eq("hellˇo hello\nhello hello");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_completion_menu_scroll_aside(cx: &mut TestAppContext) {
     let mut cx = VimTestContext::new_typescript(cx).await;
@@ -1053,6 +1070,7 @@ async fn test_completion_menu_scroll_aside(cx: &mut TestAppContext) {
     });
 }
 
+#[perf]
 #[gpui::test]
 async fn test_rename(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new_typescript(cx).await;
@@ -1088,6 +1106,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
 
+#[perf(iterations = 1)]
 #[gpui::test]
 async fn test_remap(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1210,6 +1229,7 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
         3"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_mouse_selection(cx: &mut TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1385,6 +1405,7 @@ async fn test_dw_eol(cx: &mut gpui::TestAppContext) {
         .assert_eq("twelve ˇtwelve char\ntwelve char");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1476,6 +1497,7 @@ async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
         .assert_eq(r#"<label for="guests">ˇo</label>"#);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_sneak(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1695,6 +1717,7 @@ async fn test_ctrl_w_override(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("ˇ");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_visual_indent_count(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1850,6 +1873,7 @@ async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("hellˇllo world.");
 }
 
+#[perf(iterations = 1)]
 #[gpui::test]
 async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
     VimTestContext::init(cx);
@@ -2150,6 +2174,7 @@ async fn test_paragraph_multi_delete(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq(indoc! {"ˇ"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
