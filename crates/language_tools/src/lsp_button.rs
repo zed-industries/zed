@@ -772,7 +772,7 @@ impl LspButton {
                 });
                 servers_with_health_checks.insert(&health.name);
                 let worktree_name =
-                    worktree.map(|worktree| SharedString::new(worktree.read(cx).root_name()));
+                    worktree.map(|worktree| SharedString::new(worktree.read(cx).root_name_str()));
 
                 let binary_status = state.language_servers.binary_statuses.get(&health.name);
                 let server_data = ServerData::WithHealthCheck {
@@ -831,7 +831,7 @@ impl LspButton {
                         {
                             Some((worktree, server_id)) => {
                                 let worktree_name =
-                                    SharedString::new(worktree.read(cx).root_name());
+                                    SharedString::new(worktree.read(cx).root_name_str());
                                 servers_per_worktree
                                     .entry(worktree_name.clone())
                                     .or_default()

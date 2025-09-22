@@ -4431,7 +4431,7 @@ impl Workspace {
                 let settings = WorktreeSettings::get(Some(settings_location), cx);
                 match &settings.project_name {
                     Some(name) => name.as_str(),
-                    None => worktree.read(cx).root_name(),
+                    None => worktree.read(cx).root_name_str(),
                 }
             };
             if i > 0 {
@@ -4450,7 +4450,7 @@ impl Workspace {
                     project
                         .worktree_for_id(path.worktree_id, cx)?
                         .read(cx)
-                        .root_name(),
+                        .root_name_str(),
                 )
             });
 

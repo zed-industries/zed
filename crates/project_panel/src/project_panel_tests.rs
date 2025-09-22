@@ -6427,9 +6427,7 @@ fn select_path(panel: &Entity<ProjectPanel>, path: &str, cx: &mut VisualTestCont
     panel.update(cx, |panel, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) =
-                path.strip_prefix(RelPath::new(worktree.root_name()).unwrap())
-            {
+            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
                 panel.selection = Some(crate::SelectedEntry {
                     worktree_id: worktree.id(),
@@ -6447,9 +6445,7 @@ fn select_path_with_mark(panel: &Entity<ProjectPanel>, path: &str, cx: &mut Visu
     panel.update(cx, |panel, cx| {
         for worktree in panel.project.read(cx).worktrees(cx).collect::<Vec<_>>() {
             let worktree = worktree.read(cx);
-            if let Ok(relative_path) =
-                path.strip_prefix(RelPath::new(worktree.root_name()).unwrap())
-            {
+            if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                 let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
                 let entry = crate::SelectedEntry {
                     worktree_id: worktree.id(),

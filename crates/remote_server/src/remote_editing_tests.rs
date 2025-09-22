@@ -33,7 +33,7 @@ use std::{
 };
 #[cfg(not(windows))]
 use unindent::Unindent as _;
-use util::path;
+use util::{path, rel_path::rel_path};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -74,9 +74,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
-                Path::new("README.md"),
-                Path::new("src"),
-                Path::new("src/lib.rs"),
+                rel_path("README.md"),
+                rel_path("src"),
+                rel_path("src/lib.rs"),
             ]
         );
     });

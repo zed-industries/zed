@@ -10,7 +10,7 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{ListItem, Tooltip, prelude::*};
-use util::{ResultExt as _, rel_path::RelPath};
+use util::{ResultExt as _, paths::PathStyle, rel_path::RelPath};
 use workspace::Workspace;
 
 use crate::context_picker::ContextPicker;
@@ -274,40 +274,18 @@ pub fn extract_file_name_and_directory(
     path_style: PathStyle,
 ) -> (SharedString, Option<SharedString>) {
     let full_path = path_prefix.join(path);
-    let file_name = full_path.file_name().unwrap_or_default();
-    let directory = full_path.strip_suffix(filename);
-
-    if path.is_empty() {
-        (
-            SharedString::from(
-                path_prefix
-                    .trim_end_matches(std::path::MAIN_SEPARATOR)
-                    .to_string(),
-            ),
-            None,
-        )
-    } else {
-        let file_name = path.file_name().unwrap_or_default().to_string().into();
-
-        let mut directory = path_prefix
-            .trim_end_matches(std::path::MAIN_SEPARATOR)
-            .to_string();
-        if !directory.ends_with('/') {
-            directory.push('/');
-        }
-        if let Some(parent) = path.parent().filter(|parent| parent != &Path::new("")) {
-            directory.push_str(&parent.to_string_lossy());
-            directory.push('/');
-        }
-
-        (file_name, Some(directory.into()))
-    }
+    let file_name = RelPath::new(full_path.file_name().unwrap_or_default()).unwrap();
+    let directory = full_path.parent();
+    (
+        file_name.display(path_style).to_string().into(),
+        directory.map(|d| d.display(path_style).to_string().into()),
+    )
 }
 
 pub fn render_file_context_entry(
     id: ElementId,
     worktree_id: WorktreeId,
-    path: &Arc<Path>,
+    path: &Arc<RelPath>,
     path_prefix: &Arc<RelPath>,
     is_directory: bool,
     context_store: WeakEntity<ContextStore>,

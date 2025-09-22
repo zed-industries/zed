@@ -158,7 +158,6 @@ impl Tool for ListDirectoryTool {
         }
 
         let worktree_snapshot = worktree.read(cx).snapshot();
-        let worktree_root_name = worktree.read(cx).root_name().to_string();
 
         let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
             return Task::ready(Err(anyhow!("Path not found: {}", input.path))).into();

@@ -2062,7 +2062,7 @@ impl Project {
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
-            .map(|tree| tree.read(cx).root_name())
+            .map(|tree| tree.read(cx).root_name().as_str())
     }
 
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
@@ -4557,8 +4557,7 @@ impl Project {
             .and_then(|worktree| {
                 let worktree_name = worktree.read(cx).root_name();
                 Some(
-                    RelPath::new(worktree_name)
-                        .unwrap()
+                    worktree_name
                         .join(&project_path.path)
                         .display(path_style)
                         .to_string(),
@@ -5391,7 +5390,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
 
     fn prefix(&self) -> Arc<RelPath> {
         if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
-            RelPath::new(self.snapshot.root_name()).unwrap().into()
+            self.snapshot.root_name().into()
         } else {
             RelPath::empty().into()
         }

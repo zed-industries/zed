@@ -1,8 +1,6 @@
 mod image_info;
 mod image_viewer_settings;
 
-use std::path::PathBuf;
-
 use anyhow::Context as _;
 use editor::{EditorSettings, items::entry_git_aware_label_color};
 use file_icons::FileIcons;
@@ -197,20 +195,14 @@ impl Item for ImageView {
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &App) -> String {
-    let path = image.file.file_name(cx);
-    if project.visible_worktrees(cx).count() <= 1 {
-        return path.to_string();
+    let mut path = image.file.path().clone();
+    if project.visible_worktrees(cx).count() > 1
+        && let Some(worktree) = project.worktree_for_id(image.project_path(cx).worktree_id, cx)
+    {
+        path = worktree.read(cx).root_name().join(&path);
     }
 
-    project
-        .worktree_for_id(image.project_path(cx).worktree_id, cx)
-        .map(|worktree| {
-            PathBuf::from(worktree.read(cx).root_name())
-                .join(path)
-                .to_string_lossy()
-                .to_string()
-        })
-        .unwrap_or_else(|| path.to_string())
+    path.display(project.path_style(cx)).to_string()
 }
 
 impl SerializableItem for ImageView {

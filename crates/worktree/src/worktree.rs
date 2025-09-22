@@ -160,7 +160,7 @@ pub struct Snapshot {
     id: WorktreeId,
     abs_path: Arc<SanitizedPath>,
     path_style: PathStyle,
-    root_name: String,
+    root_name: Arc<RelPath>,
     root_char_bag: CharBag,
     entries_by_path: SumTree<Entry>,
     entries_by_id: SumTree<PathEntry>,
@@ -381,7 +381,8 @@ impl Worktree {
                     cx.entity_id().as_u64(),
                     abs_path
                         .file_name()
-                        .map_or(String::new(), |f| f.to_string_lossy().to_string()),
+                        .and_then(|f| f.to_str())
+                        .map_or(RelPath::empty().into(), |f| RelPath::new(f).unwrap().into()),
                     abs_path.clone(),
                     PathStyle::local(),
                 ),
@@ -458,7 +459,8 @@ impl Worktree {
         cx.new(|cx: &mut Context<Self>| {
             let snapshot = Snapshot::new(
                 worktree.id,
-                worktree.root_name,
+                RelPath::from_proto(&worktree.root_name)
+                    .unwrap_or_else(|_| RelPath::empty().into()),
                 Arc::<Path>::from_proto(worktree.abs_path),
                 path_style,
             );
@@ -613,7 +615,7 @@ impl Worktree {
     pub fn metadata_proto(&self) -> proto::WorktreeMetadata {
         proto::WorktreeMetadata {
             id: self.id().to_proto(),
-            root_name: self.root_name().to_string(),
+            root_name: self.root_name().to_proto(),
             visible: self.is_visible(),
             abs_path: self.abs_path().to_proto(),
         }
@@ -1760,7 +1762,8 @@ impl LocalWorktree {
             let root_name = new_path
                 .as_path()
                 .file_name()
-                .map_or(String::new(), |f| f.to_string_lossy().to_string());
+                .and_then(|f| f.to_str())
+                .map_or(RelPath::empty().into(), |f| RelPath::new(f).unwrap().into());
             self.snapshot.update_abs_path(new_path, root_name);
         }
         self.restart_background_scanners(cx);
@@ -2007,12 +2010,21 @@ impl RemoteWorktree {
 }
 
 impl Snapshot {
-    pub fn new(id: u64, root_name: String, abs_path: Arc<Path>, path_style: PathStyle) -> Self {
+    pub fn new(
+        id: u64,
+        root_name: Arc<RelPath>,
+        abs_path: Arc<Path>,
+        path_style: PathStyle,
+    ) -> Self {
         Snapshot {
             id: WorktreeId::from_usize(id as usize),
             abs_path: SanitizedPath::from_arc(abs_path),
             path_style,
-            root_char_bag: root_name.chars().map(|c| c.to_ascii_lowercase()).collect(),
+            root_char_bag: root_name
+                .as_str()
+                .chars()
+                .map(|c| c.to_ascii_lowercase())
+                .collect(),
             root_name,
             always_included_entries: Default::default(),
             entries_by_path: Default::default(),
@@ -2054,7 +2066,7 @@ impl Snapshot {
             project_id,
             worktree_id,
             abs_path: self.abs_path().to_proto(),
-            root_name: self.root_name().to_string(),
+            root_name: self.root_name().to_proto(),
             updated_entries,
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
@@ -2134,10 +2146,14 @@ impl Snapshot {
         Some(removed_entry.path)
     }
 
-    fn update_abs_path(&mut self, abs_path: Arc<SanitizedPath>, root_name: String) {
+    fn update_abs_path(&mut self, abs_path: Arc<SanitizedPath>, root_name: Arc<RelPath>) {
         self.abs_path = abs_path;
         if root_name != self.root_name {
-            self.root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
+            self.root_char_bag = root_name
+                .as_str()
+                .chars()
+                .map(|c| c.to_ascii_lowercase())
+                .collect();
             self.root_name = root_name;
         }
     }
@@ -2154,7 +2170,7 @@ impl Snapshot {
         );
         self.update_abs_path(
             SanitizedPath::new_arc(&PathBuf::from_proto(update.abs_path)),
-            update.root_name,
+            RelPath::from_proto(&update.root_name)?,
         );
 
         let mut entries_by_path_edits = Vec::new();
@@ -2320,8 +2336,12 @@ impl Snapshot {
             .map(|_| self.abs_path().clone())
     }
 
-    pub fn root_name(&self) -> &str {
+    pub fn root_name(&self) -> &RelPath {
         &self.root_name
+    }
+
+    pub fn root_name_str(&self) -> &str {
+        self.root_name.as_str()
     }
 
     pub fn scan_id(&self) -> usize {
@@ -2385,7 +2405,7 @@ impl LocalSnapshot {
             project_id,
             worktree_id,
             abs_path: self.abs_path().to_proto(),
-            root_name: self.root_name().to_string(),
+            root_name: self.root_name().to_proto(),
             updated_entries,
             removed_entries,
             scan_id: self.scan_id as u64,
@@ -2989,7 +3009,7 @@ impl language::File for File {
     fn file_name<'a>(&'a self, cx: &'a App) -> &'a str {
         self.path
             .file_name()
-            .unwrap_or_else(|| &self.worktree.read(cx).root_name)
+            .unwrap_or_else(|| self.worktree.read(cx).root_name.as_str())
     }
 
     fn worktree_id(&self, cx: &App) -> WorktreeId {

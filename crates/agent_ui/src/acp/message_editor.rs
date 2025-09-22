@@ -53,7 +53,7 @@ use ui::{
     LabelCommon, LabelSize, ParentElement, Render, SelectableButton, Styled, TextSize, TintColor,
     Toggleable, Window, div, h_flex,
 };
-use util::{ResultExt, debug_panic};
+use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
@@ -1048,18 +1048,14 @@ impl MessageEditor {
             let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
                 continue;
             };
-            let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
+            let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
-            let path_prefix = abs_path
-                .file_name()
-                .unwrap_or(path.path.as_os_str())
-                .display()
-                .to_string();
             let (file_name, _) =
                 crate::context_picker::file_context_picker::extract_file_name_and_directory(
                     &path.path,
-                    &path_prefix,
+                    RelPath::new(worktree.read(cx).root_name().unwrap()),
+                    path_style,
                 );
 
             let uri = if entry.is_dir() {

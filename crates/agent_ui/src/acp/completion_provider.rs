@@ -187,7 +187,7 @@ impl ContextPickerCompletionProvider {
 
     pub(crate) fn completion_for_path(
         project_path: ProjectPath,
-        path_prefix: &str,
+        path_prefix: &RelPath,
         is_recent: bool,
         is_directory: bool,
         source_range: Range<Anchor>,
@@ -195,10 +195,12 @@ impl ContextPickerCompletionProvider {
         project: Entity<Project>,
         cx: &mut App,
     ) -> Option<Completion> {
+        let path_style = project.read(cx).path_style(cx);
         let (file_name, directory) =
             crate::context_picker::file_context_picker::extract_file_name_and_directory(
                 &project_path.path,
                 path_prefix,
+                path_style,
             );
 
         let label =

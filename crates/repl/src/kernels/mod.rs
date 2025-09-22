@@ -1,5 +1,5 @@
 mod native_kernel;
-use std::{fmt::Debug, future::Future, path::PathBuf, sync::Arc};
+use std::{fmt::Debug, future::Future, path::PathBuf};
 
 use futures::{
     channel::mpsc::{self, Receiver},

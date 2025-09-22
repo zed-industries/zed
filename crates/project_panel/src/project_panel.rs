@@ -45,7 +45,6 @@ use std::{
     cell::OnceCell,
     cmp,
     collections::HashSet,
-    ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
@@ -2726,11 +2725,7 @@ impl ProjectPanel {
 
             let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
             let dir_path = if include_root {
-                let mut full_path = RelPath::new(worktree.read(cx).root_name())
-                    .unwrap()
-                    .to_rel_path_buf();
-                full_path.push(&dir_path);
-                full_path.into()
+                worktree.read(cx).root_name().join(&dir_path)
             } else {
                 dir_path
             };
@@ -3550,7 +3545,7 @@ impl ProjectPanel {
                 .worktree_for_id(visible.worktree_id, cx)
             {
                 let snapshot = worktree.read(cx).snapshot();
-                let root_name = OsStr::new(snapshot.root_name());
+                let root_name = snapshot.root_name();
 
                 let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
                 let entries = visible
@@ -4701,7 +4696,7 @@ impl ProjectPanel {
         &self,
         entry: &Entry,
         worktree_id: WorktreeId,
-        root_name: &OsStr,
+        root_name: &RelPath,
         entries_paths: &HashSet<Arc<RelPath>>,
         git_status: GitSummary,
         sticky: Option<StickyDetails>,
@@ -4753,7 +4748,7 @@ impl ProjectPanel {
                 .path
                 .file_name()
                 .map(|name| name.to_string())
-                .unwrap_or_else(|| root_name.to_string_lossy().to_string())
+                .unwrap_or_else(|| root_name.as_str().to_string())
         };
 
         let selection = SelectedEntry {
@@ -4980,7 +4975,7 @@ impl ProjectPanel {
 
         let panel_settings = ProjectPanelSettings::get_global(cx);
         let git_status_enabled = panel_settings.git_status;
-        let root_name = OsStr::new(worktree.root_name());
+        let root_name = worktree.root_name();
 
         let git_summaries_by_id = if git_status_enabled {
             visible

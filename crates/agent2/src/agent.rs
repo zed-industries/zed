@@ -438,7 +438,7 @@ impl NativeAgent {
         cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let tree = worktree.read(cx);
-        let root_name = tree.root_name().into();
+        let root_name = tree.root_name_str().into();
         let abs_path = tree.abs_path();
 
         let mut context = WorktreeContext {

@@ -858,7 +858,7 @@ impl WorktreeStore {
                 let worktree = worktree.read(cx);
                 proto::WorktreeMetadata {
                     id: worktree.id().to_proto(),
-                    root_name: worktree.root_name().into(),
+                    root_name: worktree.root_name_str().to_owned(),
                     visible: worktree.is_visible(),
                     abs_path: worktree.abs_path().to_proto(),
                 }
@@ -1034,7 +1034,7 @@ impl WorktreeStore {
                 if is_file {
                     if query.filters_path() {
                         let matched_path = if query.match_full_paths() {
-                            let mut full_path = PathBuf::from(snapshot.root_name());
+                            let mut full_path = snapshot.root_name().as_std_path().to_owned();
                             full_path.push(path.as_std_path());
                             query.match_path(&full_path)
                         } else {
@@ -1097,7 +1097,7 @@ impl WorktreeStore {
 
                 if query.filters_path() {
                     let matched_path = if query.match_full_paths() {
-                        let mut full_path = PathBuf::from(snapshot.root_name());
+                        let mut full_path = snapshot.root_name().as_std_path().to_owned();
                         full_path.push(entry.path.as_std_path());
                         query.match_path(&full_path)
                     } else {

@@ -487,7 +487,7 @@ impl TitleBar {
                 let settings = WorktreeSettings::get(Some(settings_location), cx);
                 match &settings.project_name {
                     Some(name) => name.as_str(),
-                    None => worktree.root_name(),
+                    None => worktree.root_name_str(),
                 }
             })
             .next();

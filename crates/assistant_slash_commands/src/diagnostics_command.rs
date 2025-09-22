@@ -260,9 +260,7 @@ fn collect_diagnostics(
         .diagnostic_summaries(false, cx)
         .flat_map(|(path, _, summary)| {
             let worktree = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
-            let full_path = RelPath::new(worktree.read(cx).root_name())
-                .unwrap()
-                .join(&path.path);
+            let full_path = worktree.read(cx).root_name().join(&path.path);
             Some((path, full_path, summary))
         })
         .collect();

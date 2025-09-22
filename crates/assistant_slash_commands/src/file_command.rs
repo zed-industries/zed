@@ -67,9 +67,7 @@ impl FileSlashCommand {
                     .into_iter()
                     .filter_map(|(entry, is_dir)| {
                         let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
-                        let full_path = RelPath::new(worktree.read(cx).root_name())
-                            .unwrap()
-                            .join(&entry.path);
+                        let full_path = worktree.read(cx).root_name().join(&entry.path);
                         Some(PathMatch {
                             score: 0.,
                             positions: Vec::new(),
@@ -256,9 +254,7 @@ fn collect_files(
             let mut is_top_level_directory = true;
 
             for entry in snapshot.entries(false, 0) {
-                let path_including_worktree_name = RelPath::new(snapshot.root_name())
-                    .unwrap()
-                    .join(&entry.path);
+                let path_including_worktree_name = snapshot.root_name().join(&entry.path);
 
                 if !matchers
                     .iter()

@@ -178,12 +178,7 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         let mut results = Vec::new();
         for snapshot in snapshots {
             for entry in snapshot.entries(false, 0) {
-                if path_matcher.is_match(
-                    RelPath::new(snapshot.root_name())
-                        .unwrap()
-                        .join(&entry.path)
-                        .as_std_path(),
-                ) {
+                if path_matcher.is_match(snapshot.root_name().join(&entry.path).as_std_path()) {
                     results.push(snapshot.absolutize(&entry.path));
                 }
             }

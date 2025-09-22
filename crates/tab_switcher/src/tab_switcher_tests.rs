@@ -4,7 +4,6 @@ use gpui::{TestAppContext, VisualTestContext};
 use menu::SelectPrevious;
 use project::{Project, ProjectPath};
 use serde_json::json;
-use std::path::Path;
 use util::{path, rel_path::rel_path};
 use workspace::{AppState, Workspace};
 
