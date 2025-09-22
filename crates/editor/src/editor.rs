@@ -12452,13 +12452,14 @@ impl Editor {
             return;
         }
 
-        let clipboard_text = Cow::Borrowed(text);
+        let clipboard_text = Cow::Borrowed(text.as_str());
 
         self.transact(window, cx, |this, window, cx| {
             let had_active_edit_prediction = this.has_active_edit_prediction();
+            let old_selections = this.selections.all::<usize>(cx);
+            let cursor_offset = this.selections.last::<usize>(cx).head();
 
             if let Some(mut clipboard_selections) = clipboard_selections {
-                let old_selections = this.selections.all::<usize>(cx);
                 let all_selections_were_entire_line =
                     clipboard_selections.iter().all(|s| s.is_entire_line);
                 let first_selection_indent_column =
@@ -12466,7 +12467,6 @@ impl Editor {
                 if clipboard_selections.len() != old_selections.len() {
                     clipboard_selections.drain(..);
                 }
-                let cursor_offset = this.selections.last::<usize>(cx).head();
                 let mut auto_indent_on_paste = true;
 
                 this.buffer.update(cx, |buffer, cx| {
@@ -12489,22 +12489,36 @@ impl Editor {
                             start_offset = end_offset + 1;
                             original_indent_column = Some(clipboard_selection.first_line_indent);
                         } else {
-                            to_insert = clipboard_text.as_str();
+                            to_insert = &*clipboard_text;
                             entire_line = all_selections_were_entire_line;
                             original_indent_column = first_selection_indent_column
                         }
 
-                        // If the corresponding selection was empty when this slice of the
-                        // clipboard text was written, then the entire line containing the
-                        // selection was copied. If this selection is also currently empty,
-                        // then paste the line before the current line of the buffer.
-                        let range = if selection.is_empty() && handle_entire_lines && entire_line {
-                            let column = selection.start.to_point(&snapshot).column as usize;
-                            let line_start = selection.start - column;
-                            line_start..line_start
-                        } else {
-                            selection.range()
-                        };
+                        let (range, to_insert) =
+                            if selection.is_empty() && handle_entire_lines && entire_line {
+                                // If the corresponding selection was empty when this slice of the
+                                // clipboard text was written, then the entire line containing the
+                                // selection was copied. If this selection is also currently empty,
+                                // then paste the line before the current line of the buffer.
+                                let column = selection.start.to_point(&snapshot).column as usize;
+                                let line_start = selection.start - column;
+                                (line_start..line_start, Cow::Borrowed(to_insert))
+                            } else {
+                                let language = snapshot.language_at(selection.head());
+                                let range = selection.range();
+                                if let Some(language) = language
+                                    && language.name() == "Markdown".into()
+                                {
+                                    edit_for_markdown_paste(
+                                        &snapshot,
+                                        range,
+                                        to_insert,
+                                        url::Url::parse(to_insert).ok(),
+                                    )
+                                } else {
+                                    (range, Cow::Borrowed(to_insert))
+                                }
+                            };
 
                         edits.push((range, to_insert));
                         original_indent_columns.push(original_indent_column);
@@ -12527,7 +12541,53 @@ impl Editor {
                 let selections = this.selections.all::<usize>(cx);
                 this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             } else {
-                this.insert(&clipboard_text, window, cx);
+                let url = url::Url::parse(&clipboard_text).ok();
+
+                let auto_indent_mode = if !clipboard_text.is_empty() {
+                    Some(AutoindentMode::Block {
+                        original_indent_columns: Vec::new(),
+                    })
+                } else {
+                    None
+                };
+
+                let selection_anchors = this.buffer.update(cx, |buffer, cx| {
+                    let snapshot = buffer.snapshot(cx);
+
+                    let anchors = old_selections
+                        .iter()
+                        .map(|s| {
+                            let anchor = snapshot.anchor_after(s.head());
+                            s.map(|_| anchor)
+                        })
+                        .collect::<Vec<_>>();
+
+                    let mut edits = Vec::new();
+
+                    for selection in old_selections.iter() {
+                        let language = snapshot.language_at(selection.head());
+                        let range = selection.range();
+
+                        let (edit_range, edit_text) = if let Some(language) = language
+                            && language.name() == "Markdown".into()
+                        {
+                            edit_for_markdown_paste(&snapshot, range, &clipboard_text, url.clone())
+                        } else {
+                            (range, clipboard_text.clone())
+                        };
+
+                        edits.push((edit_range, edit_text));
+                    }
+
+                    drop(snapshot);
+                    buffer.edit(edits, auto_indent_mode, cx);
+
+                    anchors
+                });
+
+                this.change_selections(Default::default(), window, cx, |s| {
+                    s.select_anchors(selection_anchors);
+                });
             }
 
             let trigger_in_words =
@@ -19248,6 +19308,8 @@ impl Editor {
             && let Some(path) = path.to_str()
         {
             cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
+        } else {
+            cx.propagate();
         }
     }
 
@@ -19261,6 +19323,8 @@ impl Editor {
             && let Some(path) = path.to_str()
         {
             cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
+        } else {
+            cx.propagate();
         }
     }
 
@@ -21677,6 +21741,26 @@ impl Editor {
         self.pull_diagnostics(for_buffer, window, cx);
         self.refresh_colors(ignore_cache, for_buffer, window, cx);
     }
+}
+
+fn edit_for_markdown_paste<'a>(
+    buffer: &MultiBufferSnapshot,
+    range: Range<usize>,
+    to_insert: &'a str,
+    url: Option<url::Url>,
+) -> (Range<usize>, Cow<'a, str>) {
+    if url.is_none() {
+        return (range, Cow::Borrowed(to_insert));
+    };
+
+    let old_text = buffer.text_for_range(range.clone()).collect::<String>();
+
+    let new_text = if range.is_empty() || url::Url::parse(&old_text).is_ok() {
+        Cow::Borrowed(to_insert)
+    } else {
+        Cow::Owned(format!("[{old_text}]({to_insert})"))
+    };
+    (range, new_text)
 }
 
 fn vim_enabled(cx: &App) -> bool {

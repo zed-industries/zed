@@ -195,9 +195,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.4.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc2526e80463b9742afed4829aedd6ae5632d6db778c6cc1fecb80c960c3521b"
+checksum = "00e33b9f4bd34d342b6f80b7156d3a37a04aeec16313f264001e52d6a9118600"
 dependencies = [
  "anyhow",
  "async-broadcast",
@@ -4932,7 +4932,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.0",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
 ]
 
 [[package]]
@@ -12677,6 +12677,7 @@ dependencies = [
  "schemars 1.0.1",
  "serde",
  "serde_json",
+ "theme",
  "ui",
  "workspace",
  "workspace-hack",
@@ -20853,7 +20854,7 @@ dependencies = [
  "windows-sys 0.48.0",
  "windows-sys 0.52.0",
  "windows-sys 0.59.0",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.0",
  "winnow",
  "zeroize",
  "zvariant",

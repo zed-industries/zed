@@ -41,7 +41,13 @@ pub struct FontId(pub usize);
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
 
-pub(crate) const SUBPIXEL_VARIANTS: u8 = 4;
+pub(crate) const SUBPIXEL_VARIANTS_X: u8 = 4;
+
+pub(crate) const SUBPIXEL_VARIANTS_Y: u8 = if cfg!(target_os = "windows") {
+    1
+} else {
+    SUBPIXEL_VARIANTS_X
+};
 
 /// The GPUI text rendering sub system.
 pub struct TextSystem {

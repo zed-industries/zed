@@ -577,23 +577,21 @@ impl AcpThreadView {
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
-                        this.model_selector =
-                            thread
-                                .read(cx)
-                                .connection()
-                                .model_selector()
-                                .map(|selector| {
-                                    cx.new(|cx| {
-                                        AcpModelSelectorPopover::new(
-                                            thread.read(cx).session_id().clone(),
-                                            selector,
-                                            PopoverMenuHandle::default(),
-                                            this.focus_handle(cx),
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                });
+                        this.model_selector = thread
+                            .read(cx)
+                            .connection()
+                            .model_selector(thread.read(cx).session_id())
+                            .map(|selector| {
+                                cx.new(|cx| {
+                                    AcpModelSelectorPopover::new(
+                                        selector,
+                                        PopoverMenuHandle::default(),
+                                        this.focus_handle(cx),
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            });
 
                         let mode_selector = thread
                             .read(cx)

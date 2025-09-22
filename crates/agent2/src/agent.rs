@@ -56,7 +56,7 @@ struct Session {
 
 pub struct LanguageModels {
     /// Access language model by ID
-    models: HashMap<acp_thread::AgentModelId, Arc<dyn LanguageModel>>,
+    models: HashMap<acp::ModelId, Arc<dyn LanguageModel>>,
     /// Cached list for returning language model information
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
@@ -132,10 +132,7 @@ impl LanguageModels {
         self.refresh_models_rx.clone()
     }
 
-    pub fn model_from_id(
-        &self,
-        model_id: &acp_thread::AgentModelId,
-    ) -> Option<Arc<dyn LanguageModel>> {
+    pub fn model_from_id(&self, model_id: &acp::ModelId) -> Option<Arc<dyn LanguageModel>> {
         self.models.get(model_id).cloned()
     }
 
@@ -146,12 +143,13 @@ impl LanguageModels {
         acp_thread::AgentModelInfo {
             id: Self::model_id(model),
             name: model.name().0,
+            description: None,
             icon: Some(provider.icon()),
         }
     }
 
-    fn model_id(model: &Arc<dyn LanguageModel>) -> acp_thread::AgentModelId {
-        acp_thread::AgentModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
+    fn model_id(model: &Arc<dyn LanguageModel>) -> acp::ModelId {
+        acp::ModelId(format!("{}/{}", model.provider_id().0, model.id().0).into())
     }
 
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
@@ -836,10 +834,15 @@ impl NativeAgentConnection {
     }
 }
 
-impl AgentModelSelector for NativeAgentConnection {
+struct NativeAgentModelSelector {
+    session_id: acp::SessionId,
+    connection: NativeAgentConnection,
+}
+
+impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     fn list_models(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelList>> {
         log::debug!("NativeAgentConnection::list_models called");
-        let list = self.0.read(cx).models.model_list.clone();
+        let list = self.connection.0.read(cx).models.model_list.clone();
         Task::ready(if list.is_empty() {
             Err(anyhow::anyhow!("No models available"))
         } else {
@@ -847,24 +850,24 @@ impl AgentModelSelector for NativeAgentConnection {
         })
     }
 
-    fn select_model(
-        &self,
-        session_id: acp::SessionId,
-        model_id: acp_thread::AgentModelId,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        log::debug!("Setting model for session {}: {}", session_id, model_id);
+    fn select_model(&self, model_id: acp::ModelId, cx: &mut App) -> Task<Result<()>> {
+        log::debug!(
+            "Setting model for session {}: {}",
+            self.session_id,
+            model_id
+        );
         let Some(thread) = self
+            .connection
             .0
             .read(cx)
             .sessions
-            .get(&session_id)
+            .get(&self.session_id)
             .map(|session| session.thread.clone())
         else {
             return Task::ready(Err(anyhow!("Session not found")));
         };
 
-        let Some(model) = self.0.read(cx).models.model_from_id(&model_id) else {
+        let Some(model) = self.connection.0.read(cx).models.model_from_id(&model_id) else {
             return Task::ready(Err(anyhow!("Invalid model ID {}", model_id)));
         };
 
@@ -872,33 +875,32 @@ impl AgentModelSelector for NativeAgentConnection {
             thread.set_model(model.clone(), cx);
         });
 
-        update_settings_file(self.0.read(cx).fs.clone(), cx, move |settings, _cx| {
-            let provider = model.provider_id().0.to_string();
-            let model = model.id().0.to_string();
-            settings
-                .agent
-                .get_or_insert_default()
-                .set_model(LanguageModelSelection {
-                    provider: provider.into(),
-                    model,
-                });
-        });
+        update_settings_file(
+            self.connection.0.read(cx).fs.clone(),
+            cx,
+            move |settings, _cx| {
+                let provider = model.provider_id().0.to_string();
+                let model = model.id().0.to_string();
+                settings
+                    .agent
+                    .get_or_insert_default()
+                    .set_model(LanguageModelSelection {
+                        provider: provider.into(),
+                        model,
+                    });
+            },
+        );
 
         Task::ready(Ok(()))
     }
 
-    fn selected_model(
-        &self,
-        session_id: &acp::SessionId,
-        cx: &mut App,
-    ) -> Task<Result<acp_thread::AgentModelInfo>> {
-        let session_id = session_id.clone();
-
+    fn selected_model(&self, cx: &mut App) -> Task<Result<acp_thread::AgentModelInfo>> {
         let Some(thread) = self
+            .connection
             .0
             .read(cx)
             .sessions
-            .get(&session_id)
+            .get(&self.session_id)
             .map(|session| session.thread.clone())
         else {
             return Task::ready(Err(anyhow!("Session not found")));
@@ -915,8 +917,8 @@ impl AgentModelSelector for NativeAgentConnection {
         )))
     }
 
-    fn watch(&self, cx: &mut App) -> watch::Receiver<()> {
-        self.0.read(cx).models.watch()
+    fn watch(&self, cx: &mut App) -> Option<watch::Receiver<()>> {
+        Some(self.connection.0.read(cx).models.watch())
     }
 }
 
@@ -972,8 +974,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         Task::ready(Ok(()))
     }
 
-    fn model_selector(&self) -> Option<Rc<dyn AgentModelSelector>> {
-        Some(Rc::new(self.clone()) as Rc<dyn AgentModelSelector>)
+    fn model_selector(&self, session_id: &acp::SessionId) -> Option<Rc<dyn AgentModelSelector>> {
+        Some(Rc::new(NativeAgentModelSelector {
+            session_id: session_id.clone(),
+            connection: self.clone(),
+        }) as Rc<dyn AgentModelSelector>)
     }
 
     fn prompt(
@@ -1196,9 +1201,7 @@ mod tests {
     use crate::HistoryEntryId;
 
     use super::*;
-    use acp_thread::{
-        AgentConnection, AgentModelGroupName, AgentModelId, AgentModelInfo, MentionUri,
-    };
+    use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::indoc;
@@ -1292,7 +1295,25 @@ mod tests {
             .unwrap(),
         );
 
-        let models = cx.update(|cx| connection.list_models(cx)).await.unwrap();
+        // Create a thread/session
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_thread(project.clone(), Path::new("/a"), cx)
+            })
+            .await
+            .unwrap();
+
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+
+        let models = cx
+            .update(|cx| {
+                connection
+                    .model_selector(&session_id)
+                    .unwrap()
+                    .list_models(cx)
+            })
+            .await
+            .unwrap();
 
         let acp_thread::AgentModelList::Grouped(models) = models else {
             panic!("Unexpected model group");
@@ -1302,8 +1323,9 @@ mod tests {
             IndexMap::from_iter([(
                 AgentModelGroupName("Fake".into()),
                 vec![AgentModelInfo {
-                    id: AgentModelId("fake/fake".into()),
+                    id: acp::ModelId("fake/fake".into()),
                     name: "Fake".into(),
+                    description: None,
                     icon: Some(ui::IconName::ZedAssistant),
                 }]
             )])
@@ -1360,8 +1382,9 @@ mod tests {
         let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
 
         // Select a model
-        let model_id = AgentModelId("fake/fake".into());
-        cx.update(|cx| connection.select_model(session_id.clone(), model_id.clone(), cx))
+        let selector = connection.model_selector(&session_id).unwrap();
+        let model_id = acp::ModelId("fake/fake".into());
+        cx.update(|cx| selector.select_model(model_id.clone(), cx))
             .await
             .unwrap();
 

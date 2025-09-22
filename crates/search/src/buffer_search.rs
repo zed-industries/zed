@@ -28,7 +28,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use zed_actions::outline::ToggleOutline;
+use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
 use ui::{
     BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
@@ -423,6 +423,16 @@ impl Render for BufferSearchBar {
             .on_action(cx.listener(|this, _: &ToggleOutline, window, cx| {
                 if let Some(active_searchable_item) = &mut this.active_searchable_item {
                     active_searchable_item.relay_action(Box::new(ToggleOutline), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CopyPath, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(CopyPath), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CopyRelativePath, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(CopyRelativePath), window, cx);
                 }
             }))
             .when(replacement, |this| {

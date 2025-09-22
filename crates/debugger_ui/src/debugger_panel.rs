@@ -625,6 +625,15 @@ impl DebugPanel {
                 })
         };
 
+        let edit_debug_json_button = || {
+            IconButton::new("debug-edit-debug-json", IconName::Code)
+                .icon_size(IconSize::Small)
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(zed_actions::OpenProjectDebugTasks.boxed_clone(), cx);
+                })
+                .tooltip(Tooltip::text("Edit debug.json"))
+        };
+
         let documentation_button = || {
             IconButton::new("debug-open-documentation", IconName::CircleHelp)
                 .icon_size(IconSize::Small)
@@ -899,8 +908,9 @@ impl DebugPanel {
                         )
                         .when(is_side, |this| {
                             this.child(new_session_button())
-                                .child(logs_button())
+                                .child(edit_debug_json_button())
                                 .child(documentation_button())
+                                .child(logs_button())
                         }),
                 )
                 .child(
@@ -951,8 +961,9 @@ impl DebugPanel {
                                 ))
                                 .when(!is_side, |this| {
                                     this.child(new_session_button())
-                                        .child(logs_button())
+                                        .child(edit_debug_json_button())
                                         .child(documentation_button())
+                                        .child(logs_button())
                                 }),
                         ),
                 ),
