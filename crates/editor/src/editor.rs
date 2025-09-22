@@ -9947,8 +9947,10 @@ impl Editor {
         }
         self.hide_mouse_cursor(HideMouseCursorOrigin::TypingAction, cx);
 
-        // If hollow, allow deletion on the right side.
-        if self.cursor_shape == CursorShape::Hollow {
+        let vim_mode = vim_enabled(cx);
+
+        // Allow clipping as in vim mode the cursor selects the character do we need to not have it clip the end.
+        if self.cursor_shape == CursorShape::Hollow && vim_mode {
             self.set_clip_at_line_ends(false, cx);
         }
 
@@ -9967,8 +9969,8 @@ impl Editor {
             this.refresh_edit_prediction(true, false, window, cx);
         });
 
-        // Fixup cursor position after the deletion
-        if self.cursor_shape == CursorShape::Hollow {
+        // Move cursor to the left to ensure the position is correct
+        if self.cursor_shape == CursorShape::Hollow && vim_mode {
             self.set_clip_at_line_ends(true, cx);
             self.change_selections(Default::default(), window, cx, |s| {
                 s.move_with(|map, selection| {
