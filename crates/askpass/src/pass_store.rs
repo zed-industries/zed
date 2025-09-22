@@ -24,7 +24,8 @@ impl TryFrom<&str> for EncryptedPassword {
     type Error = anyhow::Error;
     fn try_from(password: &str) -> Result<EncryptedPassword> {
         let len: u32 = password.len().try_into()?;
-        if cfg!(windows) {
+        #[cfg(windows)]
+        {
             use windows::Win32::Security::Cryptography::{
                 CRYPTPROTECTMEMORY_BLOCK_SIZE, CRYPTPROTECTMEMORY_SAME_PROCESS, CryptProtectMemory,
             };
@@ -42,14 +43,16 @@ impl TryFrom<&str> for EncryptedPassword {
                 )?;
             }
             Ok(Self(value, len))
-        } else {
-            Ok(Self(String::from(password).into(), len))
         }
+        #[cfg(not(windows))]
+        Ok(Self(String::from(password).into(), len))
+
     }
 }
 
 pub(crate) fn decrypt_password(mut password: EncryptedPassword) -> Result<String> {
-    if cfg!(windows) {
+    #[cfg(windows)]
+    {
         use windows::Win32::Security::Cryptography::{
             CRYPTPROTECTMEMORY_BLOCK_SIZE, CRYPTPROTECTMEMORY_SAME_PROCESS, CryptUnprotectMemory,
         };
@@ -71,9 +74,10 @@ pub(crate) fn decrypt_password(mut password: EncryptedPassword) -> Result<String
         _ = password.0.drain(password.1 as usize..);
 
         Ok(String::from_utf8(std::mem::take(&mut password.0))?)
-    } else {
-        Ok(String::from_utf8(std::mem::take(&mut password.0))?)
     }
+    #[cfg(not(windows))]
+    Ok(String::from_utf8(std::mem::take(&mut password.0))?)
+
 }
 
 #[derive(Default)]
