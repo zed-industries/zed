@@ -1270,23 +1270,6 @@ pub fn handle_settings_file_changes(
                 Either::Left(content) => (content, false),
                 Either::Right(content) => (content, true),
             };
-
-            let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let migrating_in_memory = process_settings(content, is_user, store, cx);
-                if let Some(notifier) = MigrationNotification::try_global(cx) {
-                    notifier.update(cx, |_, cx| {
-                        cx.emit(MigrationEvent::ContentChanged {
-                            migration_type: MigrationType::Settings,
-                            migrating_in_memory,
-                        });
-                    });
-                }
-                cx.refresh_windows();
-            });
-
-            if result.is_err() {
-                break; // App dropped
-            }
         }
     })
     .detach();

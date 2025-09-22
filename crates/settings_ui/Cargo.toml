@@ -11,11 +11,19 @@ workspace = true
 [lib]
 path = "src/settings_ui.rs"
 
+[[bin]]
+name = "settings_ui"
+path = "src/main.rs"
+
 [features]
 default = []
 test-support = []
 
 [dependencies]
+futures.workspace = true
+assets.workspace = true
+paths.workspace = true
+fs.workspace = true
 anyhow.workspace = true
 command_palette_hooks.workspace = true
 editor.workspace = true

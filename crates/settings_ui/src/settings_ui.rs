@@ -4,7 +4,7 @@ use std::fmt::Display;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
     App, AppContext as _, Context, Div, IntoElement, ReadGlobal as _, Render, UpdateGlobal as _,
-    Window, actions, div, px, size,
+    Window, WindowHandle, actions, div, px, size,
 };
 use settings::{SettingsContent, SettingsStore};
 use ui::{
@@ -85,12 +85,7 @@ impl Display for SettingsPage {
     }
 }
 
-pub fn open_settings_editor(
-    workspace: &mut Workspace,
-    _: &OpenSettingsEditor,
-    window: &mut Window,
-    cx: &mut Context<Workspace>,
-) {
+pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
     // todo(settings_ui) open in a local workspace if this is remote.
     cx.open_window(
         gpui::WindowOptions {
@@ -108,10 +103,10 @@ pub fn open_settings_editor(
         },
         |window, cx| cx.new(|cx| SettingsWindow::new(window, cx)),
     )
-    .ok();
 }
 
 pub fn init(cx: &mut App) {
+    // todo(settings_ui): Make action just a global action once flag
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action_renderer(|div, _, _, cx| {
             let settings_ui_actions = [std::any::TypeId::of::<OpenSettingsEditor>()];
@@ -124,7 +119,9 @@ pub fn init(cx: &mut App) {
                 }
             });
             if has_flag {
-                div.on_action(cx.listener(open_settings_editor))
+                div.on_action(cx.listener(|_, _: &OpenSettingsEditor, _, cx| {
+                    let _ = open_settings_editor(cx).ok();
+                }))
             } else {
                 div
             }
@@ -158,38 +155,48 @@ fn render_nav(page: SettingsPage, _window: &mut Window, _cx: &mut Context<Settin
     nav
 }
 
-fn render_toggle_button(
-    title: &'static str,
-    description: &'static str,
-    get_value: fn(&SettingsContent) -> &mut bool,
-    cx: &mut App,
-) -> impl IntoElement {
-    // todo! in settings window state
+fn render_page(page: SettingsPage, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
     let store = SettingsStore::global(cx);
     let mut defaults = store
         .raw_user_settings()
         .map(|settings| &*settings.content)
         .unwrap_or_else(|| store.raw_default_settings())
         .clone();
-    // todo! id?
-    let toggle_state = if *get_value(&mut defaults) {
-        ui::ToggleState::Selected
-    } else {
-        ui::ToggleState::Unselected
-    };
-    SwitchField::new(
-        title,
-        title,
-        Some(description.into()),
-        toggle_state,
-        move |state, _, cx| {
-            SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    *get_value(settings) = *state == ui::ToggleState::Selected;
-                });
-            });
-        },
-    )
+    div()
+}
+
+fn render_toggle_button(
+    title: &'static str,
+    description: &'static str,
+    get_value: fn(&mut SettingsContent) -> &mut bool,
+    cx: &mut App,
+) {
+    // // todo! in settings window state
+    // let store = SettingsStore::global(cx);
+    // let mut defaults = store
+    //     .raw_user_settings()
+    //     .map(|settings| &*settings.content)
+    //     .unwrap_or_else(|| store.raw_default_settings())
+    //     .clone();
+    // // todo! id?
+    // let toggle_state = if *get_value(&mut defaults) {
+    //     ui::ToggleState::Selected
+    // } else {
+    //     ui::ToggleState::Unselected
+    // };
+    // SwitchField::new(
+    //     title,
+    //     title,
+    //     Some(description.into()),
+    //     toggle_state,
+    //     move |state, _, cx| {
+    //         SettingsStore::update_global(cx, |store, cx| {
+    //             store.update_user_settings(cx, |settings| {
+    //                 *get_value(settings) = *state == ui::ToggleState::Selected;
+    //             });
+    //         });
+    //     },
+    // )
 }
 
 impl Render for SettingsWindow {
@@ -197,5 +204,6 @@ impl Render for SettingsWindow {
         div()
             .bg(cx.theme().colors().background)
             .child(render_nav(self.page, window, cx))
+            .child(render_page(self.page, window, cx))
     }
 }
