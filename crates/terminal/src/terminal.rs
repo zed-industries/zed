@@ -428,7 +428,7 @@ impl TerminalBuilder {
                 drain_on_exit: true,
                 env: env.clone().into_iter().collect(),
                 #[cfg(windows)]
-                escape_args: false,
+                escape_args: true,
             }
         };
 
@@ -535,10 +535,14 @@ impl TerminalBuilder {
             child_exited: None,
         };
 
-        if cfg!(not(target_os = "windows")) && !activation_script.is_empty() && no_task {
+        if !activation_script.is_empty() && no_task {
             for activation_script in activation_script {
                 terminal.input(activation_script.into_bytes());
-                terminal.write_to_pty(b"\n");
+                if cfg!(windows) {
+                    terminal.write_to_pty(b"\r\n");
+                } else {
+                    terminal.write_to_pty(b"\n");
+                }
             }
             terminal.clear();
         }
