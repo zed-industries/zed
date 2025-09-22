@@ -2336,9 +2336,8 @@ fn end_of_document(
     if let Some(times) = maybe_times {
         return go_to_line(map, display_point, times);
     };
-    let point = map.display_point_to_point(display_point, Bias::Left);
     let mut last_point = map.buffer_snapshot.max_point();
-    last_point.column = point.column;
+    last_point.column = 0;
 
     map.clip_point(
         map.point_to_display_point(
