@@ -95,7 +95,7 @@
         "terminal.ansi.dim_cyan": "#496e4aff",
         "terminal.ansi.white": "#a89984ff",
         "terminal.ansi.bright_white": "#fbf1c7ff",
-        "terminal.ansi.dim_white": "#766b5dff"
+        "terminal.ansi.dim_white": "#766b5dff",
         "link_text.hover": "#83a598ff",
         "version_control.added": "#b7bb26ff",
         "version_control.modified": "#f9bd2fff",
@@ -500,7 +500,7 @@
         "terminal.ansi.dim_cyan": "#496e4aff",
         "terminal.ansi.white": "#a89984ff",
         "terminal.ansi.bright_white": "#fbf1c7ff",
-        "terminal.ansi.dim_white": "#766b5dff"
+        "terminal.ansi.dim_white": "#766b5dff",
         "link_text.hover": "#83a598ff",
         "version_control.added": "#b7bb26ff",
         "version_control.modified": "#f9bd2fff",
@@ -905,7 +905,7 @@
         "terminal.ansi.dim_cyan": "#496e4aff",
         "terminal.ansi.white": "#a89984ff",
         "terminal.ansi.bright_white": "#fbf1c7ff",
-        "terminal.ansi.dim_white": "#766b5dff"
+        "terminal.ansi.dim_white": "#766b5dff",
         "link_text.hover": "#83a598ff",
         "version_control.added": "#b7bb26ff",
         "version_control.modified": "#f9bd2fff",
