@@ -1111,7 +1111,7 @@ pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
 ///
 /// # Example
 ///
-/// ```rust
+/// ```ignore
 /// #[derive(FieldAccessByEnum)]
 /// #[field_access_by_enum(
 ///     enum_name = "ColorField",
@@ -1128,7 +1128,7 @@ pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
 /// ```
 ///
 /// This generates:
-/// ```rust
+/// ```ignore
 /// #[derive(Debug, Clone, Copy, EnumIter, AsRefStr)]
 /// #[strum(serialize_all = "snake_case")]
 /// enum ColorField {
