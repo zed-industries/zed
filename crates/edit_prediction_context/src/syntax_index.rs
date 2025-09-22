@@ -755,6 +755,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            SettingsStore::load_registered_settings(cx);
+
             language::init(cx);
             Project::init_settings(cx);
         });

@@ -122,6 +122,8 @@ pub fn benches() {
     cx.update(|cx| {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
+        SettingsStore::load_registered_settings(cx);
+
         assets::Assets.load_test_fonts(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         // release_channel::init(SemanticVersion::default(), cx);

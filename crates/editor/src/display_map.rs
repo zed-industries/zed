@@ -2919,6 +2919,8 @@ pub mod tests {
     fn init_test(cx: &mut App, f: impl Fn(&mut SettingsContent)) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        SettingsStore::load_registered_settings(cx);
+
         workspace::init_settings(cx);
         language::init(cx);
         crate::init(cx);

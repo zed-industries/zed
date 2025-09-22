@@ -235,6 +235,10 @@ impl SettingsStore {
         }
     }
 
+    pub fn load_registered_settings(cx: &mut App) {
+        crate::settings_registration::load_registered_settings(cx);
+    }
+
     pub fn observe_active_settings_profile_name(cx: &mut App) -> gpui::Subscription {
         cx.observe_global::<ActiveSettingsProfileName>(|cx| {
             Self::update_global(cx, |store, cx| {

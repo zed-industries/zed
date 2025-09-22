@@ -277,6 +277,8 @@ mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            SettingsStore::load_registered_settings(cx);
+
             DebuggerSettings::register(cx);
         });
     }

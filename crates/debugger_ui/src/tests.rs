@@ -40,6 +40,8 @@ pub fn init_test(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        SettingsStore::load_registered_settings(cx);
+
         terminal_view::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         command_palette_hooks::init(cx);

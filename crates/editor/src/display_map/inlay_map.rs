@@ -2102,6 +2102,8 @@ mod tests {
     fn init_test(cx: &mut App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
+        SettingsStore::load_registered_settings(cx);
+
         theme::init(theme::LoadThemes::JustBase, cx);
     }
 

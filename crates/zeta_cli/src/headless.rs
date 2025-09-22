@@ -33,6 +33,8 @@ pub fn init(cx: &mut App) -> ZetaCliAppState {
 
     let settings_store = SettingsStore::new(cx, &settings::default_settings());
     cx.set_global(settings_store);
+    SettingsStore::load_registered_settings(cx);
+
     client::init_settings(cx);
 
     // Set User-Agent so we can download language servers from GitHub

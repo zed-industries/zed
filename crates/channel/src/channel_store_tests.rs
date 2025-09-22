@@ -236,6 +236,8 @@ fn test_dangling_channel_paths(cx: &mut App) {
 fn init_test(cx: &mut App) -> Entity<ChannelStore> {
     let settings_store = SettingsStore::test(cx);
     cx.set_global(settings_store);
+    SettingsStore::load_registered_settings(cx);
+
     release_channel::init(SemanticVersion::default(), cx);
     client::init_settings(cx);
 

@@ -1468,6 +1468,8 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) {
         cx.update(LanguageModelRegistry::test);
         cx.set_global(cx.update(SettingsStore::test));
+        SettingsStore::load_registered_settings(cx);
+
         cx.update(Project::init_settings);
         cx.update(language_settings::init);
     }

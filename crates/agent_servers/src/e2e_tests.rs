@@ -459,6 +459,8 @@ pub async fn init_test(cx: &mut TestAppContext) -> Arc<FakeFs> {
     cx.update(|cx| {
         let settings_store = settings::SettingsStore::test(cx);
         cx.set_global(settings_store);
+        SettingsStore::load_registered_settings(cx);
+
         Project::init_settings(cx);
         language::init(cx);
         gpui_tokio::init(cx);

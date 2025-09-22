@@ -2193,6 +2193,7 @@ mod tests {
     fn init_test(cx: &mut gpui::App) {
         let store = SettingsStore::test(cx);
         cx.set_global(store);
+        SettingsStore::load_registered_settings(cx);
     }
 
     impl FoldMap {

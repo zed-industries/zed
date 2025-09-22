@@ -3569,6 +3569,8 @@ mod tests {
     fn init_test(cx: &mut gpui::App) {
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        SettingsStore::load_registered_settings(cx);
+
         theme::init(theme::LoadThemes::JustBase, cx);
         assets::Assets.load_test_fonts(cx);
     }

@@ -1385,6 +1385,7 @@ fn init_test(cx: &mut App) {
     prompt_store::init(cx);
     LanguageModelRegistry::test(cx);
     cx.set_global(settings_store);
+    SettingsStore::load_registered_settings(cx);
     language::init(cx);
     agent_settings::init(cx);
     Project::init_settings(cx);

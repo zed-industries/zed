@@ -172,6 +172,8 @@ impl TestServer {
             }
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            SettingsStore::load_registered_settings(cx);
+
             release_channel::init(SemanticVersion::default(), cx);
             client::init_settings(cx);
         });

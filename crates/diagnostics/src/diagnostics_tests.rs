@@ -2006,6 +2006,8 @@ fn init_test(cx: &mut TestAppContext) {
         zlog::init_test();
         let settings = SettingsStore::test(cx);
         cx.set_global(settings);
+        SettingsStore::load_registered_settings(cx);
+
         theme::init(theme::LoadThemes::JustBase, cx);
         language::init(cx);
         client::init_settings(cx);

@@ -5,10 +5,10 @@ pub mod merge_from;
 mod settings_content;
 mod settings_file;
 mod settings_json;
+pub mod settings_registration;
 mod settings_store;
 mod settings_ui_core;
 mod vscode_import;
-
 pub use settings_content::*;
 
 use gpui::{App, Global};

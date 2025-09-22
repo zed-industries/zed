@@ -227,6 +227,8 @@ mod tests {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
+            SettingsStore::load_registered_settings(cx);
+
             Project::init_settings(cx);
             AgentSettings::register(cx);
             language_model::init_settings(cx);
