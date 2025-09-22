@@ -23,8 +23,7 @@ use project::Project;
 use release_channel::AppVersion;
 use std::cmp;
 use std::collections::{HashMap, VecDeque, hash_map};
-use std::fmt::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::time::{Duration, Instant};
 use std::{ops::Range, sync::Arc};
@@ -71,45 +70,6 @@ pub enum Event {
         new_snapshot: BufferSnapshot,
         timestamp: Instant,
     },
-}
-
-impl Event {
-    //TODO: Actually use the events this in the prompt
-    fn to_prompt(&self) -> String {
-        match self {
-            Event::BufferChange {
-                old_snapshot,
-                new_snapshot,
-                ..
-            } => {
-                let mut prompt = String::new();
-
-                let old_path = old_snapshot
-                    .file()
-                    .map(|f| f.path().as_ref())
-                    .unwrap_or(Path::new("untitled"));
-                let new_path = new_snapshot
-                    .file()
-                    .map(|f| f.path().as_ref())
-                    .unwrap_or(Path::new("untitled"));
-                if old_path != new_path {
-                    writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
-                }
-
-                let diff = language::unified_diff(&old_snapshot.text(), &new_snapshot.text());
-                if !diff.is_empty() {
-                    write!(
-                        prompt,
-                        "User edited {:?}:\n```diff\n{}\n```",
-                        new_path, diff
-                    )
-                    .unwrap();
-                }
-
-                prompt
-            }
-        }
-    }
 }
 
 impl Zeta {
