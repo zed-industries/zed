@@ -12571,7 +12571,7 @@ impl Editor {
                         let (edit_range, edit_text) = if let Some(language) = language
                             && language.name() == "Markdown".into()
                         {
-                            edit_for_markdown_paste(&snapshot, range, &*clipboard_text, url.clone())
+                            edit_for_markdown_paste(&snapshot, range, &clipboard_text, url.clone())
                         } else {
                             (range, clipboard_text.clone())
                         };
