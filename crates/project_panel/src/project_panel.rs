@@ -17,14 +17,13 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{
-    Action, AnyElement, App, ArcCow, AsyncWindowContext, Bounds, ClipboardItem, Context,
-    CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred,
-    div, hsla, linear_color_stop, linear_gradient, point, px, size, transparent_white,
-    uniform_list,
+    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardItem, Context, CursorStyle,
+    DismissEvent, Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    Hsla, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
+    PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
+    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
@@ -174,7 +173,7 @@ enum ClipboardEntry {
 struct EntryDetails {
     filename: String,
     icon: Option<SharedString>,
-    path: Arc<Path>,
+    path: Arc<RelPath>,
     depth: usize,
     kind: EntryKind,
     is_ignored: bool,
@@ -787,7 +786,7 @@ impl ProjectPanel {
     }
 
     fn update_diagnostics(&mut self, cx: &mut Context<Self>) {
-        let mut diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity> =
+        let mut diagnostics: HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity> =
             Default::default();
         let show_diagnostics_setting = ProjectPanelSettings::get_global(cx).show_diagnostics;
 
@@ -807,20 +806,12 @@ impl ProjectPanel {
                     }
                 })
                 .for_each(|(project_path, diagnostic_severity)| {
-                    let mut path_buffer = PathBuf::new();
-                    Self::update_strongest_diagnostic_severity(
-                        &mut diagnostics,
-                        &project_path,
-                        path_buffer.clone(),
-                        diagnostic_severity,
-                    );
-
-                    for component in project_path.path.components() {
-                        path_buffer.push(component);
+                    let ancestors = project_path.path.ancestors().collect::<Vec<_>>();
+                    for path in ancestors.into_iter().rev() {
                         Self::update_strongest_diagnostic_severity(
                             &mut diagnostics,
                             &project_path,
-                            path_buffer.clone(),
+                            path.into(),
                             diagnostic_severity,
                         );
                     }
@@ -830,9 +821,9 @@ impl ProjectPanel {
     }
 
     fn update_strongest_diagnostic_severity(
-        diagnostics: &mut HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
+        diagnostics: &mut HashMap<(WorktreeId, Arc<RelPath>), DiagnosticSeverity>,
         project_path: &ProjectPath,
-        path_buffer: PathBuf,
+        path_buffer: Arc<RelPath>,
         diagnostic_severity: DiagnosticSeverity,
     ) {
         diagnostics
@@ -1428,7 +1419,7 @@ impl ProjectPanel {
                     let new_path = if let Some(parent) = entry.path.clone().parent() {
                         parent.join(&filename)
                     } else {
-                        filename.clone().into()
+                        filename.into()
                     };
                     if let Some(existing) = worktree.read(cx).entry_for_path(&new_path)
                         && existing.id != entry.id
@@ -1464,7 +1455,7 @@ impl ProjectPanel {
         }
 
         let path_style = self.project.read(cx).path_style(cx);
-        let mut filename_indicates_dir = if path_style.is_windows() {
+        let filename_indicates_dir = if path_style.is_windows() {
             filename.ends_with('/') || filename.ends_with('\\')
         } else {
             filename.ends_with('/')
@@ -1492,7 +1483,7 @@ impl ProjectPanel {
 
             edited_entry_id = NEW_ENTRY_ID;
             edit_task = self.project.update(cx, |project, cx| {
-                project.create_entry((worktree_id, new_path.into()), is_dir, cx)
+                project.create_entry((worktree_id, new_path), is_dir, cx)
             });
         } else {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
@@ -1769,14 +1760,9 @@ impl ProjectPanel {
                     depth: 0,
                     validation_state: ValidationState::None,
                 });
-                let file_name = entry
-                    .path
-                    .file_name()
-                    .map(|s| s.to_string_lossy())
-                    .unwrap_or_default()
-                    .to_string();
+                let file_name = entry.path.file_name().unwrap_or_default().to_string();
                 let selection = selection.unwrap_or_else(|| {
-                    let file_stem = entry.path.file_stem().map(|s| s.to_string_lossy());
+                    let file_stem = entry.path.file_stem().map(|s| s.to_string());
                     let selection_end =
                         file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
                     0..selection_end
@@ -1830,11 +1816,7 @@ impl ProjectPanel {
                         project.dirty_buffers(cx).any(|path| path == project_path) as usize;
                     Some((
                         selection.entry_id,
-                        project_path
-                            .path
-                            .file_name()?
-                            .to_string_lossy()
-                            .into_owned(),
+                        project_path.path.file_name()?.to_string(),
                     ))
                 })
                 .collect::<Vec<_>>();
@@ -1953,9 +1935,10 @@ impl ProjectPanel {
                     worktree.entry_for_id(a.entry_id),
                     worktree.entry_for_id(b.entry_id),
                 ) {
-                    (Some(a), Some(b)) => {
-                        compare_paths((&a.path, a.is_file()), (&b.path, b.is_file()))
-                    }
+                    (Some(a), Some(b)) => compare_paths(
+                        (a.path.as_std_path(), a.is_file()),
+                        (b.path.as_std_path(), b.is_file()),
+                    ),
                     _ => cmp::Ordering::Equal,
                 }
             })
@@ -2137,7 +2120,7 @@ impl ProjectPanel {
                     && entry.is_file()
                     && self
                         .diagnostics
-                        .get(&(worktree_id, entry.path.to_path_buf()))
+                        .get(&(worktree_id, entry.path.clone()))
                         .is_some_and(|severity| action.severity.matches(*severity))
             },
             cx,
@@ -2173,7 +2156,7 @@ impl ProjectPanel {
                     && entry.is_file()
                     && self
                         .diagnostics
-                        .get(&(worktree_id, entry.path.to_path_buf()))
+                        .get(&(worktree_id, entry.path.clone()))
                         .is_some_and(|severity| action.severity.matches(*severity))
             },
             cx,
@@ -2419,11 +2402,12 @@ impl ProjectPanel {
             .read(cx)
             .path_for_entry(source.entry_id, cx)?
             .path
-            .file_name()?;
-        new_path.push(RelPath::new(clipboard_entry_file_name).unwrap());
-        let extension = new_path.extension();
-        let file_name_without_extension = new_path.file_stem()?;
-        let file_name_len = file_name_without_extension.to_string_lossy().len();
+            .file_name()?
+            .to_string();
+        new_path.push(RelPath::new(&clipboard_entry_file_name).unwrap());
+        let extension = new_path.extension().map(|s| s.to_string());
+        let file_name_without_extension = new_path.file_stem()?.to_string();
+        let file_name_len = file_name_without_extension.len();
         let mut disambiguation_range = None;
         let mut ix = 0;
         {
@@ -2473,6 +2457,7 @@ impl ProjectPanel {
 
             let mut paste_tasks = Vec::new();
             let mut disambiguation_range = None;
+            let clip_is_cut = clipboard_entries.is_cut();
             for clipboard_entry in clipboard_entries.items() {
                 let (new_path, new_disambiguation_range) =
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
@@ -2576,8 +2561,7 @@ impl ProjectPanel {
                         project
                             .worktree_for_id(entry.worktree_id, cx)?
                             .read(cx)
-                            .abs_path()
-                            .join(entry_path)
+                            .absolutize(&entry_path)
                             .to_string_lossy()
                             .to_string(),
                     )
@@ -2595,6 +2579,7 @@ impl ProjectPanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
         let file_paths = {
             let project = self.project.read(cx);
             self.effective_entries()
@@ -2604,8 +2589,8 @@ impl ProjectPanel {
                         project
                             .path_for_entry(entry.entry_id, cx)?
                             .path
-                            .to_string_lossy()
-                            .to_string(),
+                            .display(path_style)
+                            .into_owned(),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -2622,7 +2607,7 @@ impl ProjectPanel {
         cx: &mut Context<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            cx.reveal_path(&worktree.read(cx).abs_path().join(&entry.path));
+            cx.reveal_path(&worktree.read(cx).absolutize(&entry.path));
         }
     }
 
@@ -2650,7 +2635,7 @@ impl ProjectPanel {
                 if !entry.is_file() {
                     return None;
                 }
-                worktree.read(cx).absolutize(&entry.path).ok()
+                Some(worktree.read(cx).absolutize(&entry.path))
             })
             .rev();
 
@@ -2678,7 +2663,7 @@ impl ProjectPanel {
 
     fn open_system(&mut self, _: &OpenWithSystem, _: &mut Window, cx: &mut Context<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            let abs_path = worktree.abs_path().join(&entry.path);
+            let abs_path = worktree.absolutize(&entry.path);
             cx.open_with_system(&abs_path);
         }
     }
@@ -2691,14 +2676,14 @@ impl ProjectPanel {
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let abs_path = match &entry.canonical_path {
-                Some(canonical_path) => Some(canonical_path.to_path_buf()),
-                None => worktree.read(cx).absolutize(&entry.path).ok(),
+                Some(canonical_path) => canonical_path.to_path_buf(),
+                None => worktree.read(cx).absolutize(&entry.path),
             };
 
             let working_directory = if entry.is_dir() {
-                abs_path
+                Some(abs_path)
             } else {
-                abs_path.and_then(|path| Some(path.parent()?.to_path_buf()))
+                abs_path.parent().map(|path| path.to_path_buf())
             };
             if let Some(working_directory) = working_directory {
                 window.dispatch_action(
@@ -2728,7 +2713,7 @@ impl ProjectPanel {
                             .update(cx, |workspace, cx| {
                                 search::ProjectSearchView::new_search_in_directory(
                                     workspace,
-                                    Path::new(""),
+                                    RelPath::empty(),
                                     window,
                                     cx,
                                 );
@@ -2741,9 +2726,11 @@ impl ProjectPanel {
 
             let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
             let dir_path = if include_root {
-                let mut full_path = PathBuf::from(worktree.read(cx).root_name());
+                let mut full_path = RelPath::new(worktree.read(cx).root_name())
+                    .unwrap()
+                    .to_rel_path_buf();
                 full_path.push(&dir_path);
-                Arc::from(full_path)
+                full_path.into()
             } else {
                 dir_path
             };
@@ -2813,16 +2800,21 @@ impl ProjectPanel {
         let destination_worktree = self.project.update(cx, |project, cx| {
             let source_path = project.path_for_entry(entry_to_move, cx)?;
             let destination_path = project.path_for_entry(destination_entry, cx)?;
+            let destination_worktree_id = destination_path.worktree_id;
 
             let mut destination_path = destination_path.path.as_ref();
             if destination_is_file {
                 destination_path = destination_path.parent()?;
             }
 
-            let mut new_path = destination_path.to_path_buf();
-            new_path.push(source_path.path.file_name()?);
-            if new_path != source_path {
-                let task = project.rename_entry(entry_to_move, new_path, cx);
+            let mut new_path = destination_path.to_rel_path_buf();
+            new_path.push(RelPath::new(source_path.path.file_name()?).unwrap());
+            if new_path.as_rel_path() != source_path.path.as_ref() {
+                let task = project.rename_entry(
+                    entry_to_move,
+                    (destination_worktree_id, new_path).into(),
+                    cx,
+                );
                 cx.foreground_executor().spawn(task).detach_and_log_err(cx);
             }
 
@@ -2984,7 +2976,7 @@ impl ProjectPanel {
             entry: Entry {
                 id: NEW_ENTRY_ID,
                 kind: new_entry_kind,
-                path: parent_entry.path.join("\0").into(),
+                path: parent_entry.path.join(RelPath::new("\0").unwrap()).into(),
                 inode: 0,
                 mtime: parent_entry.mtime,
                 size: parent_entry.size,
@@ -3130,55 +3122,57 @@ impl ProjectPanel {
                     ));
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
-                let (depth, path) = if Some(entry.entry) == worktree.read(cx).root_entry() {
-                    let Some(path_name) = worktree_abs_path.file_name() else {
-                        continue;
-                    };
-                    let path = ArcCow::Borrowed(Path::new(path_name));
-                    let depth = 0;
-                    (depth, path)
-                } else if entry.is_file() {
-                    let Some(path_name) = entry
-                        .path
-                        .file_name()
-                        .with_context(|| format!("Non-root entry has no file name: {entry:?}"))
-                        .log_err()
-                    else {
-                        continue;
-                    };
-                    let path = ArcCow::Borrowed(Path::new(path_name));
-                    let depth = entry.path.ancestors().count() - 1;
-                    (depth, path)
-                } else {
-                    let path = self
-                        .ancestors
-                        .get(&entry.id)
-                        .and_then(|ancestors| {
-                            let outermost_ancestor = ancestors.ancestors.last()?;
-                            let root_folded_entry = worktree
-                                .read(cx)
-                                .entry_for_id(*outermost_ancestor)?
-                                .path
-                                .as_ref();
-                            entry
-                                .path
-                                .strip_prefix(root_folded_entry)
-                                .ok()
-                                .and_then(|suffix| {
-                                    let full_path = Path::new(root_folded_entry.file_name()?);
-                                    Some(ArcCow::Owned(Arc::<Path>::from(full_path.join(suffix))))
+                let (depth, chars) =
+                    if Some(entry.entry) == worktree.read(cx).root_entry() {
+                        let Some(path_name) = worktree_abs_path.file_name() else {
+                            continue;
+                        };
+                        let depth = 0;
+                        (depth, path_name.to_string_lossy().chars().count())
+                    } else if entry.is_file() {
+                        let Some(path_name) = entry
+                            .path
+                            .file_name()
+                            .with_context(|| format!("Non-root entry has no file name: {entry:?}"))
+                            .log_err()
+                        else {
+                            continue;
+                        };
+                        let depth = entry.path.ancestors().count() - 1;
+                        (depth, path_name.chars().count())
+                    } else {
+                        let path =
+                            self.ancestors
+                                .get(&entry.id)
+                                .and_then(|ancestors| {
+                                    let outermost_ancestor = ancestors.ancestors.last()?;
+                                    let root_folded_entry = worktree
+                                        .read(cx)
+                                        .entry_for_id(*outermost_ancestor)?
+                                        .path
+                                        .as_ref();
+                                    entry.path.strip_prefix(root_folded_entry).ok().and_then(
+                                        |suffix| {
+                                            Some(
+                                                RelPath::new(root_folded_entry.file_name()?)
+                                                    .unwrap()
+                                                    .join(suffix),
+                                            )
+                                        },
+                                    )
                                 })
-                        })
-                        .or_else(|| entry.path.file_name().map(Path::new).map(ArcCow::Borrowed))
-                        .unwrap_or_else(|| ArcCow::Owned(entry.path.clone()));
-                    let depth = path.components().count();
-                    (depth, path)
-                };
-                let width_estimate = item_width_estimate(
-                    depth,
-                    path.to_string_lossy().chars().count(),
-                    entry.canonical_path.is_some(),
-                );
+                                .or_else(|| {
+                                    entry
+                                        .path
+                                        .file_name()
+                                        .map(|file_name| RelPath::new(file_name).unwrap().into())
+                                })
+                                .unwrap_or_else(|| entry.path.clone());
+                        let depth = path.components().count();
+                        (depth, path.as_str().chars().count())
+                    };
+                let width_estimate =
+                    item_width_estimate(depth, chars, entry.canonical_path.is_some());
 
                 match max_width_item.as_mut() {
                     Some((id, worktree_id, width)) => {
@@ -3298,9 +3292,9 @@ impl ProjectPanel {
             let entry = worktree.read(cx).entry_for_id(entry_id)?;
             let path = entry.path.clone();
             let target_directory = if entry.is_dir() {
-                path.to_path_buf()
+                path.clone()
             } else {
-                path.parent()?.to_path_buf()
+                path.parent()?.into()
             };
             Some((target_directory, worktree, fs))
         }) else {
@@ -3309,11 +3303,12 @@ impl ProjectPanel {
 
         let mut paths_to_replace = Vec::new();
         for path in &paths {
-            if let Some(name) = path.file_name() {
-                let mut target_path = target_directory.clone();
-                target_path.push(name);
-                if target_path.exists() {
-                    paths_to_replace.push((name.to_string_lossy().to_string(), path.clone()));
+            if let Some(name) = path.file_name()
+                && let Some(name) = name.to_str()
+            {
+                let target_path = target_directory.join(RelPath::new(name).unwrap());
+                if worktree.read(cx).entry_for_path(&target_path).is_some() {
+                    paths_to_replace.push((name.to_string(), path.clone()));
                 }
             }
         }
@@ -3409,7 +3404,7 @@ impl ProjectPanel {
                     )?;
 
                     let task = self.project.update(cx, |project, cx| {
-                        project.copy_entry(selection.entry_id, None, new_path, cx)
+                        project.copy_entry(selection.entry_id, (worktree_id, new_path).into(), cx)
                     });
                     copy_tasks.push(task);
                     disambiguation_range = new_disambiguation_range.or(disambiguation_range);
@@ -3496,7 +3491,7 @@ impl ProjectPanel {
         mut callback: impl FnMut(
             &Entry,
             usize,
-            &HashSet<Arc<Path>>,
+            &HashSet<Arc<RelPath>>,
             &mut Window,
             &mut Context<ProjectPanel>,
         ),

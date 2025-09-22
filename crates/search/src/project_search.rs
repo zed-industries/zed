@@ -37,7 +37,7 @@ use std::{
     sync::Arc,
 };
 use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
-use util::{ResultExt as _, paths::PathMatcher};
+use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
@@ -894,13 +894,11 @@ impl ProjectSearchView {
 
     pub fn new_search_in_directory(
         workspace: &mut Workspace,
-        dir_path: &Path,
+        dir_path: &RelPath,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(filter_str) = dir_path.to_str() else {
-            return;
-        };
+        let filter_str = dir_path.display(workspace.path_style(cx));
 
         let weak_workspace = cx.entity().downgrade();
 
