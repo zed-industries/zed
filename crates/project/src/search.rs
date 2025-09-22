@@ -4,7 +4,6 @@ use client::proto;
 use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Entity;
 use language::{Buffer, BufferSnapshot, CharKind};
-use rpc::proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE;
 use smol::future::yield_now;
 use std::{
     borrow::Cow,

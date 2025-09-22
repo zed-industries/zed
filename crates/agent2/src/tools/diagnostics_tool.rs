@@ -6,7 +6,7 @@ use language::{DiagnosticSeverity, OffsetRangeExt};
 use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{fmt::Write, path::Path, sync::Arc};
+use std::{fmt::Write, sync::Arc};
 use ui::SharedString;
 use util::markdown::MarkdownInlineCode;
 

@@ -8,9 +8,9 @@ use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
 use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
-use std::{borrow::Cow, cmp::Reverse, sync::Arc};
+use std::{cmp::Reverse, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
-use util::{ResultExt, rel_path::RelPath};
+use util::ResultExt;
 use workspace::{
     Workspace,
     ui::{LabelLike, ListItem, ListItemSpacing, prelude::*},

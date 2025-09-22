@@ -40,7 +40,7 @@ use std::{
     ffi::OsStr,
     fmt::Write,
     ops::{Range, RangeInclusive},
-    path::{Path, PathBuf},
+    path::PathBuf,
     rc::Rc,
     sync::Arc,
     time::Duration,

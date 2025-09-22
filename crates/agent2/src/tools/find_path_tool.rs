@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use std::{cmp, path::PathBuf, sync::Arc};
 use util::paths::PathMatcher;
-use util::rel_path::RelPath;
 
 /// Fast file path pattern matching tool that works with any codebase size
 ///

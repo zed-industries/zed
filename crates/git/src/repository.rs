@@ -2022,11 +2022,6 @@ impl RepoPath {
         Ok(rel_path.into())
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn from_str<S: AsRef<str> + ?Sized>(s: &S) -> Self {
-        Self(RelPath::new(s).unwrap().into())
-    }
-
     pub fn from_proto(proto: &str) -> Result<Self> {
         let rel_path = RelPath::from_proto(proto)?;
         Ok(rel_path.into())
@@ -2188,12 +2183,9 @@ mod tests {
 
         let repo =
             RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
-        repo.stage_paths(
-            vec![RepoPath::from_str("file")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
         repo.commit(
             "Initial commit".into(),
             None,
@@ -2217,12 +2209,9 @@ mod tests {
         smol::fs::write(&file_path, "modified after checkpoint")
             .await
             .unwrap();
-        repo.stage_paths(
-            vec![RepoPath::from_str("file")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
         repo.commit(
             "Commit after checkpoint".into(),
             None,
@@ -2355,12 +2344,9 @@ mod tests {
             RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
 
         // initial commit
-        repo.stage_paths(
-            vec![RepoPath::from_str("main.rs")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
+        repo.stage_paths(vec![repo_path("main.rs")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
         repo.commit(
             "Initial commit".into(),
             None,

@@ -365,13 +365,18 @@ fn compute_symbol_entries(
 }
 
 pub fn render_symbol_context_entry(id: ElementId, entry: &SymbolEntry) -> Stateful<Div> {
-    let path = entry
-        .symbol
-        .path
-        .path
-        .file_name()
-        .map(|s| s.to_string_lossy())
-        .unwrap_or_default();
+    let path = match &entry.symbol.path {
+        SymbolLocation::InProject(project_path) => {
+            project_path.path.file_name().unwrap_or_default().into()
+        }
+        SymbolLocation::OutsideProject {
+            abs_path,
+            signature: _,
+        } => abs_path
+            .file_name()
+            .map(|f| f.to_string_lossy())
+            .unwrap_or_default(),
+    };
     let symbol_location = format!("{} L{}", path, entry.symbol.range.start.0.row + 1);
 
     h_flex()

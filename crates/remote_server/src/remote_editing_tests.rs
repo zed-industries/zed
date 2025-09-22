@@ -19,7 +19,7 @@ use language::{
 use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{
-    Project, ProjectPath,
+    Project,
     search::{SearchQuery, SearchResult},
 };
 use remote::RemoteClient;
@@ -33,7 +33,11 @@ use std::{
 };
 #[cfg(not(windows))]
 use unindent::Unindent as _;
-use util::{path, rel_path::rel_path};
+use util::{
+    path,
+    paths::{PathMatcher, PathStyle},
+    rel_path::rel_path,
+};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -85,7 +89,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     // contents are loaded from the remote filesystem.
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -149,7 +153,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     .unwrap();
     cx.executor().run_until_parked();
     buffer.update(cx, |buffer, _| {
-        assert_eq!(&**buffer.file().unwrap().path(), Path::new("src/lib2.rs"));
+        assert_eq!(&**buffer.file().unwrap().path(), rel_path("src/lib2.rs"));
     });
 
     fs.set_index_for_repo(
@@ -201,8 +205,8 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
                     false,
                     true,
                     false,
-                    Default::default(),
-                    Default::default(),
+                    PathMatcher::empty(PathStyle::local()),
+                    PathMatcher::empty(PathStyle::local()),
                     false,
                     None,
                 )
@@ -335,7 +339,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -355,7 +359,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get(
                 Some(SettingsLocation {
                     worktree_id,
-                    path: Path::new("src/lib.rs")
+                    path: rel_path("src/lib.rs")
                 }),
                 cx
             )
@@ -462,7 +466,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -642,7 +646,7 @@ async fn test_remote_cancel_language_server_work(
 
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -756,7 +760,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -850,7 +854,7 @@ async fn test_remote_resolve_path_in_buffer(
 
     let buffer2 = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree2_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer((worktree2_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -876,7 +880,7 @@ async fn test_remote_resolve_path_in_buffer(
     assert!(path.is_file());
     assert_eq!(
         path.project_path().unwrap().clone(),
-        ProjectPath::from((worktree2_id, "README.md"))
+        (worktree2_id, rel_path("README.md")).into()
     );
 
     let path = project
@@ -887,7 +891,7 @@ async fn test_remote_resolve_path_in_buffer(
         .unwrap();
     assert_eq!(
         path.project_path().unwrap().clone(),
-        ProjectPath::from((worktree2_id, "src"))
+        (worktree2_id, rel_path("src")).into()
     );
     assert!(path.is_dir());
 }
@@ -972,14 +976,18 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
     let worktree_id = worktree.read_with(cx, |tree, _| tree.id());
 
     // Open a buffer on the client but cancel after a random amount of time.
-    let buffer = project.update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx));
+    let buffer = project.update(cx, |p, cx| {
+        p.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
+    });
     cx.executor().simulate_random_delay().await;
     drop(buffer);
 
     // Try opening the same buffer again as the client, and ensure we can
     // still do it despite the cancellation above.
     let buffer = project
-        .update(cx, |p, cx| p.open_buffer((worktree_id, "src/lib.rs"), cx))
+        .update(cx, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
+        })
         .await
         .unwrap();
 
@@ -1041,10 +1049,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
         assert!(worktree.is_visible());
         let entries = worktree.entries(true, 0).collect::<Vec<_>>();
         assert_eq!(entries.len(), 2);
-        assert_eq!(
-            entries[1].path.to_string_lossy().to_string(),
-            "README.md".to_string()
-        )
+        assert_eq!(entries[1].path.as_str(), "README.md")
     })
 }
 
@@ -1110,7 +1115,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -1202,10 +1207,11 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
 
     cx.run_until_parked();
 
-    let entry = worktree
-        .update(cx, |worktree, cx| {
-            let entry = worktree.entry_for_path("README.md").unwrap();
-            worktree.rename_entry(entry.id, Path::new("README.rst"), cx)
+    let entry = project
+        .update(cx, |project, cx| {
+            let worktree = worktree.read(cx);
+            let entry = worktree.entry_for_path(rel_path("README.md")).unwrap();
+            project.rename_entry(entry.id, (worktree.id(), rel_path("README.rst")).into(), cx)
         })
         .await
         .unwrap()
@@ -1215,7 +1221,10 @@ async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestA
     cx.run_until_parked();
 
     worktree.update(cx, |worktree, _| {
-        assert_eq!(worktree.entry_for_path("README.rst").unwrap().id, entry.id)
+        assert_eq!(
+            worktree.entry_for_path(rel_path("README.rst")).unwrap().id,
+            entry.id
+        )
     });
 }
 
@@ -1276,7 +1285,7 @@ async fn test_copy_file_into_remote_project(
     worktree
         .update(cx, |worktree, cx| {
             worktree.copy_external_entries(
-                Path::new("src").into(),
+                rel_path("src").into(),
                 vec![
                     Path::new(path!("/local-code/dir1/file1")).into(),
                     Path::new(path!("/local-code/dir1/dir2")).into(),
@@ -1382,7 +1391,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -1491,7 +1500,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     let worktree_id = cx.update(|cx| worktree.read(cx).id());
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer((worktree_id, rel_path("src/lib.rs")), cx)
         })
         .await
         .unwrap();

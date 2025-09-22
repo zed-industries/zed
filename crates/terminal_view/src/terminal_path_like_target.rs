@@ -4,7 +4,7 @@ use editor::Editor;
 use gpui::{App, AppContext, Context, Task, WeakEntity, Window};
 use itertools::Itertools;
 use project::{Entry, Metadata};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use terminal::PathLikeTarget;
 use util::{
     ResultExt, debug_panic,

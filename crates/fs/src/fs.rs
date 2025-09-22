@@ -47,7 +47,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use git::{
-    repository::RepoPath,
+    repository::{RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(any(test, feature = "test-support"))]
@@ -1614,7 +1614,7 @@ impl FakeFs {
             state.index_contents.extend(
                 index_state
                     .iter()
-                    .map(|(path, content)| (RepoPath::from_str(path), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.clone())),
             );
         })
         .unwrap();
@@ -1631,7 +1631,7 @@ impl FakeFs {
             state.head_contents.extend(
                 head_state
                     .iter()
-                    .map(|(path, content)| (RepoPath::from_str(path), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.clone())),
             );
             state.refs.insert("HEAD".into(), sha.into());
         })
@@ -1644,7 +1644,7 @@ impl FakeFs {
             state.head_contents.extend(
                 contents_by_path
                     .iter()
-                    .map(|(path, contents)| (RepoPath::from_str(path), contents.clone())),
+                    .map(|(path, contents)| (repo_path(path), contents.clone())),
             );
             state.index_contents = state.head_contents.clone();
         })

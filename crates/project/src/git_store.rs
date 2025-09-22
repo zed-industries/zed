@@ -1803,7 +1803,7 @@ impl GitStore {
     ) -> Result<proto::Ack> {
         let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
-        let repo_path = RepoPath::from_str(&envelope.payload.path);
+        let repo_path = RepoPath::from_proto(&envelope.payload.path)?;
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {
@@ -2025,8 +2025,8 @@ impl GitStore {
             .payload
             .paths
             .iter()
-            .map(|s| RepoPath::from_str(s))
-            .collect();
+            .map(|s| RepoPath::from_proto(s))
+            .collect::<Result<Vec<_>>>()?;
 
         repository_handle
             .update(&mut cx, |repository_handle, cx| {

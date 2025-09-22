@@ -854,7 +854,7 @@ impl SettingsStore {
                 return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                     path: directory_path
-                        .join(task_file_name().try_into().unwrap())
+                        .join(RelPath::new(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });
@@ -864,7 +864,7 @@ impl SettingsStore {
                     message: "Attempted to submit debugger config into the settings store"
                         .to_string(),
                     path: directory_path
-                        .join(task_file_name().try_into().unwrap())
+                        .join(RelPath::new(task_file_name()).unwrap())
                         .as_std_path()
                         .to_path_buf(),
                 });

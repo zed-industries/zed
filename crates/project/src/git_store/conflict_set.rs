@@ -262,7 +262,7 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use git::{
-        repository::RepoPath,
+        repository::repo_path,
         status::{UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{BackgroundExecutor, TestAppContext};
@@ -546,7 +546,7 @@ mod tests {
 
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                RepoPath::from_str("a.txt"),
+                repo_path("a.txt"),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,
@@ -650,7 +650,7 @@ mod tests {
 
         // Simulate the conflict being removed by e.g. staging the file.
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
-            state.unmerged_paths.remove(&RepoPath::from_str("a.txt"))
+            state.unmerged_paths.remove(&repo_path("a.txt"))
         })
         .unwrap();
 
@@ -663,7 +663,7 @@ mod tests {
         // Simulate the conflict being re-added.
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                RepoPath::from_str("a.txt"),
+                repo_path("a.txt"),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

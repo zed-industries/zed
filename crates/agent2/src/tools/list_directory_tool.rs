@@ -7,9 +7,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::fmt::Write;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
-use util::rel_path::RelPath;
 
 /// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]

@@ -1358,7 +1358,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .all(|worktree| {
                         worktree
                             .read(cx)
-                            .entry_for_path(Path::new("b"))
+                            .entry_for_path(rel_path("b"))
                             .is_none_or(|entry| !entry.is_dir())
                     })
                 {
