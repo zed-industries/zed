@@ -578,4 +578,42 @@ mod tests {
             assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx).0, 10.0);
         });
     }
+
+    #[gpui::test]
+    async fn test_settings_profile_selector_is_in_user_configuration_order(
+        cx: &mut TestAppContext,
+    ) {
+        // Must be unique names (HashMap)
+        let profiles_json = json!({
+            "z": {},
+            "e": {},
+            "d": {},
+            " ": {},
+            "r": {},
+            "u": {},
+            "l": {},
+            "3": {},
+            "s": {},
+            "!": {},
+        });
+        let (workspace, cx) = init_test(profiles_json.clone(), cx).await;
+
+        cx.dispatch_action(settings_profile_selector::Toggle);
+        let picker = active_settings_profile_picker(&workspace, cx);
+
+        picker.read_with(cx, |picker, _| {
+            assert_eq!(picker.delegate.matches.len(), 11);
+            assert_eq!(picker.delegate.matches[0].string, display_name(&None));
+            assert_eq!(picker.delegate.matches[1].string, "z");
+            assert_eq!(picker.delegate.matches[2].string, "e");
+            assert_eq!(picker.delegate.matches[3].string, "d");
+            assert_eq!(picker.delegate.matches[4].string, " ");
+            assert_eq!(picker.delegate.matches[5].string, "r");
+            assert_eq!(picker.delegate.matches[6].string, "u");
+            assert_eq!(picker.delegate.matches[7].string, "l");
+            assert_eq!(picker.delegate.matches[8].string, "3");
+            assert_eq!(picker.delegate.matches[9].string, "s");
+            assert_eq!(picker.delegate.matches[10].string, "!");
+        });
+    }
 }

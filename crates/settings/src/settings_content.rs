@@ -16,7 +16,7 @@ pub use terminal::*;
 pub use theme::*;
 pub use workspace::*;
 
-use collections::HashMap;
+use collections::{HashMap, IndexMap};
 use gpui::{App, SharedString};
 use release_channel::ReleaseChannel;
 use schemars::JsonSchema;
@@ -182,7 +182,7 @@ pub struct UserSettingsContent {
     pub linux: Option<Box<SettingsContent>>,
 
     #[serde(default)]
-    pub profiles: HashMap<String, SettingsContent>,
+    pub profiles: IndexMap<String, SettingsContent>,
 }
 
 pub struct ExtensionsSettingsContent {
