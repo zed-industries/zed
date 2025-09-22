@@ -20,6 +20,8 @@ use util::paths::PathWithPosition;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use std::io::IsTerminal;
 
+const URL_PREFIX: [&'static str; 5] = ["zed://", "http://", "https://", "file://", "ssh://"];
+
 struct Detect;
 
 trait InstalledApp {
@@ -310,12 +312,7 @@ fn main() -> Result<()> {
     let wsl = None;
 
     for path in args.paths_with_position.iter() {
-        if path.starts_with("zed://")
-            || path.starts_with("http://")
-            || path.starts_with("https://")
-            || path.starts_with("file://")
-            || path.starts_with("ssh://")
-        {
+        if URL_PREFIX.iter().any(|&prefix| path.starts_with(prefix)) {
             urls.push(path.to_string());
         } else if path == "-" && args.paths_with_position.len() == 1 {
             let file = NamedTempFile::new()?;
