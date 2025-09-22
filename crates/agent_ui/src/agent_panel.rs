@@ -459,10 +459,12 @@ impl AgentPanel {
         prompt_builder: Arc<PromptBuilder>,
         mut cx: AsyncWindowContext,
     ) -> Task<Result<Entity<Self>>> {
-        let prompt_store = cx.update(|_window, cx| PromptStore::global(cx));
+        // TODO: Replace with FileBasedRulesStore integration
+        // For now, return None to allow startup
+        let prompt_store: Result<Option<Entity<PromptStore>>, anyhow::Error> = Ok(None);
         cx.spawn(async move |cx| {
             let prompt_store = match prompt_store {
-                Ok(prompt_store) => prompt_store.await.ok(),
+                Ok(prompt_store) => prompt_store,
                 Err(_) => None,
             };
             let tools = cx.new(|_| ToolWorkingSet::default())?;

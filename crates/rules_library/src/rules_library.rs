@@ -1,3 +1,5 @@
+pub mod file_based_rules;
+
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use editor::{CompletionProvider, SelectionEffects};
@@ -32,7 +34,7 @@ use zed_actions::assistant::InlineAssist;
 use prompt_store::*;
 
 pub fn init(cx: &mut App) {
-    prompt_store::init(cx);
+    file_based_rules::init(cx);
 }
 
 actions!(
@@ -75,9 +77,8 @@ pub trait InlineAssistDelegate {
 /// This function opens a new rules library window if one doesn't exist already.
 /// If one exists, it brings it to the foreground.
 ///
-/// Note that, when opening a new window, this waits for the PromptStore to be
-/// initialized. If it was initialized successfully, it returns a window handle
-/// to a rules library.
+/// Note that, when opening a new window, this uses the file-based rules store.
+/// If it was initialized successfully, it returns a window handle to a rules library.
 pub fn open_rules_library(
     language_registry: Arc<LanguageRegistry>,
     inline_assist_delegate: Box<dyn InlineAssistDelegate>,
@@ -85,7 +86,7 @@ pub fn open_rules_library(
     prompt_to_select: Option<PromptId>,
     cx: &mut App,
 ) -> Task<Result<WindowHandle<RulesLibrary>>> {
-    let store = PromptStore::global(cx);
+    let store = file_based_rules::GlobalFileBasedRulesStore::global(cx);
     cx.spawn(async move |cx| {
         // We query windows in spawn so that all windows have been returned to GPUI
         let existing_window = cx
@@ -116,7 +117,7 @@ pub fn open_rules_library(
             return Ok(existing_window);
         }
 
-        let store = store.await?;
+        let store = store;
         cx.update(|cx| {
             let app_id = ReleaseChannel::global(cx).app_id();
             let bounds = Bounds::centered(None, size(px(1024.0), px(768.0)), cx);
@@ -158,7 +159,7 @@ pub fn open_rules_library(
 
 pub struct RulesLibrary {
     title_bar: Option<Entity<PlatformTitleBar>>,
-    store: Entity<PromptStore>,
+    store: Arc<file_based_rules::FileBasedRulesStore>,
     language_registry: Arc<LanguageRegistry>,
     rule_editors: HashMap<PromptId, RuleEditor>,
     active_rule_id: Option<PromptId>,
@@ -180,7 +181,7 @@ struct RuleEditor {
 }
 
 struct RulePickerDelegate {
-    store: Entity<PromptStore>,
+    store: Arc<file_based_rules::FileBasedRulesStore>,
     selected_index: usize,
     matches: Vec<PromptMetadata>,
 }
@@ -201,8 +202,8 @@ impl PickerDelegate for RulePickerDelegate {
         self.matches.len()
     }
 
-    fn no_matches_text(&self, _window: &mut Window, cx: &mut App) -> Option<SharedString> {
-        let text = if self.store.read(cx).prompt_count() == 0 {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut App) -> Option<SharedString> {
+        let text = if self.store.prompt_count() == 0 {
             "No rules.".into()
         } else {
             "No rules found matching your search.".into()
@@ -234,7 +235,7 @@ impl PickerDelegate for RulePickerDelegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
         let cancellation_flag = Arc::new(AtomicBool::default());
-        let search = self.store.read(cx).search(query, cancellation_flag, cx);
+        let search = self.store.search(query, cancellation_flag, cx);
         let prev_prompt_id = self.matches.get(self.selected_index).map(|mat| mat.id);
         cx.spawn_in(window, async move |this, cx| {
             let (matches, selected_index) = cx
@@ -290,17 +291,32 @@ impl PickerDelegate for RulePickerDelegate {
                     .line_height(relative(1.))
                     .child(Label::new(rule.title.clone().unwrap_or("Untitled".into()))),
             )
-            .end_slot::<IconButton>(default.then(|| {
-                IconButton::new("toggle-default-rule", IconName::StarFilled)
-                    .toggle_state(true)
-                    .icon_color(Color::Accent)
+            .end_slot(
+                IconButton::new("toggle-default-rule", IconName::Star)
+                    .toggle_state(default)
+                    .selected_icon(IconName::StarFilled)
+                    .icon_color(if default { Color::Accent } else { Color::Muted })
                     .icon_size(IconSize::Small)
                     .shape(IconButtonShape::Square)
-                    .tooltip(Tooltip::text("Remove from Default Rules"))
+                    .map(|this| {
+                        if default {
+                            this.tooltip(Tooltip::text("Remove from Default Rules"))
+                        } else {
+                            this.tooltip(move |window, cx| {
+                                Tooltip::with_meta(
+                                    "Add to Default Rules",
+                                    None,
+                                    "Always included in every thread.",
+                                    window,
+                                    cx,
+                                )
+                            })
+                        }
+                    })
                     .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(RulePickerEvent::ToggledDefault { prompt_id })
                     }))
-            }))
+            )
             .end_hover_slot(
                 h_flex()
                     .gap_1()
@@ -379,7 +395,7 @@ impl PickerDelegate for RulePickerDelegate {
 
 impl RulesLibrary {
     fn new(
-        store: Entity<PromptStore>,
+        store: Arc<file_based_rules::FileBasedRulesStore>,
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Rc<dyn Fn() -> Rc<dyn CompletionProvider>>,
@@ -388,7 +404,7 @@ impl RulesLibrary {
         cx: &mut Context<Self>,
     ) -> Self {
         let (selected_index, matches) = if let Some(rule_to_select) = rule_to_select {
-            let matches = store.read(cx).all_prompt_metadata();
+            let matches = store.all_prompt_metadata();
             let selected_index = matches
                 .iter()
                 .enumerate()
@@ -456,7 +472,7 @@ impl RulesLibrary {
     pub fn new_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // If we already have an untitled rule, use that instead
         // of creating a new one.
-        if let Some(metadata) = self.store.read(cx).first()
+        if let Some(metadata) = self.store.first()
             && metadata.title.is_none()
         {
             self.load_rule(metadata.id, true, window, cx);
@@ -464,14 +480,14 @@ impl RulesLibrary {
         }
 
         let prompt_id = PromptId::new();
-        let save = self.store.update(cx, |store, cx| {
-            store.save(prompt_id, None, false, "".into(), cx)
-        });
-        self.picker
-            .update(cx, |picker, cx| picker.refresh(window, cx));
+        let executor = cx.background_executor().clone();
+        let save = self.store.save_async(prompt_id, None, false, "".into(), &executor);
         cx.spawn_in(window, async move |this, cx| {
             save.await?;
             this.update_in(cx, |this, window, cx| {
+                // Refresh the picker after the save operation completes
+                this.picker
+                    .update(cx, |picker, cx| picker.refresh(window, cx));
                 this.load_rule(prompt_id, true, window, cx)
             })
         })
@@ -485,7 +501,6 @@ impl RulesLibrary {
             return;
         }
 
-        let rule_metadata = self.store.read(cx).metadata(prompt_id).unwrap();
         let rule_editor = self.rule_editors.get_mut(&prompt_id).unwrap();
         let title = rule_editor.title_editor.read(cx).text(cx);
         let body = rule_editor.body_editor.update(cx, |editor, cx| {
@@ -520,11 +535,11 @@ impl RulesLibrary {
                             } else {
                                 Some(SharedString::from(title))
                             };
-                            cx.update(|_window, cx| {
-                                store.update(cx, |store, cx| {
-                                    store.save(prompt_id, title, rule_metadata.default, body, cx)
-                                })
-                            })?
+                            // Get the current default state from the store instead of using cached metadata
+                            let current_default = store.metadata(prompt_id)
+                                .map(|metadata| metadata.default)
+                                .unwrap_or(false);
+                            store.save_async(prompt_id, title, current_default, body, &executor)
                             .await
                             .log_err();
                             this.update_in(cx, |this, window, cx| {
@@ -575,16 +590,22 @@ impl RulesLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.store.update(cx, move |store, cx| {
-            if let Some(rule_metadata) = store.metadata(prompt_id) {
-                store
-                    .save_metadata(prompt_id, rule_metadata.title, !rule_metadata.default, cx)
-                    .detach_and_log_err(cx);
-            }
-        });
-        self.picker
-            .update(cx, |picker, cx| picker.refresh(window, cx));
-        cx.notify();
+        if let Some(rule_metadata) = self.store.metadata(prompt_id) {
+            let executor = cx.background_executor().clone();
+            let save_task = self.store
+                .save_metadata_async(prompt_id, rule_metadata.title, !rule_metadata.default, &executor);
+            
+            // Refresh the picker after the save operation completes
+            cx.spawn_in(window, async move |this, cx| {
+                save_task.await.log_err();
+                this.update_in(cx, |this, window, cx| {
+                    this.picker
+                        .update(cx, |picker, cx| picker.refresh(window, cx));
+                    cx.notify();
+                })
+            })
+            .detach_and_log_err(cx);
+        }
     }
 
     pub fn load_rule(
@@ -601,9 +622,9 @@ impl RulesLibrary {
                     .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
             }
             self.set_active_rule(Some(prompt_id), window, cx);
-        } else if let Some(rule_metadata) = self.store.read(cx).metadata(prompt_id) {
+        } else if let Some(rule_metadata) = self.store.metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
-            let rule = self.store.read(cx).load(prompt_id, cx);
+            let rule = self.store.load_async(prompt_id, cx);
             let make_completion_provider = self.make_completion_provider.clone();
             self.pending_load = cx.spawn_in(window, async move |this, cx| {
                 let rule = rule.await;
@@ -725,7 +746,7 @@ impl RulesLibrary {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(metadata) = self.store.read(cx).metadata(prompt_id) {
+        if let Some(metadata) = self.store.metadata(prompt_id) {
             let confirmation = window.prompt(
                 PromptLevel::Warning,
                 &format!(
@@ -744,12 +765,19 @@ impl RulesLibrary {
                             this.set_active_rule(None, window, cx);
                         }
                         this.rule_editors.remove(&prompt_id);
-                        this.store
-                            .update(cx, |store, cx| store.delete(prompt_id, cx))
-                            .detach_and_log_err(cx);
-                        this.picker
-                            .update(cx, |picker, cx| picker.refresh(window, cx));
-                        cx.notify();
+                        let executor = cx.background_executor().clone();
+                        let delete_task = this.store.delete_async(prompt_id, &executor);
+                        
+                        // Refresh the picker after the deletion is complete
+                        cx.spawn_in(window, async move |this, cx| {
+                            delete_task.await.log_err();
+                            this.update_in(cx, |this, window, cx| {
+                                this.picker
+                                    .update(cx, |picker, cx| picker.refresh(window, cx));
+                                cx.notify();
+                            })
+                        })
+                        .detach_and_log_err(cx);
                     })?;
                 }
                 anyhow::Ok(())
@@ -790,9 +818,8 @@ impl RulesLibrary {
 
             let new_id = PromptId::new();
             let body = rule.body_editor.read(cx).text(cx);
-            let save = self.store.update(cx, |store, cx| {
-                store.save(new_id, Some(title.into()), false, body.into(), cx)
-            });
+            let executor = cx.background_executor().clone();
+            let save = self.store.save_async(new_id, Some(title.into()), false, body.into(), &executor);
             self.picker
                 .update(cx, |picker, cx| picker.refresh(window, cx));
             cx.spawn_in(window, async move |this, cx| {
@@ -1038,7 +1065,7 @@ impl RulesLibrary {
             .flex_none()
             .min_w_64()
             .children(self.active_rule_id.and_then(|prompt_id| {
-                let rule_metadata = self.store.read(cx).metadata(prompt_id)?;
+                let rule_metadata = self.store.metadata(prompt_id)?;
                 let rule_editor = &self.rule_editors[&prompt_id];
                 let focus_handle = rule_editor.body_editor.focus_handle(cx);
                 let model = LanguageModelRegistry::read_global(cx)
@@ -1281,7 +1308,7 @@ impl Render for RulesLibrary {
                         .flex_1()
                         .child(self.render_rule_list(cx))
                         .map(|el| {
-                            if self.store.read(cx).prompt_count() == 0 {
+                            if self.store.prompt_count() == 0 {
                                 el.child(
                                     v_flex()
                                         .w_2_3()

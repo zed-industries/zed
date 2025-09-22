@@ -5,6 +5,7 @@ use anyhow::Result;
 use fs::Fs;
 use gpui::{App, Entity, SharedString, Task};
 use prompt_store::PromptStore;
+use rules_library::file_based_rules::GlobalFileBasedRulesStore;
 
 use crate::{HistoryStore, NativeAgent, NativeAgentConnection, templates::Templates};
 
@@ -51,15 +52,18 @@ impl AgentServer for NativeAgentServer {
         let project = delegate.project().clone();
         let fs = self.fs.clone();
         let history = self.history.clone();
-        let prompt_store = PromptStore::global(cx);
+        // Use FileBasedRulesStore instead of PromptStore
+        let rules_store = GlobalFileBasedRulesStore::global(cx);
+        // For now, we'll pass None to the agent and handle rules loading differently
+        let prompt_store: Result<Option<Entity<PromptStore>>, anyhow::Error> = Ok(None);
         cx.spawn(async move |cx| {
             log::debug!("Creating templates for native agent");
             let templates = Templates::new();
-            let prompt_store = prompt_store.await?;
+            let prompt_store = prompt_store.ok().flatten();
 
             log::debug!("Creating native agent entity");
             let agent =
-                NativeAgent::new(project, history, templates, Some(prompt_store), fs, cx).await?;
+                NativeAgent::new(project, history, templates, prompt_store, fs, cx).await?;
 
             // Create the connection wrapper
             let connection = NativeAgentConnection(agent);

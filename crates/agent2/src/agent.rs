@@ -20,6 +20,7 @@ use project::{Project, ProjectItem, ProjectPath, Worktree};
 use prompt_store::{
     ProjectContext, PromptId, PromptStore, RulesFileContext, UserRulesContext, WorktreeContext,
 };
+use rules_library::file_based_rules::GlobalFileBasedRulesStore;
 use settings::{LanguageModelSelection, update_settings_file};
 use std::any::Any;
 use std::collections::HashMap;
@@ -384,7 +385,18 @@ impl NativeAgent {
                 cx.background_spawn(future::join_all(load_tasks))
             })
         } else {
-            Task::ready(vec![])
+            // Use FileBasedRulesStore when prompt_store is None
+            let rules_store = GlobalFileBasedRulesStore::global(cx);
+            let default_prompts = rules_store.default_prompt_metadata();
+            let load_tasks = default_prompts.into_iter().map(|prompt_metadata| {
+                let store = rules_store.clone();
+                let id = prompt_metadata.id;
+                async move {
+                    let contents = store.load(id).map_err(|e| anyhow::anyhow!("Failed to load rule: {}", e));
+                    (contents, prompt_metadata)
+                }
+            });
+            cx.background_spawn(future::join_all(load_tasks))
         };
 
         cx.spawn(async move |_cx| {

@@ -1842,7 +1842,9 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         let workspace = self.workspace.clone();
         let thread_store = self.thread_store.clone();
         let text_thread_store = self.text_thread_store.clone();
-        let prompt_store = PromptStore::global(cx);
+        // TODO: Replace with FileBasedRulesStore integration
+        // For now, return None to allow startup
+        let prompt_store: Result<Option<Entity<PromptStore>>, anyhow::Error> = Ok(None);
         window.spawn(cx, async move |cx| {
             let workspace = workspace.upgrade().context("workspace was released")?;
             let editor = editor.upgrade().context("editor was released")?;
@@ -1883,7 +1885,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
                 })?
                 .context("invalid range")?;
 
-            let prompt_store = prompt_store.await.ok();
+            let prompt_store = prompt_store.ok().flatten();
             cx.update_global(|assistant: &mut InlineAssistant, window, cx| {
                 let assist_id = assistant.suggest_assist(
                     &editor,
