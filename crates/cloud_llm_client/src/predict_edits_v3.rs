@@ -24,6 +24,8 @@ pub struct PredictEditsRequest {
     pub can_collect_data: bool,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub diagnostic_groups: Vec<DiagnosticGroup>,
+    #[serde(skip_serializing_if = "is_default", default)]
+    pub diagnostic_groups_truncated: bool,
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
@@ -92,10 +94,8 @@ pub struct ScoreComponents {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiagnosticGroup {
-    pub language_server: String,
-    pub diagnostic_group: serde_json::Value,
-}
+#[serde(transparent)]
+pub struct DiagnosticGroup(pub Box<serde_json::value::RawValue>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsResponse {
@@ -118,4 +118,8 @@ pub struct Edit {
     pub path: PathBuf,
     pub range: Range<usize>,
     pub content: String,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }

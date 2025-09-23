@@ -70,6 +70,8 @@ struct Zeta2Args {
     excerpt_min_bytes: usize,
     #[arg(long, default_value_t = 0.66)]
     target_before_cursor_over_total_bytes: f32,
+    #[arg(long, default_value_t = 1024)]
+    max_diagnostic_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -221,12 +223,15 @@ async fn get_context(
                 });
                 zeta.update(cx, |zeta, cx| {
                     zeta.register_buffer(&buffer, &project, cx);
-                    zeta.excerpt_options = EditPredictionExcerptOptions {
-                        max_bytes: zeta2_args.excerpt_max_bytes,
-                        min_bytes: zeta2_args.excerpt_min_bytes,
-                        target_before_cursor_over_total_bytes: zeta2_args
-                            .target_before_cursor_over_total_bytes,
-                    }
+                    zeta.set_options(zeta2::ZetaOptions {
+                        excerpt: EditPredictionExcerptOptions {
+                            max_bytes: zeta2_args.excerpt_max_bytes,
+                            min_bytes: zeta2_args.excerpt_min_bytes,
+                            target_before_cursor_over_total_bytes: zeta2_args
+                                .target_before_cursor_over_total_bytes,
+                        },
+                        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
+                    })
                 });
                 // TODO: Actually wait for indexing.
                 let timer = cx.background_executor().timer(Duration::from_secs(5));

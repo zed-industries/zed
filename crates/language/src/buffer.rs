@@ -4558,6 +4558,12 @@ impl BufferSnapshot {
         })
     }
 
+    /// Raw access to the diagnostic sets. Typically `diagnostic_groups` or `diagnostic_group`
+    /// should be used instead.
+    pub fn diagnostic_sets(&self) -> &SmallVec<[(LanguageServerId, DiagnosticSet); 2]> {
+        &self.diagnostics
+    }
+
     /// Returns all the diagnostic groups associated with the given
     /// language server ID. If no language server ID is provided,
     /// all diagnostics groups are returned.
