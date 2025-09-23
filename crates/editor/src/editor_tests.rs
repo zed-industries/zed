@@ -25701,7 +25701,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
-                pane.navigate_backward(&Default::default(), window, cx);
+                pane.navigate_backward(&workspace::GoBack, window, cx);
             })
         })
         .unwrap();
@@ -25727,6 +25727,50 @@ async fn test_document_colors(cx: &mut TestAppContext) {
             vec![expected_color],
             extract_color_inlays(editor, cx),
             "Should have an initial inlay"
+        );
+    });
+
+    drop(color_request_handle);
+    let closure_requests_made = Arc::clone(&requests_made);
+    let mut empty_color_request_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |params, _| {
+            let requests_made = Arc::clone(&closure_requests_made);
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
+                );
+                requests_made.fetch_add(1, atomic::Ordering::Release);
+                Ok(Vec::new())
+            }
+        });
+    let save = editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input("dirty_again", window, cx);
+        editor.save(
+            SaveOptions {
+                format: false,
+                autosave: true,
+            },
+            project.clone(),
+            window,
+            cx,
+        )
+    });
+    save.await.unwrap();
+
+    empty_color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        4,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Should query for colors once per save only, as formatting was not requested"
+    );
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "Should clear all colors when the server returns an empty response"
         );
     });
 }
