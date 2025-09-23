@@ -336,8 +336,6 @@ To use Ollama as your edit prediction provider, set this within `settings.json`:
 
 The Edit Prediction menu will automatically detect available models. When one is newly selected in the menu, it will be added to your `settings.json`, and put at the top of the list. You can then manually configure it in the settings file if you need more control.
 
-
-
 ```json
 {
   "language_models": {
