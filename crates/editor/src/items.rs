@@ -1525,17 +1525,12 @@ impl SearchableItem for Editor {
         if let Some(range) = enabled {
             let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
 
-            match range {
-                FilteredSearchRange::Selection => {
-                    if ranges.iter().any(|s| s.start != s.end) {
-                        self.set_search_within_ranges(&ranges, cx);
-                    }
-                }
-                FilteredSearchRange::Default => {
-                    if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
-                        self.set_search_within_ranges(&previous_search_ranges, cx);
-                    }
-                }
+            if ranges.iter().any(|s| s.start != s.end) {
+                self.set_search_within_ranges(&ranges, cx);
+            } else if let Some(previous_search_ranges) = self.previous_search_ranges.take()
+                && range != FilteredSearchRange::Selection
+            {
+                self.set_search_within_ranges(&previous_search_ranges, cx);
             }
         }
     }

@@ -720,6 +720,7 @@ impl BufferSearchBar {
         };
         if self.show(window, cx) {
             if let Some(active_item) = self.active_searchable_item.as_mut() {
+                dbg!("Here {}", filtered_search_range);
                 active_item.toggle_filtered_search_ranges(filtered_search_range, window, cx);
             }
             self.search_suggested(window, cx);
