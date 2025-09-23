@@ -1632,7 +1632,6 @@ mod tests {
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
-    use util::path;
 
     #[gpui::test]
     async fn test_spawn_an_empty_task(cx: &mut TestAppContext) {
@@ -1684,6 +1683,8 @@ mod tests {
             .unwrap();
     }
 
+    // A complex Unix command won't be properly parsed by the Windows terminal hence omit the test there.
+    #[cfg(unix)]
     #[gpui::test]
     async fn test_spawn_script_like_task(cx: &mut TestAppContext) {
         init_test(cx);
@@ -1702,7 +1703,7 @@ mod tests {
 
         let user_command = r#"REPO_URL=$(git remote get-url origin | sed -e \"s/^git@\\(.*\\):\\(.*\\)\\.git$/https:\\/\\/\\1\\/\\2/\"); COMMIT_SHA=$(git log -1 --format=\"%H\" -- \"${ZED_RELATIVE_FILE}\"); echo \"${REPO_URL}/blob/${COMMIT_SHA}/${ZED_RELATIVE_FILE}#L${ZED_ROW}-$(echo $(($(wc -l <<< \"$ZED_SELECTED_TEXT\") + $ZED_ROW - 1)))\" | xclip -selection clipboard"#.to_string();
 
-        let expected_cwd = PathBuf::from(path!("/some/work"));
+        let expected_cwd = PathBuf::from("/some/work");
         let task = window_handle
             .update(cx, |_, window, cx| {
                 terminal_panel.update(cx, |terminal_panel, cx| {
