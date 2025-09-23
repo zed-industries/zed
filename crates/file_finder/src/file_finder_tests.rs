@@ -2855,11 +2855,14 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                 path: history_path,
                 panel_match: path_match,
             } => {
-                // FIXME do something if this is none (abs path?)
                 if let Some(path_match) = path_match.as_ref() {
                     search_entries
                         .history
                         .push(path_match.0.path_prefix.join(&path_match.0.path));
+                } else {
+                    // This occurs when the query is empty and we show history matches
+                    // that are outside the project.
+                    panic!("currently not exercised in tests");
                 }
                 search_entries
                     .history_found_paths
