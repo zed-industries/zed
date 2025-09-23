@@ -1,10 +1,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use futures::{io::BufReader, AsyncBufReadExt, Stream, StreamExt};
-use http_client::{
-    http::Method,
-    AsyncBody, HttpClient, Request,
-};
+use futures::{AsyncBufReadExt, Stream, StreamExt, io::BufReader};
+use http_client::{AsyncBody, HttpClient, Request, http::Method};
 use postage::prelude::{Sink, Stream as _};
 use std::{
     pin::Pin,
@@ -50,8 +47,18 @@ impl Transport for SseTransport {
             .body(AsyncBody::from(message.into_bytes()))?;
 
         let http_client = self.http_client.clone();
-        let mut tx = self.tx.lock().unwrap().take().ok_or_else(|| anyhow!("transport already used"))?;
-        let mut err_tx = self.err_tx.lock().unwrap().take().ok_or_else(|| anyhow!("transport already used"))?;
+        let mut tx = self
+            .tx
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| anyhow!("transport already used"))?;
+        let mut err_tx = self
+            .err_tx
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| anyhow!("transport already used"))?;
 
         smol::spawn(async move {
             let response = http_client.send(request).await;
@@ -91,9 +98,7 @@ impl Transport for SseTransport {
 
     fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
         if let Some(mut rx) = self.rx.lock().unwrap().take() {
-            Box::pin(futures::stream::once(async move {
-                rx.recv().await.unwrap()
-            }).flatten())
+            Box::pin(futures::stream::once(async move { rx.recv().await.unwrap() }).flatten())
         } else {
             Box::pin(futures::stream::empty())
         }
@@ -112,8 +117,8 @@ impl Transport for SseTransport {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use http_client::http::Response;
     use http_client::FakeHttpClient;
+    use http_client::http::Response;
 
     #[gpui::test]
     async fn test_sse_transport() {

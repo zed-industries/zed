@@ -1,10 +1,7 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use futures::{io::AsyncReadExt, stream, Stream};
-use http_client::{
-    http::Method,
-    AsyncBody, HttpClient, Request,
-};
+use futures::{Stream, io::AsyncReadExt, stream};
+use http_client::{AsyncBody, HttpClient, Request, http::Method};
 use postage::prelude::{Sink, Stream as _};
 use std::{
     pin::Pin,
@@ -42,7 +39,12 @@ impl Transport for HttpTransport {
             .body(AsyncBody::from(message.into_bytes()))?;
 
         let http_client = self.http_client.clone();
-        let mut tx = self.tx.lock().unwrap().take().ok_or_else(|| anyhow!("transport already used"))?;
+        let mut tx = self
+            .tx
+            .lock()
+            .unwrap()
+            .take()
+            .ok_or_else(|| anyhow!("transport already used"))?;
         smol::spawn(async move {
             let res = async {
                 let mut response = http_client.send(request).await?;
@@ -52,7 +54,8 @@ impl Transport for HttpTransport {
                     response.body_mut().read_to_string(&mut body_str).await?;
                     Ok(body_str)
                 } else {
-                    let error_message = format!("Request failed with status: {}", response.status());
+                    let error_message =
+                        format!("Request failed with status: {}", response.status());
                     Err(anyhow!(error_message))
                 }
             }
@@ -86,8 +89,8 @@ impl Transport for HttpTransport {
 mod tests {
     use super::*;
     use futures::StreamExt;
-    use http_client::http::Response;
     use http_client::FakeHttpClient;
+    use http_client::http::Response;
 
     #[gpui::test]
     async fn test_http_transport(cx: &mut gpui::TestAppContext) {
