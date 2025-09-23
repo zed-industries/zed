@@ -27,7 +27,7 @@ use git::{
     repository::{
         Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
         GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode, UpstreamTrackingStatus,
+        ResetMode, UpstreamTrackingStatus, Worktree as GitWorktree,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -445,6 +445,7 @@ impl GitStore {
         client.add_entity_message_handler(Self::handle_update_repository);
         client.add_entity_message_handler(Self::handle_remove_repository);
         client.add_entity_request_handler(Self::handle_git_clone);
+        client.add_entity_request_handler(Self::handle_get_worktrees);
     }
 
     pub fn is_local(&self) -> bool {
@@ -1927,6 +1928,28 @@ impl GitStore {
                 .map(|remotes| proto::get_remotes_response::Remote {
                     name: remotes.name.to_string(),
                 })
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    async fn handle_get_worktrees(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitGetWorktrees>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::GitWorktreesResponse> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+
+        let worktrees = repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.worktrees()
+            })?
+            .await??;
+
+        Ok(proto::GitWorktreesResponse {
+            worktrees: worktrees
+                .into_iter()
+                .map(|worktree| worktree_to_proto(&worktree))
                 .collect::<Vec<_>>(),
         })
     }
@@ -4404,6 +4427,31 @@ impl Repository {
         })
     }
 
+    pub fn worktrees(&mut self) -> oneshot::Receiver<Result<Vec<GitWorktree>>> {
+        let id = self.id;
+        self.send_job(None, move |repo, _| async move {
+            match repo {
+                RepositoryState::Local { backend, .. } => backend.worktrees().await,
+                RepositoryState::Remote { project_id, client } => {
+                    let response = client
+                        .request(proto::GitGetWorktrees {
+                            project_id: project_id.0,
+                            repository_id: id.to_proto(),
+                        })
+                        .await?;
+
+                    let worktrees = response
+                        .worktrees
+                        .into_iter()
+                        .map(|worktree| proto_to_worktree(&worktree))
+                        .collect();
+
+                    Ok(worktrees)
+                }
+            }
+        })
+    }
+
     pub fn default_branch(&mut self) -> oneshot::Receiver<Result<Option<SharedString>>> {
         let id = self.id;
         self.send_job(None, move |repo, _| async move {
@@ -5233,6 +5281,22 @@ fn branch_to_proto(branch: &git::repository::Branch) -> proto::Branch {
                 commit_timestamp: commit.commit_timestamp,
                 author_name: commit.author_name.to_string(),
             }),
+    }
+}
+
+fn worktree_to_proto(worktree: &git::repository::Worktree) -> proto::Worktree {
+    proto::Worktree {
+        path: worktree.path.to_string_lossy().to_string(),
+        ref_name: worktree.ref_name.to_string(),
+        sha: worktree.sha.to_string(),
+    }
+}
+
+fn proto_to_worktree(proto: &proto::Worktree) -> git::repository::Worktree {
+    git::repository::Worktree {
+        path: PathBuf::from(proto.path.clone()),
+        ref_name: proto.ref_name.clone().into(),
+        sha: proto.sha.clone().into(),
     }
 }
 

@@ -331,6 +331,8 @@ messages!(
     (ExternalAgentLoadingStatusUpdated, Background),
     (NewExternalAgentVersionAvailable, Background),
     (RemoteStarted, Background),
+    (GitGetWorktrees, Background),
+    (GitWorktreesResponse, Background)
 );
 
 request_messages!(
@@ -509,6 +511,7 @@ request_messages!(
     (GetProcesses, GetProcessesResponse),
     (GetAgentServerCommand, AgentServerCommand),
     (RemoteStarted, Ack),
+    (GitGetWorktrees, GitWorktreesResponse),
 );
 
 lsp_messages!(
@@ -672,6 +675,7 @@ entity_messages!(
     ExternalAgentsUpdated,
     ExternalAgentLoadingStatusUpdated,
     NewExternalAgentVersionAvailable,
+    GitGetWorktrees
 );
 
 entity_messages!(

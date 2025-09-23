@@ -7,7 +7,7 @@ use git::{
     blame::Blame,
     repository::{
         AskPassDelegate, Branch, CommitDetails, CommitOptions, FetchOptions, GitRepository,
-        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode,
+        GitRepositoryCheckpoint, PushOptions, Remote, RepoPath, ResetMode, Worktree,
     },
     status::{
         DiffTreeType, FileStatus, GitStatus, StatusCode, TrackedStatus, TreeDiff, TreeDiffStatus,
@@ -385,6 +385,10 @@ impl GitRepository for FakeGitRepository {
                 })
                 .collect())
         })
+    }
+
+    fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>> {
+        unimplemented!()
     }
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
