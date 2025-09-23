@@ -9560,6 +9560,7 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
