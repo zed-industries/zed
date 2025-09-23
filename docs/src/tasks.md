@@ -144,7 +144,12 @@ For example, the following task will appear in the spawn modal only if there is 
 }
 ```
 
-If you would like to define a task that works both when text is selected and when text is not selected, you need to create 2 tasks, one with `$ZED_SELECTED_TEXT` present and one without.
+Set default values to such variables to have such tasks always displayed:
+
+{
+  "label": "selected text",
+  "command": "echo \"${ZED_SELECTED_TEXT:no text selected}\""
+}
 
 ## Oneshot tasks
 
