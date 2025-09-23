@@ -2566,6 +2566,9 @@ impl LocalSnapshot {
             }
         }
 
+        dbg!(&self.entries_by_id.items(&()));
+        dbg!(&self.entries_by_path.items(&()));
+
         let dfs_paths_via_iter = self
             .entries_by_path
             .cursor::<()>(&())
@@ -2577,6 +2580,7 @@ impl LocalSnapshot {
             .entries(true, 0)
             .map(|e| e.path.as_ref())
             .collect::<Vec<_>>();
+
         assert_eq!(dfs_paths_via_traversal, dfs_paths_via_iter);
 
         if git_state {
@@ -2839,11 +2843,13 @@ impl BackgroundScannerState {
             }
         };
 
+        let dot_git_abs_path = Arc::from(self.snapshot.absolutize(&dot_git_path).as_ref());
+
         self.insert_git_repository_for_path(
             WorkDirectory::InProject {
                 relative_path: work_dir_path,
             },
-            dot_git_path,
+            dot_git_abs_path,
             fs,
             watcher,
         );
@@ -2852,14 +2858,13 @@ impl BackgroundScannerState {
     fn insert_git_repository_for_path(
         &mut self,
         work_directory: WorkDirectory,
-        dot_git_path: Arc<RelPath>,
+        dot_git_abs_path: Arc<Path>,
         fs: &dyn Fs,
         watcher: &dyn Watcher,
     ) -> Option<LocalRepositoryEntry> {
         let work_dir_entry = self.snapshot.entry_for_path(&work_directory.path_key().0)?;
         let work_directory_abs_path = self.snapshot.work_directory_abs_path(&work_directory);
 
-        let dot_git_abs_path: Arc<Path> = self.snapshot.absolutize(&dot_git_path).into();
         let (repository_dir_abs_path, common_dir_abs_path) =
             discover_git_paths(&dot_git_abs_path, fs);
         watcher.add(&common_dir_abs_path).log_err();
@@ -3530,7 +3535,7 @@ impl BackgroundScanner {
         let containing_git_repository = repo.and_then(|(ancestor_dot_git, work_directory)| {
             self.state.lock().insert_git_repository_for_path(
                 work_directory,
-                RelPath::from_std_path(&ancestor_dot_git, PathStyle::local()).unwrap(),
+                ancestor_dot_git.clone().into(),
                 self.fs.as_ref(),
                 self.watcher.as_ref(),
             )?;
@@ -4362,8 +4367,7 @@ impl BackgroundScanner {
                         if let Some((ancestor_dot_git, work_directory)) = repo {
                             state.insert_git_repository_for_path(
                                 work_directory,
-                                RelPath::from_std_path(&ancestor_dot_git, PathStyle::local())
-                                    .unwrap(),
+                                ancestor_dot_git.into(),
                                 self.fs.as_ref(),
                                 self.watcher.as_ref(),
                             );

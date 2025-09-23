@@ -1348,8 +1348,8 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
                 .unwrap()
                 .is_file()
         );
-        assert!(tree.entry_for_path(rel_path("a/b/c/")).unwrap().is_dir());
-        assert!(tree.entry_for_path(rel_path("a/b/")).unwrap().is_dir());
+        assert!(tree.entry_for_path(rel_path("a/b/c")).unwrap().is_dir());
+        assert!(tree.entry_for_path(rel_path("a/b")).unwrap().is_dir());
     });
 
     let fs_real = Arc::new(RealFs::new(None, cx.executor()));
@@ -1389,8 +1389,8 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
                 .unwrap()
                 .is_file()
         );
-        assert!(tree.entry_for_path(rel_path("a/b/c/")).unwrap().is_dir());
-        assert!(tree.entry_for_path(rel_path("a/b/")).unwrap().is_dir());
+        assert!(tree.entry_for_path(rel_path("a/b/c")).unwrap().is_dir());
+        assert!(tree.entry_for_path(rel_path("a/b")).unwrap().is_dir());
     });
 
     // Test smallest change
@@ -1442,8 +1442,8 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
                 .is_file()
         );
         assert!(tree.entry_for_path(rel_path("d/e/f")).unwrap().is_dir());
-        assert!(tree.entry_for_path(rel_path("d/e/")).unwrap().is_dir());
-        assert!(tree.entry_for_path(rel_path("d/")).unwrap().is_dir());
+        assert!(tree.entry_for_path(rel_path("d/e")).unwrap().is_dir());
+        assert!(tree.entry_for_path(rel_path("d")).unwrap().is_dir());
     });
 }
 

@@ -10,7 +10,7 @@ use std::{
 };
 
 #[repr(transparent)]
-#[derive(PartialEq, Debug, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[derive(PartialEq, Debug, Eq, Hash, Serialize)]
 pub struct RelPath(str);
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -111,6 +111,9 @@ impl RelPath {
     }
 
     pub fn strip_prefix(&self, other: &Self) -> Result<&Self> {
+        if other.is_empty() {
+            return Ok(self);
+        }
         if let Some(suffix) = self.0.strip_prefix(&other.0) {
             if suffix.starts_with('/') {
                 return Ok(unsafe { Self::new_unchecked(&suffix[1..]) });
@@ -118,7 +121,7 @@ impl RelPath {
                 return Ok(Self::empty());
             }
         }
-        Err(anyhow!("failed to strip prefix"))
+        Err(anyhow!("failed to strip prefix: {other:?} from {self:?}"))
     }
 
     pub fn len(&self) -> usize {
@@ -197,6 +200,18 @@ impl RelPath {
 
     pub fn as_std_path(&self) -> &Path {
         Path::new(&self.0)
+    }
+}
+
+impl PartialOrd for RelPath {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RelPath {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.components().cmp(other.components())
     }
 }
 
@@ -419,6 +434,15 @@ mod tests {
                 RelPath::new(lhs).unwrap().cmp(RelPath::new(rhs).unwrap())
             );
         }
+    }
+
+    #[test]
+    fn test_strip_prefix() {
+        let parent = rel_path("");
+        let child = rel_path(".foo");
+
+        assert!(child.starts_with(parent));
+        assert_eq!(child.strip_prefix(parent).unwrap(), child);
     }
 
     #[test]
