@@ -183,7 +183,13 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
             .flat_map(|snapshot| {
                 snapshot
                     .entries(false, 0)
-                    .map(move |entry| snapshot.absolutize(&entry.path))
+                    .map(move |entry| {
+                        snapshot
+                            .root_name()
+                            .join(&entry.path)
+                            .as_std_path()
+                            .to_path_buf()
+                    })
                     .filter(|path| path_matcher.is_match(&path))
             })
             .collect())

@@ -192,8 +192,9 @@ impl Tool for ListDirectoryTool {
             }
 
             let full_path = worktree_snapshot
-                .absolutize(&entry.path)
-                .display()
+                .root_name()
+                .join(&entry.path)
+                .display(worktree_snapshot.path_style())
                 .to_string();
             if entry.is_dir() {
                 folders.push(full_path);

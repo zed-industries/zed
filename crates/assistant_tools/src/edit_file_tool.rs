@@ -1238,7 +1238,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::fs;
-    use util::{path, paths::PathStyle};
+    use util::{path, rel_path::rel_path};
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -1357,13 +1357,10 @@ mod tests {
         cx.update(|cx| resolve_path(&input, project, cx))
     }
 
+    #[track_caller]
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
-        let actual = path
-            .expect("Should return valid path")
-            .path
-            .display(PathStyle::local())
-            .into_owned();
-        assert_eq!(actual, expected);
+        let actual = path.expect("Should return valid path").path;
+        assert_eq!(actual.as_ref(), rel_path(expected));
     }
 
     #[test]
@@ -2203,12 +2200,7 @@ mod tests {
             ("", false, "Empty path is treated as project root"),
             // Root directory
             ("/", true, "Root directory should be outside project"),
-            // Parent directory references - find_project_path resolves these
-            (
-                "project/../other",
-                false,
-                "Path with .. is resolved by find_project_path",
-            ),
+            ("project/../other", true, "Path with .. is outside project"),
             (
                 "project/./src/file.rs",
                 false,
