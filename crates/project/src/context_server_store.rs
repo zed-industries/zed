@@ -99,13 +99,17 @@ pub enum ContextServerConfiguration {
         command: ContextServerCommand,
         settings: serde_json::Value,
     },
+    Remote {
+        url: url::Url,
+    },
 }
 
 impl ContextServerConfiguration {
-    pub fn command(&self) -> &ContextServerCommand {
+    pub fn command(&self) -> Option<&ContextServerCommand> {
         match self {
-            ContextServerConfiguration::Custom { command } => command,
-            ContextServerConfiguration::Extension { command, .. } => command,
+            ContextServerConfiguration::Custom { command } => Some(command),
+            ContextServerConfiguration::Extension { command, .. } => Some(command),
+            ContextServerConfiguration::Remote { .. } => None,
         }
     }
 
@@ -133,6 +137,10 @@ impl ContextServerConfiguration {
                 let command = descriptor.command(worktree_store, cx).await.log_err()?;
 
                 Some(ContextServerConfiguration::Extension { command, settings })
+            }
+            ContextServerSettings::Remote { enabled: _, url } => {
+                let url = url::Url::parse(&url).log_err()?;
+                Some(ContextServerConfiguration::Remote { url })
             }
         }
     }
@@ -472,31 +480,37 @@ impl ContextServerStore {
         configuration: Arc<ContextServerConfiguration>,
         cx: &mut Context<Self>,
     ) -> Arc<ContextServer> {
-        let root_path = self
-            .project
-            .read_with(cx, |project, cx| project.active_project_directory(cx))
-            .ok()
-            .flatten()
-            .or_else(|| {
-                self.worktree_store.read_with(cx, |store, cx| {
-                    store.visible_worktrees(cx).fold(None, |acc, item| {
-                        if acc.is_none() {
-                            item.read(cx).root_dir()
-                        } else {
-                            acc
-                        }
-                    })
-                })
-            });
-
         if let Some(factory) = self.context_server_factory.as_ref() {
-            factory(id, configuration)
-        } else {
-            Arc::new(ContextServer::stdio(
-                id,
-                configuration.command().clone(),
-                root_path,
-            ))
+            return factory(id, configuration);
+        }
+
+        match configuration.as_ref() {
+            ContextServerConfiguration::Remote { url } => {
+                Arc::new(ContextServer::from_url(id, url, cx).unwrap())
+            }
+            _ => {
+                let root_path = self
+                    .project
+                    .read_with(cx, |project, cx| project.active_project_directory(cx))
+                    .ok()
+                    .flatten()
+                    .or_else(|| {
+                        self.worktree_store.read_with(cx, |store, cx| {
+                            store.visible_worktrees(cx).fold(None, |acc, item| {
+                                if acc.is_none() {
+                                    item.read(cx).root_dir()
+                                } else {
+                                    acc
+                                }
+                            })
+                        })
+                    });
+                Arc::new(ContextServer::stdio(
+                    id,
+                    configuration.command().unwrap().clone(),
+                    root_path,
+                ))
+            }
         }
     }
 
@@ -1217,6 +1231,60 @@ mod tests {
                 });
             })
         });
+    }
+
+    #[gpui::test]
+    async fn test_remote_context_server(cx: &mut TestAppContext) {
+        const SERVER_ID: &str = "remote-server";
+        let server_id = ContextServerId(SERVER_ID.into());
+        let server_url = "http://example.com/api";
+
+        let (_fs, project) = setup_context_server_test(
+            cx,
+            json!({ "code.rs": "" }),
+            vec![(
+                SERVER_ID.into(),
+                ContextServerSettings::Remote {
+                    enabled: true,
+                    url: server_url.to_string(),
+                },
+            )],
+        )
+        .await;
+
+        let executor = cx.executor();
+        let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+        let store = cx.new(|cx| {
+            ContextServerStore::test_maintain_server_loop(
+                Box::new(move |id, config| {
+                    assert_eq!(id.0.as_ref(), SERVER_ID);
+                    match config.as_ref() {
+                        ContextServerConfiguration::Remote { url } => {
+                            assert_eq!(url.as_str(), server_url);
+                        }
+                        _ => panic!("Expected remote configuration"),
+                    }
+                    Arc::new(ContextServer::new(
+                        id.clone(),
+                        Arc::new(create_fake_transport(id.0.to_string(), executor.clone())),
+                    ))
+                }),
+                registry.clone(),
+                project.read(cx).worktree_store(),
+                project.downgrade(),
+                cx,
+            )
+        });
+
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
     }
 
     struct ServerEvents {

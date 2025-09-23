@@ -1,11 +1,11 @@
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
-use futures::{io::AsyncReadExt, stream, Stream, StreamExt};
+use futures::{io::AsyncReadExt, stream, Stream};
 use http_client::{
     http::Method,
     AsyncBody, HttpClient, Request,
 };
-use postage::prelude::Sink;
+use postage::prelude::{Sink, Stream as _};
 use std::{
     pin::Pin,
     sync::{Arc, Mutex},
@@ -43,7 +43,7 @@ impl Transport for HttpTransport {
 
         let http_client = self.http_client.clone();
         let mut tx = self.tx.lock().unwrap().take().ok_or_else(|| anyhow!("transport already used"))?;
-        gpui::spawn(async move {
+        smol::spawn(async move {
             let res = async {
                 let mut response = http_client.send(request).await?;
 
@@ -67,7 +67,10 @@ impl Transport for HttpTransport {
     fn receive(&self) -> Pin<Box<dyn Stream<Item = String> + Send>> {
         if let Some(mut rx) = self.rx.lock().unwrap().take() {
             Box::pin(stream::once(async move {
-                rx.recv().await.unwrap_or_else(|_| Ok("".to_string())).unwrap_or_default()
+                match rx.recv().await {
+                    Some(Ok(response)) => response,
+                    _ => "".to_string(),
+                }
             }))
         } else {
             Box::pin(stream::empty())

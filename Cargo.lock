@@ -3648,7 +3648,6 @@ dependencies = [
  "settings",
  "smol",
  "tempfile",
- "tokio",
  "url",
  "util",
  "workspace-hack",

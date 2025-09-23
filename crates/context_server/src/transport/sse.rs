@@ -53,7 +53,7 @@ impl Transport for SseTransport {
         let mut tx = self.tx.lock().unwrap().take().ok_or_else(|| anyhow!("transport already used"))?;
         let mut err_tx = self.err_tx.lock().unwrap().take().ok_or_else(|| anyhow!("transport already used"))?;
 
-        gpui::spawn(async move {
+        smol::spawn(async move {
             let response = http_client.send(request).await;
             match response {
                 Ok(response) => {
