@@ -253,6 +253,7 @@ mod windows {
         path::{Path, PathBuf},
         process::{self, Command},
     };
+    use winreg::{RegKey, enums::*};
 
     pub(super) fn build() {
         // Compile HLSL shaders
@@ -325,6 +326,21 @@ mod windows {
         }
     }
 
+    fn find_windows_sdk_bin() -> String {
+        if let Ok(key) = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey("SOFTWARE\\WOW6432Node\\Microsoft\\Microsoft SDKs\\Windows\\v10.0")
+        {
+            let install_folder: String = key.get_value("InstallationFolder").unwrap_or_default(); // "C:\Program Files (x86)\Windows Kits\10\"
+            let product_version: String = key.get_value("ProductVersion").unwrap_or_default(); // "10.0.22621" NOTE: does not include trailing `.0`
+
+            if !install_folder.is_empty() && !product_version.is_empty() {
+                return format!("{}bin\\{}.0\\x64\\", install_folder, product_version);
+            }
+        }
+
+        String::default()
+    }
+
     /// You can set the `GPUI_FXC_PATH` environment variable to specify the path to the fxc.exe compiler.
     fn find_fxc_compiler() -> String {
         // Check environment variable
@@ -345,12 +361,11 @@ mod windows {
             return path.trim().to_string();
         }
 
-        // Check the default path
-        if Path::new(r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe")
-            .exists()
-        {
-            return r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\fxc.exe"
-                .to_string();
+        // Try to find the latest Windows SDK path in registry.
+        let path = format!("{}{}", find_windows_sdk_bin(), "fxc.exe");
+
+        if Path::new(&path).exists() {
+            return path;
         }
 
         panic!("Failed to find fxc.exe");
