@@ -44,7 +44,7 @@ impl RelPath {
         if path_style == PathStyle::Windows {
             if path.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
                 && let Some(path) = path[1..].strip_prefix(':')
-                && let Some(_) = path.strip_prefix('\\')
+                && (path.starts_with('/') || path.starts_with('\\'))
             {
                 return Err(anyhow!("absolute path not allowed: {path:?}"));
             }
@@ -398,33 +398,40 @@ mod tests {
     #[test]
     fn test_rel_path_components() {
         let path = rel_path("foo/bar/baz");
+        assert_eq!(
+            path.components().collect::<Vec<_>>(),
+            vec!["foo", "bar", "baz"]
+        );
+        assert_eq!(
+            path.components().rev().collect::<Vec<_>>(),
+            vec!["baz", "bar", "foo"]
+        );
+
+        let path = rel_path("");
         let mut components = path.components();
-        assert_eq!(components.next(), Some("foo"));
-        assert_eq!(components.next(), Some("bar"));
-        assert_eq!(components.next(), Some("baz"));
         assert_eq!(components.next(), None);
     }
 
     #[test]
     fn test_rel_path_ancestors() {
         let path = rel_path("foo/bar/baz");
-        let mut components = path.ancestors();
-        assert_eq!(components.next(), Some(rel_path("foo/bar/baz")));
-        assert_eq!(components.next(), Some(rel_path("foo/bar")));
-        assert_eq!(components.next(), Some(rel_path("foo")));
-        assert_eq!(components.next(), Some(rel_path("")));
-        assert_eq!(components.next(), None);
+        let mut ancestors = path.ancestors();
+        assert_eq!(ancestors.next(), Some(rel_path("foo/bar/baz")));
+        assert_eq!(ancestors.next(), Some(rel_path("foo/bar")));
+        assert_eq!(ancestors.next(), Some(rel_path("foo")));
+        assert_eq!(ancestors.next(), Some(rel_path("")));
+        assert_eq!(ancestors.next(), None);
 
         let path = rel_path("foo");
-        let mut components = path.ancestors();
-        assert_eq!(components.next(), Some(rel_path("foo")));
-        assert_eq!(components.next(), Some(RelPath::empty()));
-        assert_eq!(components.next(), None);
+        let mut ancestors = path.ancestors();
+        assert_eq!(ancestors.next(), Some(rel_path("foo")));
+        assert_eq!(ancestors.next(), Some(RelPath::empty()));
+        assert_eq!(ancestors.next(), None);
 
         let path = RelPath::empty();
-        let mut components = path.ancestors();
-        assert_eq!(components.next(), Some(RelPath::empty()));
-        assert_eq!(components.next(), None);
+        let mut ancestors = path.ancestors();
+        assert_eq!(ancestors.next(), Some(RelPath::empty()));
+        assert_eq!(ancestors.next(), None);
     }
 
     #[test]

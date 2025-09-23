@@ -1902,7 +1902,9 @@ fn path_for_file<'a>(
     if height > 0 {
         let mut full_path = file.full_path(cx);
         if !include_filename {
-            full_path.pop();
+            if !full_path.pop() {
+                return None;
+            }
         }
         Some(full_path.to_string_lossy().to_string().into())
     } else {
