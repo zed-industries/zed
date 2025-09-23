@@ -21695,7 +21695,9 @@ dependencies = [
  "anyhow",
  "clap",
  "client",
+ "cloud_zeta2_prompt",
  "debug_adapter_extension",
+ "edit_prediction_context",
  "extension",
  "fs",
  "futures 0.3.31",
@@ -21722,6 +21724,7 @@ dependencies = [
  "watch",
  "workspace-hack",
  "zeta",
+ "zeta2",
 ]
 
 [[package]]

@@ -22,7 +22,7 @@ pub struct PlannedPrompt<'a> {
 }
 
 pub struct PlanOptions {
-    max_bytes: usize,
+    pub max_bytes: usize,
 }
 
 #[derive(Clone, Debug)]

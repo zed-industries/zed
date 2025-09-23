@@ -48,7 +48,7 @@ pub struct Zeta {
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     projects: HashMap<EntityId, ZetaProject>,
-    excerpt_options: EditPredictionExcerptOptions,
+    pub excerpt_options: EditPredictionExcerptOptions,
     update_required: bool,
 }
 
@@ -87,7 +87,7 @@ impl Zeta {
             })
     }
 
-    fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
+    pub fn new(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut Context<Self>) -> Self {
         let refresh_llm_token_listener = RefreshLlmTokenListener::global(cx);
 
         Self {
@@ -477,6 +477,66 @@ impl Zeta {
                 );
             }
         }
+    }
+
+    // TODO: Dedupe with similar code in request_prediction?
+    pub fn cloud_request_for_zeta_cli(
+        &mut self,
+        project: &Entity<Project>,
+        buffer: &Entity<Buffer>,
+        position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<predict_edits_v3::PredictEditsRequest>> {
+        let project_state = self.projects.get(&project.entity_id());
+
+        let index_state = project_state.map(|state| {
+            state
+                .syntax_index
+                .read_with(cx, |index, _cx| index.state().clone())
+        });
+        let excerpt_options = self.excerpt_options.clone();
+        let snapshot = buffer.read(cx).snapshot();
+        let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx)) else {
+            return Task::ready(Err(anyhow!("No file path for excerpt")));
+        };
+        let worktree_snapshots = project
+            .read(cx)
+            .worktrees(cx)
+            .map(|worktree| worktree.read(cx).snapshot())
+            .collect::<Vec<_>>();
+
+        cx.background_spawn(async move {
+            let index_state = if let Some(index_state) = index_state {
+                Some(index_state.lock_owned().await)
+            } else {
+                None
+            };
+
+            let cursor_point = position.to_point(&snapshot);
+
+            let debug_info = true;
+            EditPredictionContext::gather_context(
+                cursor_point,
+                &snapshot,
+                &excerpt_options,
+                index_state.as_deref(),
+            )
+            .context("Failed to selecte excerpt")
+            .map(|context| {
+                make_cloud_request(
+                    excerpt_path.clone(),
+                    context,
+                    // TODO pass everything
+                    Vec::new(),
+                    false,
+                    Vec::new(),
+                    None,
+                    debug_info,
+                    &worktree_snapshots,
+                    index_state.as_deref(),
+                )
+            })
+        })
     }
 }
 
