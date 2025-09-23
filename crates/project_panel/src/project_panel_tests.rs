@@ -6,7 +6,7 @@ use project::{FakeFs, WorktreeSettings};
 use serde_json::json;
 use settings::SettingsStore;
 use std::path::{Path, PathBuf};
-use util::{path, rel_path::rel_path};
+use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
     AppState, ItemHandle, Pane,
     item::{Item, ProjectItem},
@@ -978,7 +978,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
             "    > a",
             "    > b",
             "    > C",
-            "      [PROCESSING: '/bdir1/dir2/the-new-filename']  <== selected",
+            "      [PROCESSING: 'bdir1/dir2/the-new-filename']  <== selected",
             "      .dockerignore",
             "v root2",
             "    > d",
@@ -1068,7 +1068,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
         &[
             "v root1",
             "    > .git",
-            "      [PROCESSING: 'new_dir/']  <== selected",
+            "      [PROCESSING: 'new_dir']  <== selected",
             "      .dockerignore",
         ]
     );
@@ -1992,7 +1992,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         })
         .unwrap();
 
-    select_path(&panel, "src/", cx);
+    select_path(&panel, "src", cx);
     panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
     cx.executor().run_until_parked();
     assert_eq!(
@@ -2045,7 +2045,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
         "File list should be unchanged after failed folder create confirmation"
     );
 
-    select_path(&panel, "src/test/", cx);
+    select_path(&panel, "src/test", cx);
     panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
     cx.executor().run_until_parked();
     assert_eq!(
@@ -4114,7 +4114,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
         })
         .unwrap();
 
-    select_path(&panel, "src/", cx);
+    select_path(&panel, "src", cx);
     panel.update_in(cx, |panel, window, cx| panel.confirm(&Confirm, window, cx));
     cx.executor().run_until_parked();
     assert_eq!(
@@ -6262,8 +6262,8 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
     let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
-    let file1_path = path!("root/file1.txt");
-    let file2_path = path!("root/file2.txt");
+    let file1_path = "root/file1.txt";
+    let file2_path = "root/file2.txt";
     select_path_with_mark(&panel, file1_path, cx);
     select_path_with_mark(&panel, file2_path, cx);
 
@@ -6289,7 +6289,11 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
             assert_eq!(diff_view.tab_content_text(0, cx), "file1.txt ↔ file2.txt");
             assert_eq!(
                 diff_view.tab_tooltip_text(cx).unwrap(),
-                format!("{} ↔ {}", file1_path, file2_path)
+                format!(
+                    "{} ↔ {}",
+                    rel_path(file1_path).display(PathStyle::local()),
+                    rel_path(file2_path).display(PathStyle::local())
+                )
             );
         })
         .unwrap();

@@ -1459,8 +1459,12 @@ impl ProjectPanel {
         } else {
             filename.ends_with('/')
         };
-        let filename =
-            RelPath::from_std_path(filename.trim_start_matches('/').as_ref(), path_style).ok()?;
+        let filename = if path_style.is_windows() {
+            filename.trim_start_matches(&['/', '\\'])
+        } else {
+            filename.trim_start_matches('/')
+        };
+        let filename = RelPath::from_std_path(filename.as_ref(), path_style).ok()?;
 
         edit_state.is_dir =
             edit_state.is_dir || (edit_state.is_new_entry() && filename_indicates_dir);
@@ -2392,10 +2396,13 @@ impl ProjectPanel {
         cx: &App,
     ) -> Option<(Arc<RelPath>, Option<Range<usize>>)> {
         let mut new_path = target_entry.path.to_rel_path_buf();
+        dbg!(&new_path);
         // If we're pasting into a file, or a directory into itself, go up one level.
         if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
+            dbg!();
             new_path.pop();
         }
+        dbg!(&new_path);
         let clipboard_entry_file_name = self
             .project
             .read(cx)
@@ -2404,6 +2411,7 @@ impl ProjectPanel {
             .file_name()?
             .to_string();
         new_path.push(RelPath::new(&clipboard_entry_file_name).unwrap());
+        dbg!(&new_path);
         let extension = new_path.extension().map(|s| s.to_string());
         let file_name_without_extension = new_path.file_stem()?.to_string();
         let file_name_len = file_name_without_extension.len();
@@ -2432,6 +2440,9 @@ impl ProjectPanel {
                 }
 
                 new_path.push(RelPath::new(&new_file_name).unwrap());
+
+                dbg!(&new_path);
+
                 disambiguation_range = Some(file_name_len..(file_name_len + disambiguation_len));
                 ix += 1;
             }
@@ -2442,12 +2453,14 @@ impl ProjectPanel {
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
+            dbg!();
             let entry = entry.clone();
             let worktree_id = worktree.read(cx).id();
             let clipboard_entries = self
                 .clipboard
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
+            dbg!();
 
             enum PasteTask {
                 Rename(Task<Result<CreatedEntry>>),
@@ -2458,18 +2471,22 @@ impl ProjectPanel {
             let mut disambiguation_range = None;
             let clip_is_cut = clipboard_entries.is_cut();
             for clipboard_entry in clipboard_entries.items() {
+                dbg!(&clipboard_entry);
                 let (new_path, new_disambiguation_range) =
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
+                dbg!(&new_path, &new_disambiguation_range);
                 let clip_entry_id = clipboard_entry.entry_id;
                 let task = if clipboard_entries.is_cut() {
                     let task = self.project.update(cx, |project, cx| {
                         project.rename_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
                     });
+                    dbg!();
                     PasteTask::Rename(task)
                 } else {
                     let task = self.project.update(cx, |project, cx| {
                         project.copy_entry(clip_entry_id, (worktree_id, new_path).into(), cx)
                     });
+                    dbg!();
                     PasteTask::Copy(task)
                 };
                 paste_tasks.push(task);
@@ -2477,17 +2494,20 @@ impl ProjectPanel {
             }
 
             let item_count = paste_tasks.len();
+            dbg!(item_count);
 
             cx.spawn_in(window, async move |project_panel, cx| {
                 let mut last_succeed = None;
                 for task in paste_tasks {
                     match task {
                         PasteTask::Rename(task) => {
+                            dbg!();
                             if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
                                 last_succeed = Some(entry);
                             }
                         }
                         PasteTask::Copy(task) => {
+                            dbg!();
                             if let Some(Some(entry)) = task.await.log_err() {
                                 last_succeed = Some(entry);
                             }
@@ -2498,14 +2518,17 @@ impl ProjectPanel {
                 if let Some(entry) = last_succeed {
                     project_panel
                         .update_in(cx, |project_panel, window, cx| {
+                            dbg!();
                             project_panel.selection = Some(SelectedEntry {
                                 worktree_id,
                                 entry_id: entry.id,
                             });
 
                             if item_count == 1 {
+                                dbg!();
                                 // open entry if not dir, and only focus if rename is not pending
                                 if !entry.is_dir() {
+                                    dbg!();
                                     project_panel.open_entry(
                                         entry.id,
                                         disambiguation_range.is_none(),
@@ -2516,6 +2539,7 @@ impl ProjectPanel {
 
                                 // if only one entry was pasted and it was disambiguated, open the rename editor
                                 if disambiguation_range.is_some() {
+                                    dbg!();
                                     cx.defer_in(window, |this, window, cx| {
                                         this.rename_impl(disambiguation_range, window, cx);
                                     });

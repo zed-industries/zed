@@ -234,11 +234,15 @@ impl RelPathBuf {
     pub fn pop(&mut self) {
         if let Some(ix) = self.0.rfind('/') {
             self.0.truncate(ix);
+        } else {
+            self.0.clear();
         }
     }
 
     pub fn push(&mut self, path: &RelPath) {
-        self.0.push('/');
+        if !self.is_empty() {
+            self.0.push('/');
+        }
         self.0.push_str(&path.0);
     }
 
@@ -458,6 +462,26 @@ mod tests {
         assert!(RelPath::from_std_path(Path::new("/a/b"), PathStyle::Windows).is_err());
         assert!(RelPath::from_std_path(Path::new("/a/b"), PathStyle::Posix).is_err());
         assert!(RelPath::from_std_path(Path::new("C:/a/b"), PathStyle::Windows).is_err());
+        assert!(RelPath::from_std_path(Path::new("C:\\a\\b"), PathStyle::Windows).is_err());
         assert!(RelPath::from_std_path(Path::new("C:/a/b"), PathStyle::Posix).is_ok());
+    }
+
+    #[test]
+    fn test_push() {
+        assert_eq!(rel_path("a/b").push("c").unwrap().as_str(), "a/b/c");
+        assert_eq!(rel_path("").push("c").unwrap().as_str(), "c");
+        assert!(rel_path("a/b").push("").is_err());
+        assert!(rel_path("a/b").push("c/d").is_err());
+    }
+
+    #[test]
+    fn test_pop() {
+        let mut path = rel_path("a/b").to_rel_path_buf();
+        path.pop();
+        assert_eq!(path.as_rel_path().as_str(), "a");
+        path.pop();
+        assert_eq!(path.as_rel_path().as_str(), "");
+        path.pop();
+        assert_eq!(path.as_rel_path().as_str(), "");
     }
 }
