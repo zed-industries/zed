@@ -4,11 +4,11 @@ use fuzzy::StringMatchCandidate;
 use git::repository::Worktree as GitWorktree;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, WeakEntity, Window, rems,
+    InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
+    PathPromptOptions, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use project::git_store::Repository;
+use project::{DirectoryLister, git_store::Repository};
 use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
@@ -47,6 +47,7 @@ impl WorktreeList {
         cx: &mut Context<Self>,
     ) -> Self {
         let all_worktrees_request = repository
+            .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
 
         cx.spawn_in(window, async move |this, cx| {
@@ -65,7 +66,7 @@ impl WorktreeList {
         })
         .detach_and_log_err(cx);
 
-        let delegate = WorktreeListDelegate::new(workspace, window, cx);
+        let delegate = WorktreeListDelegate::new(workspace, repository, window, cx);
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
@@ -124,12 +125,14 @@ impl Render for WorktreeList {
 struct WorktreeEntry {
     worktree: GitWorktree,
     positions: Vec<usize>,
+    is_new: bool,
 }
 
 pub struct WorktreeListDelegate {
     matches: Vec<WorktreeEntry>,
     all_worktrees: Option<Vec<GitWorktree>>,
     workspace: WeakEntity<Workspace>,
+    repo: Option<Entity<Repository>>,
     selected_index: usize,
     last_query: String,
     modifiers: Modifiers,
@@ -139,6 +142,7 @@ pub struct WorktreeListDelegate {
 impl WorktreeListDelegate {
     fn new(
         workspace: WeakEntity<Workspace>,
+        repo: Option<Entity<Repository>>,
         _window: &mut Window,
         cx: &mut Context<WorktreeList>,
     ) -> Self {
@@ -147,10 +151,75 @@ impl WorktreeListDelegate {
             all_worktrees: None,
             workspace,
             selected_index: 0,
+            repo,
             last_query: Default::default(),
             modifiers: Default::default(),
             focus_handle: cx.focus_handle(),
         }
+    }
+
+    fn create_worktree(
+        &self,
+        worktree_name: &str,
+        replace_current_window: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let workspace = self.workspace.clone();
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+
+        let worktree_path = self
+            .workspace
+            .clone()
+            .update(cx, |this, cx| {
+                this.prompt_for_open_path(
+                    PathPromptOptions {
+                        files: false,
+                        directories: true,
+                        multiple: false,
+                        prompt: Some("Select directory for new worktree".into()),
+                    },
+                    DirectoryLister::Project(this.project().clone()),
+                    window,
+                    cx,
+                )
+            })
+            .log_err();
+        let Some(worktree_path) = worktree_path else {
+            return;
+        };
+
+        let name = worktree_name.to_string();
+        cx.spawn_in(window, async move |_, cx| {
+            let Some(paths) = worktree_path.await? else {
+                return anyhow::Ok(());
+            };
+            let path = paths.get(0).cloned().context("No path selected")?;
+
+            repo.update(cx, |repo, _| {
+                repo.create_worktree(name.clone(), path.clone(), None)
+            })?
+            .await??;
+
+            let final_path = path.join(name);
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    workspace.open_workspace_for_paths(
+                        replace_current_window,
+                        vec![final_path],
+                        window,
+                        cx,
+                    )
+                })?
+                .await?;
+
+            anyhow::Ok(())
+        })
+        .detach_and_prompt_err("Failed to create worktree", window, cx, |e, _, _| {
+            Some(e.to_string())
+        });
     }
 
     fn open_worktree(
@@ -170,7 +239,7 @@ impl WorktreeListDelegate {
             open_task?.await?;
             anyhow::Ok(())
         })
-        .detach_and_prompt_err("Failed open worktree", window, cx, |e, _, _| {
+        .detach_and_prompt_err("Failed to open worktree", window, cx, |e, _, _| {
             Some(e.to_string())
         });
 
@@ -217,12 +286,13 @@ impl PickerDelegate for WorktreeListDelegate {
         };
 
         cx.spawn_in(window, async move |picker, cx| {
-            let matches: Vec<WorktreeEntry> = if query.is_empty() {
+            let mut matches: Vec<WorktreeEntry> = if query.is_empty() {
                 all_worktrees
                     .into_iter()
                     .map(|worktree| WorktreeEntry {
                         worktree,
                         positions: Vec::new(),
+                        is_new: false,
                     })
                     .collect()
             } else {
@@ -245,11 +315,28 @@ impl PickerDelegate for WorktreeListDelegate {
                 .map(|candidate| WorktreeEntry {
                     worktree: all_worktrees[candidate.candidate_id].clone(),
                     positions: candidate.positions,
+                    is_new: false,
                 })
                 .collect()
             };
             picker
                 .update(cx, |picker, _| {
+                    if !query.is_empty()
+                        && !matches
+                            .first()
+                            .is_some_and(|entry| entry.worktree.name() == query)
+                    {
+                        let query = query.replace(' ', "-");
+                        matches.push(WorktreeEntry {
+                            worktree: GitWorktree {
+                                path: Default::default(),
+                                ref_name: format!("refs/heads/{query}").into(),
+                                sha: Default::default(),
+                            },
+                            positions: Vec::new(),
+                            is_new: true,
+                        })
+                    }
                     let delegate = &mut picker.delegate;
                     delegate.matches = matches;
                     if delegate.matches.is_empty() {
@@ -268,9 +355,13 @@ impl PickerDelegate for WorktreeListDelegate {
         let Some(entry) = self.matches.get(self.selected_index()) else {
             return;
         };
-
-        // If secondary click, we open on a new window
-        self.open_worktree(&entry.worktree.path, secondary, window, cx);
+        if entry.is_new {
+            // We handle worktree creation logic
+            self.create_worktree(&entry.worktree.name(), secondary, window, cx);
+        } else {
+            // If secondary click, we open on a new window
+            self.open_worktree(&entry.worktree.path, secondary, window, cx);
+        }
 
         cx.emit(DismissEvent);
     }
@@ -296,10 +387,25 @@ impl PickerDelegate for WorktreeListDelegate {
             .take(7)
             .collect::<String>();
 
-        let worktree_name =
+        let worktree_name = if entry.is_new {
+            h_flex()
+                .gap_1()
+                .child(
+                    Icon::new(IconName::Plus)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    Label::new(format!("Create worktree \"{}\"…", entry.worktree.name()))
+                        .single_line()
+                        .truncate(),
+                )
+                .into_any_element()
+        } else {
             HighlightedLabel::new(entry.worktree.name().to_owned(), entry.positions.clone())
                 .truncate()
-                .into_any_element();
+                .into_any_element()
+        };
 
         Some(
             ListItem::new(SharedString::from(format!("worktree-menu-{ix}")))
@@ -320,19 +426,23 @@ impl PickerDelegate for WorktreeListDelegate {
                                 .justify_between()
                                 .overflow_x_hidden()
                                 .child(worktree_name)
-                                .child(
-                                    Label::new(sha)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_element(),
-                                ),
+                                .when(!entry.is_new, |el| {
+                                    el.child(
+                                        Label::new(sha)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted)
+                                            .into_element(),
+                                    )
+                                }),
                         )
-                        .child(div().max_w_96().child({
-                            Label::new(path)
-                                .size(LabelSize::Small)
-                                .truncate()
-                                .color(Color::Muted)
-                        })),
+                        .when(!entry.is_new, |el| {
+                            el.child(div().max_w_96().child({
+                                Label::new(path)
+                                    .size(LabelSize::Small)
+                                    .truncate()
+                                    .color(Color::Muted)
+                            }))
+                        }),
                 ),
         )
     }

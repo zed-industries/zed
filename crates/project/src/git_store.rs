@@ -446,6 +446,7 @@ impl GitStore {
         client.add_entity_message_handler(Self::handle_remove_repository);
         client.add_entity_request_handler(Self::handle_git_clone);
         client.add_entity_request_handler(Self::handle_get_worktrees);
+        client.add_entity_request_handler(Self::handle_create_worktree);
     }
 
     pub fn is_local(&self) -> bool {
@@ -1952,6 +1953,26 @@ impl GitStore {
                 .map(|worktree| worktree_to_proto(&worktree))
                 .collect::<Vec<_>>(),
         })
+    }
+
+    async fn handle_create_worktree(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateWorktree>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let directory = PathBuf::from(envelope.payload.directory);
+        let name = envelope.payload.name;
+        let commit = envelope.payload.commit;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_worktree(name, directory, commit)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
     }
 
     async fn handle_get_branches(
@@ -4450,6 +4471,38 @@ impl Repository {
                 }
             }
         })
+    }
+
+    pub fn create_worktree(
+        &mut self,
+        name: String,
+        path: PathBuf,
+        commit: Option<String>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some("git worktree add".into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.create_worktree(name, path, commit).await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        client
+                            .request(proto::GitCreateWorktree {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                name,
+                                directory: path.to_string_lossy().to_string(),
+                                commit,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
     }
 
     pub fn default_branch(&mut self) -> oneshot::Receiver<Result<Option<SharedString>>> {

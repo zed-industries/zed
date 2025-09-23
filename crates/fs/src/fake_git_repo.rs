@@ -391,6 +391,15 @@ impl GitRepository for FakeGitRepository {
         unimplemented!()
     }
 
+    fn create_worktree(
+        &self,
+        _: String,
+        _: PathBuf,
+        _: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        unimplemented!()
+    }
+
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>> {
         self.with_state_async(true, |state| {
             state.current_branch_name = Some(name);

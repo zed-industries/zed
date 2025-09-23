@@ -440,6 +440,13 @@ pub trait GitRepository: Send + Sync {
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
+    fn create_worktree(
+        &self,
+        name: String,
+        directory: PathBuf,
+        from_commit: Option<String>,
+    ) -> BoxFuture<'_, Result<()>>;
+
     fn reset(
         &self,
         commit: String,
@@ -1269,6 +1276,41 @@ impl GitRepository for RealGitRepository {
                 if output.status.success() {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     Ok(parse_worktrees_from_str(&stdout))
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    anyhow::bail!("git worktree list failed: {stderr}");
+                }
+            })
+            .boxed()
+    }
+
+    fn create_worktree(
+        &self,
+        name: String,
+        directory: PathBuf,
+        from_commit: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.any_git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let final_path = directory.join(name);
+        let mut args = vec![
+            OsString::from("--no-optional-locks"),
+            OsString::from("worktree"),
+            OsString::from("add"),
+            OsString::from(final_path.as_os_str()),
+        ];
+        if let Some(from_commit) = from_commit {
+            args.push(OsString::from(from_commit));
+        }
+        self.executor
+            .spawn(async move {
+                let output = new_smol_command(&git_binary_path)
+                    .current_dir(working_directory?)
+                    .args(args)
+                    .output()
+                    .await?;
+                if output.status.success() {
+                    Ok(())
                 } else {
                     let stderr = String::from_utf8_lossy(&output.stderr);
                     anyhow::bail!("git worktree list failed: {stderr}");
