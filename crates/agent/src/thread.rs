@@ -3258,6 +3258,7 @@ mod tests {
     use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
     use assistant_tool::ToolRegistry;
     use assistant_tools;
+    use fs::Fs;
     use futures::StreamExt;
     use futures::future::BoxFuture;
     use futures::stream::BoxStream;
@@ -3281,9 +3282,10 @@ mod tests {
 
     #[gpui::test]
     async fn test_message_with_context(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3358,9 +3360,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_only_include_new_contexts(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({
                 "file1.rs": "fn function1() {}\n",
@@ -3514,9 +3517,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_message_without_files(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3593,9 +3597,10 @@ fn main() {{
     #[gpui::test]
     #[ignore] // turn this test on when project_notifications tool is re-enabled
     async fn test_stale_buffer_notification(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3721,9 +3726,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_storing_profile_setting_per_thread(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3743,9 +3749,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_serializing_thread_profile(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3786,9 +3793,10 @@ fn main() {{
 
     #[gpui::test]
     async fn test_temperature_setting(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
         let project = create_test_project(
+            &fs,
             cx,
             json!({"code.rs": "fn main() {\n    println!(\"Hello, world!\");\n}"}),
         )
@@ -3880,9 +3888,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_thread_summary(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
 
         let (_, _thread_store, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
@@ -3965,9 +3973,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_thread_summary_error_set_manually(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
 
         let (_, _thread_store, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
@@ -3987,9 +3995,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_thread_summary_error_retry(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
 
         let (_, _thread_store, thread, _context_store, model) =
             setup_test_environment(cx, project.clone()).await;
@@ -4141,9 +4149,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_retry_on_overloaded_error(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4219,9 +4227,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_retry_on_internal_server_error(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4301,9 +4309,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_exponential_backoff_on_retries(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4421,9 +4429,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_max_retries_exceeded(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4512,9 +4520,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_retry_message_removed_on_retry(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4685,9 +4693,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_successful_completion_clears_retry_state(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -4851,9 +4859,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_rate_limit_retry_single_attempt(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -5036,9 +5044,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_ui_only_messages_not_sent_to_model(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, model) = setup_test_environment(cx, project.clone()).await;
 
         // Insert a regular user message
@@ -5136,9 +5144,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_no_retry_without_burn_mode(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Ensure we're in Normal mode (not Burn mode)
@@ -5209,9 +5217,9 @@ fn main() {{
 
     #[gpui::test]
     async fn test_retry_canceled_on_stop(cx: &mut TestAppContext) {
-        init_test_settings(cx);
+        let fs = init_test_settings(cx);
 
-        let project = create_test_project(cx, json!({})).await;
+        let project = create_test_project(&fs, cx, json!({})).await;
         let (_, _, thread, _, _base_model) = setup_test_environment(cx, project.clone()).await;
 
         // Enable Burn Mode to allow retries
@@ -5317,7 +5325,8 @@ fn main() {{
         cx.run_until_parked();
     }
 
-    fn init_test_settings(cx: &mut TestAppContext) {
+    fn init_test_settings(cx: &mut TestAppContext) -> Arc<dyn Fs> {
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
@@ -5325,7 +5334,7 @@ fn main() {{
             Project::init_settings(cx);
             AgentSettings::register(cx);
             prompt_store::init(cx);
-            thread_store::init(cx);
+            thread_store::init(fs.clone(), cx);
             workspace::init_settings(cx);
             language_model::init_settings(cx);
             ThemeSettings::register(cx);
@@ -5339,16 +5348,17 @@ fn main() {{
             ));
             assistant_tools::init(http_client, cx);
         });
+        fs
     }
 
     // Helper to create a test project with test files
     async fn create_test_project(
+        fs: &Arc<dyn Fs>,
         cx: &mut TestAppContext,
         files: serde_json::Value,
     ) -> Entity<Project> {
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(path!("/test"), files).await;
-        Project::test(fs, [path!("/test").as_ref()], cx).await
+        fs.as_fake().insert_tree(path!("/test"), files).await;
+        Project::test(fs.clone(), [path!("/test").as_ref()], cx).await
     }
 
     async fn setup_test_environment(

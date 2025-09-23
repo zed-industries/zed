@@ -3549,7 +3549,7 @@ impl BackgroundScanner {
             if let Some(global_gitignore_path) = global_gitignore_path.as_ref() {
                 build_gitignore(global_gitignore_path, self.fs.as_ref())
                     .await
-                    .log_err()
+                    .ok()
                     .map(Arc::new)
             } else {
                 None

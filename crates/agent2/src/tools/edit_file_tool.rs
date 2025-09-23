@@ -1410,8 +1410,8 @@ mod tests {
             // Parent directory references - find_project_path resolves these
             (
                 "project/../other",
-                false,
-                "Path with .. is resolved by find_project_path",
+                true,
+                "Path with .. that goes outside of root directory",
             ),
             (
                 "project/./src/file.rs",

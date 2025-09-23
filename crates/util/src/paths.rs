@@ -31,13 +31,6 @@ pub fn home_dir() -> &'static PathBuf {
     })
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub fn set_home_dir(path: PathBuf) {
-    HOME_DIR
-        .set(path)
-        .expect("set_home_dir called after home_dir was already accessed");
-}
-
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
