@@ -16,11 +16,7 @@ use language::{
     EditPredictionsMode, File, Language,
     language_settings::{self, AllLanguageSettings, EditPredictionProvider, all_language_settings},
 };
-#[cfg(test)]
-use language_model::LanguageModelProvider;
 use language_models::{AllLanguageModelSettings, provider::ollama::OllamaLanguageModelProvider};
-#[cfg(test)]
-use settings::OllamaAvailableModel;
 use settings::{AllLanguageModelSettingsContent, OllamaSettingsContent};
 
 use paths;
@@ -1271,7 +1267,9 @@ mod tests {
     use fs;
     use gpui::TestAppContext;
     use http_client;
+    use language_model::LanguageModelProvider;
     use ollama::fake::FakeHttpClient;
+    use settings::OllamaAvailableModel;
     use settings::SettingsStore;
     use std::sync::Arc;
 
