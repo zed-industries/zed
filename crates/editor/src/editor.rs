@@ -196,11 +196,7 @@ use ui::{
     ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape, IconName,
     IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
 };
-use util::{
-    RangeExt, ResultExt, TryFutureExt, maybe,
-    paths::{PathMatcher, PathStyle},
-    post_inc,
-};
+use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
 use workspace::{
     CollaboratorId, Item as WorkspaceItem, ItemId, ItemNavHistory, OpenInTerminal, OpenTerminal,
     RestoreOnStartupBehavior, SERIALIZATION_THROTTLE_TIME, SplitDirection, TabBarSettings, Toast,
@@ -6949,8 +6945,8 @@ impl Editor {
                     false,
                     false,
                     false,
-                    PathMatcher::empty(PathStyle::local()),
-                    PathMatcher::empty(PathStyle::local()),
+                    Default::default(),
+                    Default::default(),
                     false,
                     None,
                 ) else {

@@ -52,12 +52,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{
-    path,
-    paths::{PathMatcher, PathStyle},
-    rel_path::rel_path,
-    uri,
-};
+use util::{path, rel_path::rel_path, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
@@ -2637,10 +2632,9 @@ async fn test_git_diff_base_change(
     "
     .unindent();
 
-    client_a.fs().set_index_for_repo(
-        Path::new("/dir/.git"),
-        &[("a.txt", staged_text.clone())],
-    );
+    client_a
+        .fs()
+        .set_index_for_repo(Path::new("/dir/.git"), &[("a.txt", staged_text.clone())]);
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
         &[("a.txt", committed_text.clone())],
@@ -3507,18 +3501,15 @@ async fn test_local_settings(
     cx_b.read(|cx| {
         let store = cx.global::<SettingsStore>();
         assert_eq!(
-                    store
-                        .local_settings(worktree_b.read(cx).id())
-                        .map(|(path, content)| (
-                            path,
-                            content.all_languages.defaults.tab_size.map(Into::into)
-                        ))
-                        .collect::<Vec<_>>(),
-                    &[
-                        (rel_path("").into(), None),
-                        (rel_path("a").into(), Some(8)),
-                    ]
-                )
+            store
+                .local_settings(worktree_b.read(cx).id())
+                .map(|(path, content)| (
+                    path,
+                    content.all_languages.defaults.tab_size.map(Into::into)
+                ))
+                .collect::<Vec<_>>(),
+            &[(rel_path("").into(), None), (rel_path("a").into(), Some(8)),]
+        )
     });
 
     // As client A, create and remove some settings files. As client B, see the changed settings.
@@ -3540,18 +3531,18 @@ async fn test_local_settings(
     cx_b.read(|cx| {
         let store = cx.global::<SettingsStore>();
         assert_eq!(
-                    store
-                        .local_settings(worktree_b.read(cx).id())
-                        .map(|(path, content)| (
-                            path,
-                            content.all_languages.defaults.tab_size.map(Into::into)
-                        ))
-                        .collect::<Vec<_>>(),
-                    &[
+            store
+                .local_settings(worktree_b.read(cx).id())
+                .map(|(path, content)| (
+                    path,
+                    content.all_languages.defaults.tab_size.map(Into::into)
+                ))
+                .collect::<Vec<_>>(),
+            &[
                 (rel_path("a").into(), Some(8)),
                 (rel_path("b").into(), Some(4)),
-                    ]
-                )
+            ]
+        )
     });
 
     // As client B, disconnect.
@@ -5181,7 +5172,6 @@ async fn test_project_search(
 
     // Perform a search as the guest.
     let mut results = HashMap::default();
-    let path_style = PathStyle::local();
     let search_rx = project_b.update(cx_b, |project, cx| {
         project.search(
             SearchQuery::text(
@@ -5189,8 +5179,8 @@ async fn test_project_search(
                 false,
                 false,
                 false,
-                PathMatcher::empty(path_style),
-                PathMatcher::empty(path_style),
+                Default::default(),
+                Default::default(),
                 false,
                 None,
             )

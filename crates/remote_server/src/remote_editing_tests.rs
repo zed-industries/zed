@@ -34,11 +34,7 @@ use std::{
 };
 #[cfg(not(windows))]
 use unindent::Unindent as _;
-use util::{
-    path,
-    paths::{PathMatcher, PathStyle},
-    rel_path::rel_path,
-};
+use util::{path, rel_path::rel_path};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -206,8 +202,8 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
                     false,
                     true,
                     false,
-                    PathMatcher::empty(PathStyle::local()),
-                    PathMatcher::empty(PathStyle::local()),
+                    Default::default(),
+                    Default::default(),
                     false,
                     None,
                 )

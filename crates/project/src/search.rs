@@ -653,8 +653,8 @@ mod tests {
             case_sensitive,
             false,
             false,
-            PathMatcher::empty(PathStyle::local()),
-            PathMatcher::empty(PathStyle::local()),
+            Default::default(),
+            Default::default(),
             false,
             None,
         )
@@ -673,8 +673,8 @@ mod tests {
             case_sensitive,
             false,
             false,
-            PathMatcher::empty(PathStyle::local()),
-            PathMatcher::empty(PathStyle::local()),
+            Default::default(),
+            Default::default(),
             false,
             None,
         )
@@ -693,8 +693,8 @@ mod tests {
             case_sensitive,
             false,
             false,
-            PathMatcher::empty(PathStyle::local()),
-            PathMatcher::empty(PathStyle::local()),
+            Default::default(),
+            Default::default(),
             false,
             None,
         )
@@ -713,8 +713,8 @@ mod tests {
             case_sensitive,
             false,
             false,
-            PathMatcher::empty(PathStyle::local()),
-            PathMatcher::empty(PathStyle::local()),
+            Default::default(),
+            Default::default(),
             false,
             None,
         )

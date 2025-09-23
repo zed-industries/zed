@@ -1142,7 +1142,7 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
-        let path_style = self.entity.read(cx).project.read(cx).path_style(cx);
+
         let text = self.search_query_text(cx);
         let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
@@ -1168,11 +1168,11 @@ impl ProjectSearchView {
                         if should_mark_error.is_none() {
                             cx.notify();
                         }
-                        PathMatcher::empty(path_style)
+                        PathMatcher::default()
                     }
                 }
             })
-            .unwrap_or(PathMatcher::empty(path_style));
+            .unwrap_or(PathMatcher::default());
         let excluded_files = self
             .filters_enabled
             .then(|| {
@@ -1193,11 +1193,11 @@ impl ProjectSearchView {
                         if should_mark_error.is_none() {
                             cx.notify();
                         }
-                        PathMatcher::empty(path_style)
+                        PathMatcher::default()
                     }
                 }
             })
-            .unwrap_or(PathMatcher::empty(path_style));
+            .unwrap_or(PathMatcher::default());
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be

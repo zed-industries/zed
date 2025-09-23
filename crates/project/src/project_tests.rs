@@ -5401,8 +5401,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(PathStyle::local()),
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
+                Default::default(),
                 false,
                 None
             )
@@ -5436,8 +5436,8 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(PathStyle::local()),
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
+                Default::default(),
                 false,
                 None,
             )
@@ -5482,7 +5482,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 PathMatcher::new(&["*.odd".to_owned()], PathStyle::local()).unwrap(),
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
                 false,
                 None
             )
@@ -5504,7 +5504,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 true,
                 false,
                 PathMatcher::new(&["*.rs".to_owned()], PathStyle::local()).unwrap(),
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
                 false,
                 None
             )
@@ -5530,7 +5530,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], PathStyle::local())
                     .unwrap(),
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
                 false,
                 None,
             )
@@ -5559,7 +5559,7 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
                     PathStyle::local()
                 )
                 .unwrap(),
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
                 false,
                 None,
             )
@@ -5605,7 +5605,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
                 PathMatcher::new(&["*.odd".to_owned()], PathStyle::local()).unwrap(),
                 false,
                 None,
@@ -5632,7 +5632,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
                 PathMatcher::new(&["*.rs".to_owned()], PathStyle::local()).unwrap(),
                 false,
                 None,
@@ -5657,7 +5657,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], PathStyle::local())
                     .unwrap(),
                 false,
@@ -5683,7 +5683,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
                 PathMatcher::new(
                     &["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()],
                     PathStyle::local(),
@@ -5734,7 +5734,7 @@ async fn test_search_with_buffer_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(path_style),
+                Default::default(),
                 PathMatcher::new(&["*.odd".to_owned()], path_style).unwrap(),
                 false,
                 None,
@@ -5761,7 +5761,7 @@ async fn test_search_with_buffer_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(path_style),
+                Default::default(),
                 PathMatcher::new(&["*.rs".to_owned()], path_style).unwrap(),
                 false,
                 None,
@@ -5786,7 +5786,7 @@ async fn test_search_with_buffer_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(path_style),
+                Default::default(),
                 PathMatcher::new(&["*.ts".to_owned(), "*.odd".to_owned()], path_style).unwrap(),
                 false,
                 None,
@@ -5811,10 +5811,10 @@ async fn test_search_with_buffer_exclusions(cx: &mut gpui::TestAppContext) {
                 false,
                 true,
                 false,
-                PathMatcher::empty(path_style),
+                Default::default(),
                 PathMatcher::new(
                     &["*.rs".to_owned(), "*.ts".to_owned(), "*.odd".to_owned()],
-                    path_style
+                    PathStyle::local(),
                 )
                 .unwrap(),
                 false,
@@ -5983,7 +5983,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 PathMatcher::new(&["worktree-a/*.rs".to_owned()], path_style).unwrap(),
-                PathMatcher::empty(path_style),
+                Default::default(),
                 true,
                 None,
             )
@@ -6004,7 +6004,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 PathMatcher::new(&["worktree-b/*.rs".to_owned()], path_style).unwrap(),
-                PathMatcher::empty(path_style),
+                Default::default(),
                 true,
                 None,
             )
@@ -6026,7 +6026,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 true,
                 false,
                 PathMatcher::new(&["*.ts".to_owned()], path_style).unwrap(),
-                PathMatcher::empty(path_style),
+                Default::default(),
                 false,
                 None,
             )
@@ -6081,8 +6081,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 false,
                 false,
-                PathMatcher::empty(PathStyle::local()),
-                PathMatcher::empty(PathStyle::local()),
+                Default::default(),
+                Default::default(),
                 false,
                 None,
             )
@@ -6105,8 +6105,8 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
                 false,
                 false,
                 true,
-                PathMatcher::empty(path_style),
-                PathMatcher::empty(path_style),
+                Default::default(),
+                Default::default(),
                 false,
                 None,
             )
@@ -6183,14 +6183,13 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
     )
     .await;
     let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
-    let path_style = PathStyle::local();
     let unicode_case_sensitive_query = SearchQuery::text(
         "привет",
         false,
         true,
         false,
-        PathMatcher::empty(path_style),
-        PathMatcher::empty(path_style),
+        Default::default(),
+        Default::default(),
         false,
         None,
     );
@@ -6210,8 +6209,8 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
         false,
         false,
         false,
-        PathMatcher::empty(path_style),
-        PathMatcher::empty(path_style),
+        Default::default(),
+        Default::default(),
         false,
         None,
     );
@@ -6238,8 +6237,8 @@ async fn test_search_with_unicode(cx: &mut gpui::TestAppContext) {
                 false,
                 false,
                 false,
-                PathMatcher::empty(path_style),
-                PathMatcher::empty(path_style),
+                Default::default(),
+                Default::default(),
                 false,
                 None,
             )
@@ -6991,10 +6990,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    fs.set_index_for_repo(
-        Path::new("/dir/.git"),
-        &[("src/main.rs", staged_contents)],
-    );
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("src/main.rs", staged_contents)]);
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
 
@@ -7037,10 +7033,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     "#
     .unindent();
 
-    fs.set_index_for_repo(
-        Path::new("/dir/.git"),
-        &[("src/main.rs", staged_contents)],
-    );
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("src/main.rs", staged_contents)]);
 
     cx.run_until_parked();
     unstaged_diff.update(cx, |unstaged_diff, cx| {

@@ -29,7 +29,7 @@ use std::{
 };
 use util::{
     ResultExt, path,
-    paths::{PathMatcher, PathStyle},
+    paths::PathStyle,
     rel_path::{RelPath, RelPathBuf, rel_path},
 };
 
@@ -886,7 +886,6 @@ impl RandomizedTest for ProjectCollaborationTest {
                     if detach { "detaching" } else { "awaiting" }
                 );
 
-                let path_style = PathStyle::local();
                 let search = project.update(cx, |project, cx| {
                     project.search(
                         SearchQuery::text(
@@ -894,8 +893,8 @@ impl RandomizedTest for ProjectCollaborationTest {
                             false,
                             false,
                             false,
-                            PathMatcher::empty(path_style),
-                            PathMatcher::empty(path_style),
+                            Default::default(),
+                            Default::default(),
                             false,
                             None,
                         )

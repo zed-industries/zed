@@ -614,15 +614,6 @@ impl PathMatcher {
         })
     }
 
-    // FIXME get rid of this in favor of the default impl
-    pub fn empty(path_style: PathStyle) -> Self {
-        Self {
-            path_style,
-            glob: GlobSet::empty(),
-            sources: vec![],
-        }
-    }
-
     pub fn sources(&self) -> &[String] {
         &self.sources
     }
