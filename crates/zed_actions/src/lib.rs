@@ -187,18 +187,6 @@ pub mod git {
     );
 }
 
-pub mod jj {
-    use gpui::actions;
-
-    actions!(
-        jj,
-        [
-            /// Opens the Jujutsu bookmark list.
-            BookmarkList
-        ]
-    );
-}
-
 pub mod toast {
     use gpui::actions;
 

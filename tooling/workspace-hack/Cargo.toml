@@ -56,7 +56,6 @@ either = { version = "1", features = ["serde", "use_std"] }
 euclid = { version = "0.22" }
 event-listener = { version = "5" }
 event-listener-strategy = { version = "0.5" }
-flate2 = { version = "1", features = ["zlib-rs"] }
 form_urlencoded = { version = "1" }
 futures = { version = "0.3", features = ["io-compat"] }
 futures-channel = { version = "0.3", features = ["sink"] }
@@ -76,7 +75,6 @@ hyper = { version = "0.14", features = ["client", "http1", "http2", "runtime", "
 idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-jiff = { version = "0.2" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 libsqlite3-sys = { version = "0.30", features = ["bundled", "unlock_notify"] }
@@ -102,7 +100,7 @@ phf_shared = { version = "0.11" }
 prost-274715c4dabd11b0 = { package = "prost", version = "0.9" }
 prost-types = { version = "0.9" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
-rand_chacha = { version = "0.3" }
+rand_chacha = { version = "0.3", default-features = false, features = ["std"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 rand_distr = { version = "0.5" }
 regalloc2 = { version = "0.11", features = ["checker", "enable-serde"] }
@@ -120,9 +118,8 @@ semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "rc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc", "preserve_order", "raw_value", "unbounded_depth"] }
-sha1 = { version = "0.10", features = ["compress"] }
 simd-adler32 = { version = "0.3" }
-smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union", "write"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union"] }
 spin = { version = "0.9" }
 sqlx = { version = "0.8", features = ["bigdecimal", "chrono", "postgres", "runtime-tokio-rustls", "rust_decimal", "sqlite", "time", "uuid"] }
 sqlx-postgres = { version = "0.8", default-features = false, features = ["any", "bigdecimal", "chrono", "json", "migrate", "offline", "rust_decimal", "time", "uuid"] }
@@ -136,11 +133,10 @@ tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 tokio-util = { version = "0.7", features = ["codec", "compat", "io"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
-toml_edit = { version = "0.22", features = ["serde"] }
+toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-core = { version = "0.1" }
 tungstenite = { version = "0.26", default-features = false, features = ["__rustls-tls", "handshake"] }
-unicode-normalization = { version = "0.1" }
 unicode-properties = { version = "0.1" }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
@@ -148,7 +144,6 @@ wasmparser = { version = "0.221" }
 wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "incremental-cache", "parallel-compilation"] }
 wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc", "incremental-cache"] }
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
-winnow = { version = "0.7", features = ["simd"] }
 
 [build-dependencies]
 ahash = { version = "0.8", features = ["serde"] }
@@ -193,7 +188,6 @@ either = { version = "1", features = ["serde", "use_std"] }
 euclid = { version = "0.22" }
 event-listener = { version = "5" }
 event-listener-strategy = { version = "0.5" }
-flate2 = { version = "1", features = ["zlib-rs"] }
 form_urlencoded = { version = "1" }
 futures = { version = "0.3", features = ["io-compat"] }
 futures-channel = { version = "0.3", features = ["sink"] }
@@ -215,7 +209,6 @@ idna = { version = "1" }
 indexmap = { version = "2", features = ["serde"] }
 itertools-594e8ee84c453af0 = { package = "itertools", version = "0.13" }
 itertools-5ef9efb8ec2df382 = { package = "itertools", version = "0.12" }
-jiff = { version = "0.2" }
 lazy_static = { version = "1", default-features = false, features = ["spin_no_std"] }
 libc = { version = "0.2", features = ["extra_traits"] }
 libsqlite3-sys = { version = "0.30", features = ["bundled", "unlock_notify"] }
@@ -244,7 +237,7 @@ prost-274715c4dabd11b0 = { package = "prost", version = "0.9" }
 prost-types = { version = "0.9" }
 quote = { version = "1" }
 rand-c38e5c1d305a1b54 = { package = "rand", version = "0.8", features = ["small_rng"] }
-rand_chacha = { version = "0.3" }
+rand_chacha = { version = "0.3", default-features = false, features = ["std"] }
 rand_core = { version = "0.6", default-features = false, features = ["std"] }
 rand_distr = { version = "0.5" }
 regalloc2 = { version = "0.11", features = ["checker", "enable-serde"] }
@@ -262,9 +255,8 @@ semver = { version = "1", features = ["serde"] }
 serde = { version = "1", features = ["alloc", "derive", "rc"] }
 serde_core = { version = "1", default-features = false, features = ["alloc", "rc", "result", "std"] }
 serde_json = { version = "1", features = ["alloc", "preserve_order", "raw_value", "unbounded_depth"] }
-sha1 = { version = "0.10", features = ["compress"] }
 simd-adler32 = { version = "0.3" }
-smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union", "write"] }
+smallvec = { version = "1", default-features = false, features = ["const_new", "serde", "union"] }
 spin = { version = "0.9" }
 sqlx = { version = "0.8", features = ["bigdecimal", "chrono", "postgres", "runtime-tokio-rustls", "rust_decimal", "sqlite", "time", "uuid"] }
 sqlx-macros = { version = "0.8", features = ["_rt-tokio", "_tls-rustls-ring-webpki", "bigdecimal", "chrono", "derive", "json", "macros", "migrate", "postgres", "rust_decimal", "sqlite", "time", "uuid"] }
@@ -283,11 +275,10 @@ tokio = { version = "1", features = ["full"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 tokio-util = { version = "0.7", features = ["codec", "compat", "io"] }
 toml_datetime = { version = "0.6", default-features = false, features = ["serde"] }
-toml_edit = { version = "0.22", features = ["serde"] }
+toml_edit = { version = "0.22", default-features = false, features = ["display", "parse", "serde"] }
 tracing = { version = "0.1", features = ["log"] }
 tracing-core = { version = "0.1" }
 tungstenite = { version = "0.26", default-features = false, features = ["__rustls-tls", "handshake"] }
-unicode-normalization = { version = "0.1" }
 unicode-properties = { version = "0.1" }
 url = { version = "2", features = ["serde"] }
 uuid = { version = "1", features = ["serde", "v4", "v5", "v7"] }
@@ -295,12 +286,12 @@ wasmparser = { version = "0.221" }
 wasmtime = { version = "29", default-features = false, features = ["async", "component-model", "cranelift", "demangle", "gc-drc", "incremental-cache", "parallel-compilation"] }
 wasmtime-cranelift = { version = "29", default-features = false, features = ["component-model", "gc-drc", "incremental-cache"] }
 wasmtime-environ = { version = "29", default-features = false, features = ["compile", "component-model", "demangle", "gc-drc"] }
-winnow = { version = "0.7", features = ["simd"] }
 
 [target.x86_64-apple-darwin.dependencies]
 codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
+flate2 = { version = "1" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
@@ -331,6 +322,7 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
+flate2 = { version = "1" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
@@ -362,6 +354,7 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
+flate2 = { version = "1" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
@@ -392,6 +385,7 @@ tower = { version = "0.5", default-features = false, features = ["timeout", "uti
 codespan-reporting = { version = "0.12" }
 core-foundation = { version = "0.9" }
 core-foundation-sys = { version = "0.8" }
+flate2 = { version = "1" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
 gimli = { version = "0.31", default-features = false, features = ["read", "std", "write"] }
@@ -426,6 +420,7 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
+flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -451,6 +446,7 @@ ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
+smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -467,6 +463,7 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
+flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -491,6 +488,7 @@ ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
+smallvec = { version = "1", default-features = false, features = ["write"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
@@ -506,6 +504,7 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
+flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -531,6 +530,7 @@ ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
+smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -547,6 +547,7 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
+flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -571,6 +572,7 @@ ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
+smallvec = { version = "1", default-features = false, features = ["write"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
@@ -581,6 +583,7 @@ zvariant = { version = "5", features = ["enumflags2", "gvariant", "url"] }
 
 [target.x86_64-pc-windows-msvc.dependencies]
 codespan-reporting = { version = "0.12" }
+flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -601,12 +604,13 @@ winapi = { version = "0.3", default-features = false, features = ["cfg", "commap
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
 windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
 windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
 codespan-reporting = { version = "0.12" }
+flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -628,7 +632,7 @@ winapi = { version = "0.3", default-features = false, features = ["cfg", "commap
 windows-core = { version = "0.61" }
 windows-numerics = { version = "0.2" }
 windows-sys-73dcd821b1037cfd = { package = "windows-sys", version = "0.59", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security_Authentication_Identity", "Win32_Security_Credentials", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Performance", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
-windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows-sys-b21d60becc0929df = { package = "windows-sys", version = "0.52", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_IO", "Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_SystemServices", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
 windows-sys-c8eced492e86ede7 = { package = "windows-sys", version = "0.48", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_Time", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 windows-sys-d4189bed749088b6 = { package = "windows-sys", version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Globalization", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
 
@@ -639,6 +643,7 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
+flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -664,6 +669,7 @@ ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
+smallvec = { version = "1", default-features = false, features = ["write"] }
 syn-f595c2ba2a3f28df = { package = "syn", version = "2", features = ["extra-traits", "fold", "full", "visit", "visit-mut"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
@@ -680,6 +686,7 @@ bytemuck = { version = "1", default-features = false, features = ["min_const_gen
 cipher = { version = "0.4", default-features = false, features = ["block-padding", "rand_core", "zeroize"] }
 codespan-reporting = { version = "0.12" }
 crypto-common = { version = "0.1", default-features = false, features = ["rand_core", "std"] }
+flate2 = { version = "1" }
 flume = { version = "0.11" }
 foldhash = { version = "0.1", default-features = false, features = ["std"] }
 getrandom-468e82937335b1c9 = { package = "getrandom", version = "0.3", default-features = false, features = ["std"] }
@@ -704,6 +711,7 @@ ring = { version = "0.17", features = ["std"] }
 rustix-d585fab2519d2d1 = { package = "rustix", version = "0.38", features = ["event", "mm", "net", "param", "pipe", "process", "shm", "system"] }
 rustix-dff4ba8e3ae991db = { package = "rustix", version = "1", default-features = false, features = ["event", "pipe", "process", "pty", "stdio", "termios", "time"] }
 scopeguard = { version = "1" }
+smallvec = { version = "1", default-features = false, features = ["write"] }
 sync_wrapper = { version = "1", default-features = false, features = ["futures"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring"] }
 tokio-socks = { version = "0.5", features = ["futures-io"] }
