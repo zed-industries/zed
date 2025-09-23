@@ -57,13 +57,16 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
+// TODO show included diagnostics, and events
+
 pub struct Zeta2Inspector {
     focus_handle: FocusHandle,
     project: Entity<Project>,
     last_prediction: Option<LastPredictionState>,
-    max_bytes_input: Entity<SingleLineInput>,
-    min_bytes_input: Entity<SingleLineInput>,
+    max_excerpt_bytes_input: Entity<SingleLineInput>,
+    min_excerpt_bytes_input: Entity<SingleLineInput>,
     cursor_context_ratio_input: Entity<SingleLineInput>,
+    max_prompt_bytes_input: Entity<SingleLineInput>,
     active_view: ActiveView,
     zeta: Entity<Zeta>,
     _active_editor_subscription: Option<Subscription>,
@@ -129,9 +132,10 @@ impl Zeta2Inspector {
             project: project.clone(),
             last_prediction: None,
             active_view: ActiveView::Context,
-            max_bytes_input: Self::number_input("Max Bytes", window, cx),
-            min_bytes_input: Self::number_input("Min Bytes", window, cx),
+            max_excerpt_bytes_input: Self::number_input("Max Excerpt Bytes", window, cx),
+            min_excerpt_bytes_input: Self::number_input("Min Excerpt Bytes", window, cx),
             cursor_context_ratio_input: Self::number_input("Cursor Context Ratio", window, cx),
+            max_prompt_bytes_input: Self::number_input("Max Prompt Bytes", window, cx),
             zeta: zeta.clone(),
             _active_editor_subscription: None,
             _update_state_task: Task::ready(()),
@@ -147,10 +151,10 @@ impl Zeta2Inspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.max_bytes_input.update(cx, |input, cx| {
+        self.max_excerpt_bytes_input.update(cx, |input, cx| {
             input.set_text(options.excerpt.max_bytes.to_string(), window, cx);
         });
-        self.min_bytes_input.update(cx, |input, cx| {
+        self.min_excerpt_bytes_input.update(cx, |input, cx| {
             input.set_text(options.excerpt.min_bytes.to_string(), window, cx);
         });
         self.cursor_context_ratio_input.update(cx, |input, cx| {
@@ -162,6 +166,9 @@ impl Zeta2Inspector {
                 window,
                 cx,
             );
+        });
+        self.max_prompt_bytes_input.update(cx, |input, cx| {
+            input.set_text(options.max_prompt_bytes.to_string(), window, cx);
         });
         cx.notify();
     }
@@ -236,8 +243,8 @@ impl Zeta2Inspector {
                 }
 
                 let excerpt_options = EditPredictionExcerptOptions {
-                    max_bytes: number_input_value(&this.max_bytes_input, cx),
-                    min_bytes: number_input_value(&this.min_bytes_input, cx),
+                    max_bytes: number_input_value(&this.max_excerpt_bytes_input, cx),
+                    min_bytes: number_input_value(&this.min_excerpt_bytes_input, cx),
                     target_before_cursor_over_total_bytes: number_input_value(
                         &this.cursor_context_ratio_input,
                         cx,
@@ -247,7 +254,8 @@ impl Zeta2Inspector {
                 this.set_options(
                     ZetaOptions {
                         excerpt: excerpt_options,
-                        ..this.zeta.read(cx).options().clone()
+                        max_prompt_bytes: number_input_value(&this.max_prompt_bytes_input, cx),
+                        max_diagnostic_bytes: this.zeta.read(cx).options().max_diagnostic_bytes,
                     },
                     cx,
                 );
@@ -520,16 +528,15 @@ impl Render for Zeta2Inspector {
                             .child(
                                 v_flex()
                                     .gap_2()
-                                    .child(
-                                        Headline::new("Excerpt Options").size(HeadlineSize::Small),
-                                    )
+                                    .child(Headline::new("Options").size(HeadlineSize::Small))
                                     .child(
                                         h_flex()
                                             .gap_2()
                                             .items_end()
-                                            .child(self.max_bytes_input.clone())
-                                            .child(self.min_bytes_input.clone())
+                                            .child(self.max_excerpt_bytes_input.clone())
+                                            .child(self.min_excerpt_bytes_input.clone())
                                             .child(self.cursor_context_ratio_input.clone())
+                                            .child(self.max_prompt_bytes_input.clone())
                                             .child(
                                                 ui::Button::new("reset-options", "Reset")
                                                     .disabled(

@@ -6,6 +6,7 @@ use cloud_llm_client::predict_edits_v3::{self, Signature};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
+use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use edit_prediction::{DataCollectionState, Direction, EditPredictionProvider};
 use edit_prediction_context::{
     DeclarationId, EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
@@ -49,6 +50,7 @@ pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPrediction
 
 pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     excerpt: DEFAULT_EXCERPT_OPTIONS,
+    max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
 };
 
@@ -71,6 +73,7 @@ pub struct Zeta {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ZetaOptions {
     pub excerpt: EditPredictionExcerptOptions,
+    pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
 }
 
@@ -408,6 +411,7 @@ impl Zeta {
                     debug_context.is_some(),
                     &worktree_snapshots,
                     index_state.as_deref(),
+                    Some(options.max_prompt_bytes),
                 );
 
                 let retrieval_time = chrono::Utc::now() - before_retrieval;
@@ -702,6 +706,7 @@ impl Zeta {
                     debug_info,
                     &worktree_snapshots,
                     index_state.as_deref(),
+                    Some(options.max_prompt_bytes),
                 )
             })
         })
@@ -1062,6 +1067,7 @@ fn make_cloud_request(
     debug_info: bool,
     worktrees: &Vec<worktree::Snapshot>,
     index_state: Option<&SyntaxIndexState>,
+    prompt_max_bytes: Option<usize>,
 ) -> predict_edits_v3::PredictEditsRequest {
     let mut signatures = Vec::new();
     let mut declaration_to_signature_index = HashMap::default();
@@ -1132,9 +1138,9 @@ fn make_cloud_request(
         can_collect_data,
         diagnostic_groups,
         diagnostic_groups_truncated,
-
         git_info,
         debug_info,
+        prompt_max_bytes,
     }
 }
 
