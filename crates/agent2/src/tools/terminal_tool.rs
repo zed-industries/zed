@@ -2,31 +2,37 @@ use agent_client_protocol as acp;
 use anyhow::Result;
 use gpui::{App, Entity, SharedString, Task};
 use project::Project;
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
 };
-use util::markdown::MarkdownInlineCode;
+use util::{get_system_shell, markdown::MarkdownInlineCode};
 
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream};
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
-/// Executes a shell one-liner and returns the combined output.
-///
-/// This tool spawns a process using the user's shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
-///
-/// The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
-///
-/// Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
-///
-/// Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
-///
-/// Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.
+fn dynamic_description(schema: &mut Schema) {
+    schema.insert("description".into(),  format!("Executes a shell one-liner and returns the combined output.
+
+Default Shell: {}
+
+This tool spawns a process using the user's default shell, reads from stdout and stderr (preserving the order of writes), and returns a string with the combined output result.
+
+The output results will be shown to the user already, only list it again if necessary, avoid being redundant.
+
+Make sure you use the `cd` parameter to navigate to one of the root directories of the project. NEVER do it as part of the `command` itself, otherwise it will error.
+
+Do not use this tool for commands that run indefinitely, such as servers (like `npm run start`, `npm run dev`, `python -m http.server`, etc) or file watchers that don't terminate on their own.
+
+Remember that each invocation of this tool will spawn a new shell process, so you can't rely on any state from previous invocations.", get_system_shell()).into());
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[schemars(transform = dynamic_description)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute.
     command: String,
