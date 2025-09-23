@@ -429,7 +429,33 @@ impl WindowTextSystem {
                     break;
                 };
 
-                let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
+                let mut run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
+
+                // Ensure the run length respects UTF-8 character boundaries
+                if run_len_within_line > 0 {
+                    let text_slice = &line_text[run_start - line_start..];
+                    if run_len_within_line < text_slice.len()
+                        && !text_slice.is_char_boundary(run_len_within_line)
+                    {
+                        // Find the previous character boundary using efficient bit-level checking
+                        // UTF-8 characters are at most 4 bytes, so we only need to check up to 3 bytes back
+                        let lower_bound = run_len_within_line.saturating_sub(3);
+                        let search_range =
+                            &text_slice.as_bytes()[lower_bound..=run_len_within_line];
+
+                        // SAFETY: A valid character boundary must exist in this range because:
+                        // 1. run_len_within_line is a valid position in the string slice
+                        // 2. UTF-8 characters are at most 4 bytes, so some boundary exists in [run_len_within_line-3..=run_len_within_line]
+                        let pos_from_lower = unsafe {
+                            search_range
+                                .iter()
+                                .rposition(|&b| (b as i8) >= -0x40)
+                                .unwrap_unchecked()
+                        };
+
+                        run_len_within_line = lower_bound + pos_from_lower;
+                    }
+                }
 
                 if last_font == Some(run.font.clone()) {
                     font_runs.last_mut().unwrap().len += run_len_within_line;
