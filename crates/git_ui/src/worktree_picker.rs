@@ -5,7 +5,8 @@ use git::repository::Worktree as GitWorktree;
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement,
-    PathPromptOptions, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, rems,
+    PathPromptOptions, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window,
+    actions, rems,
 };
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use project::{DirectoryLister, git_store::Repository};
@@ -13,6 +14,8 @@ use std::{path::PathBuf, sync::Arc};
 use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
+
+actions!(git, [WorktreeFromDefault]);
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(open);
@@ -50,14 +53,27 @@ impl WorktreeList {
             .clone()
             .map(|repository| repository.update(cx, |repository, _| repository.worktrees()));
 
+        let default_branch_request = repository
+            .clone()
+            .map(|repository| repository.update(cx, |repository, _| repository.default_branch()));
+
         cx.spawn_in(window, async move |this, cx| {
             let all_worktrees = all_worktrees_request
                 .context("No active repository")?
                 .await??;
 
+            let default_branch = default_branch_request
+                .context("No active repository")?
+                .await
+                .map(Result::ok)
+                .ok()
+                .flatten()
+                .flatten();
+
             this.update_in(cx, |this, window, cx| {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.all_worktrees = Some(all_worktrees);
+                    picker.delegate.default_branch = default_branch;
                     picker.refresh(window, cx);
                 })
             })?;
@@ -94,6 +110,33 @@ impl WorktreeList {
         self.picker
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
+
+    fn handle_worktree_from_default(
+        &mut self,
+        _: &WorktreeFromDefault,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            let ix = picker.delegate.selected_index();
+            let Some(entry) = picker.delegate.matches.get(ix) else {
+                return;
+            };
+            let Some(default_branch) = picker.delegate.default_branch.clone() else {
+                return;
+            };
+            if !entry.is_new {
+                return;
+            }
+            picker.delegate.create_worktree(
+                entry.worktree.name(),
+                false,
+                Some(default_branch.into()),
+                window,
+                cx,
+            );
+        })
+    }
 }
 impl ModalView for WorktreeList {}
 impl EventEmitter<DismissEvent> for WorktreeList {}
@@ -110,6 +153,7 @@ impl Render for WorktreeList {
             .key_context("GitWorktreeSelector")
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
+            .on_action(cx.listener(Self::handle_worktree_from_default))
             .child(self.picker.clone())
             .on_mouse_down_out({
                 cx.listener(move |this, _, window, cx| {
@@ -137,6 +181,7 @@ pub struct WorktreeListDelegate {
     last_query: String,
     modifiers: Modifiers,
     focus_handle: FocusHandle,
+    default_branch: Option<SharedString>,
 }
 
 impl WorktreeListDelegate {
@@ -155,6 +200,7 @@ impl WorktreeListDelegate {
             last_query: Default::default(),
             modifiers: Default::default(),
             focus_handle: cx.focus_handle(),
+            default_branch: None,
         }
     }
 
@@ -162,6 +208,7 @@ impl WorktreeListDelegate {
         &self,
         worktree_name: &str,
         replace_current_window: bool,
+        commit: Option<String>,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
@@ -199,7 +246,7 @@ impl WorktreeListDelegate {
             let path = paths.get(0).cloned().context("No path selected")?;
 
             repo.update(cx, |repo, _| {
-                repo.create_worktree(name.clone(), path.clone(), None)
+                repo.create_worktree(name.clone(), path.clone(), commit)
             })?
             .await??;
 
@@ -357,7 +404,7 @@ impl PickerDelegate for WorktreeListDelegate {
         };
         if entry.is_new {
             // We handle worktree creation logic
-            self.create_worktree(&entry.worktree.name(), secondary, window, cx);
+            self.create_worktree(&entry.worktree.name(), secondary, None, window, cx);
         } else {
             // If secondary click, we open on a new window
             self.open_worktree(&entry.worktree.path, secondary, window, cx);
@@ -375,7 +422,7 @@ impl PickerDelegate for WorktreeListDelegate {
         ix: usize,
         selected: bool,
         _window: &mut Window,
-        _cx: &mut Context<Picker<Self>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let entry = &self.matches.get(ix)?;
         let path = entry.worktree.path.to_string_lossy().to_string();
@@ -386,6 +433,29 @@ impl PickerDelegate for WorktreeListDelegate {
             .chars()
             .take(7)
             .collect::<String>();
+
+        let focus_handle = self.focus_handle.clone();
+        let icon = if let Some(default_branch) = self.default_branch.clone()
+            && entry.is_new
+        {
+            Some(
+                IconButton::new("worktree-from-default", IconName::GitBranchAlt)
+                    .on_click(|_, window, cx| {
+                        window.dispatch_action(WorktreeFromDefault.boxed_clone(), cx)
+                    })
+                    .tooltip(move |window, cx| {
+                        Tooltip::for_action_in(
+                            format!("From default branch {default_branch}"),
+                            &WorktreeFromDefault,
+                            &focus_handle,
+                            window,
+                            cx,
+                        )
+                    }),
+            )
+        } else {
+            None
+        };
 
         let worktree_name = if entry.is_new {
             h_flex()
@@ -435,15 +505,27 @@ impl PickerDelegate for WorktreeListDelegate {
                                     )
                                 }),
                         )
-                        .when(!entry.is_new, |el| {
-                            el.child(div().max_w_96().child({
-                                Label::new(path)
+                        .child({
+                            let message = if entry.is_new {
+                                if let Some(current_branch) = self.repo.as_ref().and_then(|repo| {
+                                    repo.read(cx).branch.as_ref().map(|b| b.name())
+                                }) {
+                                    format!("based off {}", current_branch)
+                                } else {
+                                    "based off the current branch".to_string()
+                                }
+                            } else {
+                                path
+                            };
+                            div().max_w_96().child({
+                                Label::new(message)
                                     .size(LabelSize::Small)
                                     .truncate()
                                     .color(Color::Muted)
-                            }))
+                            })
                         }),
-                ),
+                )
+                .end_slot::<IconButton>(icon),
         )
     }
 
