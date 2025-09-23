@@ -1259,14 +1259,14 @@ pub fn handle_settings_file_changes(
     });
 
     // Watch for changes in both files
-    cx.spawn(async move |cx| {
+    cx.spawn(async move |_| {
         let mut settings_streams = futures::stream::select(
             global_settings_file_rx.map(Either::Left),
             user_settings_file_rx.map(Either::Right),
         );
 
         while let Some(content) = settings_streams.next().await {
-            let (content, is_user) = match content {
+            let (_content, _is_user) = match content {
                 Either::Left(content) => (content, false),
                 Either::Right(content) => (content, true),
             };

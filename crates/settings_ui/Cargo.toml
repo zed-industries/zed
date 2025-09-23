@@ -20,11 +20,7 @@ default = []
 test-support = []
 
 [dependencies]
-futures.workspace = true
-language.workspace = true
 project.workspace = true
-assets.workspace = true
-paths.workspace = true
 fs.workspace = true
 anyhow.workspace = true
 command_palette_hooks.workspace = true
@@ -41,7 +37,15 @@ ui.workspace = true
 ui_input.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
-zlog.workspace = true
 
 [dev-dependencies]
 settings = { workspace = true, features = ["test-support"] }
+futures.workspace = true
+language.workspace = true
+assets.workspace = true
+paths.workspace = true
+zlog.workspace = true
+
+[[example]]
+name = "ui"
+path = "examples/ui.rs"
