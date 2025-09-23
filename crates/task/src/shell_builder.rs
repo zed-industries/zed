@@ -242,19 +242,23 @@ impl ShellBuilder {
 
     /// Returns the label to show in the terminal tab
     pub fn command_label(&self, command_label: &str) -> String {
-        match self.kind {
-            ShellKind::PowerShell => {
-                format!("{} -C '{}'", self.program, command_label)
-            }
-            ShellKind::Cmd => {
-                format!("{} /C '{}'", self.program, command_label)
-            }
-            ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
-                let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
-                format!(
-                    "{} {interactivity}-c '$\"{}\"'",
-                    self.program, command_label
-                )
+        if command_label.trim().is_empty() {
+            self.program.clone()
+        } else {
+            match self.kind {
+                ShellKind::PowerShell => {
+                    format!("{} -C '{}'", self.program, command_label)
+                }
+                ShellKind::Cmd => {
+                    format!("{} /C '{}'", self.program, command_label)
+                }
+                ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
+                    let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
+                    format!(
+                        "{PROGRAM} {interactivity}-c '$\"{command_label}\"'",
+                        PROGRAM = self.program
+                    )
+                }
             }
         }
     }

@@ -664,7 +664,7 @@ impl TerminalPanel {
                 .filter_map(|(index, item)| Some((index, item.act_as::<TerminalView>(cx)?)))
                 .filter_map(|(index, terminal_view)| {
                     let task_state = terminal_view.read(cx).terminal().read(cx).task()?;
-                    if &task_state.full_label == label {
+                    if &task_state.spawned_task.full_label == label {
                         Some((index, terminal_view))
                     } else {
                         None
@@ -1622,5 +1622,73 @@ impl Render for InlineAssistTabBarButton {
                     cx,
                 )
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::TestAppContext;
+    use project::FakeFs;
+    use settings::SettingsStore;
+
+    #[gpui::test]
+    async fn test_spawn_an_empty_task(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project, window, cx));
+
+        let (window_handle, terminal_panel) = workspace
+            .update(cx, |workspace, window, cx| {
+                let window_handle = window.window_handle();
+                let terminal_panel = cx.new(|cx| TerminalPanel::new(workspace, window, cx));
+                (window_handle, terminal_panel)
+            })
+            .unwrap();
+
+        let spawn_in_terminal = SpawnInTerminal::default();
+        let task = window_handle
+            .update(cx, |_, window, cx| {
+                terminal_panel.update(cx, |terminal_panel, cx| {
+                    terminal_panel.spawn_task(&spawn_in_terminal, window, cx)
+                })
+            })
+            .unwrap();
+
+        let terminal = task.await.unwrap();
+        terminal
+            .update(cx, |terminal, _| {
+                let task_metadata = terminal
+                    .task()
+                    .expect("When spawning a task, should have the task metadata")
+                    .spawned_task
+                    .clone();
+                assert_eq!(task_metadata.env, HashMap::default());
+                assert_eq!(task_metadata.cwd, None);
+                assert_eq!(task_metadata.args, Vec::<String>::new());
+                assert_eq!(task_metadata.shell, task::Shell::System);
+                assert_eq!(task_metadata.command, Some("/bin/zsh".to_string()));
+                assert_eq!(task_metadata.command_label, "/bin/zsh".to_string());
+            })
+            .unwrap();
+    }
+
+    pub fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            // assets::Assets.load_test_fonts(cx);
+            let store = SettingsStore::test(cx);
+            cx.set_global(store);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            // release_channel::init(SemanticVersion::default(), cx);
+            client::init_settings(cx);
+            language::init(cx);
+            Project::init_settings(cx);
+            workspace::init_settings(cx);
+            editor::init(cx);
+            crate::init(cx);
+        });
+        // zlog::init_test();
     }
 }
