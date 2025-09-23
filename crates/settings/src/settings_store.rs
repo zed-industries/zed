@@ -21,7 +21,7 @@ use std::{
     str::{self, FromStr},
     sync::Arc,
 };
-use util::{ResultExt as _, TakeUntilExt, schemars::DefaultDenyUnknownFields};
+use util::{ResultExt as _, schemars::DefaultDenyUnknownFields};
 
 pub type EditorconfigProperties = ec4rs::Properties;
 

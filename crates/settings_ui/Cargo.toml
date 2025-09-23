@@ -38,6 +38,7 @@ settings.workspace = true
 smallvec.workspace = true
 theme.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zlog.workspace = true

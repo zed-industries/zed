@@ -15552,6 +15552,7 @@ dependencies = [
  "smallvec",
  "theme",
  "ui",
+ "ui_input",
  "workspace",
  "workspace-hack",
  "zlog",

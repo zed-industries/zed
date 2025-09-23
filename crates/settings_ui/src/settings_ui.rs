@@ -4,17 +4,97 @@ use std::{rc::Rc, sync::Arc};
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    App, AppContext as _, Context, Div, IntoElement, ReadGlobal, Render, Window, WindowHandle,
-    actions, div, px, size,
+    App, AppContext as _, Context, Div, Entity, IntoElement, Render, Window, WindowHandle, actions,
+    div, px, size,
 };
 use project::WorktreeId;
 use settings::{SettingsContent, SettingsStore};
 use std::path::Path;
 use ui::{
-    ActiveTheme as _, AnyElement, BorrowAppContext as _, Color, FluentBuilder as _,
-    InteractiveElement as _, Label, LabelCommon as _, LabelSize, ParentElement, SharedString,
-    StatefulInteractiveElement as _, Styled, Switch, v_flex,
+    ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color,
+    FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label, LabelCommon as _,
+    LabelSize, ParentElement, SharedString, StatefulInteractiveElement as _, Styled, Switch,
+    v_flex,
 };
+
+fn user_settings_data() -> Vec<SettingsPage> {
+    vec![
+        SettingsPage {
+            title: "General",
+            items: vec![
+                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Confirm Quit",
+                    description: "Whether to confirm before quitting Zed",
+                    render: Rc::new(|_, cx| {
+                        render_toggle_button(
+                            "confirm_quit",
+                            SettingsFile::User,
+                            cx,
+                            |settings_content| &mut settings_content.workspace.confirm_quit,
+                        )
+                    }),
+                }),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Auto Update",
+                    description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
+                    render: Rc::new(|_, cx| {
+                        render_toggle_button(
+                            "Auto Update",
+                            SettingsFile::User,
+                            cx,
+                            |settings_content| &mut settings_content.auto_update,
+                        )
+                    }),
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Project",
+            items: vec![
+                SettingsPageItem::SectionHeader("Worktree Settings Content"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Project Name",
+                    description: "The displayed name of this project. If not set, the root directory name",
+                    render: Rc::new(|window, cx| {
+                        render_text_field(
+                            "project_name",
+                            SettingsFile::User,
+                            window,
+                            cx,
+                            |settings_content| &mut settings_content.project.worktree.project_name,
+                        )
+                    }),
+                }),
+            ],
+        },
+    ]
+}
+
+fn project_settings_data() -> Vec<SettingsPage> {
+    vec![SettingsPage {
+        title: "Project",
+        items: vec![
+            SettingsPageItem::SectionHeader("Worktree Settings Content"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Project Name",
+                description: " The displayed name of this project. If not set, the root directory name",
+                render: Rc::new(|window, cx| {
+                    render_text_field(
+                        "project_name",
+                        SettingsFile::Local((
+                            WorktreeId::from_usize(0),
+                            Arc::from(Path::new("TODO: actually pass through file")),
+                        )),
+                        window,
+                        cx,
+                        |settings_content| &mut settings_content.project.worktree.project_name,
+                    )
+                }),
+            }),
+        ],
+    }]
+}
 
 pub struct SettingsUiFeatureFlag;
 
@@ -75,6 +155,7 @@ pub struct SettingsWindow {
     files: Vec<SettingsFile>,
     current_file: SettingsFile,
     pages: Vec<SettingsPage>,
+    search: Entity<Editor>,
     current_page: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
 }
 
@@ -121,6 +202,7 @@ struct SettingItem {
     render: std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
 }
 
+#[allow(unused)]
 #[derive(Clone)]
 enum SettingsFile {
     User,                           // Uses all settings.
@@ -136,6 +218,14 @@ impl SettingsFile {
             SettingsFile::Server(_) => user_settings_data(),
         }
     }
+
+    fn name(&self) -> String {
+        match self {
+            SettingsFile::User => "User".to_string(),
+            SettingsFile::Local((_, path)) => format!("Local ({})", path.display()),
+            SettingsFile::Server(file) => format!("Server ({})", file),
+        }
+    }
 }
 
 impl Into<settings::SettingsFile> for SettingsFile {
@@ -148,68 +238,26 @@ impl Into<settings::SettingsFile> for SettingsFile {
     }
 }
 
-fn user_settings_data() -> Vec<SettingsPage> {
-    [
-        SettingsPage {
-            title: "General",
-            items: vec![
-                SettingsPageItem::SectionHeader("General"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Confirm Quit",
-                    description: "Whether to confirm before quitting Zed",
-                    render: Rc::new(|_, cx|
-                        render_toggle_button("confirm_quit", SettingsFile::User, cx, |settings_content| {
-                            &mut settings_content.workspace.confirm_quit
-                        })),
-                }),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Auto Update",
-                    description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
-                    render: Rc::new(|_, cx| render_toggle_button("Auto Update", SettingsFile::User, cx, |settings_content| {
-                        &mut settings_content.auto_update
-                    })),
-                }),
-            ],
-        },
-        SettingsPage {
-            title: "Project",
-            items: vec![
-                SettingsPageItem::SectionHeader("Worktree Settings Content"),
-                SettingsPageItem::SettingItem(SettingItem {
-                    title: "Project Name",
-                    description: "The displayed name of this project. If not set, the root directory name",
-                    render: Rc::new(| window, cx| {                        render_text_field("project_name", window, cx, |settings_content| {
-                            &mut settings_content.project.worktree.project_name
-                        })
-                    }),
-                }),
-            ],
-        },
-    ].iter().cloned().collect()
-}
-
-fn project_settings_data() -> Vec<SettingsPage> {
-    vec![SettingsPage {
-        title: "Project",
-        items: vec![
-            SettingsPageItem::SectionHeader("Worktree Settings Content"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Project Name",
-                description: " The displayed name of this project. If not set, the root directory name",
-                render: Rc::new(|_, _| todo!()),
-            }),
-        ],
-    }]
-}
-
 impl SettingsWindow {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let current_file = SettingsFile::User;
+        let search = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Search Settings", window, cx);
+            editor
+        });
         let mut this = Self {
-            files: vec![SettingsFile::User],
+            files: vec![
+                SettingsFile::User,
+                SettingsFile::Local((
+                    WorktreeId::from_usize(0),
+                    Arc::from(Path::new("/my-project/")),
+                )),
+            ],
             current_file: current_file,
             pages: vec![],
             current_page: 0,
+            search,
         };
         cx.observe_global_in::<SettingsStore>(window, move |_, _, cx| {
             cx.notify();
@@ -224,12 +272,35 @@ impl SettingsWindow {
         self.pages = self.current_file.pages();
     }
 
-    fn render_files(&self, _window: &mut Window, _cx: &mut Context<SettingsWindow>) -> Div {
-        todo!()
+    fn change_file(&mut self, ix: usize) {
+        self.current_file = self.files[ix].clone();
+        self.build_ui();
     }
 
-    fn render_nav(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
-        let mut nav = v_flex().p_4().gap_2();
+    fn render_files(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+        div()
+            .flex()
+            .flex_row()
+            .gap_1()
+            .children(self.files.iter().enumerate().map(|(ix, file)| {
+                Button::new(ix, file.name())
+                    .on_click(cx.listener(move |this, _, _window, _cx| this.change_file(ix)))
+            }))
+    }
+
+    fn render_search(&self, _window: &mut Window, _cx: &mut App) -> Div {
+        div()
+            .child(Icon::new(IconName::MagnifyingGlass))
+            .child(self.search.clone())
+    }
+
+    fn render_nav(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
+        let mut nav = v_flex()
+            .p_4()
+            .gap_2()
+            .child(div().h_10()) // Files spacer;
+            .child(self.render_search(window, cx));
+
         for (ix, page) in self.pages.iter().enumerate() {
             nav = nav.child(
                 div()
@@ -257,6 +328,7 @@ impl SettingsWindow {
         cx: &mut Context<SettingsWindow>,
     ) -> Div {
         div()
+            .child(self.render_files(window, cx))
             .child(Label::new(page.title))
             .children(page.items.iter().map(|item| item.render(window, cx)))
     }
@@ -272,13 +344,14 @@ impl SettingsWindow {
 
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sidebar = self.render_nav(window, cx);
-        let page = self.render_page(self.current_page(), window, cx);
         div()
+            .size_full()
+            .bg(cx.theme().colors().background)
             .flex()
             .flex_row()
-            .child(sidebar.w(px(300.0)))
-            .child(page.w_full())
+            .text_color(cx.theme().colors().text)
+            .child(self.render_nav(window, cx).w(px(300.0)))
+            .child(self.render_page(self.current_page(), window, cx).w_full())
     }
 }
 
@@ -296,27 +369,20 @@ fn write_setting_value<T: Send + 'static>(
 
 fn render_text_field(
     id: &'static str,
+    file: SettingsFile,
     window: &mut Window,
     cx: &mut App,
     get_value: fn(&mut SettingsContent) -> &mut Option<String>,
 ) -> AnyElement {
     // TODO: Updating file does not cause the editor text to reload, suspicious it may be a missing global update/notify in SettingsStore
-    let store = SettingsStore::global(cx);
-    // let initial_text = store
-    //     .get_value_from_file_mut(settings::SettingsFile, get_value)
-    //     .unwrap_or_default();
-    let mut defaults = store.raw_default_settings().clone();
-    let mut user_settings = store
-        .raw_user_settings()
-        .cloned()
-        .unwrap_or_default()
-        .content;
 
-    // TODO: Move this defaulting logic into a "Sources" concept
-    let initial_text = get_value(user_settings.as_mut())
-        .clone()
-        // TODO: unwrap_or_default here because project name is null
-        .unwrap_or_else(|| get_value(&mut defaults).clone().unwrap_or_default());
+    // TODO: unwrap_or_default here because project name is null
+    let initial_text = cx.update_global(|store: &mut SettingsStore, _| {
+        store
+            .get_value_from_file_mut(file.into(), get_value)
+            .clone()
+            .unwrap_or_default()
+    });
 
     let editor = window.use_keyed_state((id.into(), initial_text.clone()), cx, {
         move |window, cx| {
@@ -324,7 +390,7 @@ fn render_text_field(
             editor.set_text(initial_text, window, cx);
 
             // TODO: is this redundant with the same logic in the SettingsWindow::new function?
-            cx.observe_global_in::<SettingsStore>(window, move |editor, window, cx| cx.notify())
+            cx.observe_global_in::<SettingsStore>(window, move |_editor, _window, cx| cx.notify())
                 .detach();
 
             editor
@@ -342,16 +408,11 @@ fn render_text_field(
         .border_color(theme_colors.border)
         .on_action::<menu::Confirm>({
             move |_, _, cx| {
-                dbg!("In project name confirm closure");
                 let Some(editor) = weak_editor.upgrade() else {
-                    // sanity check
-                    dbg!("Failed to upgrade weak_editor (this shouldn't happen)");
                     return;
                 };
                 let new_value = editor.read_with(cx, |editor, cx| editor.text(cx));
-                dbg!("Writing project name value");
                 let new_value = (!new_value.is_empty()).then_some(new_value);
-                dbg!(&new_value);
                 write_setting_value(get_value, new_value, cx);
                 editor.update(cx, |_, cx| {
                     cx.notify();
