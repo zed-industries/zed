@@ -5280,7 +5280,7 @@ mod tests {
         });
 
         let all_matches = format!(
-            r#"{root}/
+            r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5358,7 +5358,7 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5428,7 +5428,7 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"rust-analyzer/
   crates/
     ide/src/{SELECTED_MARKER}
     rust-analyzer/src/
@@ -5512,7 +5512,7 @@ mod tests {
                 });
         });
         let all_matches = format!(
-            r#"{root}/
+            r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5652,7 +5652,7 @@ mod tests {
                 });
         });
         let all_matches = format!(
-            r#"{root}/
+            r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5902,15 +5902,13 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{}/
+                    r#"one/
   a.txt
     search: aaa aaa  <==== selected
     search: aaa aaa
-{}/
+two/
   b.txt
     search: a aaa"#,
-                    path!("/root/one"),
-                    path!("/root/two"),
                 ),
             );
         });
@@ -5932,13 +5930,11 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{}/
+                    r#"one/
   a.txt  <==== selected
-{}/
+two/
   b.txt
     search: a aaa"#,
-                    path!("/root/one"),
-                    path!("/root/two"),
                 ),
             );
         });
@@ -5960,11 +5956,9 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{}/
+                    r#"one/
   a.txt
-{}/  <==== selected"#,
-                    path!("/root/one"),
-                    path!("/root/two"),
+two/  <==== selected"#,
                 ),
             );
         });
@@ -5985,13 +5979,11 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{}/
+                    r#"one/
   a.txt
-{}/  <==== selected
+two/  <==== selected
   b.txt
     search: a aaa"#,
-                    path!("/root/one"),
-                    path!("/root/two"),
                 )
             );
         });
@@ -6453,7 +6445,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}  <==== selected
@@ -6492,7 +6484,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}
@@ -6522,7 +6514,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}
@@ -6556,7 +6548,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}
@@ -6589,7 +6581,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}
@@ -6648,7 +6640,6 @@ outline: struct OutlineEntryExcerpt
         cx: &mut App,
     ) -> String {
         let project = project.read(cx);
-        let path_style = project.path_style(cx);
         let mut display_string = String::new();
         for entry in cached_entries {
             if !display_string.is_empty() {
@@ -6663,24 +6654,26 @@ outline: struct OutlineEntryExcerpt
                         panic!("Did not cover external files with tests")
                     }
                     FsEntry::Directory(directory) => {
-                        if let Some(worktree) = project
+                        let path = if let Some(worktree) = project
                             .worktree_for_id(directory.worktree_id, cx)
                             .filter(|worktree| {
                                 worktree.read(cx).root_entry() == Some(&directory.entry.entry)
-                            })
-                        {
+                            }) {
                             worktree
                                 .read(cx)
-                                .absolutize(&directory.entry.path)
-                                .to_string_lossy()
+                                .root_name()
+                                .join(&directory.entry.path)
+                                .as_str()
                                 .to_string()
                         } else {
-                            format!(
-                                "{}{}",
-                                directory.entry.path.file_name().unwrap_or_default(),
-                                path_style.separator(),
-                            )
-                        }
+                            directory
+                                .entry
+                                .path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string()
+                        };
+                        format!("{path}/")
                     }
                     FsEntry::File(file) => file
                         .entry
@@ -6693,7 +6686,7 @@ outline: struct OutlineEntryExcerpt
                     .entries
                     .iter()
                     .filter_map(|dir| dir.path.file_name())
-                    .map(|name| name.to_string() + path_style.separator())
+                    .map(|name| name.to_string() + "/")
                     .collect(),
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Excerpt(_) => continue,

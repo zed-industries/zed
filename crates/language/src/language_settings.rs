@@ -918,8 +918,12 @@ mod tests {
 
         // Test tilde expansion
         let home = shellexpand::tilde("~").into_owned();
-        let home_file = make_test_file(&[&home, "test.rs"]);
-        let settings = build_settings(&["~/test.rs"]);
+        let home_file = Arc::new(TestFile {
+            path: rel_path("test.rs").into(),
+            root_name: "the-dir".to_string(),
+            local_root: Some(PathBuf::from(home)),
+        }) as Arc<dyn File>;
+        let settings = build_settings(&["~/the-dir/test.rs"]);
         assert!(!settings.enabled_for_file(&home_file, &cx));
     }
 
