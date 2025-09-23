@@ -17,42 +17,6 @@ pub enum SurroundsType {
     Selection,
 }
 
-#[derive(PartialEq, Debug)]
-enum SurroundWhiteSpace {
-    /// Clears all whitespace between the bracket and the content.
-    // {   a   } → cs{] → [a]
-    Clear,
-    /// Adds a new space between the bracket and the content, including existing
-    /// whitespace.
-    // '  a  ' → cs'{ → {   a   }
-    Add,
-    /// Does not alter the existing whitespace between the content and the
-    /// bracket.
-    // '  a  ' → cs'} → {  a  }
-    Keep,
-    /// Updates the space between the bracket and the content to a single space.
-    // {   a   } → cs{[ → [ a ]
-    Single,
-}
-
-impl SurroundWhiteSpace {
-    /// Whether whitespace should be added between the bracket and the content.
-    fn add_whitespace(&self) -> bool {
-        match self {
-            Self::Add | Self::Single => true,
-            Self::Keep | Self::Clear => false,
-        }
-    }
-
-    /// Whether whitespace should be kept between the bracket and the content.
-    fn keep_whitespace(&self) -> bool {
-        match self {
-            Self::Keep | Self::Add => true,
-            Self::Clear | Self::Single => false,
-        }
-    }
-}
-
 impl Vim {
     pub fn add_surrounds(
         &mut self,
@@ -278,26 +242,19 @@ impl Vim {
                         },
                     };
 
-                    let from_quote = will_replace_pair.start == will_replace_pair.end;
-                    let from_opening_bracket =
-                        !from_quote && target_text.is_some_and(|s| s == will_replace_pair.start);
+                    // A single space should be added if the new surround is a
+                    // bracket and not a quote (pair.start != pair.end) and if
+                    // the bracket used is the opening bracket.
+                    let add_space =
+                        !(pair.start == pair.end) && (pair.end != surround_alias((*text).as_ref()));
 
-                    let to_quote = pair.start == pair.end;
-                    let to_opening_bracket = pair.end != surround_alias((*text).as_ref());
-
-                    let surround_whitespace = match (
-                        from_quote,
-                        to_quote,
-                        from_opening_bracket,
-                        to_opening_bracket,
-                    ) {
-                        (false, true, true, _) => SurroundWhiteSpace::Clear,
-                        (false, false, true, true) => SurroundWhiteSpace::Single,
-                        (true, false, true, true) => SurroundWhiteSpace::Single,
-                        (_, false, false, true) => SurroundWhiteSpace::Add,
-                        (true, true, _, _) | (_, _, false, false) => SurroundWhiteSpace::Keep,
-                        (_, _, _, _) => SurroundWhiteSpace::Clear,
-                    };
+                    // Space should be preserved if either the surrounding
+                    // characters being updated are quotes
+                    // (will_replace_pair.start == will_replace_pair.end) or if
+                    // the bracket used in the command is the opening bracket.
+                    // original text is a quote.
+                    let preserve_space = will_replace_pair.start == will_replace_pair.end
+                        || !target_text.is_some_and(|s| s == will_replace_pair.start);
 
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
@@ -336,12 +293,12 @@ impl Vim {
                                     {
                                         end += 1;
 
-                                        if surround_whitespace.keep_whitespace() {
+                                        if preserve_space {
                                             open_str.push(next_ch);
                                         }
                                     }
 
-                                    if surround_whitespace.add_whitespace() {
+                                    if add_space {
                                         open_str.push(' ');
                                     };
 
@@ -368,12 +325,12 @@ impl Vim {
                                     {
                                         start -= 1;
 
-                                        if surround_whitespace.keep_whitespace() {
+                                        if preserve_space {
                                             close_str.push(next_ch);
                                         }
                                     }
 
-                                    if surround_whitespace.add_whitespace() {
+                                    if add_space {
                                         close_str.push(' ');
                                     };
 
