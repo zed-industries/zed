@@ -93,7 +93,7 @@ mod tests {
     use http_client::http::Response;
 
     #[gpui::test]
-    async fn test_http_transport(cx: &mut gpui::TestAppContext) {
+    async fn test_http_transport(_cx: &mut gpui::TestAppContext) {
         let response_body = r#"{"jsonrpc":"2.0","id":1,"result":"hello"}"#;
         let http_client = FakeHttpClient::create(move |_req| async move {
             Ok(Response::builder()

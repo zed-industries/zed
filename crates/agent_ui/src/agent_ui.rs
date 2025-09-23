@@ -283,20 +283,16 @@ pub fn init(
         ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
     })
     .detach();
-    cx.observe_new(move |workspace, window, cx| {
-        window.on_action({
-            let workspace = workspace.weak_handle();
-            move |_: &AddRemoteContextServer, cx| {
-                if let Some(workspace) = workspace.upgrade(cx) {
-                    workspace.update(cx, |workspace, cx| {
-                        agent_configuration::configure_remote_context_server_modal::ConfigureRemoteContextServerModal::toggle(
-                            workspace,
-                            &AddRemoteContextServer,
-                            cx.window(),
-                            cx,
-                        )
-                    });
-                }
+    cx.observe_new(move |workspace: &mut workspace::Workspace, _window, cx| {
+        workspace.register_action({
+            move |workspace, _: &AddRemoteContextServer, window, cx| {
+                crate::agent_configuration::configure_context_server_modal::ConfigureContextServerModal::new_remote_server(
+                    workspace.project().clone(),
+                    workspace.weak_handle(),
+                    None, // language registry will be auto-resolved
+                    window,
+                    cx,
+                ).detach();
             }
         });
     })
