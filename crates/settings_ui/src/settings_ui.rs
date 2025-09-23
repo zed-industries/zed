@@ -1,5 +1,5 @@
 //! # settings_ui
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use feature_flags::FeatureFlag;
 use gpui::{
@@ -8,8 +8,8 @@ use gpui::{
 };
 use settings::{SettingsContent, SettingsStore};
 use ui::{
-    AnyElement, BorrowAppContext, Color, FluentBuilder as _, InteractiveElement as _, Label,
-    LabelCommon as _, LabelSize, ParentElement, SharedString, Styled, Switch, SwitchField, v_flex,
+    AnyElement, BorrowAppContext as _, Color, FluentBuilder as _, InteractiveElement as _, Label,
+    LabelCommon as _, LabelSize, ParentElement, SharedString, Styled, Switch, v_flex,
 };
 
 pub struct SettingsUiFeatureFlag;
@@ -95,16 +95,15 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
                     render: Rc::new(|cx|
-
                         render_toggle_button("confirm_quit", cx, |settings_content| {
-                            settings_content.workspace.confirm_quit.as_mut()
+                            &mut settings_content.workspace.confirm_quit
                         })),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Update",
                     description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
                     render: Rc::new(|cx| render_toggle_button("Auto Update", cx, |settings_content| {
-                        settings_content.auto_update.as_mut()
+                        &mut settings_content.auto_update
                     })),
                 }),
             ],
@@ -169,7 +168,7 @@ pub struct SettingsWindow {
 }
 
 impl SettingsWindow {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         let current_file = SettingsFile::User;
         let mut this = Self {
             files: vec![SettingsFile::User, SettingsFile::Project("zed.dev")],
@@ -238,8 +237,11 @@ impl Render for SettingsWindow {
     }
 }
 
-
-fn render_toggle_button(id: &'static str, cx: &mut App, get_value: fn(&mut SettingsContent) -> Option<&mut bool>) -> AnyElement {
+fn render_toggle_button(
+    id: &'static str,
+    cx: &mut App,
+    get_value: fn(&mut SettingsContent) -> &mut Option<bool>,
+) -> AnyElement {
     // todo! in settings window state
     let store = SettingsStore::global(cx);
 
@@ -253,7 +255,7 @@ fn render_toggle_button(id: &'static str, cx: &mut App, get_value: fn(&mut Setti
 
     // TODO: Move this defaulting logic into a "Sources" concept
     let toggle_state =
-        if *get_value(&mut user_settings).unwrap_or_else(|| get_value(&mut defaults).unwrap()) {
+        if get_value(&mut user_settings).unwrap_or_else(|| get_value(&mut defaults).unwrap()) {
             ui::ToggleState::Selected
         } else {
             ui::ToggleState::Unselected
@@ -261,17 +263,16 @@ fn render_toggle_button(id: &'static str, cx: &mut App, get_value: fn(&mut Setti
 
     Switch::new(id, toggle_state)
         .on_click({
-            move |state, window, cx| {
-                    cx.update_global(|store: &mut SettingsStore, cx| {
-                        // source.update_file(cx, |settings| {
-                        //   *get_value(settings).unwrap() = *state == ui::ToggleState::Selected;
-                        // })
-
-                        // TODO: Make seperate
-                        store.update_user_settings(cx, |settings| {
-                            *get_value(settings).unwrap() = *state == ui::ToggleState::Selected;
-                        });
-                    })
-                },
-        }).into_any_element()
+            move |state, _window, cx| {
+                cx.update_global(|store: &mut SettingsStore, cx| {
+                    let toggled = *state == ui::ToggleState::Selected;
+                    // TODO: Make separate
+                    let fs = <dyn fs::Fs>::global(cx);
+                    store.update_settings_file(fs, move |settings, _cx| {
+                        *get_value(settings) = Some(toggled);
+                    });
+                });
+            }
+        })
+        .into_any_element()
 }

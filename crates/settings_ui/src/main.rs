@@ -20,7 +20,8 @@ fn main() {
         paths::global_settings_file().clone(),
     );
 
-    app.run(|cx| {
+    app.run(move |cx| {
+        <dyn fs::Fs>::set_global(fs.clone(), cx);
         let store = SettingsStore::new(cx, &default_settings());
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
