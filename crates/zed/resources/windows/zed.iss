@@ -29,7 +29,6 @@ VersionInfoVersion={#Version}
 ShowLanguageDialog=auto
 WizardStyle=modern
 
-
 CloseApplications=force
 
 SignTool=Defaultsign
