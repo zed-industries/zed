@@ -1292,12 +1292,14 @@ impl GitRepository for RealGitRepository {
     ) -> BoxFuture<'_, Result<()>> {
         let git_binary_path = self.any_git_binary_path.clone();
         let working_directory = self.working_directory();
-        let final_path = directory.join(name);
+        let final_path = directory.join(&name);
         let mut args = vec![
             OsString::from("--no-optional-locks"),
             OsString::from("worktree"),
             OsString::from("add"),
             OsString::from(final_path.as_os_str()),
+            OsString::from("-b"),
+            OsString::from(name.as_str()),
         ];
         if let Some(from_commit) = from_commit {
             args.push(OsString::from(from_commit));
