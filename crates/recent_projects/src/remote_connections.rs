@@ -570,9 +570,10 @@ pub fn connect(
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
     let known_password = match &connection_options {
-        RemoteConnectionOptions::Ssh(ssh_connection_options) => {
-            ssh_connection_options.password.as_deref().and_then(|pw| pw.try_into().ok())
-        }
+        RemoteConnectionOptions::Ssh(ssh_connection_options) => ssh_connection_options
+            .password
+            .as_deref()
+            .and_then(|pw| pw.try_into().ok()),
         _ => None,
     };
     let (tx, rx) = oneshot::channel();
