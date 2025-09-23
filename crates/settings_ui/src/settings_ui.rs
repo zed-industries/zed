@@ -1,5 +1,5 @@
 //! # settings_ui
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
@@ -7,7 +7,9 @@ use gpui::{
     App, AppContext as _, Context, Div, IntoElement, ReadGlobal, Render, Window, WindowHandle,
     actions, div, px, size,
 };
+use project::WorktreeId;
 use settings::{SettingsContent, SettingsStore};
+use std::path::Path;
 use ui::{
     ActiveTheme as _, AnyElement, BorrowAppContext as _, Color, FluentBuilder as _,
     InteractiveElement as _, Label, LabelCommon as _, LabelSize, ParentElement, SharedString,
@@ -97,7 +99,7 @@ impl SettingsPageItem {
             SettingsPageItem::SettingItem(setting_item) => div()
                 .child(setting_item.title)
                 .child(setting_item.description)
-                .child((setting_item.render)(SettingsFile::User, window, cx))
+                .child((setting_item.render)(window, cx))
                 .into_any_element(),
         }
     }
@@ -116,21 +118,32 @@ impl SettingsPageItem {
 struct SettingItem {
     title: &'static str,
     description: &'static str,
-    render: std::rc::Rc<dyn Fn(SettingsFile, &mut Window, &mut App) -> AnyElement>,
+    render: std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
 }
 
+#[derive(Clone)]
 enum SettingsFile {
-    User,                  // Uses all settings.
-    Project(&'static str), // Has a special name, and special set of settings
-    Remote(&'static str),  // Uses a special name, and the user settings
+    User,                           // Uses all settings.
+    Local((WorktreeId, Arc<Path>)), // Has a special name, and special set of settings
+    Server(&'static str),           // Uses a special name, and the user settings
 }
 
 impl SettingsFile {
     fn pages(&self) -> Vec<SettingsPage> {
         match self {
             SettingsFile::User => user_settings_data(),
-            SettingsFile::Project(_) => project_settings_data(),
-            SettingsFile::Remote(_) => user_settings_data(),
+            SettingsFile::Local(_) => project_settings_data(),
+            SettingsFile::Server(_) => user_settings_data(),
+        }
+    }
+}
+
+impl Into<settings::SettingsFile> for SettingsFile {
+    fn into(self) -> settings::SettingsFile {
+        match self {
+            SettingsFile::User => settings::SettingsFile::User,
+            SettingsFile::Local(location) => settings::SettingsFile::Local(location),
+            SettingsFile::Server(_ /*TODO*/) => settings::SettingsFile::Server,
         }
     }
 }
@@ -144,15 +157,15 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
-                    render: Rc::new(|_, _, cx|
-                        render_toggle_button("confirm_quit", cx, |settings_content| {
+                    render: Rc::new(|_, cx|
+                        render_toggle_button("confirm_quit", SettingsFile::User, cx, |settings_content| {
                             &mut settings_content.workspace.confirm_quit
                         })),
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Update",
                     description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
-                    render: Rc::new(|_, _, cx| render_toggle_button("Auto Update", cx, |settings_content| {
+                    render: Rc::new(|_, cx| render_toggle_button("Auto Update", SettingsFile::User, cx, |settings_content| {
                         &mut settings_content.auto_update
                     })),
                 }),
@@ -165,9 +178,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Name",
                     description: "The displayed name of this project. If not set, the root directory name",
-                    render: Rc::new(|_, window, cx| {
-
-                        render_text_field("project_name", window, cx, |settings_content| {
+                    render: Rc::new(| window, cx| {                        render_text_field("project_name", window, cx, |settings_content| {
                             &mut settings_content.project.worktree.project_name
                         })
                     }),
@@ -177,11 +188,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
     ].iter().cloned().collect()
 }
 
-// todo! remove
-// X 0. Make this turn on and look ok-ish
-// X 1. Do text input for the worktree settings content (might need to stash an editor in a use_state near the page)
-// 2. Let's introduce settings files and settings source
-
 fn project_settings_data() -> Vec<SettingsPage> {
     vec![SettingsPage {
         title: "Project",
@@ -190,7 +196,7 @@ fn project_settings_data() -> Vec<SettingsPage> {
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Name",
                 description: " The displayed name of this project. If not set, the root directory name",
-                render: Rc::new(|_, _, _| todo!()),
+                render: Rc::new(|_, _| todo!()),
             }),
         ],
     }]
@@ -200,7 +206,7 @@ impl SettingsWindow {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let current_file = SettingsFile::User;
         let mut this = Self {
-            files: vec![SettingsFile::User, SettingsFile::Project("zed.dev")],
+            files: vec![SettingsFile::User],
             current_file: current_file,
             pages: vec![],
             current_page: 0,
@@ -357,27 +363,19 @@ fn render_text_field(
 
 fn render_toggle_button(
     id: &'static str,
+    file: SettingsFile,
     cx: &mut App,
     get_value: fn(&mut SettingsContent) -> &mut Option<bool>,
 ) -> AnyElement {
-    // todo! in settings window state
-    let store = SettingsStore::global(cx);
-
-    // This clone needs to go!!
-    let mut defaults = store.raw_default_settings().clone();
-    let mut user_settings = store
-        .raw_user_settings()
-        .cloned()
-        .unwrap_or_default()
-        .content;
-
-    // TODO: Move this defaulting logic into a "Sources" concept
-    let toggle_state =
-        if get_value(&mut user_settings).unwrap_or_else(|| get_value(&mut defaults).unwrap()) {
-            ui::ToggleState::Selected
-        } else {
-            ui::ToggleState::Unselected
-        };
+    let toggle_state = if cx.update_global(|store: &mut SettingsStore, _| {
+        store
+            .get_value_from_file_mut(file.into(), get_value)
+            .unwrap_or_default()
+    }) {
+        ui::ToggleState::Selected
+    } else {
+        ui::ToggleState::Unselected
+    };
 
     Switch::new(id, toggle_state)
         .on_click({
