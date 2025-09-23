@@ -133,12 +133,27 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         return Vec::new();
     }
 
-    let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
-    let query = query.chars().collect::<Vec<_>>();
+    let path_style = candidate_sets[0].path_style();
 
-    let lowercase_query = &lowercase_query;
+    let query = query
+        .chars()
+        .map(|char| {
+            if path_style.is_windows() && char == '\\' {
+                '/'
+            } else {
+                char
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let lowercase_query = query
+        .iter()
+        .map(|query| query.to_ascii_lowercase())
+        .collect::<Vec<_>>();
+
     let query = &query;
-    let query_char_bag = CharBag::from(&lowercase_query[..]);
+    let lowercase_query = &lowercase_query;
+    let query_char_bag = CharBag::from_iter(lowercase_query.iter().copied());
 
     let num_cpus = executor.num_cpus().min(path_count);
     let segment_size = path_count.div_ceil(num_cpus);

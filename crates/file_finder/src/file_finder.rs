@@ -1311,7 +1311,6 @@ impl PickerDelegate for FileFinderDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let path_style = self.project.read(cx).path_style(cx);
         let raw_query = raw_query.replace(' ', "");
         let raw_query = raw_query.trim();
 
@@ -1390,14 +1389,7 @@ impl PickerDelegate for FileFinderDelegate {
             Task::ready(())
         } else {
             let path_position = PathWithPosition::parse_str(raw_query);
-
-            let raw_query = if path_style == PathStyle::Windows {
-                Cow::Owned(raw_query.trim().replace('\\', "/"))
-            } else {
-                Cow::Borrowed(raw_query.trim())
-            };
-
-            let raw_query = raw_query.trim_end_matches(':').to_owned();
+            let raw_query = raw_query.trim().trim_end_matches(':').to_owned();
             let path = path_position.path.to_str();
             let path_trimmed = path.unwrap_or(&raw_query).trim_end_matches(':');
             let file_query_end = if path_trimmed == raw_query {
