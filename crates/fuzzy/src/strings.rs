@@ -28,7 +28,7 @@ impl StringMatchCandidate {
     }
 }
 
-impl<'a> MatchCandidate for &'a StringMatchCandidate {
+impl MatchCandidate for &StringMatchCandidate {
     fn has_chars(&self, bag: CharBag) -> bool {
         self.char_bag.is_superset(bag)
     }

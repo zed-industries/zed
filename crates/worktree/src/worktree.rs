@@ -1397,15 +1397,13 @@ impl LocalWorktree {
                     let refresh_full_path = lowest_ancestor.join(refresh_path);
 
                     refreshes.push(this.as_local_mut().unwrap().refresh_entry(
-                        refresh_full_path.into(),
+                        refresh_full_path,
                         None,
                         cx,
                     ));
                 }
                 (
-                    this.as_local_mut()
-                        .unwrap()
-                        .refresh_entry(path.into(), None, cx),
+                    this.as_local_mut().unwrap().refresh_entry(path, None, cx),
                     refreshes,
                 )
             })?;
@@ -1553,13 +1551,11 @@ impl LocalWorktree {
         let paths_to_refresh = paths
             .iter()
             .filter_map(|(_, target)| {
-                Some(
-                    RelPath::from_std_path(
-                        target.strip_prefix(&worktree_path).ok()?,
-                        PathStyle::local(),
-                    )
-                    .ok()?,
+                RelPath::from_std_path(
+                    target.strip_prefix(&worktree_path).ok()?,
+                    PathStyle::local(),
                 )
+                .ok()
             })
             .collect::<Vec<_>>();
 
@@ -2572,9 +2568,6 @@ impl LocalSnapshot {
                 stack.insert(ix, &child_entry.path);
             }
         }
-
-        dbg!(&self.entries_by_id.items(&()));
-        dbg!(&self.entries_by_path.items(&()));
 
         let dfs_paths_via_iter = self
             .entries_by_path

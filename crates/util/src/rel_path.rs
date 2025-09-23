@@ -118,8 +118,8 @@ impl RelPath {
             return Ok(self);
         }
         if let Some(suffix) = self.0.strip_prefix(&other.0) {
-            if suffix.starts_with('/') {
-                return Ok(unsafe { Self::new_unchecked(&suffix[1..]) });
+            if let Some(suffix) = suffix.strip_prefix('/') {
+                return Ok(unsafe { Self::new_unchecked(suffix) });
             } else if suffix.is_empty() {
                 return Ok(Self::empty());
             }
