@@ -813,11 +813,13 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "net",
- "parking_lot",
+ "proto",
  "smol",
  "tempfile",
  "util",
+ "windows 0.61.1",
  "workspace-hack",
+ "zeroize",
 ]
 
 [[package]]
@@ -6946,6 +6948,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zeroize",
  "zlog",
 ]
 
@@ -13141,6 +13144,7 @@ dependencies = [
  "which 6.0.3",
  "workspace-hack",
  "worktree",
+ "zeroize",
  "zlog",
 ]
 
@@ -13839,6 +13843,7 @@ name = "recent_projects"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "auto_update",
  "dap",
  "editor",

@@ -89,6 +89,7 @@ util.workspace = true
 watch.workspace = true
 which.workspace = true
 worktree.workspace = true
+zeroize.workspace = true
 zlog.workspace = true
 workspace-hack.workspace = true
 

@@ -7,7 +7,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
-use askpass::AskPassDelegate;
+use askpass::{AskPassDelegate, EncryptedPassword};
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -68,6 +68,7 @@ use worktree::{
     File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
     UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
 };
+use zeroize::Zeroize;
 
 pub struct GitStore {
     state: GitStoreState,
@@ -2106,7 +2107,7 @@ impl GitStore {
             .lock()
             .insert(envelope.payload.askpass_id, askpass);
 
-        Ok(proto::AskPassResponse { response })
+        response.try_into()
     }
 
     async fn handle_check_for_pushed_commits(
@@ -2740,7 +2741,10 @@ fn make_remote_delegate(
                 prompt,
             });
             cx.spawn(async move |_, _| {
-                tx.send(response.await?.response).ok();
+                let mut response = response.await?.response;
+                tx.send(EncryptedPassword::try_from(response.as_ref())?)
+                    .ok();
+                response.zeroize();
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
