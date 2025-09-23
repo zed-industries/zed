@@ -228,60 +228,70 @@ impl Editor {
                 };
                 match colors {
                     Ok(colors) => {
-                        for color in colors.colors {
-                            let color_start = point_from_lsp(color.lsp_range.start);
-                            let color_end = point_from_lsp(color.lsp_range.end);
+                        if colors.colors.is_empty() {
+                            let new_entry =
+                                new_editor_colors.entry(buffer_id).or_insert_with(|| {
+                                    (Vec::<(Range<Anchor>, DocumentColor)>::new(), None)
+                                });
+                            new_entry.0.clear();
+                            new_entry.1 = colors.cache_version;
+                        } else {
+                            for color in colors.colors {
+                                let color_start = point_from_lsp(color.lsp_range.start);
+                                let color_end = point_from_lsp(color.lsp_range.end);
 
-                            for (excerpt_id, buffer_snapshot, excerpt_range) in excerpts {
-                                if !excerpt_range.contains(&color_start.0)
-                                    || !excerpt_range.contains(&color_end.0)
-                                {
-                                    continue;
+                                for (excerpt_id, buffer_snapshot, excerpt_range) in excerpts {
+                                    if !excerpt_range.contains(&color_start.0)
+                                        || !excerpt_range.contains(&color_end.0)
+                                    {
+                                        continue;
+                                    }
+                                    let Some(color_start_anchor) = multi_buffer_snapshot
+                                        .anchor_in_excerpt(
+                                            *excerpt_id,
+                                            buffer_snapshot.anchor_before(
+                                                buffer_snapshot
+                                                    .clip_point_utf16(color_start, Bias::Left),
+                                            ),
+                                        )
+                                    else {
+                                        continue;
+                                    };
+                                    let Some(color_end_anchor) = multi_buffer_snapshot
+                                        .anchor_in_excerpt(
+                                            *excerpt_id,
+                                            buffer_snapshot.anchor_after(
+                                                buffer_snapshot
+                                                    .clip_point_utf16(color_end, Bias::Right),
+                                            ),
+                                        )
+                                    else {
+                                        continue;
+                                    };
+
+                                    let new_entry =
+                                        new_editor_colors.entry(buffer_id).or_insert_with(|| {
+                                            (Vec::<(Range<Anchor>, DocumentColor)>::new(), None)
+                                        });
+                                    new_entry.1 = colors.cache_version;
+                                    let new_buffer_colors = &mut new_entry.0;
+
+                                    let (Ok(i) | Err(i)) =
+                                        new_buffer_colors.binary_search_by(|(probe, _)| {
+                                            probe
+                                                .start
+                                                .cmp(&color_start_anchor, &multi_buffer_snapshot)
+                                                .then_with(|| {
+                                                    probe.end.cmp(
+                                                        &color_end_anchor,
+                                                        &multi_buffer_snapshot,
+                                                    )
+                                                })
+                                        });
+                                    new_buffer_colors
+                                        .insert(i, (color_start_anchor..color_end_anchor, color));
+                                    break;
                                 }
-                                let Some(color_start_anchor) = multi_buffer_snapshot
-                                    .anchor_in_excerpt(
-                                        *excerpt_id,
-                                        buffer_snapshot.anchor_before(
-                                            buffer_snapshot
-                                                .clip_point_utf16(color_start, Bias::Left),
-                                        ),
-                                    )
-                                else {
-                                    continue;
-                                };
-                                let Some(color_end_anchor) = multi_buffer_snapshot
-                                    .anchor_in_excerpt(
-                                        *excerpt_id,
-                                        buffer_snapshot.anchor_after(
-                                            buffer_snapshot
-                                                .clip_point_utf16(color_end, Bias::Right),
-                                        ),
-                                    )
-                                else {
-                                    continue;
-                                };
-
-                                let new_entry =
-                                    new_editor_colors.entry(buffer_id).or_insert_with(|| {
-                                        (Vec::<(Range<Anchor>, DocumentColor)>::new(), None)
-                                    });
-                                new_entry.1 = colors.cache_version;
-                                let new_buffer_colors = &mut new_entry.0;
-
-                                let (Ok(i) | Err(i)) =
-                                    new_buffer_colors.binary_search_by(|(probe, _)| {
-                                        probe
-                                            .start
-                                            .cmp(&color_start_anchor, &multi_buffer_snapshot)
-                                            .then_with(|| {
-                                                probe
-                                                    .end
-                                                    .cmp(&color_end_anchor, &multi_buffer_snapshot)
-                                            })
-                                    });
-                                new_buffer_colors
-                                    .insert(i, (color_start_anchor..color_end_anchor, color));
-                                break;
                             }
                         }
                     }
