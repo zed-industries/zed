@@ -19,12 +19,19 @@ fn main() {
         fs.clone(),
         paths::global_settings_file().clone(),
     );
+    zlog::init();
+    zlog::init_output_stderr();
 
     app.run(move |cx| {
         <dyn fs::Fs>::set_global(fs.clone(), cx);
         let store = SettingsStore::new(cx, &default_settings());
         cx.set_global(store);
         theme::init(theme::LoadThemes::JustBase, cx);
+        workspace::init_settings(cx);
+        project::Project::init_settings(cx);
+        language::init(cx);
+        editor::init(cx);
+        menu::init();
 
         cx.spawn(async move |cx| {
             let mut settings_streams = futures::stream::select(

@@ -15542,8 +15542,10 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "language",
  "menu",
  "paths",
+ "project",
  "serde",
  "serde_json",
  "settings",
@@ -15552,6 +15554,7 @@ dependencies = [
  "ui",
  "workspace",
  "workspace-hack",
+ "zlog",
 ]
 
 [[package]]

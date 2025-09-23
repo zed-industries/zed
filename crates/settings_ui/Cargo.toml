@@ -21,6 +21,8 @@ test-support = []
 
 [dependencies]
 futures.workspace = true
+language.workspace = true
+project.workspace = true
 assets.workspace = true
 paths.workspace = true
 fs.workspace = true
@@ -38,3 +40,4 @@ theme.workspace = true
 ui.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
+zlog.workspace = true
