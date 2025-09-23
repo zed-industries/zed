@@ -24,15 +24,25 @@ pub fn build_transport(
     http_client: Arc<dyn HttpClient>,
     endpoint: &Url,
 ) -> Result<Arc<dyn Transport>> {
+    log::info!("Creating transport for endpoint: {}", endpoint);
     match endpoint.scheme() {
-        "http" | "https" => Ok(Arc::new(HttpTransport::new(
-            http_client,
-            endpoint.to_string(),
-        ))),
-        "sse" => Ok(Arc::new(SseTransport::new(
-            http_client,
-            endpoint.to_string(),
-        ))),
-        _ => Err(anyhow!("unsupported scheme {}", endpoint.scheme())),
+        "http" | "https" => {
+            log::info!("Using HTTP transport for {}", endpoint);
+            Ok(Arc::new(HttpTransport::new(
+                http_client,
+                endpoint.to_string(),
+            )))
+        },
+        "sse" => {
+            log::info!("Using SSE transport for {}", endpoint);
+            Ok(Arc::new(SseTransport::new(
+                http_client,
+                endpoint.to_string(),
+            )))
+        },
+        _ => {
+            log::error!("Unsupported URL scheme: {}", endpoint.scheme());
+            Err(anyhow!("unsupported scheme {}", endpoint.scheme()))
+        },
     }
 }
