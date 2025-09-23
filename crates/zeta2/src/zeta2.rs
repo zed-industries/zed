@@ -134,6 +134,10 @@ impl Zeta {
         debug_watch_rx
     }
 
+    pub fn set_options(&mut self, options: EditPredictionExcerptOptions) {
+        self.excerpt_options = options;
+    }
+
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
         self.user_store.read(cx).edit_prediction_usage()
     }
