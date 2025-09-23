@@ -4,7 +4,7 @@
 
 ### Opt-In
 
-When using the Agent Panel, whether through
+When you use the Agent Panel through any of these means: 
 
 - [Zed's hosted models](./subscription.md)
 - [connecting a non-Zed AI service via API key](./llm-providers.md)
