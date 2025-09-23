@@ -8,7 +8,7 @@ use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -32,9 +32,14 @@ use crate::AddContextServer;
 
 enum ConfigurationTarget {
     New,
+    NewRemote,
     Existing {
         id: ContextServerId,
         command: ContextServerCommand,
+    },
+    ExistingRemote {
+        id: ContextServerId,
+        url: String,
     },
     Extension {
         id: ContextServerId,
@@ -47,8 +52,16 @@ enum ConfigurationSource {
     New {
         editor: Entity<Editor>,
     },
+    NewRemote {
+        name_editor: Entity<Editor>,
+        url_editor: Entity<Editor>,
+    },
     Existing {
         editor: Entity<Editor>,
+    },
+    ExistingRemote {
+        name_editor: Entity<Editor>,
+        url_editor: Entity<Editor>,
     },
     Extension {
         id: ContextServerId,
@@ -65,7 +78,7 @@ impl ConfigurationSource {
     }
 
     fn is_new(&self) -> bool {
-        matches!(self, ConfigurationSource::New { .. })
+        matches!(self, ConfigurationSource::New { .. } | ConfigurationSource::NewRemote { .. })
     }
 
     fn from_target(
@@ -93,9 +106,17 @@ impl ConfigurationSource {
             })
         }
 
+        fn create_simple_editor(window: &mut Window, cx: &mut App) -> Entity<Editor> {
+            cx.new(|cx| Editor::single_line(window, cx))
+        }
+
         match target {
             ConfigurationTarget::New => ConfigurationSource::New {
                 editor: create_editor(context_server_input(None), jsonc_language, window, cx),
+            },
+            ConfigurationTarget::NewRemote => ConfigurationSource::NewRemote {
+                name_editor: create_simple_editor(window, cx),
+                url_editor: create_simple_editor(window, cx),
             },
             ConfigurationTarget::Existing { id, command } => ConfigurationSource::Existing {
                 editor: create_editor(
@@ -104,6 +125,23 @@ impl ConfigurationSource {
                     window,
                     cx,
                 ),
+            },
+            ConfigurationTarget::ExistingRemote { id, url } => {
+                let name_editor = create_simple_editor(window, cx);
+                let url_editor = create_simple_editor(window, cx);
+                
+                // Set initial values
+                name_editor.update(cx, |editor, cx| {
+                    editor.set_text(id.0.to_string(), window, cx);
+                });
+                url_editor.update(cx, |editor, cx| {
+                    editor.set_text(url, window, cx);
+                });
+                
+                ConfigurationSource::ExistingRemote {
+                    name_editor,
+                    url_editor,
+                }
             },
             ConfigurationTarget::Extension {
                 id,
@@ -150,6 +188,23 @@ impl ConfigurationSource {
                         },
                     )
                 })
+            }
+            ConfigurationSource::NewRemote { name_editor, url_editor } 
+            | ConfigurationSource::ExistingRemote { name_editor, url_editor } => {
+                let name = name_editor.read(cx).text(cx);
+                let url = url_editor.read(cx).text(cx);
+                
+                if name.trim().is_empty() || url.trim().is_empty() {
+                    return Err(anyhow::anyhow!("Name and URL are required for remote servers"));
+                }
+                
+                Ok((
+                    ContextServerId(name.into()),
+                    ContextServerSettings::Remote {
+                        enabled: true,
+                        url,
+                    },
+                ))
             }
             ConfigurationSource::Extension {
                 id,
@@ -255,6 +310,26 @@ pub struct ConfigureContextServerModal {
 }
 
 impl ConfigureContextServerModal {
+    pub fn new_remote_server(
+        project: Entity<project::Project>,
+        workspace: WeakEntity<Workspace>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let target = ConfigurationTarget::NewRemote;
+        let language_registry = language_registry.unwrap_or_else(|| project.read(cx).languages().clone());
+        
+        window.spawn(cx, async move |mut cx| {
+            Self::show_modal(
+                target,
+                language_registry,
+                workspace,
+                &mut cx,
+            ).await
+        })
+    }
+
     pub fn register(
         workspace: &mut Workspace,
         language_registry: Arc<LanguageRegistry>,
@@ -310,6 +385,12 @@ impl ConfigureContextServerModal {
                     id: server_id,
                     command,
                 }),
+                ContextServerSettings::Remote { enabled: _, url } => {
+                    Some(ConfigurationTarget::ExistingRemote {
+                        id: server_id,
+                        url,
+                    })
+                },
                 ContextServerSettings::Extension { .. } => {
                     match workspace
                         .update(cx, |workspace, cx| {
@@ -351,8 +432,9 @@ impl ConfigureContextServerModal {
                     state: State::Idle,
                     original_server_id: match &target {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
+                        ConfigurationTarget::ExistingRemote { id, .. } => Some(id.clone()),
                         ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
-                        ConfigurationTarget::New => None,
+                        ConfigurationTarget::New | ConfigurationTarget::NewRemote => None,
                     },
                     source: ConfigurationSource::from_target(
                         target,
@@ -479,7 +561,9 @@ impl Focusable for ConfigureContextServerModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match &self.source {
             ConfigurationSource::New { editor } => editor.focus_handle(cx),
+            ConfigurationSource::NewRemote { name_editor, .. } => name_editor.focus_handle(cx),
             ConfigurationSource::Existing { editor, .. } => editor.focus_handle(cx),
+            ConfigurationSource::ExistingRemote { name_editor, .. } => name_editor.focus_handle(cx),
             ConfigurationSource::Extension { editor, .. } => editor
                 .as_ref()
                 .map(|editor| editor.focus_handle(cx))
@@ -494,7 +578,9 @@ impl ConfigureContextServerModal {
     fn render_modal_header(&self) -> ModalHeader {
         let text: SharedString = match &self.source {
             ConfigurationSource::New { .. } => "Add MCP Server".into(),
+            ConfigurationSource::NewRemote { .. } => "Add Remote MCP Server".into(),
             ConfigurationSource::Existing { .. } => "Configure MCP Server".into(),
+            ConfigurationSource::ExistingRemote { .. } => "Configure Remote MCP Server".into(),
             ConfigurationSource::Extension { id, .. } => format!("Configure {}", id.0).into(),
         };
         ModalHeader::new().headline(text)
@@ -523,47 +609,36 @@ impl ConfigureContextServerModal {
         }
     }
 
-    fn render_modal_content(&self, cx: &App) -> AnyElement {
-        let editor = match &self.source {
-            ConfigurationSource::New { editor } => editor,
-            ConfigurationSource::Existing { editor } => editor,
+    fn render_modal_content(&self, _cx: &App) -> AnyElement {
+        match &self.source {
+            ConfigurationSource::New { editor } | ConfigurationSource::Existing { editor } => {
+                EditorElement::new(editor, EditorStyle::default()).into_any_element()
+            }
+            ConfigurationSource::NewRemote { name_editor, url_editor } 
+            | ConfigurationSource::ExistingRemote { name_editor, url_editor } => {
+                v_flex()
+                    .gap_4()
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(Label::new("Server Name"))
+                            .child(EditorElement::new(name_editor, EditorStyle::default())),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .child(Label::new("Server URL"))
+                            .child(EditorElement::new(url_editor, EditorStyle::default())),
+                    )
+                    .into_any_element()
+            }
             ConfigurationSource::Extension { editor, .. } => {
                 let Some(editor) = editor else {
                     return div().into_any_element();
                 };
-                editor
+                EditorElement::new(editor, EditorStyle::default()).into_any_element()
             }
-        };
-
-        div()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(cx.theme().colors().border_variant)
-            .bg(cx.theme().colors().editor_background)
-            .child({
-                let settings = ThemeSettings::get_global(cx);
-                let text_style = TextStyle {
-                    color: cx.theme().colors().text,
-                    font_family: settings.buffer_font.family.clone(),
-                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                    font_size: settings.buffer_font_size(cx).into(),
-                    font_weight: settings.buffer_font.weight,
-                    line_height: relative(settings.buffer_line_height.value()),
-                    ..Default::default()
-                };
-                EditorElement::new(
-                    editor,
-                    EditorStyle {
-                        background: cx.theme().colors().editor_background,
-                        local_player: cx.theme().players().local(),
-                        text: text_style,
-                        syntax: cx.theme().syntax().clone(),
-                        ..Default::default()
-                    },
-                )
-            })
-            .into_any_element()
+        }
     }
 
     fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
