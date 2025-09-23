@@ -3226,6 +3226,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cloud_zeta2_prompt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cloud_llm_client",
+ "ordered-float 2.10.1",
+ "rustc-hash 2.1.1",
+ "strum 0.27.1",
+ "workspace-hack",
+]
+
+[[package]]
 name = "clru"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
