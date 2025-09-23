@@ -177,7 +177,7 @@ use std::{
     borrow::Cow,
     cell::{OnceCell, RefCell},
     cmp::{self, Ordering, Reverse},
-    iter::Peekable,
+    iter::{self, Peekable},
     mem,
     num::NonZeroU32,
     ops::{ControlFlow, Deref, DerefMut, Not, Range, RangeInclusive},
@@ -16341,15 +16341,30 @@ impl Editor {
 
         let workspace = self.workspace();
 
-        cx.spawn_in(window, async move |editor, acx| {
-            let mut locations: Vec<Location> = future::join_all(definitions)
+        cx.spawn_in(window, async move |editor, cx| {
+            let locations: Vec<Location> = future::join_all(definitions)
                 .await
                 .into_iter()
                 .filter_map(|location| location.transpose())
                 .collect::<Result<_>>()
                 .context("location tasks")?;
+            let mut locations = cx.update(|_, cx| {
+                locations
+                    .into_iter()
+                    .map(|location| {
+                        let buffer = location.buffer.read(cx);
+                        (location.buffer, location.range.to_point(buffer))
+                    })
+                    .into_group_map()
+            })?;
+            let mut num_locations = 0;
+            for ranges in locations.values_mut() {
+                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.dedup();
+                num_locations += ranges.len();
+            }
 
-            if locations.len() > 1 {
+            if num_locations > 1 {
                 let Some(workspace) = workspace else {
                     return Ok(Navigated::No);
                 };
@@ -16361,14 +16376,14 @@ impl Editor {
                     Some(GotoDefinitionKind::Type) => "Types",
                 };
                 let title = editor
-                    .update_in(acx, |_, _, cx| {
+                    .update_in(cx, |_, _, cx| {
                         let target = locations
                             .iter()
-                            .map(|location| {
-                                location
-                                    .buffer
+                            .flat_map(|(k, v)| iter::repeat(k.clone()).zip(v))
+                            .map(|(buffer, location)| {
+                                buffer
                                     .read(cx)
-                                    .text_for_range(location.range.clone())
+                                    .text_for_range(location.clone())
                                     .collect::<String>()
                             })
                             .filter(|text| !text.contains('\n'))
@@ -16384,7 +16399,7 @@ impl Editor {
                     .context("buffer title")?;
 
                 let opened = workspace
-                    .update_in(acx, |workspace, window, cx| {
+                    .update_in(cx, |workspace, window, cx| {
                         Self::open_locations_in_multibuffer(
                             workspace,
                             locations,
@@ -16398,11 +16413,11 @@ impl Editor {
                     .is_ok();
 
                 anyhow::Ok(Navigated::from_bool(opened))
-            } else if locations.is_empty() {
+            } else if num_locations == 0 {
                 // If there is one url or file, open it directly
                 match first_url_or_file {
                     Some(Either::Left(url)) => {
-                        acx.update(|_, cx| cx.open_url(&url))?;
+                        cx.update(|_, cx| cx.open_url(&url))?;
                         Ok(Navigated::Yes)
                     }
                     Some(Either::Right(path)) => {
@@ -16411,7 +16426,7 @@ impl Editor {
                         };
 
                         workspace
-                            .update_in(acx, |workspace, window, cx| {
+                            .update_in(cx, |workspace, window, cx| {
                                 workspace.open_resolved_path(path, window, cx)
                             })?
                             .await?;
@@ -16424,14 +16439,16 @@ impl Editor {
                     return Ok(Navigated::No);
                 };
 
-                let target = locations.pop().unwrap();
-                editor.update_in(acx, |editor, window, cx| {
-                    let range = target.range.to_point(target.buffer.read(cx));
+                let (target_buffer, target_ranges) = locations.into_iter().next().unwrap();
+                let target_range = target_ranges.first().unwrap().clone();
+
+                editor.update_in(cx, |editor, window, cx| {
+                    let range = target_range.to_point(target_buffer.read(cx));
                     let range = editor.range_for_match(&range);
                     let range = collapse_multiline_range(range);
 
                     if !split
-                        && Some(&target.buffer) == editor.buffer.read(cx).as_singleton().as_ref()
+                        && Some(&target_buffer) == editor.buffer.read(cx).as_singleton().as_ref()
                     {
                         editor.go_to_singleton_buffer_range(range, window, cx);
                     } else {
@@ -16447,7 +16464,7 @@ impl Editor {
 
                                     workspace.open_project_item(
                                         pane,
-                                        target.buffer.clone(),
+                                        target_buffer.clone(),
                                         true,
                                         true,
                                         window,
@@ -16557,18 +16574,31 @@ impl Editor {
             let Some(locations) = references.await? else {
                 return anyhow::Ok(Navigated::No);
             };
+            let mut locations = cx.update(|_, cx| {
+                locations
+                    .into_iter()
+                    .map(|location| {
+                        let buffer = location.buffer.read(cx);
+                        (location.buffer, location.range.to_point(buffer))
+                    })
+                    .into_group_map()
+            })?;
             if locations.is_empty() {
                 return anyhow::Ok(Navigated::No);
+            }
+            for ranges in locations.values_mut() {
+                ranges.sort_by_key(|range| (range.start, Reverse(range.end)));
+                ranges.dedup();
             }
 
             workspace.update_in(cx, |workspace, window, cx| {
                 let target = locations
                     .iter()
-                    .map(|location| {
-                        location
-                            .buffer
+                    .flat_map(|(k, v)| iter::repeat(k.clone()).zip(v))
+                    .map(|(buffer, location)| {
+                        buffer
                             .read(cx)
-                            .text_for_range(location.range.clone())
+                            .text_for_range(location.clone())
                             .collect::<String>()
                     })
                     .filter(|text| !text.contains('\n'))
@@ -16597,7 +16627,7 @@ impl Editor {
     /// Opens a multibuffer with the given project locations in it
     pub fn open_locations_in_multibuffer(
         workspace: &mut Workspace,
-        mut locations: Vec<Location>,
+        locations: std::collections::HashMap<Entity<Buffer>, Vec<Range<Point>>>,
         title: String,
         split: bool,
         multibuffer_selection_mode: MultibufferSelectionMode,
@@ -16609,11 +16639,8 @@ impl Editor {
             return;
         }
 
-        locations.sort_by_key(|location| location.buffer.read(cx).remote_id());
-
-        let mut locations = locations.into_iter().peekable();
-        let mut ranges: Vec<Range<Anchor>> = Vec::new();
         let capability = workspace.project().read(cx).capability();
+        let mut ranges = <Vec<Range<Anchor>>>::new();
 
         // a key to find existing multibuffer editors with the same set of locations
         // to prevent us from opening more and more multibuffer tabs for searches and the like
@@ -16621,26 +16648,12 @@ impl Editor {
         let excerpt_buffer = cx.new(|cx| {
             let key = &mut key.1;
             let mut multibuffer = MultiBuffer::new(capability);
-            while let Some(location) = locations.next() {
-                let buffer = location.buffer.read(cx);
-                let mut ranges_for_buffer = Vec::new();
-                let range = location.range.to_point(buffer);
-                ranges_for_buffer.push(range.clone());
-
-                while let Some(next_location) =
-                    locations.next_if(|next_location| next_location.buffer == location.buffer)
-                {
-                    ranges_for_buffer.push(next_location.range.to_point(buffer));
-                }
-
+            for (buffer, mut ranges_for_buffer) in locations {
                 ranges_for_buffer.sort_by_key(|range| (range.start, Reverse(range.end)));
-                key.push((
-                    location.buffer.read(cx).remote_id(),
-                    ranges_for_buffer.clone(),
-                ));
+                key.push((buffer.read(cx).remote_id(), ranges_for_buffer.clone()));
                 let (new_ranges, _) = multibuffer.set_excerpts_for_path(
-                    PathKey::for_buffer(&location.buffer, cx),
-                    location.buffer.clone(),
+                    PathKey::for_buffer(&buffer, cx),
+                    buffer.clone(),
                     ranges_for_buffer,
                     multibuffer_context_lines(cx),
                     cx,
@@ -19718,11 +19731,14 @@ impl Editor {
             .selections
             .all_anchors(cx)
             .iter()
-            .map(|selection| Location {
-                buffer: buffer.clone(),
-                range: selection.start.text_anchor..selection.end.text_anchor,
+            .map(|selection| {
+                (
+                    buffer.clone(),
+                    (selection.start.text_anchor..selection.end.text_anchor)
+                        .to_point(buffer.read(cx)),
+                )
             })
-            .collect::<Vec<_>>();
+            .into_group_map();
 
         cx.spawn_in(window, async move |_, cx| {
             workspace.update_in(cx, |workspace, window, cx| {
