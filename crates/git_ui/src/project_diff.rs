@@ -1461,10 +1461,7 @@ mod tests {
 
         fs.set_head_and_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[
-                ("bar", "bar\n".into()),
-                ("foo", "foo\n".into()),
-            ],
+            &[("bar", "bar\n".into()), ("foo", "foo\n".into())],
         );
         cx.run_until_parked();
 

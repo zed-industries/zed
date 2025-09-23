@@ -2415,10 +2415,7 @@ mod tests {
         // Make another commit that accepts the NEW line but with different content
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[(
-                "file.txt",
-                "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into(),
-            )],
+            &[("file.txt", "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into())],
             "0000002",
         );
         cx.run_until_parked();
