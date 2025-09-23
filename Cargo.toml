@@ -90,8 +90,6 @@ members = [
     "crates/image_viewer",
     "crates/inspector_ui",
     "crates/install_cli",
-    "crates/jj",
-    "crates/jj_ui",
     "crates/journal",
     "crates/keymap_editor",
     "crates/language",
@@ -322,8 +320,6 @@ edit_prediction_context = { path = "crates/edit_prediction_context" }
 zeta2_tools = { path = "crates/zeta2_tools" }
 inspector_ui = { path = "crates/inspector_ui" }
 install_cli = { path = "crates/install_cli" }
-jj = { path = "crates/jj" }
-jj_ui = { path = "crates/jj_ui" }
 journal = { path = "crates/journal" }
 keymap_editor = { path = "crates/keymap_editor" }
 language = { path = "crates/language" }
