@@ -1288,9 +1288,9 @@ impl Render for MessageEditor {
             .flex_1()
             .child({
                 let settings = ThemeSettings::get_global(cx);
-                let font_size = TextSize::Small
+                let font_size = TextSize::Default
                     .rems(cx)
-                    .to_pixels(settings.agent_font_size(cx));
+                    .to_pixels(settings.buffer_font_size(cx));
                 let line_height = settings.buffer_line_height.value() * font_size;
 
                 let text_style = TextStyle {
