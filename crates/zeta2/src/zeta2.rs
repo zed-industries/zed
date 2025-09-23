@@ -521,7 +521,7 @@ impl Zeta {
                 &excerpt_options,
                 index_state.as_deref(),
             )
-            .context("Failed to selecte excerpt")
+            .context("Failed to select excerpt")
             .map(|context| {
                 make_cloud_request(
                     excerpt_path.clone(),
