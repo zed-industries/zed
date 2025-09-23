@@ -13868,6 +13868,7 @@ name = "recent_projects"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "auto_update",
  "dap",
  "editor",

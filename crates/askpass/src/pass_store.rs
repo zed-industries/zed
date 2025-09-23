@@ -1,6 +1,4 @@
-use std::collections::BTreeMap;
-
-use anyhow::{Result};
+use anyhow::Result;
 use zeroize::Zeroize;
 
 type LengthWithoutPadding = u32;
@@ -46,7 +44,6 @@ impl TryFrom<&str> for EncryptedPassword {
         }
         #[cfg(not(windows))]
         Ok(Self(String::from(password).into(), len))
-
     }
 }
 
@@ -78,26 +75,4 @@ pub(crate) fn decrypt_password(mut password: EncryptedPassword) -> Result<String
     }
     #[cfg(not(windows))]
     Ok(String::from_utf8(std::mem::take(&mut password.0))?)
-
-}
-
-#[derive(Default)]
-pub struct PassStore(BTreeMap<String, EncryptedPassword>);
-
-impl PassStore {
-    pub fn cached_password(&self, url: &str) -> Option<EncryptedPassword> {
-        self.0.get(url).cloned()
-    }
-
-    pub fn cache_password(&mut self, url: String, pw: EncryptedPassword) -> Result<()> {
-        // This function is currently a no-op on non Windows platforms, as we use a MasterPass on Linux and Mac with ssh.
-        if cfg!(windows) {
-            self.0.insert(url, pw);
-        }
-        Ok(())
-    }
-
-    pub fn prune_password(&mut self, url: &str) {
-        self.0.remove(url);
-    }
 }
