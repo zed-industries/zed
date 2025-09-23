@@ -486,7 +486,23 @@ impl ContextServerStore {
 
         match configuration.as_ref() {
             ContextServerConfiguration::Remote { url } => {
-                Arc::new(ContextServer::from_url(id, url, cx).unwrap())
+                match ContextServer::from_url(id.clone(), url, cx) {
+                    Ok(server) => Arc::new(server),
+                    Err(e) => {
+                        log::error!("Failed to create remote context server {}: {}", id, e);
+                        // Return a stub server that will fail to start
+                        Arc::new(ContextServer::stdio(
+                            id,
+                            ContextServerCommand {
+                                path: "/bin/false".into(), // This will fail immediately
+                                args: vec![],
+                                env: Some(collections::HashMap::default()),
+                                timeout: None,
+                            },
+                            None,
+                        ))
+                    }
+                }
             }
             _ => {
                 let root_path = self

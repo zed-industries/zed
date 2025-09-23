@@ -661,7 +661,7 @@ impl AgentConfiguration {
                 }
             }))
     }
-
+    
     fn render_context_server(
         &self,
         context_server_id: ContextServerId,
