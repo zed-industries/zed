@@ -452,7 +452,6 @@ mod tests {
                         supports_images: None,
                         supports_thinking: None,
                     }],
-                    ..current_settings.ollama.clone()
                 },
                 open_router: current_settings.open_router.clone(),
                 openai: current_settings.openai.clone(),
@@ -531,7 +530,6 @@ mod tests {
                         supports_images: None,
                         supports_thinking: None,
                     }],
-                    ..current_settings.ollama.clone()
                 },
                 open_router: current_settings.open_router.clone(),
                 openai: current_settings.openai.clone(),
