@@ -26,6 +26,7 @@ test-support = [
 anyhow.workspace = true
 clock.workspace = true
 collections.workspace = true
+encoding_rs.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
@@ -47,6 +48,7 @@ sum_tree.workspace = true
 text.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
+
 
 [dev-dependencies]
 clock = { workspace = true, features = ["test-support"] }
