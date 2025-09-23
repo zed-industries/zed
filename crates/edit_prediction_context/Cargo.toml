@@ -14,7 +14,6 @@ path = "src/edit_prediction_context.rs"
 [dependencies]
 anyhow.workspace = true
 arrayvec.workspace = true
-chrono.workspace = true
 cloud_llm_client.workspace = true
 collections.workspace = true
 futures.workspace = true

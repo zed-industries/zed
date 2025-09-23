@@ -5177,7 +5177,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
- "chrono",
  "clap",
  "cloud_llm_client",
  "collections",
@@ -21666,7 +21665,6 @@ dependencies = [
  "indoc",
  "language",
  "log",
- "markdown",
  "pretty_assertions",
  "project",
  "serde",
