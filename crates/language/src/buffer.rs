@@ -3756,11 +3756,9 @@ impl BufferSnapshot {
         theme: Option<&SyntaxTheme>,
     ) -> Vec<OutlineItem<Anchor>> {
         let position = position.to_offset(self);
-        let mut items = self.outline_items_containing(
-            position.saturating_sub(1)..self.len().min(position + 1),
-            false,
-            theme,
-        );
+        let start = self.clip_offset(position.saturating_sub(1), Bias::Left);
+        let end = self.clip_offset(position + 1, Bias::Right);
+        let mut items = self.outline_items_containing(start..end, false, theme);
         let mut prev_depth = None;
         items.retain(|item| {
             let result = prev_depth.is_none_or(|prev_depth| item.depth > prev_depth);

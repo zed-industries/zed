@@ -1052,6 +1052,21 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
             })
             .collect()
     }
+
+    let (text, offsets) = marked_text_offsets(
+        &"
+        // ˇ😅 //
+        fn test() {
+        }
+    "
+        .unindent(),
+    );
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    // note, it would be nice to actually return the method test in this
+    // case, but primarily asserting we don't crash because of the multibyte character.
+    assert_eq!(snapshot.symbols_containing(offsets[0], None), vec![]);
 }
 
 #[gpui::test]
