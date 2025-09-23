@@ -119,7 +119,7 @@ impl AskPassSession {
                     {
                         askpass_secret.get_or_init(|| password.clone());
                     }
-                    if let Ok(decrypted) = decrypt_password(password) {
+                    if let Ok(decrypted) = decrypt(password) {
                         stream.write_all(decrypted.as_bytes()).await.log_err();
                     }
                 } else {
