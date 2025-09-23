@@ -983,6 +983,13 @@ impl ExtensionImports for WasmState {
                                 command: None,
                                 settings: Some(settings),
                             })?),
+                            project::project_settings::ContextServerSettings::Remote {
+                                enabled,
+                                url,
+                            } => Ok(serde_json::to_string(&settings::ContextServerSettings {
+                                command: None,
+                                settings: None,
+                            })?),
                         }
                     }
                     _ => {
