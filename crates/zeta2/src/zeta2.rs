@@ -39,6 +39,12 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
 
+pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
+    max_bytes: 512,
+    min_bytes: 128,
+    target_before_cursor_over_total_bytes: 0.5,
+};
+
 #[derive(Clone)]
 struct ZetaGlobal(Entity<Zeta>);
 
@@ -107,11 +113,7 @@ impl Zeta {
             projects: HashMap::new(),
             client,
             user_store,
-            excerpt_options: EditPredictionExcerptOptions {
-                max_bytes: 512,
-                min_bytes: 128,
-                target_before_cursor_over_total_bytes: 0.5,
-            },
+            excerpt_options: DEFAULT_EXCERPT_OPTIONS,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -136,7 +138,11 @@ impl Zeta {
         debug_watch_rx
     }
 
-    pub fn set_options(&mut self, options: EditPredictionExcerptOptions) {
+    pub fn excerpt_options(&self) -> &EditPredictionExcerptOptions {
+        &self.excerpt_options
+    }
+
+    pub fn set_excerpt_options(&mut self, options: EditPredictionExcerptOptions) {
         self.excerpt_options = options;
     }
 

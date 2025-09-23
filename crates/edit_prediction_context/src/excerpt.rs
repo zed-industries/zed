@@ -20,7 +20,7 @@ use crate::{BufferDeclaration, declaration::DeclarationId, syntax_index::SyntaxI
 //
 // - Filter outer syntax layers that don't support edit prediction.
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EditPredictionExcerptOptions {
     /// Limit for the number of bytes in the window around the cursor.
     pub max_bytes: usize,

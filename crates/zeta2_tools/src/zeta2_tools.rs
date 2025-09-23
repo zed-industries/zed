@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
+    time::Duration,
 };
 
 use chrono::TimeDelta;
@@ -79,7 +80,10 @@ enum ActiveView {
 enum LastPredictionState {
     Failed(SharedString),
     Success(LastPrediction),
-    Replaying(LastPrediction),
+    Replaying {
+        prediction: LastPrediction,
+        _task: Task<()>,
+    },
 }
 
 struct LastPrediction {
@@ -102,77 +106,9 @@ impl Zeta2Inspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let number_input = |label: &'static str,
-                            value: &'static str,
-                            window: &mut Window,
-                            cx: &mut Context<Self>|
-         -> Entity<SingleLineInput> {
-            let input = cx.new(|cx| {
-                let input = SingleLineInput::new(window, cx, "")
-                    .label(label)
-                    .label_min_width(px(64.));
-                input.set_text(value, window, cx);
-                input
-            });
-
-            cx.subscribe_in(
-                &input.read(cx).editor().clone(),
-                window,
-                |this, _, event, _window, cx| {
-                    let EditorEvent::BufferEdited = event else {
-                        return;
-                    };
-
-                    fn number_input_value<T: FromStr + Default>(
-                        input: &Entity<SingleLineInput>,
-                        cx: &App,
-                    ) -> T {
-                        input
-                            .read(cx)
-                            .editor()
-                            .read(cx)
-                            .text(cx)
-                            .parse::<T>()
-                            .unwrap_or_default()
-                    }
-
-                    let options = EditPredictionExcerptOptions {
-                        max_bytes: number_input_value(&this.max_bytes_input, cx),
-                        min_bytes: number_input_value(&this.min_bytes_input, cx),
-                        target_before_cursor_over_total_bytes: number_input_value(
-                            &this.cursor_context_ratio_input,
-                            cx,
-                        ),
-                    };
-
-                    this.zeta.update(cx, |zeta, _cx| {
-                        zeta.set_options(options);
-                    });
-
-                    if let Some(LastPredictionState::Success(state)) = this.last_prediction.take() {
-                        if let Some(buffer) = state.buffer.upgrade() {
-                            let position = state.position;
-                            this.last_prediction = Some(LastPredictionState::Replaying(state));
-                            this.zeta
-                                .update(cx, |zeta, cx| {
-                                    zeta.request_prediction(&this.project, &buffer, position, cx)
-                                })
-                                .detach();
-                        } else {
-                            this.last_prediction =
-                                Some(LastPredictionState::Failed("Buffer dropped".into()));
-                        }
-                    }
-
-                    cx.notify();
-                },
-            )
-            .detach();
-            input
-        };
-
         let zeta = Zeta::global(client, user_store, cx);
         let mut request_rx = zeta.update(cx, |zeta, _cx| zeta.debug_info());
+
         let receive_task = cx.spawn_in(window, async move |this, cx| {
             while let Some(prediction_result) = request_rx.next().await {
                 this.update_in(cx, |this, window, cx| match prediction_result {
@@ -188,20 +124,129 @@ impl Zeta2Inspector {
             }
         });
 
-        Self {
+        let mut this = Self {
             focus_handle: cx.focus_handle(),
             project: project.clone(),
             last_prediction: None,
             active_view: ActiveView::Context,
-            // todo! load these from zeta
-            max_bytes_input: number_input("Max Bytes", "512", window, cx),
-            min_bytes_input: number_input("Min Bytes", "128", window, cx),
-            cursor_context_ratio_input: number_input("Cursor Context Ratio", "0.5", window, cx),
-            zeta,
+            max_bytes_input: Self::number_input("Max Bytes", window, cx),
+            min_bytes_input: Self::number_input("Min Bytes", window, cx),
+            cursor_context_ratio_input: Self::number_input("Cursor Context Ratio", window, cx),
+            zeta: zeta.clone(),
             _active_editor_subscription: None,
             _update_state_task: Task::ready(()),
             _receive_task: receive_task,
+        };
+        this.set_input_options(&zeta.read(cx).excerpt_options().clone(), window, cx);
+        this
+    }
+
+    fn set_input_options(
+        &mut self,
+        options: &EditPredictionExcerptOptions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.max_bytes_input.update(cx, |input, cx| {
+            input.set_text(options.max_bytes.to_string(), window, cx);
+        });
+        self.min_bytes_input.update(cx, |input, cx| {
+            input.set_text(options.min_bytes.to_string(), window, cx);
+        });
+        self.cursor_context_ratio_input.update(cx, |input, cx| {
+            input.set_text(
+                format!("{:.2}", options.target_before_cursor_over_total_bytes),
+                window,
+                cx,
+            );
+        });
+        cx.notify();
+    }
+
+    fn set_options(&mut self, options: EditPredictionExcerptOptions, cx: &mut Context<Self>) {
+        self.zeta
+            .update(cx, |this, _cx| this.set_excerpt_options(options));
+
+        const THROTTLE_TIME: Duration = Duration::from_millis(100);
+
+        if let Some(
+            LastPredictionState::Success(prediction)
+            | LastPredictionState::Replaying { prediction, .. },
+        ) = self.last_prediction.take()
+        {
+            if let Some(buffer) = prediction.buffer.upgrade() {
+                let position = prediction.position;
+                let zeta = self.zeta.clone();
+                let project = self.project.clone();
+                let task = cx.spawn(async move |_this, cx| {
+                    cx.background_executor().timer(THROTTLE_TIME).await;
+                    if let Some(task) = zeta
+                        .update(cx, |zeta, cx| {
+                            zeta.request_prediction(&project, &buffer, position, cx)
+                        })
+                        .ok()
+                    {
+                        task.await.log_err();
+                    }
+                });
+                self.last_prediction = Some(LastPredictionState::Replaying {
+                    prediction,
+                    _task: task,
+                });
+            } else {
+                self.last_prediction = Some(LastPredictionState::Failed("Buffer dropped".into()));
+            }
         }
+
+        cx.notify();
+    }
+
+    fn number_input(
+        label: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<SingleLineInput> {
+        let input = cx.new(|cx| {
+            SingleLineInput::new(window, cx, "")
+                .label(label)
+                .label_min_width(px(64.))
+        });
+
+        cx.subscribe_in(
+            &input.read(cx).editor().clone(),
+            window,
+            |this, _, event, _window, cx| {
+                let EditorEvent::BufferEdited = event else {
+                    return;
+                };
+
+                fn number_input_value<T: FromStr + Default>(
+                    input: &Entity<SingleLineInput>,
+                    cx: &App,
+                ) -> T {
+                    input
+                        .read(cx)
+                        .editor()
+                        .read(cx)
+                        .text(cx)
+                        .parse::<T>()
+                        .unwrap_or_default()
+                }
+
+                let options = EditPredictionExcerptOptions {
+                    max_bytes: number_input_value(&this.max_bytes_input, cx),
+                    min_bytes: number_input_value(&this.min_bytes_input, cx),
+                    target_before_cursor_over_total_bytes: number_input_value(
+                        &this.cursor_context_ratio_input,
+                        cx,
+                    ),
+                };
+
+                this.set_options(options, cx);
+            },
+        )
+        .detach();
+        input
     }
 
     fn update_last_prediction(
@@ -441,7 +486,7 @@ impl Render for Zeta2Inspector {
             Some(LastPredictionState::Success(prediction)) => {
                 self.render_last_prediction(prediction, cx).into_any()
             }
-            Some(LastPredictionState::Replaying(prediction)) => self
+            Some(LastPredictionState::Replaying { prediction, _task }) => self
                 .render_last_prediction(prediction, cx)
                 .opacity(0.6)
                 .into_any(),
@@ -473,9 +518,28 @@ impl Render for Zeta2Inspector {
                                     .child(
                                         h_flex()
                                             .gap_2()
+                                            .items_end()
                                             .child(self.max_bytes_input.clone())
                                             .child(self.min_bytes_input.clone())
-                                            .child(self.cursor_context_ratio_input.clone()),
+                                            .child(self.cursor_context_ratio_input.clone())
+                                            .child(
+                                                ui::Button::new("reset-options", "Reset")
+                                                    .disabled(
+                                                        self.zeta.read(cx).excerpt_options()
+                                                            == &zeta2::DEFAULT_EXCERPT_OPTIONS,
+                                                    )
+                                                    .style(ButtonStyle::Outlined)
+                                                    .size(ButtonSize::Large)
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.set_input_options(
+                                                                &zeta2::DEFAULT_EXCERPT_OPTIONS,
+                                                                window,
+                                                                cx,
+                                                            );
+                                                        },
+                                                    )),
+                                            ),
                                     ),
                             )
                             .map(|this| {
@@ -522,7 +586,7 @@ impl Render for Zeta2Inspector {
                     .map(|this| {
                         if let Some(
                             LastPredictionState::Success(prediction)
-                            | LastPredictionState::Replaying(prediction),
+                            | LastPredictionState::Replaying { prediction, .. },
                         ) = self.last_prediction.as_ref()
                         {
                             this.child(
