@@ -343,6 +343,11 @@ mod tests {
     async fn test_assign_edit_prediction_provider_with_no_ollama_models(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
+        // Set up the global filesystem before trying to access it
+        cx.update(|cx| {
+            <dyn fs::Fs>::set_global(app_state.fs.clone(), cx);
+        });
+
         let buffer = cx.new(|cx| Buffer::local("test content", cx));
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let (editor, cx) =
@@ -410,6 +415,11 @@ mod tests {
     async fn test_ollama_model_change_updates_existing_editors(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
+        // Set up the global filesystem before trying to access it
+        cx.update(|cx| {
+            <dyn fs::Fs>::set_global(app_state.fs.clone(), cx);
+        });
+
         // Initialize the global Ollama provider
         cx.update(|cx| {
             init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -420,28 +430,38 @@ mod tests {
         let updated_model = "codellama:7b-code".to_string();
 
         cx.update(|cx| {
-            let fs = <dyn Fs>::global(cx);
-            let initial_model_clone = initial_model.clone();
-            update_settings_file(fs, cx, |settings, _cx| {
-                if settings.language_models.is_none() {
-                    settings.language_models = Some(Default::default());
-                }
-                let language_models = settings.language_models.as_mut().unwrap();
-                if language_models.ollama.is_none() {
-                    language_models.ollama = Some(Default::default());
-                }
-                let ollama_settings = language_models.ollama.as_mut().unwrap();
-                ollama_settings.api_url = Some("http://localhost:11434".to_string());
-                ollama_settings.available_models = Some(vec![OllamaAvailableModel {
-                    name: initial_model_clone,
-                    display_name: None,
-                    max_tokens: 4096,
-                    keep_alive: None,
-                    supports_tools: None,
-                    supports_images: None,
-                    supports_thinking: None,
-                }]);
-            });
+            // Get current settings to preserve other provider settings
+            let current_settings = AllLanguageModelSettings::get_global(cx);
+
+            // Create new settings with updated Ollama config
+            let updated_settings = AllLanguageModelSettings {
+                anthropic: current_settings.anthropic.clone(),
+                bedrock: current_settings.bedrock.clone(),
+                deepseek: current_settings.deepseek.clone(),
+                google: current_settings.google.clone(),
+                lmstudio: current_settings.lmstudio.clone(),
+                mistral: current_settings.mistral.clone(),
+                ollama: language_models::provider::ollama::OllamaSettings {
+                    api_url: "http://localhost:11434".to_string(),
+                    available_models: vec![OllamaAvailableModel {
+                        name: initial_model.clone(),
+                        display_name: None,
+                        max_tokens: 4096,
+                        keep_alive: None,
+                        supports_tools: None,
+                        supports_images: None,
+                        supports_thinking: None,
+                    }],
+                    ..current_settings.ollama.clone()
+                },
+                open_router: current_settings.open_router.clone(),
+                openai: current_settings.openai.clone(),
+                openai_compatible: current_settings.openai_compatible.clone(),
+                vercel: current_settings.vercel.clone(),
+                x_ai: current_settings.x_ai.clone(),
+                zed_dot_dev: current_settings.zed_dot_dev.clone(),
+            };
+            AllLanguageModelSettings::override_global(updated_settings, cx);
 
             // Also set the edit prediction provider to Ollama
             let mut language_settings =
@@ -489,28 +509,38 @@ mod tests {
 
         // Change settings to use a different model
         visual_cx.update(|_window, cx| {
-            let fs = <dyn Fs>::global(cx);
-            let updated_model_clone = updated_model.clone();
-            update_settings_file(fs, cx, |settings, _cx| {
-                if settings.language_models.is_none() {
-                    settings.language_models = Some(Default::default());
-                }
-                let language_models = settings.language_models.as_mut().unwrap();
-                if language_models.ollama.is_none() {
-                    language_models.ollama = Some(Default::default());
-                }
-                let ollama_settings = language_models.ollama.as_mut().unwrap();
-                ollama_settings.api_url = Some("http://localhost:11434".to_string());
-                ollama_settings.available_models = Some(vec![OllamaAvailableModel {
-                    name: updated_model_clone,
-                    display_name: None,
-                    max_tokens: 4096,
-                    keep_alive: None,
-                    supports_tools: None,
-                    supports_images: None,
-                    supports_thinking: None,
-                }]);
-            });
+            // Get current settings to preserve other provider settings
+            let current_settings = AllLanguageModelSettings::get_global(cx);
+
+            // Create new settings with updated Ollama config
+            let updated_settings = AllLanguageModelSettings {
+                anthropic: current_settings.anthropic.clone(),
+                bedrock: current_settings.bedrock.clone(),
+                deepseek: current_settings.deepseek.clone(),
+                google: current_settings.google.clone(),
+                lmstudio: current_settings.lmstudio.clone(),
+                mistral: current_settings.mistral.clone(),
+                ollama: language_models::provider::ollama::OllamaSettings {
+                    api_url: "http://localhost:11434".to_string(),
+                    available_models: vec![OllamaAvailableModel {
+                        name: updated_model.clone(),
+                        display_name: None,
+                        max_tokens: 4096,
+                        keep_alive: None,
+                        supports_tools: None,
+                        supports_images: None,
+                        supports_thinking: None,
+                    }],
+                    ..current_settings.ollama.clone()
+                },
+                open_router: current_settings.open_router.clone(),
+                openai: current_settings.openai.clone(),
+                openai_compatible: current_settings.openai_compatible.clone(),
+                vercel: current_settings.vercel.clone(),
+                x_ai: current_settings.x_ai.clone(),
+                zed_dot_dev: current_settings.zed_dot_dev.clone(),
+            };
+            AllLanguageModelSettings::override_global(updated_settings, cx);
         });
 
         // Allow the settings change observer to run
