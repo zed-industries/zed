@@ -287,7 +287,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                 model.display_name = setting_model.display_name.clone();
                 model.keep_alive = setting_model.keep_alive.clone();
                 model.supports_tools = setting_model.supports_tools;
-                model.supports_vision = setting_model.supports_images;
+                model.supports_images = setting_model.supports_images;
                 model.supports_thinking = setting_model.supports_thinking;
             } else {
                 models.insert(
@@ -298,7 +298,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
                         max_tokens: setting_model.max_tokens,
                         keep_alive: setting_model.keep_alive.clone(),
                         supports_tools: setting_model.supports_tools,
-                        supports_vision: setting_model.supports_images,
+                        supports_images: setting_model.supports_images,
                         supports_thinking: setting_model.supports_thinking,
                     },
                 );
