@@ -354,8 +354,7 @@ impl SshRemoteConnection {
             &temp_dir,
             askpass
                 .get_password()
-                .context("Failed to fetch askpass password")?
-                .try_into()?,
+                .context("Failed to fetch askpass password")?,
         )?;
         drop(askpass);
 

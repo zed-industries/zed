@@ -5,7 +5,7 @@
 //! The "safety" of this module lies in exploiting visibility rules of Rust:
 //! 1. No outside module has access to the internal representation of [EncryptedPassword].
 //! 2. [EncryptedPassword] cannot be converted into a [String] or any other plaintext representation.
-//! All use cases that do need such funcitonality (of which we have two right now) are implemented within this module.
+//! All use cases that do need such functionality (of which we have two right now) are implemented within this module.
 //!
 //! Note that this is not bulletproof.
 //! 1. [ProcessExt] is implemented for [smol::process::Command], which is a builder for smol processes.
