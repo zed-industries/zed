@@ -257,7 +257,7 @@ impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
 mod tests {
     use std::{path::Path, sync::mpsc};
 
-    use crate::{Project, project_settings::ProjectSettings};
+    use crate::Project;
 
     use super::*;
     use fs::FakeFs;
@@ -344,8 +344,8 @@ mod tests {
         assert_eq!(conflicts_in_range.len(), 1);
 
         // Test with a range that doesn't include any conflicts
-        let range = buffer.anchor_after(first_conflict_end.to_offset(&buffer) + 1)
-            ..buffer.anchor_before(second_conflict_start.to_offset(&buffer) - 1);
+        let range = buffer.anchor_after(first_conflict_end.to_next_offset(&buffer))
+            ..buffer.anchor_before(second_conflict_start.to_previous_offset(&buffer));
         let conflicts_in_range = conflict_snapshot.conflicts_in_range(range, &snapshot);
         assert_eq!(conflicts_in_range.len(), 0);
     }
@@ -369,7 +369,7 @@ mod tests {
         .unindent();
 
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let buffer = Buffer::new(0, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -400,7 +400,7 @@ mod tests {
             >>>>>>> "#
             .unindent();
         let buffer_id = BufferId::new(1).unwrap();
-        let buffer = Buffer::new(0, buffer_id, test_content.to_string());
+        let buffer = Buffer::new(0, buffer_id, test_content);
         let snapshot = buffer.snapshot();
 
         let conflict_snapshot = ConflictSet::parse(&snapshot);
@@ -484,7 +484,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
-            ProjectSettings::register(cx);
+            Project::init_settings(cx);
             AllLanguageSettings::register(cx);
         });
         let initial_text = "
@@ -585,7 +585,7 @@ mod tests {
         cx.update(|cx| {
             settings::init(cx);
             WorktreeSettings::register(cx);
-            ProjectSettings::register(cx);
+            Project::init_settings(cx);
             AllLanguageSettings::register(cx);
         });
 
@@ -653,7 +653,7 @@ mod tests {
 
         cx.run_until_parked();
         conflict_set.update(cx, |conflict_set, _| {
-            assert_eq!(conflict_set.has_conflict, false);
+            assert!(!conflict_set.has_conflict);
             assert_eq!(conflict_set.snapshot.conflicts.len(), 0);
         });
 

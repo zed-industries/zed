@@ -6,13 +6,6 @@ use crate::{
     DebugScenario, DebugTaskFile, EnvVariableReplacer, TcpArgumentsTemplate, VariableName,
 };
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-enum Request {
-    Launch,
-    Attach,
-}
-
 // TODO support preLaunchTask linkage with other tasks
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -30,12 +23,12 @@ impl VsCodeDebugTaskDefinition {
         let label = replacer.replace(&self.name);
         let mut config = replacer.replace_value(self.other_attributes);
         let adapter = task_type_to_adapter_name(&self.r#type);
-        if let Some(config) = config.as_object_mut() {
-            if adapter == "JavaScript" {
-                config.insert("type".to_owned(), self.r#type.clone().into());
-                if let Some(port) = self.port.take() {
-                    config.insert("port".to_owned(), port.into());
-                }
+        if let Some(config) = config.as_object_mut()
+            && adapter == "JavaScript"
+        {
+            config.insert("type".to_owned(), self.r#type.clone().into());
+            if let Some(port) = self.port.take() {
+                config.insert("port".to_owned(), port.into());
             }
         }
         let definition = DebugScenario {
@@ -131,7 +124,7 @@ mod tests {
             }
         "#;
         let parsed: VsCodeDebugTaskFile =
-            serde_json_lenient::from_str(&raw).expect("deserializing launch.json");
+            serde_json_lenient::from_str(raw).expect("deserializing launch.json");
         let zed = DebugTaskFile::try_from(parsed).expect("converting to Zed debug templates");
         pretty_assertions::assert_eq!(
             zed,

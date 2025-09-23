@@ -70,9 +70,6 @@ macro_rules! id_type {
 }
 
 id_type!(AccessTokenId);
-id_type!(BillingCustomerId);
-id_type!(BillingSubscriptionId);
-id_type!(BillingPreferencesId);
 id_type!(BufferId);
 id_type!(ChannelBufferCollaboratorId);
 id_type!(ChannelChatParticipantId);

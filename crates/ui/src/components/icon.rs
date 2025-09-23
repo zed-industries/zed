@@ -9,6 +9,7 @@ use gpui::{AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation
 pub use icon_decoration::*;
 pub use icons::*;
 
+use crate::traits::transformable::Transformable;
 use crate::{Indicator, prelude::*};
 
 #[derive(IntoElement)]
@@ -180,8 +181,10 @@ impl Icon {
         self.size = size;
         self
     }
+}
 
-    pub fn transform(mut self, transformation: Transformation) -> Self {
+impl Transformable for Icon {
+    fn transform(mut self, transformation: Transformation) -> Self {
         self.transformation = transformation;
         self
     }

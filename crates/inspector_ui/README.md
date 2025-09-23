@@ -68,7 +68,7 @@ With both approaches, would need to record the buffer version and use that when 
 
 * Mode to navigate to source code on every element change while picking.
 
-* Tracking of more source locations - currently the source location is often in a ui compoenent. Ideally this would have a way for the components to indicate that they are probably not the source location the user is looking for.
+* Tracking of more source locations - currently the source location is often in a ui component. Ideally this would have a way for the components to indicate that they are probably not the source location the user is looking for.
 
   - Could have `InspectorElementId` be `Vec<(ElementId, Option<Location>)>`, but if there are multiple code paths that construct the same element this would cause them to be considered different.
 

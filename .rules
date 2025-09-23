@@ -12,6 +12,19 @@
   - Example: avoid `let _ = client.request(...).await?;` - use `client.request(...).await?;` instead
 * When implementing async operations that may fail, ensure errors propagate to the UI layer so users get meaningful feedback.
 * Never create files with `mod.rs` paths - prefer `src/some_module.rs` instead of `src/some_module/mod.rs`.
+* When creating new crates, prefer specifying the library root path in `Cargo.toml` using `[lib] path = "...rs"` instead of the default `lib.rs`, to maintain consistent and descriptive naming (e.g., `gpui.rs` or `main.rs`).
+* Avoid creative additions unless explicitly requested
+* Use full words for variable names (no abbreviations like "q" for "queue")
+* Use variable shadowing to scope clones in async contexts for clarity, minimizing the lifetime of borrowed references.
+  Example:
+  ```rust
+  executor.spawn({
+      let task_ran = task_ran.clone();
+      async move {
+          *task_ran.borrow_mut() = true;
+      }
+  });
+  ```
 
 # GPUI
 
@@ -46,7 +59,7 @@ Trying to update an entity while it's already being updated must be avoided as t
 
 When  `read_with`, `update`, or `update_in` are used with an async context, the closure's return value is wrapped in an `anyhow::Result`.
 
-`WeakEntity<T>` is a weak handle. It has `read_with`, `update`, and `update_in` methods that work the same, but always return an `anyhow::Result` so that they can fail if the entity no longer exists. This can be useful to avoid memory leaks - if entities have mutually recursive handles to eachother they will never be dropped.
+`WeakEntity<T>` is a weak handle. It has `read_with`, `update`, and `update_in` methods that work the same, but always return an `anyhow::Result` so that they can fail if the entity no longer exists. This can be useful to avoid memory leaks - if entities have mutually recursive handles to each other they will never be dropped.
 
 ## Concurrency
 

@@ -198,7 +198,7 @@ async fn load_directory_shell_environment(
                 );
             };
 
-            load_shell_environment(&dir, load_direnv).await
+            load_shell_environment(dir, load_direnv).await
         }
         Err(err) => (
             None,

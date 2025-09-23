@@ -4,7 +4,7 @@
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
 use crate::{DisplayRow, EditorStyle, ToOffset, ToPoint, scroll::ScrollAnchor};
 use gpui::{Pixels, WindowTextSystem};
-use language::Point;
+use language::{CharClassifier, Point};
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
 use serde::Deserialize;
 use workspace::searchable::Direction;
@@ -289,10 +289,112 @@ pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
+        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
             || right == '\n'
     })
+}
+
+/// Text movements are too greedy, making deletions too greedy too.
+/// Makes deletions more ergonomic by potentially reducing the deletion range based on its text contents:
+/// * whitespace sequences with length >= 2 stop the deletion after removal (despite movement jumping over the word behind the whitespaces)
+/// * brackets stop the deletion after removal (despite movement currently not accounting for these and jumping over)
+pub fn adjust_greedy_deletion(
+    map: &DisplaySnapshot,
+    delete_from: DisplayPoint,
+    delete_until: DisplayPoint,
+    ignore_brackets: bool,
+) -> DisplayPoint {
+    if delete_from == delete_until {
+        return delete_until;
+    }
+    let is_backward = delete_from > delete_until;
+    let delete_range = if is_backward {
+        map.display_point_to_point(delete_until, Bias::Left)
+            .to_offset(&map.buffer_snapshot)
+            ..map
+                .display_point_to_point(delete_from, Bias::Right)
+                .to_offset(&map.buffer_snapshot)
+    } else {
+        map.display_point_to_point(delete_from, Bias::Left)
+            .to_offset(&map.buffer_snapshot)
+            ..map
+                .display_point_to_point(delete_until, Bias::Right)
+                .to_offset(&map.buffer_snapshot)
+    };
+
+    let trimmed_delete_range = if ignore_brackets {
+        delete_range
+    } else {
+        let brackets_in_delete_range = map
+            .buffer_snapshot
+            .bracket_ranges(delete_range.clone())
+            .into_iter()
+            .flatten()
+            .flat_map(|(left_bracket, right_bracket)| {
+                [
+                    left_bracket.start,
+                    left_bracket.end,
+                    right_bracket.start,
+                    right_bracket.end,
+                ]
+            })
+            .filter(|&bracket| delete_range.start < bracket && bracket < delete_range.end);
+        let closest_bracket = if is_backward {
+            brackets_in_delete_range.max()
+        } else {
+            brackets_in_delete_range.min()
+        };
+
+        if is_backward {
+            closest_bracket.unwrap_or(delete_range.start)..delete_range.end
+        } else {
+            delete_range.start..closest_bracket.unwrap_or(delete_range.end)
+        }
+    };
+
+    let mut whitespace_sequences = Vec::new();
+    let mut current_offset = trimmed_delete_range.start;
+    let mut whitespace_sequence_length = 0;
+    let mut whitespace_sequence_start = 0;
+    for ch in map
+        .buffer_snapshot
+        .text_for_range(trimmed_delete_range.clone())
+        .flat_map(str::chars)
+    {
+        if ch.is_whitespace() {
+            if whitespace_sequence_length == 0 {
+                whitespace_sequence_start = current_offset;
+            }
+            whitespace_sequence_length += 1;
+        } else {
+            if whitespace_sequence_length >= 2 {
+                whitespace_sequences.push((whitespace_sequence_start, current_offset));
+            }
+            whitespace_sequence_start = 0;
+            whitespace_sequence_length = 0;
+        }
+        current_offset += ch.len_utf8();
+    }
+    if whitespace_sequence_length >= 2 {
+        whitespace_sequences.push((whitespace_sequence_start, current_offset));
+    }
+
+    let closest_whitespace_end = if is_backward {
+        whitespace_sequences.last().map(|&(start, _)| start)
+    } else {
+        whitespace_sequences.first().map(|&(_, end)| end)
+    };
+
+    closest_whitespace_end
+        .unwrap_or_else(|| {
+            if is_backward {
+                trimmed_delete_range.start
+            } else {
+                trimmed_delete_range.end
+            }
+        })
+        .to_display_point(map)
 }
 
 /// Returns a position of the previous subword boundary, where a subword is defined as a run of
@@ -303,13 +405,16 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        let is_word_start =
-            classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
-        let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
-            || left == '_' && right != '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_start || is_subword_start || left == '\n'
+        is_subword_start(left, right, &classifier) || left == '\n'
     })
+}
+
+pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) -> bool {
+    let is_word_start = classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
+    let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
+        || left == '_' && right != '_'
+        || left.is_lowercase() && right.is_uppercase();
+    is_word_start || is_subword_start
 }
 
 /// Returns a position of the next word boundary, where a word character is defined as either
@@ -361,13 +466,17 @@ pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPo
     let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
-        let is_word_end =
-            (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
-        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
-            || left != '_' && right == '_'
-            || left.is_lowercase() && right.is_uppercase();
-        is_word_end || is_subword_end || right == '\n'
+        is_subword_end(left, right, &classifier) || right == '\n'
     })
+}
+
+pub fn is_subword_end(left: char, right: char, classifier: &CharClassifier) -> bool {
+    let is_word_end =
+        (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
+    let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+        || left != '_' && right == '_'
+        || left.is_lowercase() && right.is_uppercase();
+    is_word_end || is_subword_end
 }
 
 /// Returns a position of the start of the current paragraph, where a paragraph
@@ -439,17 +548,17 @@ pub fn start_of_excerpt(
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(&map);
+            let mut start = excerpt.start_anchor().to_display_point(map);
             if start >= display_point && start.row() > DisplayRow(0) {
                 let Some(excerpt) = map.buffer_snapshot.excerpt_before(excerpt.id()) else {
                     return display_point;
                 };
-                start = excerpt.start_anchor().to_display_point(&map);
+                start = excerpt.start_anchor().to_display_point(map);
             }
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(&map);
+            let mut end = excerpt.end_anchor().to_display_point(map);
             *end.row_mut() += 1;
             map.clip_point(end, Bias::Right)
         }
@@ -467,7 +576,7 @@ pub fn end_of_excerpt(
     };
     match direction {
         Direction::Prev => {
-            let mut start = excerpt.start_anchor().to_display_point(&map);
+            let mut start = excerpt.start_anchor().to_display_point(map);
             if start.row() > DisplayRow(0) {
                 *start.row_mut() -= 1;
             }
@@ -476,7 +585,7 @@ pub fn end_of_excerpt(
             start
         }
         Direction::Next => {
-            let mut end = excerpt.end_anchor().to_display_point(&map);
+            let mut end = excerpt.end_anchor().to_display_point(map);
             *end.column_mut() = 0;
             if end <= display_point {
                 *end.row_mut() += 1;
@@ -485,7 +594,7 @@ pub fn end_of_excerpt(
                 else {
                     return display_point;
                 };
-                end = excerpt.end_anchor().to_display_point(&map);
+                end = excerpt.end_anchor().to_display_point(map);
                 *end.column_mut() = 0;
             }
             end
@@ -510,10 +619,10 @@ pub fn find_preceding_boundary_point(
         if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(ch, prev_ch) {
-                break;
-            }
+        if let Some(prev_ch) = prev_ch
+            && is_boundary(ch, prev_ch)
+        {
+            break;
         }
 
         offset -= ch.len_utf8();
@@ -562,13 +671,13 @@ pub fn find_boundary_point(
         if find_range == FindRange::SingleLine && ch == '\n' {
             break;
         }
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(prev_ch, ch) {
-                if return_point_before_boundary {
-                    return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
-                } else {
-                    break;
-                }
+        if let Some(prev_ch) = prev_ch
+            && is_boundary(prev_ch, ch)
+        {
+            if return_point_before_boundary {
+                return map.clip_point(prev_offset.to_display_point(map), Bias::Right);
+            } else {
+                break;
             }
         }
         prev_offset = offset;
@@ -603,13 +712,13 @@ pub fn find_preceding_boundary_trail(
     // Find the boundary
     let start_offset = offset;
     for ch in forward {
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(prev_ch, ch) {
-                if start_offset == offset {
-                    trail_offset = Some(offset);
-                } else {
-                    break;
-                }
+        if let Some(prev_ch) = prev_ch
+            && is_boundary(prev_ch, ch)
+        {
+            if start_offset == offset {
+                trail_offset = Some(offset);
+            } else {
+                break;
             }
         }
         offset -= ch.len_utf8();
@@ -651,13 +760,13 @@ pub fn find_boundary_trail(
     // Find the boundary
     let start_offset = offset;
     for ch in forward {
-        if let Some(prev_ch) = prev_ch {
-            if is_boundary(prev_ch, ch) {
-                if start_offset == offset {
-                    trail_offset = Some(offset);
-                } else {
-                    break;
-                }
+        if let Some(prev_ch) = prev_ch
+            && is_boundary(prev_ch, ch)
+        {
+            if start_offset == offset {
+                trail_offset = Some(offset);
+            } else {
+                break;
             }
         }
         offset += ch.len_utf8();

@@ -172,7 +172,7 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 /// - `#[gpui::test(iterations = 5)]` runs five times, providing as seed the values in the range `0..5`.
 /// - `#[gpui::test(retries = 3)]` runs up to four times if it fails to try and make it pass.
 /// - `#[gpui::test(on_failure = "crate::test::report_failure")]` will call the specified function after the
-///    tests fail so that you can write out more detail about the failure.
+///   tests fail so that you can write out more detail about the failure.
 ///
 /// You can combine `iterations = ...` with `seeds(...)`:
 /// - `#[gpui::test(iterations = 5, seed = 10)]` is equivalent to `#[gpui::test(seeds(0, 1, 2, 3, 4, 10))]`.

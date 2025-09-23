@@ -122,7 +122,7 @@ impl PtyProcessInfo {
     }
 
     pub(crate) fn kill_current_process(&mut self) -> bool {
-        self.refresh().map_or(false, |process| process.kill())
+        self.refresh().is_some_and(|process| process.kill())
     }
 
     fn load(&mut self) -> Option<ProcessInfo> {

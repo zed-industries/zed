@@ -27,11 +27,10 @@ fn register_web_search_providers(
 
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
-        move |this, registry, event, cx| match event {
-            language_model::Event::DefaultModelChanged => {
+        move |this, registry, event, cx| {
+            if let language_model::Event::DefaultModelChanged = event {
                 register_zed_web_search_provider(this, client.clone(), &registry, cx)
             }
-            _ => {}
         },
     )
     .detach();
@@ -46,7 +45,7 @@ fn register_zed_web_search_provider(
     let using_zed_provider = language_model_registry
         .read(cx)
         .default_model()
-        .map_or(false, |default| default.is_provided_by_zed());
+        .is_some_and(|default| default.is_provided_by_zed());
     if using_zed_provider {
         registry.register_provider(cloud::CloudWebSearchProvider::new(client, cx), cx)
     } else {

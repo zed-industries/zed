@@ -43,12 +43,11 @@ impl Transform for ToJsonSchemaSubsetTransform {
     fn transform(&mut self, schema: &mut Schema) {
         // Ensure that the type field is not an array, this happens when we use
         // Option<T>, the type will be [T, "null"].
-        if let Some(type_field) = schema.get_mut("type") {
-            if let Some(types) = type_field.as_array() {
-                if let Some(first_type) = types.first() {
-                    *type_field = first_type.clone();
-                }
-            }
+        if let Some(type_field) = schema.get_mut("type")
+            && let Some(types) = type_field.as_array()
+            && let Some(first_type) = types.first()
+        {
+            *type_field = first_type.clone();
         }
 
         // oneOf is not supported, use anyOf instead

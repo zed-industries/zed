@@ -303,7 +303,6 @@ impl ThemePreview {
                     .gap_1()
                     .children(all_colors.into_iter().map(|(color, name)| {
                         let id = ElementId::Name(format!("{:?}-preview", color).into());
-                        let name = name.clone();
                         div().size_8().flex_none().child(
                             ButtonLike::new(id)
                                 .child(

@@ -70,10 +70,10 @@ impl Example for AddArgToTraitMethod {
             let path_str = format!("crates/assistant_tools/src/{}.rs", tool_name);
             let edits = edits.get(Path::new(&path_str));
 
-            let ignored = edits.map_or(false, |edits| {
+            let ignored = edits.is_some_and(|edits| {
                 edits.has_added_line("        _window: Option<gpui::AnyWindowHandle>,\n")
             });
-            let uningored = edits.map_or(false, |edits| {
+            let uningored = edits.is_some_and(|edits| {
                 edits.has_added_line("        window: Option<gpui::AnyWindowHandle>,\n")
             });
 
@@ -89,7 +89,7 @@ impl Example for AddArgToTraitMethod {
         let batch_tool_edits = edits.get(Path::new("crates/assistant_tools/src/batch_tool.rs"));
 
         cx.assert(
-            batch_tool_edits.map_or(false, |edits| {
+            batch_tool_edits.is_some_and(|edits| {
                 edits.has_added_line("        window: Option<gpui::AnyWindowHandle>,\n")
             }),
             "Argument:   batch_tool",

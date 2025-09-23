@@ -8,22 +8,26 @@ use collections::HashMap;
 use command_palette::CommandPalette;
 use editor::{
     AnchorRangeExt, DisplayPoint, Editor, EditorMode, MultiBuffer, actions::DeleteLine,
-    display_map::DisplayRow, test::editor_test_context::EditorTestContext,
+    code_context_menus::CodeContextMenu, display_map::DisplayRow,
+    test::editor_test_context::EditorTestContext,
 };
 use futures::StreamExt;
-use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext};
+use gpui::{KeyBinding, Modifiers, MouseButton, TestAppContext, px};
 use language::Point;
 pub use neovim_backed_test_context::*;
 use settings::SettingsStore;
+use ui::Pixels;
 use util::test::marked_text_ranges;
 pub use vim_test_context::*;
 
 use indoc::indoc;
 use search::BufferSearchBar;
-use workspace::WorkspaceSettings;
 
 use crate::{PushSneak, PushSneakBackward, insert::NormalBefore, motion, state::Mode};
 
+use util_macros::perf;
+
+#[perf]
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, false).await;
@@ -43,6 +47,7 @@ async fn test_neovim(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("ˇtest");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -79,6 +84,7 @@ async fn test_toggle_through_settings(cx: &mut gpui::TestAppContext) {
     assert_eq!(cx.mode(), Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_cancel_selection(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -103,6 +109,7 @@ async fn test_cancel_selection(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("The quick brown fox juˇmps over the lazy dog");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -131,6 +138,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
     })
 }
 
+#[perf]
 #[gpui::test]
 async fn test_count_down(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -142,6 +150,7 @@ async fn test_count_down(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aa\nbb\ncc\ndd\neˇe");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -156,6 +165,7 @@ async fn test_end_of_document_710(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aˇa\nbb\ncc");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -174,6 +184,7 @@ async fn test_end_of_line_with_times(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("aa\nbb\ncˇc");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -240,6 +251,7 @@ async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     cx.assert_state("aˇbc\n", Mode::Insert);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -250,6 +262,7 @@ async fn test_escape_cancels(cx: &mut gpui::TestAppContext) {
     cx.assert_state("aˇbc", Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -288,6 +301,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
     cx.assert_state(indoc! {"aa\nbb\nˇcc\ncc\ncc\n"}, Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_word_characters(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new_typescript(cx).await;
@@ -314,6 +328,7 @@ async fn test_word_characters(cx: &mut gpui::TestAppContext) {
     )
 }
 
+#[perf]
 #[gpui::test]
 async fn test_kebab_case(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new_html(cx).await;
@@ -820,6 +835,7 @@ async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
         two"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_select_all_issue_2170(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -880,6 +896,7 @@ fn assert_pending_input(cx: &mut VimTestContext, expected: &str) {
     });
 }
 
+#[perf]
 #[gpui::test]
 async fn test_jk_multi(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -971,6 +988,89 @@ async fn test_comma_w(cx: &mut gpui::TestAppContext) {
         .assert_eq("hellˇo hello\nhello hello");
 }
 
+#[perf]
+#[gpui::test]
+async fn test_completion_menu_scroll_aside(cx: &mut TestAppContext) {
+    let mut cx = VimTestContext::new_typescript(cx).await;
+
+    cx.lsp
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "Test Item".to_string(),
+                    documentation: Some(lsp::Documentation::String(
+                        "This is some very long documentation content that will be displayed in the aside panel for scrolling.\n".repeat(50)
+                    )),
+                    ..Default::default()
+                },
+            ])))
+        });
+
+    cx.set_state("variableˇ", Mode::Insert);
+    cx.simulate_keystroke(".");
+    cx.executor().run_until_parked();
+
+    let mut initial_offset: Pixels = px(0.0);
+
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        initial_offset = menu.scroll_handle_aside.offset().y;
+    });
+
+    // The `ctrl-e` shortcut should scroll the completion menu's aside content
+    // down, so the updated offset should be lower than the initial offset.
+    cx.simulate_keystroke("ctrl-e");
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        assert!(menu.scroll_handle_aside.offset().y < initial_offset);
+    });
+
+    // The `ctrl-y` shortcut should do the inverse scrolling as `ctrl-e`, so the
+    // offset should now be the same as the initial offset.
+    cx.simulate_keystroke("ctrl-y");
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        assert_eq!(menu.scroll_handle_aside.offset().y, initial_offset);
+    });
+
+    // The `ctrl-d` shortcut should scroll the completion menu's aside content
+    // down, so the updated offset should be lower than the initial offset.
+    cx.simulate_keystroke("ctrl-d");
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        assert!(menu.scroll_handle_aside.offset().y < initial_offset);
+    });
+
+    // The `ctrl-u` shortcut should do the inverse scrolling as `ctrl-u`, so the
+    // offset should now be the same as the initial offset.
+    cx.simulate_keystroke("ctrl-u");
+    cx.update_editor(|editor, _, _| {
+        let binding = editor.context_menu().borrow();
+        let Some(CodeContextMenu::Completions(menu)) = binding.as_ref() else {
+            panic!("Should have completions menu open");
+        };
+
+        assert_eq!(menu.scroll_handle_aside.offset().y, initial_offset);
+    });
+}
+
+#[perf]
 #[gpui::test]
 async fn test_rename(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new_typescript(cx).await;
@@ -1006,6 +1106,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
 
+#[perf(iterations = 1)]
 #[gpui::test]
 async fn test_remap(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1128,6 +1229,7 @@ async fn test_undo(cx: &mut gpui::TestAppContext) {
         3"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_mouse_selection(cx: &mut TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1303,6 +1405,7 @@ async fn test_dw_eol(cx: &mut gpui::TestAppContext) {
         .assert_eq("twelve ˇtwelve char\ntwelve char");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1394,6 +1497,7 @@ async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
         .assert_eq(r#"<label for="guests">ˇo</label>"#);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_sneak(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1479,10 +1583,10 @@ async fn test_plus_minus(cx: &mut gpui::TestAppContext) {
 async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
     cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
+        store.update_user_settings(cx, |s| {
             let mut aliases = HashMap::default();
             aliases.insert("Q".to_string(), "upper".to_string());
-            s.command_aliases = Some(aliases)
+            s.workspace.command_aliases = aliases
         });
     });
 
@@ -1613,6 +1717,7 @@ async fn test_ctrl_w_override(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("ˇ");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_visual_indent_count(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1768,6 +1873,7 @@ async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("hellˇllo world.");
 }
 
+#[perf(iterations = 1)]
 #[gpui::test]
 async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
     VimTestContext::init(cx);
@@ -2068,6 +2174,7 @@ async fn test_paragraph_multi_delete(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq(indoc! {"ˇ"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -2101,6 +2208,55 @@ async fn test_multi_cursor_replay(cx: &mut gpui::TestAppContext) {
         wow wow wow
 
         woˇw woˇw woˇw
+        "
+        },
+        Mode::Normal,
+    );
+}
+
+#[gpui::test]
+async fn test_clipping_on_mode_change(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.set_state(
+        indoc! {
+        "
+        ˇverylongline
+        andsomelinebelow
+        "
+        },
+        Mode::Normal,
+    );
+
+    cx.simulate_keystrokes("v e");
+    cx.assert_state(
+        indoc! {
+        "
+        «verylonglineˇ»
+        andsomelinebelow
+        "
+        },
+        Mode::Visual,
+    );
+
+    let mut pixel_position = cx.update_editor(|editor, window, cx| {
+        let snapshot = editor.snapshot(window, cx);
+        let current_head = editor.selections.newest_display(cx).end;
+        editor.last_bounds().unwrap().origin
+            + editor
+                .display_to_pixel_point(current_head, &snapshot, window)
+                .unwrap()
+    });
+    pixel_position.x += px(100.);
+    // click beyond end of the line
+    cx.simulate_click(pixel_position, Modifiers::default());
+    cx.run_until_parked();
+
+    cx.assert_state(
+        indoc! {
+        "
+        verylonglinˇe
+        andsomelinebelow
         "
         },
         Mode::Normal,

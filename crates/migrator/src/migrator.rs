@@ -28,7 +28,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&tree_sitter_json::LANGUAGE.into())?;
     let syntax_tree = parser
-        .parse(&text, None)
+        .parse(text, None)
         .context("failed to parse settings")?;
 
     let mut cursor = tree_sitter::QueryCursor::new();
@@ -37,7 +37,7 @@ fn migrate(text: &str, patterns: MigrationPatterns, query: &Query) -> Result<Opt
     let mut edits = vec![];
     while let Some(mat) = matches.next() {
         if let Some((_, callback)) = patterns.get(mat.pattern_index) {
-            edits.extend(callback(&text, &mat, query));
+            edits.extend(callback(text, mat, query));
         }
     }
 
@@ -170,7 +170,7 @@ pub fn migrate_settings(text: &str) -> Result<Option<String>> {
 
 pub fn migrate_edit_prediction_provider_settings(text: &str) -> Result<Option<String>> {
     migrate(
-        &text,
+        text,
         &[(
             SETTINGS_NESTED_KEY_VALUE_PATTERN,
             migrations::m_2025_01_29::replace_edit_prediction_provider_setting,
@@ -293,12 +293,12 @@ mod tests {
     use super::*;
 
     fn assert_migrate_keymap(input: &str, output: Option<&str>) {
-        let migrated = migrate_keymap(&input).unwrap();
+        let migrated = migrate_keymap(input).unwrap();
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 
     fn assert_migrate_settings(input: &str, output: Option<&str>) {
-        let migrated = migrate_settings(&input).unwrap();
+        let migrated = migrate_settings(input).unwrap();
         pretty_assertions::assert_eq!(migrated.as_deref(), output);
     }
 

@@ -37,51 +37,57 @@ impl LinuxDispatcher {
         let mut background_threads = (0..thread_count)
             .map(|i| {
                 let receiver = background_receiver.clone();
-                std::thread::spawn(move || {
-                    for runnable in receiver {
-                        let start = Instant::now();
+                std::thread::Builder::new()
+                    .name(format!("Worker-{i}"))
+                    .spawn(move || {
+                        for runnable in receiver {
+                            let start = Instant::now();
 
-                        runnable.run();
+                            runnable.run();
 
-                        log::trace!(
-                            "background thread {}: ran runnable. took: {:?}",
-                            i,
-                            start.elapsed()
-                        );
-                    }
-                })
+                            log::trace!(
+                                "background thread {}: ran runnable. took: {:?}",
+                                i,
+                                start.elapsed()
+                            );
+                        }
+                    })
+                    .unwrap()
             })
             .collect::<Vec<_>>();
 
         let (timer_sender, timer_channel) = calloop::channel::channel::<TimerAfter>();
-        let timer_thread = std::thread::spawn(|| {
-            let mut event_loop: EventLoop<()> =
-                EventLoop::try_new().expect("Failed to initialize timer loop!");
+        let timer_thread = std::thread::Builder::new()
+            .name("Timer".to_owned())
+            .spawn(|| {
+                let mut event_loop: EventLoop<()> =
+                    EventLoop::try_new().expect("Failed to initialize timer loop!");
 
-            let handle = event_loop.handle();
-            let timer_handle = event_loop.handle();
-            handle
-                .insert_source(timer_channel, move |e, _, _| {
-                    if let channel::Event::Msg(timer) = e {
-                        // This has to be in an option to satisfy the borrow checker. The callback below should only be scheduled once.
-                        let mut runnable = Some(timer.runnable);
-                        timer_handle
-                            .insert_source(
-                                calloop::timer::Timer::from_duration(timer.duration),
-                                move |_, _, _| {
-                                    if let Some(runnable) = runnable.take() {
-                                        runnable.run();
-                                    }
-                                    TimeoutAction::Drop
-                                },
-                            )
-                            .expect("Failed to start timer");
-                    }
-                })
-                .expect("Failed to start timer thread");
+                let handle = event_loop.handle();
+                let timer_handle = event_loop.handle();
+                handle
+                    .insert_source(timer_channel, move |e, _, _| {
+                        if let channel::Event::Msg(timer) = e {
+                            // This has to be in an option to satisfy the borrow checker. The callback below should only be scheduled once.
+                            let mut runnable = Some(timer.runnable);
+                            timer_handle
+                                .insert_source(
+                                    calloop::timer::Timer::from_duration(timer.duration),
+                                    move |_, _, _| {
+                                        if let Some(runnable) = runnable.take() {
+                                            runnable.run();
+                                        }
+                                        TimeoutAction::Drop
+                                    },
+                                )
+                                .expect("Failed to start timer");
+                        }
+                    })
+                    .expect("Failed to start timer thread");
 
-            event_loop.run(None, &mut (), |_| {}).log_err();
-        });
+                event_loop.run(None, &mut (), |_| {}).log_err();
+            })
+            .unwrap();
 
         background_threads.push(timer_thread);
 

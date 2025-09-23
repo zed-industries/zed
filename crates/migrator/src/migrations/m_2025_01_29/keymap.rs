@@ -242,22 +242,22 @@ static STRING_REPLACE: LazyLock<HashMap<&str, &str>> = LazyLock::new(|| {
             "inline_completion::ToggleMenu",
             "edit_prediction::ToggleMenu",
         ),
-        ("editor::NextEditPrediction", "editor::NextEditPrediction"),
+        ("editor::NextInlineCompletion", "editor::NextEditPrediction"),
         (
+            "editor::PreviousInlineCompletion",
             "editor::PreviousEditPrediction",
-            "editor::PreviousEditPrediction",
         ),
         (
+            "editor::AcceptPartialInlineCompletion",
             "editor::AcceptPartialEditPrediction",
-            "editor::AcceptPartialEditPrediction",
         ),
-        ("editor::ShowEditPrediction", "editor::ShowEditPrediction"),
+        ("editor::ShowInlineCompletion", "editor::ShowEditPrediction"),
         (
-            "editor::AcceptEditPrediction",
+            "editor::AcceptInlineCompletion",
             "editor::AcceptEditPrediction",
         ),
         (
-            "editor::ToggleEditPredictions",
+            "editor::ToggleInlineCompletions",
             "editor::ToggleEditPrediction",
         ),
     ])
@@ -279,7 +279,7 @@ fn rename_context_key(
         new_predicate = new_predicate.replace(old_key, new_key);
     }
     if new_predicate != old_predicate {
-        Some((context_predicate_range, new_predicate.to_string()))
+        Some((context_predicate_range, new_predicate))
     } else {
         None
     }

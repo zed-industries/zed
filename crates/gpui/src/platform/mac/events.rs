@@ -311,9 +311,8 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         let mut shift = modifiers.contains(NSEventModifierFlags::NSShiftKeyMask);
         let command = modifiers.contains(NSEventModifierFlags::NSCommandKeyMask);
         let function = modifiers.contains(NSEventModifierFlags::NSFunctionKeyMask)
-            && first_char.map_or(true, |ch| {
-                !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch)
-            });
+            && first_char
+                .is_none_or(|ch| !(NSUpArrowFunctionKey..=NSModeSwitchFunctionKey).contains(&ch));
 
         #[allow(non_upper_case_globals)]
         let key = match first_char {
@@ -427,7 +426,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                     key_char = Some(chars_for_modified_key(native_event.keyCode(), mods));
                 }
 
-                let mut key = if shift
+                if shift
                     && chars_ignoring_modifiers
                         .chars()
                         .all(|c| c.is_ascii_lowercase())
@@ -438,9 +437,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                     chars_with_shift
                 } else {
                     chars_ignoring_modifiers
-                };
-
-                key
+                }
             }
         };
 

@@ -41,7 +41,13 @@ pub struct FontId(pub usize);
 #[derive(Hash, PartialEq, Eq, Clone, Copy, Debug)]
 pub struct FontFamilyId(pub usize);
 
-pub(crate) const SUBPIXEL_VARIANTS: u8 = 4;
+pub(crate) const SUBPIXEL_VARIANTS_X: u8 = 4;
+
+pub(crate) const SUBPIXEL_VARIANTS_Y: u8 = if cfg!(target_os = "windows") {
+    1
+} else {
+    SUBPIXEL_VARIANTS_X
+};
 
 /// The GPUI text rendering sub system.
 pub struct TextSystem {
@@ -351,7 +357,7 @@ impl WindowTextSystem {
     ///
     /// Note that this method can only shape a single line of text. It will panic
     /// if the text contains newlines. If you need to shape multiple lines of text,
-    /// use `TextLayout::shape_text` instead.
+    /// use [`Self::shape_text`] instead.
     pub fn shape_line(
         &self,
         text: SharedString,
@@ -366,15 +372,14 @@ impl WindowTextSystem {
 
         let mut decoration_runs = SmallVec::<[DecorationRun; 32]>::new();
         for run in runs {
-            if let Some(last_run) = decoration_runs.last_mut() {
-                if last_run.color == run.color
-                    && last_run.underline == run.underline
-                    && last_run.strikethrough == run.strikethrough
-                    && last_run.background_color == run.background_color
-                {
-                    last_run.len += run.len as u32;
-                    continue;
-                }
+            if let Some(last_run) = decoration_runs.last_mut()
+                && last_run.color == run.color
+                && last_run.underline == run.underline
+                && last_run.strikethrough == run.strikethrough
+                && last_run.background_color == run.background_color
+            {
+                last_run.len += run.len as u32;
+                continue;
             }
             decoration_runs.push(DecorationRun {
                 len: run.len as u32,
@@ -424,7 +429,33 @@ impl WindowTextSystem {
                     break;
                 };
 
-                let run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
+                let mut run_len_within_line = cmp::min(line_end, run_start + run.len) - run_start;
+
+                // Ensure the run length respects UTF-8 character boundaries
+                if run_len_within_line > 0 {
+                    let text_slice = &line_text[run_start - line_start..];
+                    if run_len_within_line < text_slice.len()
+                        && !text_slice.is_char_boundary(run_len_within_line)
+                    {
+                        // Find the previous character boundary using efficient bit-level checking
+                        // UTF-8 characters are at most 4 bytes, so we only need to check up to 3 bytes back
+                        let lower_bound = run_len_within_line.saturating_sub(3);
+                        let search_range =
+                            &text_slice.as_bytes()[lower_bound..=run_len_within_line];
+
+                        // SAFETY: A valid character boundary must exist in this range because:
+                        // 1. run_len_within_line is a valid position in the string slice
+                        // 2. UTF-8 characters are at most 4 bytes, so some boundary exists in [run_len_within_line-3..=run_len_within_line]
+                        let pos_from_lower = unsafe {
+                            search_range
+                                .iter()
+                                .rposition(|&b| (b as i8) >= -0x40)
+                                .unwrap_unchecked()
+                        };
+
+                        run_len_within_line = lower_bound + pos_from_lower;
+                    }
+                }
 
                 if last_font == Some(run.font.clone()) {
                     font_runs.last_mut().unwrap().len += run_len_within_line;
@@ -436,7 +467,7 @@ impl WindowTextSystem {
                     });
                 }
 
-                if decoration_runs.last().map_or(false, |last_run| {
+                if decoration_runs.last().is_some_and(|last_run| {
                     last_run.color == run.color
                         && last_run.underline == run.underline
                         && last_run.strikethrough == run.strikethrough
@@ -492,14 +523,14 @@ impl WindowTextSystem {
         let mut split_lines = text.split('\n');
         let mut processed = false;
 
-        if let Some(first_line) = split_lines.next() {
-            if let Some(second_line) = split_lines.next() {
-                processed = true;
-                process_line(first_line.to_string().into());
-                process_line(second_line.to_string().into());
-                for line_text in split_lines {
-                    process_line(line_text.to_string().into());
-                }
+        if let Some(first_line) = split_lines.next()
+            && let Some(second_line) = split_lines.next()
+        {
+            processed = true;
+            process_line(first_line.to_string().into());
+            process_line(second_line.to_string().into());
+            for line_text in split_lines {
+                process_line(line_text.to_string().into());
             }
         }
 
@@ -518,7 +549,7 @@ impl WindowTextSystem {
 
     /// Layout the given line of text, at the given font_size.
     /// Subsets of the line can be styled independently with the `runs` parameter.
-    /// Generally, you should prefer to use `TextLayout::shape_line` instead, which
+    /// Generally, you should prefer to use [`Self::shape_line`] instead, which
     /// can be painted directly.
     pub fn layout_line<Text>(
         &self,
@@ -534,11 +565,11 @@ impl WindowTextSystem {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         for run in runs.iter() {
             let font_id = self.resolve_font(&run.font);
-            if let Some(last_run) = font_runs.last_mut() {
-                if last_run.font_id == font_id {
-                    last_run.len += run.len;
-                    continue;
-                }
+            if let Some(last_run) = font_runs.last_mut()
+                && last_run.font_id == font_id
+            {
+                last_run.len += run.len;
+                continue;
             }
             font_runs.push(FontRun {
                 len: run.len,
@@ -669,7 +700,7 @@ impl Display for FontStyle {
     }
 }
 
-/// A styled run of text, for use in [`TextLayout`].
+/// A styled run of text, for use in [`crate::TextLayout`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TextRun {
     /// A number of utf8 bytes
@@ -695,7 +726,7 @@ impl TextRun {
     }
 }
 
-/// An identifier for a specific glyph, as returned by [`TextSystem::layout_line`].
+/// An identifier for a specific glyph, as returned by [`WindowTextSystem::layout_line`].
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[repr(C)]
 pub struct GlyphId(pub(crate) u32);

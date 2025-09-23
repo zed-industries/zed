@@ -98,12 +98,12 @@ pub fn highlight_ranges(
 
         loop {
             end_ix = end_ix + text[end_ix..].chars().next().unwrap().len_utf8();
-            if let Some(&next_ix) = highlight_indices.peek() {
-                if next_ix == end_ix {
-                    end_ix = next_ix;
-                    highlight_indices.next();
-                    continue;
-                }
+            if let Some(&next_ix) = highlight_indices.peek()
+                && next_ix == end_ix
+            {
+                end_ix = next_ix;
+                highlight_indices.next();
+                continue;
             }
             break;
         }

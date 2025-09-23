@@ -12,6 +12,12 @@ impl Borrow<SharedString> for ManifestName {
     }
 }
 
+impl Borrow<str> for ManifestName {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 impl From<SharedString> for ManifestName {
     fn from(value: SharedString) -> Self {
         Self(value)

@@ -153,17 +153,11 @@ impl FileStatus {
     }
 
     pub fn is_conflicted(self) -> bool {
-        match self {
-            FileStatus::Unmerged { .. } => true,
-            _ => false,
-        }
+        matches!(self, FileStatus::Unmerged { .. })
     }
 
     pub fn is_ignored(self) -> bool {
-        match self {
-            FileStatus::Ignored => true,
-            _ => false,
-        }
+        matches!(self, FileStatus::Ignored)
     }
 
     pub fn has_changes(&self) -> bool {
@@ -176,40 +170,31 @@ impl FileStatus {
 
     pub fn is_modified(self) -> bool {
         match self {
-            FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Modified, _) | (_, StatusCode::Modified) => true,
-                _ => false,
-            },
+            FileStatus::Tracked(tracked) => matches!(
+                (tracked.index_status, tracked.worktree_status),
+                (StatusCode::Modified, _) | (_, StatusCode::Modified)
+            ),
             _ => false,
         }
     }
 
     pub fn is_created(self) -> bool {
         match self {
-            FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Added, _) | (_, StatusCode::Added) => true,
-                _ => false,
-            },
+            FileStatus::Tracked(tracked) => matches!(
+                (tracked.index_status, tracked.worktree_status),
+                (StatusCode::Added, _) | (_, StatusCode::Added)
+            ),
             FileStatus::Untracked => true,
             _ => false,
         }
     }
 
     pub fn is_deleted(self) -> bool {
-        match self {
-            FileStatus::Tracked(tracked) => match (tracked.index_status, tracked.worktree_status) {
-                (StatusCode::Deleted, _) | (_, StatusCode::Deleted) => true,
-                _ => false,
-            },
-            _ => false,
-        }
+        matches!(self, FileStatus::Tracked(tracked) if matches!((tracked.index_status, tracked.worktree_status), (StatusCode::Deleted, _) | (_, StatusCode::Deleted)))
     }
 
     pub fn is_untracked(self) -> bool {
-        match self {
-            FileStatus::Untracked => true,
-            _ => false,
-        }
+        matches!(self, FileStatus::Untracked)
     }
 
     pub fn summary(self) -> GitSummary {
@@ -468,7 +453,7 @@ impl FromStr for GitStatus {
                 Some((path, status))
             })
             .collect::<Vec<_>>();
-        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(b));
         // When a file exists in HEAD, is deleted in the index, and exists again in the working copy,
         // git produces two lines for it, one reading `D ` (deleted in index, unmodified in working copy)
         // and the other reading `??` (untracked). Merge these two into the equivalent of `DA`.

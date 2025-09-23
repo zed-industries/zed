@@ -6,13 +6,15 @@ Learn how to get started using AI with Zed and all its capabilities.
 
 - [Configuration](./configuration.md): Learn how to set up different language model providers like Anthropic, OpenAI, Ollama, Google AI, and more.
 
+- [External Agents](./external-agents.md): Learn how to plug in your favorite agent into Zed.
+
 - [Subscription](./subscription.md): Learn about Zed's hosted model service and other billing-related information.
 
 - [Privacy and Security](./privacy-and-security.md): Understand how Zed handles privacy and security with AI features.
 
 ## Agentic Editing
 
-- [Agent Panel](./agent-panel.md): Create and manage interactions with language models.
+- [Agent Panel](./agent-panel.md): Create and manage interactions with LLM agents.
 
 - [Rules](./rules.md): How to define rules for AI interactions.
 

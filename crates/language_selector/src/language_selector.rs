@@ -283,7 +283,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let mat = &self.matches.get(ix)?;
         let (label, language_icon) = self.language_data_for_match(mat, cx);
         Some(
             ListItem::new(ix)

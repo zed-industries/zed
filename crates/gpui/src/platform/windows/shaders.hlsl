@@ -1,6 +1,10 @@
+#include "alpha_correction.hlsl"
+
 cbuffer GlobalParams: register(b0) {
+    float4 gamma_ratios;
     float2 global_viewport_size;
-    uint2 _pad;
+    float grayscale_enhanced_contrast;
+    uint _pad;
 };
 
 Texture2D<float4> t_sprite: register(t0);
@@ -1098,7 +1102,8 @@ MonochromeSpriteVertexOutput monochrome_sprite_vertex(uint vertex_id: SV_VertexI
 
 float4 monochrome_sprite_fragment(MonochromeSpriteFragmentInput input): SV_Target {
     float sample = t_sprite.Sample(s_sprite, input.tile_position).r;
-    return float4(input.color.rgb, input.color.a * sample);
+    float alpha_corrected = apply_contrast_and_gamma_correction(sample, input.color.rgb, grayscale_enhanced_contrast, gamma_ratios);
+    return float4(input.color.rgb, input.color.a * alpha_corrected);
 }
 
 /*

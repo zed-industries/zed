@@ -220,42 +220,39 @@ impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
 
             // Accept wrapped text format: { "type": "text", "text": "..." }
             if let (Some(type_value), Some(text_value)) =
-                (get_field(&obj, "type"), get_field(&obj, "text"))
+                (get_field(obj, "type"), get_field(obj, "text"))
+                && let Some(type_str) = type_value.as_str()
+                && type_str.to_lowercase() == "text"
+                && let Some(text) = text_value.as_str()
             {
-                if let Some(type_str) = type_value.as_str() {
-                    if type_str.to_lowercase() == "text" {
-                        if let Some(text) = text_value.as_str() {
-                            return Ok(Self::Text(Arc::from(text)));
-                        }
-                    }
-                }
+                return Ok(Self::Text(Arc::from(text)));
             }
 
             // Check for wrapped Text variant: { "text": "..." }
-            if let Some((_key, value)) = obj.iter().find(|(k, _)| k.to_lowercase() == "text") {
-                if obj.len() == 1 {
-                    // Only one field, and it's "text" (case-insensitive)
-                    if let Some(text) = value.as_str() {
-                        return Ok(Self::Text(Arc::from(text)));
-                    }
+            if let Some((_key, value)) = obj.iter().find(|(k, _)| k.to_lowercase() == "text")
+                && obj.len() == 1
+            {
+                // Only one field, and it's "text" (case-insensitive)
+                if let Some(text) = value.as_str() {
+                    return Ok(Self::Text(Arc::from(text)));
                 }
             }
 
             // Check for wrapped Image variant: { "image": { "source": "...", "size": ... } }
-            if let Some((_key, value)) = obj.iter().find(|(k, _)| k.to_lowercase() == "image") {
-                if obj.len() == 1 {
-                    // Only one field, and it's "image" (case-insensitive)
-                    // Try to parse the nested image object
-                    if let Some(image_obj) = value.as_object() {
-                        if let Some(image) = LanguageModelImage::from_json(image_obj) {
-                            return Ok(Self::Image(image));
-                        }
-                    }
+            if let Some((_key, value)) = obj.iter().find(|(k, _)| k.to_lowercase() == "image")
+                && obj.len() == 1
+            {
+                // Only one field, and it's "image" (case-insensitive)
+                // Try to parse the nested image object
+                if let Some(image_obj) = value.as_object()
+                    && let Some(image) = LanguageModelImage::from_json(image_obj)
+                {
+                    return Ok(Self::Image(image));
                 }
             }
 
             // Try as direct Image (object with "source" and "size" fields)
-            if let Some(image) = LanguageModelImage::from_json(&obj) {
+            if let Some(image) = LanguageModelImage::from_json(obj) {
                 return Ok(Self::Image(image));
             }
         }
@@ -272,7 +269,7 @@ impl<'de> Deserialize<'de> for LanguageModelToolResultContent {
 impl LanguageModelToolResultContent {
     pub fn to_str(&self) -> Option<&str> {
         match self {
-            Self::Text(text) => Some(&text),
+            Self::Text(text) => Some(text),
             Self::Image(_) => None,
         }
     }

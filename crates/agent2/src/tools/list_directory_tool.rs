@@ -10,14 +10,12 @@ use std::fmt::Write;
 use std::{path::Path, sync::Arc};
 use util::markdown::MarkdownInlineCode;
 
-/// Lists files and directories in a given path. Prefer the `grep` or
-/// `find_path` tools when searching the codebase.
+/// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
     /// The fully-qualified path of the directory to list in the project.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// This path should never be absolute, and the first component of the path should always be a root directory in a project.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -53,15 +51,19 @@ impl AgentTool for ListDirectoryTool {
     type Input = ListDirectoryToolInput;
     type Output = String;
 
-    fn name(&self) -> SharedString {
-        "list_directory".into()
+    fn name() -> &'static str {
+        "list_directory"
     }
 
-    fn kind(&self) -> ToolKind {
+    fn kind() -> ToolKind {
         ToolKind::Read
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> SharedString {
         if let Ok(input) = input {
             let path = MarkdownInlineCode(&input.path);
             format!("List the {path} directory's contents").into()
@@ -212,7 +214,7 @@ mod tests {
     use super::*;
     use gpui::{TestAppContext, UpdateGlobal};
     use indoc::indoc;
-    use project::{FakeFs, Project, WorktreeSettings};
+    use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -419,17 +421,20 @@ mod tests {
         // Configure settings explicitly
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions = Some(vec![
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions = Some(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
                         "**/.hidden_subdir".to_string(),
                     ]);
-                    settings.private_files = Some(vec![
-                        "**/.mysecrets".to_string(),
-                        "**/*.privatekey".to_string(),
-                        "**/*.mysensitive".to_string(),
-                    ]);
+                    settings.project.worktree.private_files = Some(
+                        vec![
+                            "**/.mysecrets".to_string(),
+                            "**/*.privatekey".to_string(),
+                            "**/*.mysensitive".to_string(),
+                        ]
+                        .into(),
+                    );
                 });
             });
         });
@@ -563,10 +568,11 @@ mod tests {
         // Set global settings
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions =
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
                         Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
-                    settings.private_files = Some(vec!["**/.env".to_string()]);
+                    settings.project.worktree.private_files =
+                        Some(vec!["**/.env".to_string()].into());
                 });
             });
         });

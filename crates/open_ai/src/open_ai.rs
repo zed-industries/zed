@@ -3,13 +3,14 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+pub use settings::OpenAiReasoningEffort as ReasoningEffort;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 
 pub const OPEN_AI_API_URL: &str = "https://api.openai.com/v1";
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
-    opt.as_ref().map_or(true, |v| v.as_ref().is_empty())
+    opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -241,7 +242,7 @@ impl Model {
     ///
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
-        return true;
+        true
     }
 }
 
@@ -269,22 +270,13 @@ pub struct Request {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
     Required,
     None,
+    #[serde(untagged)]
     Other(ToolDefinition),
-}
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
-#[serde(rename_all = "lowercase")]
-pub enum ReasoningEffort {
-    Minimal,
-    Low,
-    Medium,
-    High,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
@@ -433,15 +425,19 @@ pub struct ChoiceDelta {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct OpenAiError {
+    message: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 #[serde(untagged)]
 pub enum ResponseStreamResult {
     Ok(ResponseStreamEvent),
-    Err { error: String },
+    Err { error: OpenAiError },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ResponseStreamEvent {
-    pub model: String,
     pub choices: Vec<ChoiceDelta>,
     pub usage: Option<Usage>,
 }
@@ -457,7 +453,7 @@ pub async fn stream_completion(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
@@ -468,14 +464,14 @@ pub async fn stream_completion(
             .filter_map(|line| async move {
                 match line {
                     Ok(line) => {
-                        let line = line.strip_prefix("data: ")?;
+                        let line = line.strip_prefix("data: ").or_else(|| line.strip_prefix("data:"))?;
                         if line == "[DONE]" {
                             None
                         } else {
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
                                 Ok(ResponseStreamResult::Err { error }) => {
-                                    Some(Err(anyhow!(error)))
+                                    Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => {
                                     log::error!(
@@ -500,11 +496,6 @@ pub async fn stream_completion(
         #[derive(Deserialize)]
         struct OpenAiResponse {
             error: OpenAiError,
-        }
-
-        #[derive(Deserialize)]
-        struct OpenAiError {
-            message: String,
         }
 
         match serde_json::from_str::<OpenAiResponse>(&body) {
@@ -566,7 +557,7 @@ pub fn embed<'a>(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key))
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
         .body(body)
         .map(|request| client.send(request));
 

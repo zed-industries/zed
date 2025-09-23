@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:15
+    image: docker.io/library/postgres:15
     container_name: zed_postgres
     ports:
       - 5432:5432
@@ -23,7 +23,7 @@ services:
       - ./.blob_store:/data
 
   livekit_server:
-    image: livekit/livekit-server
+    image: docker.io/livekit/livekit-server
     container_name: livekit_server
     entrypoint: /livekit-server --config /livekit.yaml
     ports:
@@ -34,7 +34,7 @@ services:
       - ./livekit.yaml:/livekit.yaml
 
   postgrest_app:
-    image: postgrest/postgrest
+    image: docker.io/postgrest/postgrest
     container_name: postgrest_app
     ports:
       - 8081:8081
@@ -47,7 +47,7 @@ services:
       - postgres
 
   postgrest_llm:
-    image: postgrest/postgrest
+    image: docker.io/postgrest/postgrest
     container_name: postgrest_llm
     ports:
       - 8082:8082
@@ -60,7 +60,7 @@ services:
       - postgres
 
   stripe-mock:
-    image: stripe/stripe-mock:v0.178.0
+    image: docker.io/stripe/stripe-mock:v0.178.0
     ports:
       - 12111:12111
       - 12112:12112

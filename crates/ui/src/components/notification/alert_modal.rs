@@ -64,7 +64,7 @@ impl RenderOnce for AlertModal {
                             )
                             .child(Button::new(
                                 self.primary_action.clone(),
-                                self.primary_action.clone(),
+                                self.primary_action,
                             )),
                     ),
             )

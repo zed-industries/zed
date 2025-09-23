@@ -5,7 +5,6 @@ use extension::ExtensionManifest;
 use fs::Fs;
 use gpui::WeakEntity;
 use language::LanguageRegistry;
-use project::project_settings::ProjectSettings;
 use settings::update_settings_file;
 use ui::prelude::*;
 use util::ResultExt;
@@ -69,8 +68,9 @@ fn remove_context_server_settings(
     fs: Arc<dyn Fs>,
     cx: &mut App,
 ) {
-    update_settings_file::<ProjectSettings>(fs, cx, move |settings, _| {
+    update_settings_file(fs, cx, move |settings, _| {
         settings
+            .project
             .context_servers
             .retain(|server_id, _| !context_server_ids.contains(server_id));
     });

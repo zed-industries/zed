@@ -1,8 +1,13 @@
 use std::fmt::{Display, Formatter};
 
-use crate::{Settings, SettingsSources, VsCodeSettings};
+use crate::{
+    self as settings,
+    settings_content::{BaseKeymapContent, SettingsContent},
+};
+use gpui::App;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings, VsCodeSettings};
 
 /// Base key bindings scheme. Base keymaps can be overridden with user keymaps.
 ///
@@ -18,6 +23,35 @@ pub enum BaseKeymap {
     Emacs,
     Cursor,
     None,
+}
+
+impl From<BaseKeymapContent> for BaseKeymap {
+    fn from(value: BaseKeymapContent) -> Self {
+        match value {
+            BaseKeymapContent::VSCode => Self::VSCode,
+            BaseKeymapContent::JetBrains => Self::JetBrains,
+            BaseKeymapContent::SublimeText => Self::SublimeText,
+            BaseKeymapContent::Atom => Self::Atom,
+            BaseKeymapContent::TextMate => Self::TextMate,
+            BaseKeymapContent::Emacs => Self::Emacs,
+            BaseKeymapContent::Cursor => Self::Cursor,
+            BaseKeymapContent::None => Self::None,
+        }
+    }
+}
+impl Into<BaseKeymapContent> for BaseKeymap {
+    fn into(self) -> BaseKeymapContent {
+        match self {
+            BaseKeymap::VSCode => BaseKeymapContent::VSCode,
+            BaseKeymap::JetBrains => BaseKeymapContent::JetBrains,
+            BaseKeymap::SublimeText => BaseKeymapContent::SublimeText,
+            BaseKeymap::Atom => BaseKeymapContent::Atom,
+            BaseKeymap::TextMate => BaseKeymapContent::TextMate,
+            BaseKeymap::Emacs => BaseKeymapContent::Emacs,
+            BaseKeymap::Cursor => BaseKeymapContent::Cursor,
+            BaseKeymap::None => BaseKeymapContent::None,
+        }
+    }
 }
 
 impl Display for BaseKeymap {
@@ -97,24 +131,11 @@ impl BaseKeymap {
 }
 
 impl Settings for BaseKeymap {
-    const KEY: Option<&'static str> = Some("base_keymap");
-
-    type FileContent = Option<Self>;
-
-    fn load(
-        sources: SettingsSources<Self::FileContent>,
-        _: &mut gpui::App,
-    ) -> anyhow::Result<Self> {
-        if let Some(Some(user_value)) = sources.user.copied() {
-            return Ok(user_value);
-        }
-        if let Some(Some(server_value)) = sources.server.copied() {
-            return Ok(server_value);
-        }
-        sources.default.ok_or_else(Self::missing_default)
+    fn from_settings(s: &crate::settings_content::SettingsContent, _cx: &mut App) -> Self {
+        s.base_keymap.unwrap().into()
     }
 
-    fn import_from_vscode(_vscode: &VsCodeSettings, current: &mut Self::FileContent) {
-        *current = Some(BaseKeymap::VSCode);
+    fn import_from_vscode(_vscode: &VsCodeSettings, current: &mut SettingsContent) {
+        current.base_keymap = Some(BaseKeymapContent::VSCode);
     }
 }

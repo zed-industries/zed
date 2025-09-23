@@ -338,11 +338,9 @@ impl ContextStore {
             image_task,
             context_id: self.next_context_id.post_inc(),
         });
-        if self.has_context(&context) {
-            if remove_if_exists {
-                self.remove_context(&context, cx);
-                return None;
-            }
+        if self.has_context(&context) && remove_if_exists {
+            self.remove_context(&context, cx);
+            return None;
         }
 
         self.insert_context(context.clone(), cx);

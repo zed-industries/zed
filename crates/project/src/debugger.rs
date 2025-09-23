@@ -6,9 +6,9 @@
 //!
 //! There are few reasons for this divide:
 //! - Breakpoints persist across debug sessions and they're not really specific to any particular session. Sure, we have to send protocol messages for them
-//! (so they're a "thing" in the protocol), but we also want to set them before any session starts up.
+//!   (so they're a "thing" in the protocol), but we also want to set them before any session starts up.
 //! - Debug clients are doing the heavy lifting, and this is where UI grabs all of it's data from. They also rely on breakpoint store during initialization to obtain
-//! current set of breakpoints.
+//!   current set of breakpoints.
 //! - Since DAP store knows about all of the available debug sessions, it is responsible for routing RPC requests to sessions. It also knows how to find adapters for particular kind of session.
 
 pub mod breakpoint_store;

@@ -64,7 +64,7 @@ pub struct RemoteParticipant {
 
 impl RemoteParticipant {
     pub fn has_video_tracks(&self) -> bool {
-        return !self.video_tracks.is_empty();
+        !self.video_tracks.is_empty()
     }
 
     pub fn can_write(&self) -> bool {

@@ -128,23 +128,20 @@ mod windows_impl {
         #[test]
         fn test_parse_args() {
             // launch can be specified via two separate arguments
-            assert_eq!(parse_args(["--launch".into(), "true".into()]).launch, true);
-            assert_eq!(
-                parse_args(["--launch".into(), "false".into()]).launch,
-                false
-            );
+            assert!(parse_args(["--launch".into(), "true".into()]).launch);
+            assert!(!parse_args(["--launch".into(), "false".into()]).launch);
 
             // launch can be specified via one single argument
-            assert_eq!(parse_args(["--launch=true".into()]).launch, true);
-            assert_eq!(parse_args(["--launch=false".into()]).launch, false);
+            assert!(parse_args(["--launch=true".into()]).launch);
+            assert!(!parse_args(["--launch=false".into()]).launch);
 
             // launch defaults to true on no arguments
-            assert_eq!(parse_args([]).launch, true);
+            assert!(parse_args([]).launch);
 
             // launch defaults to true on invalid arguments
-            assert_eq!(parse_args(["--launch".into()]).launch, true);
-            assert_eq!(parse_args(["--launch=".into()]).launch, true);
-            assert_eq!(parse_args(["--launch=invalid".into()]).launch, true);
+            assert!(parse_args(["--launch".into()]).launch);
+            assert!(parse_args(["--launch=".into()]).launch);
+            assert!(parse_args(["--launch=invalid".into()]).launch);
         }
     }
 }

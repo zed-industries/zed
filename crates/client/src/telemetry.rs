@@ -19,7 +19,7 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{AssistantEventData, AssistantPhase, Event, EventRequestBody, EventWrapper};
-use util::{ResultExt, TryFutureExt};
+use util::TryFutureExt;
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -76,13 +76,17 @@ static ZED_CLIENT_CHECKSUM_SEED: LazyLock<Option<Vec<u8>>> = LazyLock::new(|| {
 
 pub static MINIDUMP_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
     option_env!("ZED_MINIDUMP_ENDPOINT")
-        .map(|s| s.to_owned())
+        .map(str::to_string)
         .or_else(|| env::var("ZED_MINIDUMP_ENDPOINT").ok())
 });
 
 static DOTNET_PROJECT_FILES_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^(global\.json|Directory\.Build\.props|.*\.(csproj|fsproj|vbproj|sln))$").unwrap()
 });
+
+#[cfg(target_os = "macos")]
+static MACOS_VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\s*\(Build [^)]*[0-9]\))").unwrap());
 
 pub fn os_name() -> String {
     #[cfg(target_os = "macos")]
@@ -108,19 +112,16 @@ pub fn os_name() -> String {
 pub fn os_version() -> String {
     #[cfg(target_os = "macos")]
     {
-        use cocoa::base::nil;
-        use cocoa::foundation::NSProcessInfo;
-
-        unsafe {
-            let process_info = cocoa::foundation::NSProcessInfo::processInfo(nil);
-            let version = process_info.operatingSystemVersion();
-            gpui::SemanticVersion::new(
-                version.majorVersion as usize,
-                version.minorVersion as usize,
-                version.patchVersion as usize,
-            )
+        use objc2_foundation::NSProcessInfo;
+        let process_info = NSProcessInfo::processInfo();
+        let version_nsstring = unsafe { process_info.operatingSystemVersionString() };
+        // "Version 15.6.1 (Build 24G90)" -> "15.6.1 (Build 24G90)"
+        let version_string = version_nsstring.to_string().replace("Version ", "");
+        // "15.6.1 (Build 24G90)" -> "15.6.1"
+        // "26.0.0 (Build 25A5349a)" -> unchanged (Beta or Rapid Security Response; ends with letter)
+        MACOS_VERSION_REGEX
+            .replace_all(&version_string, "")
             .to_string()
-        }
     }
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
@@ -208,7 +209,7 @@ impl Telemetry {
             let os_version = os_version();
             state.lock().os_version = Some(os_version);
             async move {
-                if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
+                if let Some(tempfile) = File::create(Self::log_file_path()).ok() {
                     state.lock().log_file = Some(tempfile);
                 }
             }
@@ -739,7 +740,7 @@ mod tests {
         );
 
         // Third scan of worktree does not double report, as we already reported
-        test_project_discovery_helper(telemetry.clone(), vec!["package.json"], None, worktree_id);
+        test_project_discovery_helper(telemetry, vec!["package.json"], None, worktree_id);
     }
 
     #[gpui::test]
@@ -751,7 +752,7 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
         test_project_discovery_helper(
-            telemetry.clone(),
+            telemetry,
             vec!["package.json", "pnpm-lock.yaml"],
             Some(vec!["node", "pnpm"]),
             1,
@@ -767,7 +768,7 @@ mod tests {
         let telemetry = cx.update(|cx| Telemetry::new(clock.clone(), http, cx));
 
         test_project_discovery_helper(
-            telemetry.clone(),
+            telemetry,
             vec!["package.json", "yarn.lock"],
             Some(vec!["node", "yarn"]),
             1,
@@ -786,7 +787,7 @@ mod tests {
         // project type for the same worktree multiple times
 
         test_project_discovery_helper(
-            telemetry.clone().clone(),
+            telemetry.clone(),
             vec!["global.json"],
             Some(vec!["dotnet"]),
             1,

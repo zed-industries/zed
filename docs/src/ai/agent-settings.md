@@ -123,6 +123,20 @@ You can choose between `thread` (the default) and `text_thread`:
 }
 ```
 
+### Font Size
+
+Use the `agent_font_size` setting to change the font size of rendered agent responses in the panel.
+
+```json
+{
+  "agent": {
+    "agent_font_size": 18
+  }
+}
+```
+
+> (Preview Version Note): Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
+
 ### Auto-run Commands
 
 Control whether you want to allow the agent to run commands without asking you for permission.
@@ -131,7 +145,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "always_allow_tool_actions": "true"
+    "always_allow_tool_actions": true
   }
 }
 ```
@@ -146,7 +160,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "single_file_review": "true"
+    "single_file_review": true
   }
 }
 ```
@@ -163,12 +177,27 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "play_sound_when_agent_done": "true"
+    "play_sound_when_agent_done": true
   }
 }
 ```
 
 > This setting is available via the Agent Panel's settings UI.
+
+### Message Editor Size
+
+Use the `message_editor_min_lines` setting to control minimum number of lines of height the agent message editor should have.
+It is set to `4` by default, and the max number of lines is always double of the minimum.
+
+```json
+{
+  "agent": {
+    "message_editor_min_lines": 4
+  }
+}
+```
+
+> This setting is currently available only in Preview.
 
 ### Modifier to Send
 
@@ -179,7 +208,7 @@ The default value is `false`.
 ```json
 {
   "agent": {
-    "use_modifier_to_send": "true"
+    "use_modifier_to_send": true
   }
 }
 ```
@@ -194,7 +223,7 @@ It is set to `true` by default, but if set to false, the card's height is capped
 ```json
 {
   "agent": {
-    "expand_edit_card": "false"
+    "expand_edit_card": false
   }
 }
 ```
@@ -207,7 +236,7 @@ It is set to `true` by default, but if set to false, the card will be fully coll
 ```json
 {
   "agent": {
-    "expand_terminal_card": "false"
+    "expand_terminal_card": false
   }
 }
 ```
@@ -220,7 +249,7 @@ The default value is `true`.
 ```json
 {
   "agent": {
-    "enable_feedback": "false"
+    "enable_feedback": false
   }
 }
 ```

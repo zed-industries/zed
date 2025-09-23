@@ -40,7 +40,6 @@ Ensure your credentials have the following permissions set up:
 
 - `bedrock:InvokeModelWithResponseStream`
 - `bedrock:InvokeModel`
-- `bedrock:ConverseStream`
 
 Your IAM policy should look similar to:
 
@@ -52,8 +51,7 @@ Your IAM policy should look similar to:
       "Effect": "Allow",
       "Action": [
         "bedrock:InvokeModel",
-        "bedrock:InvokeModelWithResponseStream",
-        "bedrock:ConverseStream"
+        "bedrock:InvokeModelWithResponseStream"
       ],
       "Resource": "*"
     }
@@ -378,6 +376,20 @@ If the model is tagged with `thinking` in the Ollama catalog, set this option an
 The `supports_images` option enables the model's vision capabilities, allowing it to process images included in the conversation context.
 If the model is tagged with `vision` in the Ollama catalog, set this option and you can use it in Zed.
 
+#### Ollama Authentication
+
+In addition to running Ollama on your own hardware, which generally does not require authentication, Zed also supports connecting to remote Ollama instances. API keys are required for authentication.
+
+One such service is [Ollama Turbo])(https://ollama.com/turbo). To configure Zed to use Ollama turbo:
+
+1. Sign in to your Ollama account and subscribe to Ollama Turbo
+2. Visit [ollama.com/settings/keys](https://ollama.com/settings/keys) and create an API key
+3. Open the settings view (`agent: open settings`) and go to the Ollama section
+4. Paste your API key and press enter.
+5. For the API URL enter `https://ollama.com`
+
+Zed will also use the `OLLAMA_API_KEY` environment variables if defined.
+
 ### OpenAI {#openai}
 
 1. Visit the OpenAI platform and [create an API key](https://platform.openai.com/account/api-keys)
@@ -427,7 +439,7 @@ Custom models will be listed in the model dropdown in the Agent Panel.
 Zed supports using [OpenAI compatible APIs](https://platform.openai.com/docs/api-reference/chat) by specifying a custom `api_url` and `available_models` for the OpenAI provider.
 This is useful for connecting to other hosted services (like Together AI, Anyscale, etc.) or local models.
 
-You can add a custom, OpenAI-compatible model via either via the UI or by editing your `settings.json`.
+You can add a custom, OpenAI-compatible model either via the UI or by editing your `settings.json`.
 
 To do it via the UI, go to the Agent Panel settings (`agent: open settings`) and look for the "Add Provider" button to the right of the "LLM Providers" section title.
 Then, fill up the input fields available in the modal.
@@ -437,22 +449,38 @@ To do it via your `settings.json`, add the following snippet under `language_mod
 ```json
 {
   "language_models": {
-    "openai": {
-      "api_url": "https://api.together.xyz/v1", // Using Together AI as an example
-      "available_models": [
-        {
-          "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
-          "display_name": "Together Mixtral 8x7B",
-          "max_tokens": 32768
-        }
-      ]
+    "openai_compatible": {
+      // Using Together AI as an example
+      "Together AI": {
+        "api_url": "https://api.together.xyz/v1",
+        "available_models": [
+          {
+            "name": "mistralai/Mixtral-8x7B-Instruct-v0.1",
+            "display_name": "Together Mixtral 8x7B",
+            "max_tokens": 32768,
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false
+            }
+          }
+        ]
+      }
     }
   }
 }
 ```
 
+By default, OpenAI-compatible models inherit the following capabilities:
+
+- `tools`: true (supports tool/function calling)
+- `images`: false (does not support image inputs)
+- `parallel_tool_calls`: false (does not support `parallel_tool_calls` parameter)
+- `prompt_cache_key`: false (does not support `prompt_cache_key` parameter)
+
 Note that LLM API keys aren't stored in your settings file.
-So, ensure you have it set in your environment variables (`OPENAI_API_KEY=<your api key>`) so your settings can pick it up.
+So, ensure you have it set in your environment variables (`<PROVIDER_NAME>_API_KEY=<your api key>`) so your settings can pick it up. In the example above, it would be `TOGETHER_AI_API_KEY=<your api key>`.
 
 ### OpenRouter {#openrouter}
 
@@ -509,6 +537,53 @@ The available configuration options for each model are:
 You can find available models and their specifications on the [OpenRouter models page](https://openrouter.ai/models).
 
 Custom models will be listed in the model dropdown in the Agent Panel.
+
+#### Provider Routing
+
+You can optionally control how OpenRouter routes a given custom model request among underlying upstream providers via the `provider` object on each model entry.
+
+Supported fields (all optional):
+
+- `order`: Array of provider slugs to try first, in order (e.g. `["anthropic", "openai"]`)
+- `allow_fallbacks` (default: `true`): Whether fallback providers may be used if preferred ones are unavailable
+- `require_parameters` (default: `false`): Only use providers that support every parameter you supplied
+- `data_collection` (default: `allow`): `"allow"` or `"disallow"` (controls use of providers that may store data)
+- `only`: Whitelist of provider slugs allowed for this request
+- `ignore`: Provider slugs to skip
+- `quantizations`: Restrict to specific quantization variants (e.g. `["int4","int8"]`)
+- `sort`: Sort strategy for candidate providers (e.g. `"price"` or `"throughput"`)
+
+Example adding routing preferences to a model:
+
+```json
+{
+  "language_models": {
+    "open_router": {
+      "api_url": "https://openrouter.ai/api/v1",
+      "available_models": [
+        {
+          "name": "openrouter/auto",
+          "display_name": "Auto Router (Tools Preferred)",
+          "max_tokens": 2000000,
+          "supports_tools": true,
+          "provider": {
+            "order": ["anthropic", "openai"],
+            "allow_fallbacks": true,
+            "require_parameters": true,
+            "only": ["anthropic", "openai", "google"],
+            "ignore": ["cohere"],
+            "quantizations": ["int8"],
+            "sort": "price",
+            "data_collection": "allow"
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+These routing controls let you fine‑tune cost, capability, and reliability trade‑offs without changing the model name you select in the UI.
 
 ### Vercel v0 {#vercel-v0}
 

@@ -62,7 +62,7 @@ fn contains(
         handlebars::RenderError::new("contains: missing or invalid query parameter")
     })?;
 
-    if list.contains(&query) {
+    if list.contains(query) {
         out.write("true")?;
     }
 

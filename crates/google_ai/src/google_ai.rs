@@ -4,6 +4,7 @@ use anyhow::{Result, anyhow, bail};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+pub use settings::ModelMode as GoogleModelMode;
 
 pub const API_URL: &str = "https://generativelanguage.googleapis.com";
 
@@ -13,6 +14,7 @@ pub async fn stream_generate_content(
     api_key: &str,
     mut request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
+    let api_key = api_key.trim();
     validate_generate_content_request(&request)?;
 
     // The `model` field is emptied as it is provided as a path parameter.
@@ -106,10 +108,9 @@ pub fn validate_generate_content_request(request: &GenerateContentRequest) -> Re
         .contents
         .iter()
         .find(|content| content.role == Role::User)
+        && user_content.parts.is_empty()
     {
-        if user_content.parts.is_empty() {
-            bail!("User content must contain at least one part");
-        }
+        bail!("User content must contain at least one part");
     }
 
     Ok(())
@@ -267,7 +268,7 @@ pub struct CitationMetadata {
 pub struct PromptFeedback {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason: Option<String>,
-    pub safety_ratings: Vec<SafetyRating>,
+    pub safety_ratings: Option<Vec<SafetyRating>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub block_reason_message: Option<String>,
 }
@@ -293,16 +294,6 @@ pub struct UsageMetadata {
 #[serde(rename_all = "camelCase")]
 pub struct ThinkingConfig {
     pub thinking_budget: u32,
-}
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub enum GoogleModelMode {
-    #[default]
-    Default,
-    Thinking {
-        budget_tokens: Option<u32>,
-    },
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -478,10 +469,10 @@ impl<'de> Deserialize<'de> for ModelName {
                 model_id: id.to_string(),
             })
         } else {
-            return Err(serde::de::Error::custom(format!(
+            Err(serde::de::Error::custom(format!(
                 "Expected model name to begin with {}, got: {}",
                 MODEL_NAME_PREFIX, string
-            )));
+            )))
         }
     }
 }

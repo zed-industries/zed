@@ -2,7 +2,7 @@ use super::*;
 use collections::HashSet;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
 use pretty_assertions::assert_eq;
-use project::{FakeFs, WorktreeSettings};
+use project::FakeFs;
 use serde_json::json;
 use settings::SettingsStore;
 use std::path::{Path, PathBuf};
@@ -17,7 +17,7 @@ use workspace::{
 async fn test_visible_list(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -106,7 +106,7 @@ async fn test_visible_list(cx: &mut gpui::TestAppContext) {
 async fn test_opening_file(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/src"),
         json!({
@@ -161,8 +161,8 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
                     Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
             });
         });
@@ -276,7 +276,7 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
 async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root1"),
         json!({
@@ -459,7 +459,7 @@ async fn test_auto_collapse_dir_paths(cx: &mut gpui::TestAppContext) {
 async fn test_editing_files(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -877,7 +877,7 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
 async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -1010,7 +1010,7 @@ async fn test_adding_directories_via_file(cx: &mut gpui::TestAppContext) {
 async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root1"),
         json!({
@@ -1137,7 +1137,7 @@ async fn test_adding_directory_via_file(cx: &mut gpui::TestAppContext) {
 async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -1235,7 +1235,7 @@ async fn test_copy_paste(cx: &mut gpui::TestAppContext) {
 async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -1320,7 +1320,7 @@ async fn test_cut_paste(cx: &mut gpui::TestAppContext) {
 async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -1416,7 +1416,7 @@ async fn test_cut_paste_between_different_worktrees(cx: &mut gpui::TestAppContex
 async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -1551,7 +1551,7 @@ async fn test_copy_paste_between_different_worktrees(cx: &mut gpui::TestAppConte
 async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -1692,7 +1692,7 @@ async fn test_copy_paste_directory(cx: &mut gpui::TestAppContext) {
 async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/test",
         json!({
@@ -1797,7 +1797,7 @@ async fn test_copy_paste_directory_with_sibling_file(cx: &mut gpui::TestAppConte
 async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/test",
         json!({
@@ -1876,7 +1876,7 @@ async fn test_copy_paste_nested_and_root_entries(cx: &mut gpui::TestAppContext) 
 async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/src"),
         json!({
@@ -1968,7 +1968,7 @@ async fn test_remove_opened_file(cx: &mut gpui::TestAppContext) {
 async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/src",
         json!({
@@ -2161,7 +2161,7 @@ async fn test_create_duplicate_items(cx: &mut gpui::TestAppContext) {
 async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -2440,7 +2440,7 @@ async fn test_select_git_entry(cx: &mut gpui::TestAppContext) {
 async fn test_select_directory(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -2541,7 +2541,7 @@ async fn test_select_directory(cx: &mut gpui::TestAppContext) {
 async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -2651,7 +2651,7 @@ async fn test_select_first_last(cx: &mut gpui::TestAppContext) {
 async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -2693,7 +2693,7 @@ async fn test_dir_toggle_collapse(cx: &mut gpui::TestAppContext) {
 async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -2748,10 +2748,115 @@ async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_collapse_all_entries_multiple_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let worktree_content = json!({
+        "dir_1": {
+            "file_1.py": "# File contents",
+        },
+        "dir_2": {
+            "file_1.py": "# File contents",
+        }
+    });
+
+    fs.insert_tree("/project_root_1", worktree_content.clone())
+        .await;
+    fs.insert_tree("/project_root_2", worktree_content).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/project_root_1".as_ref(), "/project_root_2".as_ref()],
+        cx,
+    )
+    .await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_all_entries_with_collapsed_root(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project_root",
+        json!({
+            "dir_1": {
+                "nested_dir": {
+                    "file_a.py": "# File contents",
+                    "file_b.py": "# File contents",
+                    "file_c.py": "# File contents",
+                },
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "file_3.py": "# File contents",
+            },
+            "dir_2": {
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "file_3.py": "# File contents",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    // Open project_root/dir_1 to ensure that a nested directory is expanded
+    toggle_expand_dir(&panel, "project_root/dir_1", cx);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v project_root",
+            "    v dir_1  <== selected",
+            "        > nested_dir",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    > dir_2",
+        ]
+    );
+
+    // Close root directory
+    toggle_expand_dir(&panel, "project_root", cx);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root  <== selected"]
+    );
+
+    // Run collapse_all_entries and make sure root is not expanded
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root  <== selected"]
+    );
+}
+
+#[gpui::test]
 async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.as_fake().insert_tree(path!("/root"), json!({})).await;
     let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
@@ -2819,7 +2924,7 @@ async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
 async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -2895,7 +3000,7 @@ async fn test_rename_root_of_worktree(cx: &mut gpui::TestAppContext) {
 async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -2989,7 +3094,7 @@ async fn test_rename_with_hide_root(cx: &mut gpui::TestAppContext) {
 #[gpui::test]
 async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/project_root",
         json!({
@@ -3162,16 +3267,193 @@ async fn test_multiple_marked_entries(cx: &mut gpui::TestAppContext) {
         ]
     );
 }
+
+#[gpui::test]
+async fn test_dragged_selection_resolve_entry(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "a": {
+                "b": {
+                    "c": {
+                        "d": {}
+                    }
+                }
+            },
+            "target_destination": {}
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    // Case 1: Move last dir 'd' - should move only 'd', leaving 'a/b/c'
+    select_path(&panel, "root/a/b/c/d", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("target_destination")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v root",
+            "    > a/b/c",
+            "    > target_destination/d  <== selected"
+        ],
+        "Moving last empty directory 'd' should leave 'a/b/c' and move only 'd'"
+    );
+
+    // Reset
+    select_path(&panel, "root/target_destination/d", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("a/b/c")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // Case 2: Move middle dir 'b' - should move 'b/c/d', leaving only 'a'
+    select_path(&panel, "root/a/b", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("target_destination")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    v a", "    > target_destination/b/c/d"],
+        "Moving middle directory 'b' should leave only 'a' and move 'b/c/d'"
+    );
+
+    // Reset
+    select_path(&panel, "root/target_destination/b", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("a")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    // Case 3: Move first dir 'a' - should move whole 'a/b/c/d'
+    select_path(&panel, "root/a", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        let drag = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: panel.selection.as_ref().unwrap().worktree_id,
+                entry_id: panel.resolve_entry(panel.selection.as_ref().unwrap().entry_id),
+            },
+            marked_selections: Arc::new([*panel.selection.as_ref().unwrap()]),
+        };
+        let target_entry = panel
+            .project
+            .read(cx)
+            .visible_worktrees(cx)
+            .next()
+            .unwrap()
+            .read(cx)
+            .entry_for_path("target_destination")
+            .unwrap();
+        panel.drag_onto(&drag, target_entry.id, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v root", "    > target_destination/a/b/c/d"],
+        "Moving first directory 'a' should move whole 'a/b/c/d' chain"
+    );
+}
+
 #[gpui::test]
 async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
-            });
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(false)
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(false);
             });
         })
     });
@@ -3289,8 +3571,11 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
 
     cx.update(|_, cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(true)
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(true)
             });
         })
     });
@@ -3403,13 +3688,14 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
-                worktree_settings.file_scan_inclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_inclusions =
                     Some(vec!["always_included_but_ignored_dir/*".to_string()]);
-            });
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(false)
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(false)
             });
         })
     });
@@ -3478,8 +3764,11 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     cx.update(|_, cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(true)
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(true)
             });
         })
     });
@@ -3519,11 +3808,12 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
-            });
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(false)
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(false)
             });
         })
     });
@@ -3720,8 +4010,8 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
                     Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
             });
         });
@@ -3731,7 +4021,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
         register_project_item::<TestProjectItemView>(cx);
     });
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -3914,7 +4204,7 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
 async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/src",
         json!({
@@ -3982,7 +4272,7 @@ async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppC
 async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4105,7 +4395,7 @@ async fn test_basic_file_deletion_scenarios(cx: &mut gpui::TestAppContext) {
 async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -4206,7 +4496,7 @@ async fn test_deletion_gitignored(cx: &mut gpui::TestAppContext) {
 async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -4271,7 +4561,7 @@ async fn test_nested_deletion_gitignore(cx: &mut gpui::TestAppContext) {
 async fn test_complex_selection_scenarios(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4382,7 +4672,7 @@ async fn test_complex_selection_scenarios(cx: &mut gpui::TestAppContext) {
 async fn test_delete_all_files_and_directories(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4457,7 +4747,7 @@ async fn test_delete_all_files_and_directories(cx: &mut gpui::TestAppContext) {
 async fn test_nested_selection_deletion(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4523,7 +4813,7 @@ async fn test_nested_selection_deletion(cx: &mut gpui::TestAppContext) {
 async fn test_multiple_worktrees_deletion(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     // First worktree
     fs.insert_tree(
         "/root1",
@@ -4666,7 +4956,7 @@ async fn test_multiple_worktrees_deletion(cx: &mut gpui::TestAppContext) {
 async fn test_selection_vs_marked_entries_priority(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -4766,7 +5056,7 @@ async fn test_selection_vs_marked_entries_priority(cx: &mut gpui::TestAppContext
 async fn test_selection_fallback_to_next_highest_worktree(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root_b",
         json!({
@@ -4859,7 +5149,7 @@ fn toggle_expand_dir(
 async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -5050,7 +5340,7 @@ async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
 async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -5234,7 +5524,7 @@ async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
 async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -5299,7 +5589,7 @@ async fn test_create_entries_without_selection(cx: &mut gpui::TestAppContext) {
 async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
@@ -5448,7 +5738,7 @@ async fn test_create_entries_without_selection_hide_root(cx: &mut gpui::TestAppC
 async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -5516,7 +5806,7 @@ async fn test_highlight_entry_for_external_drag(cx: &mut gpui::TestAppContext) {
 async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -5644,10 +5934,245 @@ async fn test_highlight_entry_for_selection_drag(cx: &mut gpui::TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_highlight_entry_for_selection_drag_cross_worktree(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "src": {
+                "main.rs": "",
+                "lib.rs": ""
+            }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "src": {
+                "main.rs": "",
+                "test.rs": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+
+        let worktree_a = &worktrees[0];
+        let main_rs_from_a = worktree_a.read(cx).entry_for_path("src/main.rs").unwrap();
+
+        let worktree_b = &worktrees[1];
+        let src_dir_from_b = worktree_b.read(cx).entry_for_path("src").unwrap();
+        let main_rs_from_b = worktree_b.read(cx).entry_for_path("src/main.rs").unwrap();
+
+        // Test dragging file from worktree A onto parent of file with same relative path in worktree B
+        let dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree_a.read(cx).id(),
+                entry_id: main_rs_from_a.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree_a.read(cx).id(),
+                entry_id: main_rs_from_a.id,
+            }]),
+        };
+
+        let result = panel.highlight_entry_for_selection_drag(
+            src_dir_from_b,
+            worktree_b.read(cx),
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(
+            result,
+            Some(src_dir_from_b.id),
+            "Should highlight target directory from different worktree even with same relative path"
+        );
+
+        // Test dragging file from worktree A onto file with same relative path in worktree B
+        let result = panel.highlight_entry_for_selection_drag(
+            main_rs_from_b,
+            worktree_b.read(cx),
+            &dragged_selection,
+            cx,
+        );
+        assert_eq!(
+            result,
+            Some(src_dir_from_b.id),
+            "Should highlight parent of target file from different worktree"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_should_highlight_background_for_selection_drag(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "parent_dir": {
+                "child_file.txt": "",
+                "nested_dir": {
+                    "nested_file.txt": ""
+                }
+            },
+            "root_file.txt": ""
+        }),
+    )
+    .await;
+
+    fs.insert_tree(
+        "/root2",
+        json!({
+            "other_dir": {
+                "other_file.txt": ""
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update(cx, |panel, cx| {
+        let project = panel.project.read(cx);
+        let worktrees: Vec<_> = project.visible_worktrees(cx).collect();
+        let worktree1 = worktrees[0].read(cx);
+        let worktree2 = worktrees[1].read(cx);
+        let worktree1_id = worktree1.id();
+        let _worktree2_id = worktree2.id();
+
+        let root1_entry = worktree1.root_entry().unwrap();
+        let root2_entry = worktree2.root_entry().unwrap();
+        let _parent_dir = worktree1.entry_for_path("parent_dir").unwrap();
+        let child_file = worktree1
+            .entry_for_path("parent_dir/child_file.txt")
+            .unwrap();
+        let nested_file = worktree1
+            .entry_for_path("parent_dir/nested_dir/nested_file.txt")
+            .unwrap();
+        let root_file = worktree1.entry_for_path("root_file.txt").unwrap();
+
+        // Test 1: Multiple entries - should always highlight background
+        let multiple_dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new([
+                SelectedEntry {
+                    worktree_id: worktree1_id,
+                    entry_id: child_file.id,
+                },
+                SelectedEntry {
+                    worktree_id: worktree1_id,
+                    entry_id: nested_file.id,
+                },
+            ]),
+        };
+
+        let result = panel.should_highlight_background_for_selection_drag(
+            &multiple_dragged_selection,
+            root1_entry.id,
+            cx,
+        );
+        assert!(result, "Should highlight background for multiple entries");
+
+        // Test 2: Single entry with non-empty parent path - should highlight background
+        let nested_dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: nested_file.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: nested_file.id,
+            }]),
+        };
+
+        let result = panel.should_highlight_background_for_selection_drag(
+            &nested_dragged_selection,
+            root1_entry.id,
+            cx,
+        );
+        assert!(result, "Should highlight background for nested file");
+
+        // Test 3: Single entry at root level, same worktree - should NOT highlight background
+        let root_file_dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: root_file.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: root_file.id,
+            }]),
+        };
+
+        let result = panel.should_highlight_background_for_selection_drag(
+            &root_file_dragged_selection,
+            root1_entry.id,
+            cx,
+        );
+        assert!(
+            !result,
+            "Should NOT highlight background for root file in same worktree"
+        );
+
+        // Test 4: Single entry at root level, different worktree - should highlight background
+        let result = panel.should_highlight_background_for_selection_drag(
+            &root_file_dragged_selection,
+            root2_entry.id,
+            cx,
+        );
+        assert!(
+            result,
+            "Should highlight background for root file from different worktree"
+        );
+
+        // Test 5: Single entry in subdirectory - should highlight background
+        let child_file_dragged_selection = DraggedSelection {
+            active_selection: SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: child_file.id,
+            },
+            marked_selections: Arc::new([SelectedEntry {
+                worktree_id: worktree1_id,
+                entry_id: child_file.id,
+            }]),
+        };
+
+        let result = panel.should_highlight_background_for_selection_drag(
+            &child_file_dragged_selection,
+            root1_entry.id,
+            cx,
+        );
+        assert!(
+            result,
+            "Should highlight background for file with non-empty parent path"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_hide_root(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root1",
         json!({
@@ -5825,7 +6350,7 @@ async fn test_hide_root(cx: &mut gpui::TestAppContext) {
 async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -5923,7 +6448,7 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
 async fn test_compare_files_context_menu(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
-    let fs = FakeFs::new(cx.executor().clone());
+    let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
         json!({
@@ -6134,11 +6659,12 @@ fn init_test(cx: &mut TestAppContext) {
         Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_fold_dirs = Some(false);
-            });
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_fold_dirs = Some(false);
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
             });
         });
     });
@@ -6152,15 +6678,16 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
         language::init(cx);
         editor::init(cx);
         crate::init(cx);
-        workspace::init(app_state.clone(), cx);
+        workspace::init(app_state, cx);
         Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_fold_dirs = Some(false);
-            });
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_fold_dirs = Some(false);
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new())
             });
         });
     });

@@ -45,27 +45,18 @@ impl TabHandles {
             })
             .unwrap_or_default();
 
-        if let Some(next_handle) = self.handles.get(next_ix) {
-            Some(next_handle.clone())
-        } else {
-            None
-        }
+        self.handles.get(next_ix).cloned()
     }
 
     pub(crate) fn prev(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
         let ix = self.current_index(focused_id).unwrap_or_default();
-        let prev_ix;
-        if ix == 0 {
-            prev_ix = self.handles.len().saturating_sub(1);
+        let prev_ix = if ix == 0 {
+            self.handles.len().saturating_sub(1)
         } else {
-            prev_ix = ix.saturating_sub(1);
-        }
+            ix.saturating_sub(1)
+        };
 
-        if let Some(prev_handle) = self.handles.get(prev_ix) {
-            Some(prev_handle.clone())
-        } else {
-            None
-        }
+        self.handles.get(prev_ix).cloned()
     }
 }
 
@@ -90,7 +81,7 @@ mod tests {
         ];
 
         for handle in focus_handles.iter() {
-            tab.insert(&handle);
+            tab.insert(handle);
         }
         assert_eq!(
             tab.handles

@@ -24,8 +24,11 @@ mod livekit_client;
 )))]
 pub use livekit_client::*;
 
-// If you need proper LSP in livekit_client you've got to comment out
-// the mocks and test
+// If you need proper LSP in livekit_client you've got to comment
+// - the cfg blocks above
+// - the mods: mock_client & test and their conditional blocks
+// - the pub use mock_client::* and their conditional blocks
+
 #[cfg(any(
     test,
     feature = "test-support",

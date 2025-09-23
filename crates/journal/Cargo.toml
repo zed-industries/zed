@@ -18,7 +18,6 @@ chrono.workspace = true
 editor.workspace = true
 gpui.workspace = true
 log.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 shellexpand.workspace = true

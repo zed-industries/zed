@@ -24,7 +24,6 @@ gpui.workspace = true
 language.workspace = true
 log.workspace = true
 project.workspace = true
-schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 theme.workspace = true

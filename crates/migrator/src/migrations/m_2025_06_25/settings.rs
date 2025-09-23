@@ -84,10 +84,10 @@ fn remove_pair_with_whitespace(
         }
     } else {
         // If no next sibling, check if there's a comma before
-        if let Some(prev_sibling) = pair_node.prev_sibling() {
-            if prev_sibling.kind() == "," {
-                range_to_remove.start = prev_sibling.start_byte();
-            }
+        if let Some(prev_sibling) = pair_node.prev_sibling()
+            && prev_sibling.kind() == ","
+        {
+            range_to_remove.start = prev_sibling.start_byte();
         }
     }
 
@@ -123,10 +123,10 @@ fn remove_pair_with_whitespace(
 
     // Also check if we need to include trailing whitespace up to the next line
     let text_after = &contents[range_to_remove.end..];
-    if let Some(newline_pos) = text_after.find('\n') {
-        if text_after[..newline_pos].chars().all(|c| c.is_whitespace()) {
-            range_to_remove.end += newline_pos + 1;
-        }
+    if let Some(newline_pos) = text_after.find('\n')
+        && text_after[..newline_pos].chars().all(|c| c.is_whitespace())
+    {
+        range_to_remove.end += newline_pos + 1;
     }
 
     Some((range_to_remove, String::new()))

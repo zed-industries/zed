@@ -78,11 +78,10 @@ While configuration fields are debug adapter-dependent, most adapters support th
     // The debug adapter that Zed should use to debug the program
     "adapter": "Example adapter name",
     // Request:
-    //  - launch: Zed will launch the program if specified or shows a debug terminal with the right configuration
-    //  - attach: Zed will attach to a running program to debug it or when the process_id is not specified we will show a process picker (only supported for node currently)
+    //  - launch: Zed will launch the program if specified, or show a debug terminal with the right configuration
+    //  - attach: Zed will attach to a running program to debug it, or when the process_id is not specified, will show a process picker (only supported for node currently)
     "request": "launch",
-    // program: The program that you want to debug
-    // This field supports path resolution with ~ or . symbols
+    // The program to debug. This field supports path resolution with ~ or . symbols.
     "program": "path_to_program",
     // cwd: defaults to the current working directory of your project ($ZED_WORKTREE_ROOT)
     "cwd": "$ZED_WORKTREE_ROOT"
@@ -147,6 +146,8 @@ All breakpoints enabled for a given project are also listed in "Breakpoints" ite
 The debug adapter will then stop whenever an exception of a given kind occurs. Which exception types are supported depends on the debug adapter.
 
 ## Settings
+
+The settings for the debugger are grouped under the `debugger` key in `settings.json`:
 
 - `dock`: Determines the position of the debug panel in the UI.
 - `stepping_granularity`: Determines the stepping granularity.

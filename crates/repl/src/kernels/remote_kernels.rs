@@ -95,7 +95,7 @@ pub async fn list_remote_kernelspecs(
         .kernelspecs
         .into_iter()
         .map(|(name, spec)| RemoteKernelSpecification {
-            name: name.clone(),
+            name,
             url: remote_server.base_url.clone(),
             token: remote_server.token.clone(),
             kernelspec: spec.spec,
@@ -103,7 +103,7 @@ pub async fn list_remote_kernelspecs(
         .collect::<Vec<RemoteKernelSpecification>>();
 
     anyhow::ensure!(!remote_kernelspecs.is_empty(), "No kernel specs found");
-    Ok(remote_kernelspecs.clone())
+    Ok(remote_kernelspecs)
 }
 
 impl PartialEq for RemoteKernelSpecification {

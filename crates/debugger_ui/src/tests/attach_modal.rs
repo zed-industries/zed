@@ -139,7 +139,7 @@ async fn test_show_attach_modal_and_select_process(
     workspace
         .update(cx, |_, window, cx| {
             let names =
-                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
+                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(modal, cx));
             // Initially all processes are visible.
             assert_eq!(3, names.len());
             attach_modal.update(cx, |this, cx| {
@@ -154,7 +154,7 @@ async fn test_show_attach_modal_and_select_process(
     workspace
         .update(cx, |_, _, cx| {
             let names =
-                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(&modal, cx));
+                attach_modal.update(cx, |modal, cx| attach_modal::_process_names(modal, cx));
             // Initially all processes are visible.
             assert_eq!(2, names.len());
         })

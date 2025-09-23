@@ -15,7 +15,7 @@ impl ScrollDirection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 pub enum ScrollAmount {
     // Scroll N lines (positive is towards the end of the document)
     Line(f32),
@@ -67,10 +67,7 @@ impl ScrollAmount {
     }
 
     pub fn is_full_page(&self) -> bool {
-        match self {
-            ScrollAmount::Page(count) if count.abs() == 1.0 => true,
-            _ => false,
-        }
+        matches!(self, ScrollAmount::Page(count) if count.abs() == 1.0)
     }
 
     pub fn direction(&self) -> ScrollDirection {

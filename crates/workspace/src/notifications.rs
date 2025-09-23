@@ -346,7 +346,7 @@ impl Render for LanguageServerPrompt {
                     )
                     .child(Label::new(request.message.to_string()).size(LabelSize::Small))
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
-                        let this_handle = cx.entity().clone();
+                        let this_handle = cx.entity();
                         Button::new(ix, action.title.clone())
                             .size(ButtonSize::Large)
                             .on_click(move |_, window, cx| {
@@ -1012,7 +1012,6 @@ where
                 let message: SharedString = format!("Error: {err}").into();
                 log::error!("Showing error notification in app: {message}");
                 show_app_notification(workspace_error_notification_id(), cx, {
-                    let message = message.clone();
                     move |cx| {
                         cx.new({
                             let message = message.clone();
@@ -1038,7 +1037,7 @@ where
 {
     fn detach_and_notify_err(self, window: &mut Window, cx: &mut App) {
         window
-            .spawn(cx, async move |mut cx| self.await.notify_async_err(&mut cx))
+            .spawn(cx, async move |cx| self.await.notify_async_err(cx))
             .detach();
     }
 }
@@ -1078,8 +1077,13 @@ where
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|window, cx| {
+                    let mut display = format!("{err}");
+                    if !display.ends_with('\n') {
+                        display.push('.');
+                        display.push(' ')
+                    }
                     let detail =
-                        f(err, window, cx).unwrap_or_else(|| format!("{err}. Please try again."));
+                        f(err, window, cx).unwrap_or_else(|| format!("{display}Please try again."));
                     window.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"], cx)
                 }) {
                     prompt.await.ok();

@@ -1,7 +1,7 @@
 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
 <path d="M7.5 4C7.91421 4 8.25 3.66421 8.25 3.25C8.25 2.83579 7.91421 2.5 7.5 2.5C7.08579 2.5 6.75 2.83579 6.75 3.25C6.75 3.66421 7.08579 4 7.5 4Z" fill="black" stroke="black" stroke-linecap="round" stroke-linejoin="round"/>
 <path d="M8 8L10 6L12 8H8Z" fill="black"/>
-<path d="M3 11L6 8L8.375 10.375" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M7 9L8.5 7.5L10 6L11.5 7.5L13 9" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M4.375 3H3.5C3.22386 3 3 3.22386 3 3.5V12.5C3 12.7761 3.22386 13 3.5 13H8.35938M10.6406 3H12.5C12.7761 3 13 3.22386 13 3.5V12.5C13 12.7761 12.7761 13 12.5 13H11.125" stroke="black" stroke-width="1.5" stroke-linecap="round"/>
+<path d="M3 11L6 8L8.375 10.375" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M7 9L8.5 7.5L10 6L11.5 7.5L13 9" stroke="black" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M4.375 3H3.5C3.22386 3 3 3.22386 3 3.5V12.5C3 12.7761 3.22386 13 3.5 13H8.35938M10.6406 3H12.5C12.7761 3 13 3.22386 13 3.5V12.5C13 12.7761 12.7761 13 12.5 13H11.125" stroke="black" stroke-width="1.2" stroke-linecap="round"/>
 </svg>

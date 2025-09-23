@@ -218,6 +218,7 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
         " ndan ",
         " band ",
         "a bandana",
+        "bandana:",
     ] {
         picker
             .update_in(cx, |picker, window, cx| {
@@ -250,6 +251,53 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
             );
         });
     }
+}
+
+#[gpui::test]
+async fn test_matching_paths_with_colon(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "foo:bar.rs": "",
+                    "foo.rs": "",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    // 'foo:' matches both files
+    cx.simulate_input("foo:");
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 3);
+        assert_match_at_position(picker, 0, "foo.rs");
+        assert_match_at_position(picker, 1, "foo:bar.rs");
+    });
+
+    // 'foo:b' matches one of the files
+    cx.simulate_input("b");
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 2);
+        assert_match_at_position(picker, 0, "foo:bar.rs");
+    });
+
+    cx.dispatch_action(editor::actions::Backspace);
+
+    // 'foo:1' matches both files, specifying which row to jump to
+    cx.simulate_input("1");
+    picker.update(cx, |picker, _| {
+        assert_eq!(picker.delegate.matches.len(), 3);
+        assert_match_at_position(picker, 0, "foo.rs");
+        assert_match_at_position(picker, 1, "foo:bar.rs");
+    });
 }
 
 #[gpui::test]
@@ -1614,7 +1662,7 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
 
     let picker = open_file_picker(&workspace, cx);
     picker.update(cx, |finder, _| {
-        assert_match_selection(&finder, 0, "1_qw");
+        assert_match_selection(finder, 0, "1_qw");
     });
 }
 
@@ -2623,7 +2671,7 @@ async fn open_queried_buffer(
     workspace: &Entity<Workspace>,
     cx: &mut gpui::VisualTestContext,
 ) -> Vec<FoundPath> {
-    let picker = open_file_picker(&workspace, cx);
+    let picker = open_file_picker(workspace, cx);
     cx.simulate_input(input);
 
     let history_items = picker.update(cx, |finder, _| {

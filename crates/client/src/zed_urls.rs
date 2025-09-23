@@ -43,3 +43,11 @@ pub fn ai_privacy_and_security(cx: &App) -> String {
         server_url = server_url(cx)
     )
 }
+
+/// Returns the URL to Zed AI's external agents documentation.
+pub fn external_agents_docs(cx: &App) -> String {
+    format!(
+        "{server_url}/docs/ai/external-agents",
+        server_url = server_url(cx)
+    )
+}

@@ -57,7 +57,7 @@ impl WebSearchRegistry {
     ) {
         let id = provider.id();
         let provider = Arc::new(provider);
-        self.providers.insert(id.clone(), provider.clone());
+        self.providers.insert(id, provider.clone());
         if self.active_provider.is_none() {
             self.active_provider = Some(provider);
         }

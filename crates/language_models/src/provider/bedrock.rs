@@ -42,7 +42,7 @@ use language_model::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{Settings, SettingsStore};
+use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
 use smol::lock::OnceCell;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use theme::ThemeSettings;
@@ -83,15 +83,14 @@ pub enum BedrockAuthMethod {
     Automatic,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    pub max_output_tokens: Option<u64>,
-    pub default_temperature: Option<f32>,
-    pub mode: Option<ModelMode>,
+impl From<settings::BedrockAuthMethodContent> for BedrockAuthMethod {
+    fn from(value: settings::BedrockAuthMethodContent) -> Self {
+        match value {
+            settings::BedrockAuthMethodContent::SingleSignOn => BedrockAuthMethod::SingleSignOn,
+            settings::BedrockAuthMethodContent::Automatic => BedrockAuthMethod::Automatic,
+            settings::BedrockAuthMethodContent::NamedProfile => BedrockAuthMethod::NamedProfile,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -150,7 +149,7 @@ impl State {
         let credentials_provider = <dyn CredentialsProvider>::global(cx);
         cx.spawn(async move |this, cx| {
             credentials_provider
-                .delete_credentials(AMAZON_AWS_URL, &cx)
+                .delete_credentials(AMAZON_AWS_URL, cx)
                 .await
                 .log_err();
             this.update(cx, |this, cx| {
@@ -174,7 +173,7 @@ impl State {
                     AMAZON_AWS_URL,
                     "Bearer",
                     &serde_json::to_vec(&credentials)?,
-                    &cx,
+                    cx,
                 )
                 .await?;
             this.update(cx, |this, cx| {
@@ -206,7 +205,7 @@ impl State {
                     (credentials, true)
                 } else {
                     let (_, credentials) = credentials_provider
-                        .read_credentials(AMAZON_AWS_URL, &cx)
+                        .read_credentials(AMAZON_AWS_URL, cx)
                         .await?
                         .ok_or_else(|| AuthenticateError::CredentialsNotFound)?;
                     (
@@ -348,7 +347,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> AnyView {
+    fn configuration_view(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyView {
         cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
@@ -407,10 +411,10 @@ impl BedrockModel {
                     .region(Region::new(region))
                     .timeout_config(TimeoutConfig::disabled());
 
-                if let Some(endpoint_url) = endpoint {
-                    if !endpoint_url.is_empty() {
-                        config_builder = config_builder.endpoint_url(endpoint_url);
-                    }
+                if let Some(endpoint_url) = endpoint
+                    && !endpoint_url.is_empty()
+                {
+                    config_builder = config_builder.endpoint_url(endpoint_url);
                 }
 
                 match auth_method {
@@ -460,7 +464,7 @@ impl BedrockModel {
         Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
         let Ok(runtime_client) = self
-            .get_or_init_client(&cx)
+            .get_or_init_client(cx)
             .cloned()
             .context("Bedrock client not initialized")
         else {
@@ -723,11 +727,11 @@ pub fn into_bedrock(
                     Role::Assistant => bedrock::BedrockRole::Assistant,
                     Role::System => unreachable!("System role should never occur here"),
                 };
-                if let Some(last_message) = new_messages.last_mut() {
-                    if last_message.role == bedrock_role {
-                        last_message.content.extend(bedrock_message_content);
-                        continue;
-                    }
+                if let Some(last_message) = new_messages.last_mut()
+                    && last_message.role == bedrock_role
+                {
+                    last_message.content.extend(bedrock_message_content);
+                    continue;
                 }
                 new_messages.push(
                     BedrockMessage::builder()
@@ -912,7 +916,7 @@ pub fn map_to_language_model_completion_events(
                             Some(ContentBlockDelta::ReasoningContent(thinking)) => match thinking {
                                 ReasoningContentBlockDelta::Text(thoughts) => {
                                     Some(Ok(LanguageModelCompletionEvent::Thinking {
-                                        text: thoughts.clone(),
+                                        text: thoughts,
                                         signature: None,
                                     }))
                                 }
@@ -963,7 +967,7 @@ pub fn map_to_language_model_completion_events(
                                         id: tool_use.id.into(),
                                         name: tool_use.name.into(),
                                         is_input_complete: true,
-                                        raw_input: tool_use.input_json.clone(),
+                                        raw_input: tool_use.input_json,
                                         input,
                                     },
                                 ))
@@ -1048,22 +1052,22 @@ impl ConfigurationView {
         Self {
             access_key_id_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_ACCESS_KEY_ID_TEXT, window, cx);
                 editor
             }),
             secret_access_key_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SECRET_ACCESS_KEY_TEXT, window, cx);
                 editor
             }),
             session_token_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_SESSION_TOKEN_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_SESSION_TOKEN_TEXT, window, cx);
                 editor
             }),
             region_editor: cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_REGION, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_REGION, window, cx);
                 editor
             }),
             state,
@@ -1081,21 +1085,18 @@ impl ConfigurationView {
             .access_key_id_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let secret_access_key = self
             .secret_access_key_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let session_token = self
             .session_token_editor
             .read(cx)
             .text(cx)
-            .to_string()
             .trim()
             .to_string();
         let session_token = if session_token.is_empty() {
@@ -1103,13 +1104,7 @@ impl ConfigurationView {
         } else {
             Some(session_token)
         };
-        let region = self
-            .region_editor
-            .read(cx)
-            .text(cx)
-            .to_string()
-            .trim()
-            .to_string();
+        let region = self.region_editor.read(cx).text(cx).trim().to_string();
         let region = if region.is_empty() {
             "us-east-1".to_string()
         } else {

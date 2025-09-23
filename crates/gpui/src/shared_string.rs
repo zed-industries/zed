@@ -23,6 +23,11 @@ impl SharedString {
     pub fn new(str: impl Into<Arc<str>>) -> Self {
         SharedString(ArcCow::Owned(str.into()))
     }
+
+    /// Get a &str from the underlying string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
 }
 
 impl JsonSchema for SharedString {
@@ -103,7 +108,7 @@ impl From<SharedString> for Arc<str> {
     fn from(val: SharedString) -> Self {
         match val.0 {
             ArcCow::Borrowed(borrowed) => Arc::from(borrowed),
-            ArcCow::Owned(owned) => owned.clone(),
+            ArcCow::Owned(owned) => owned,
         }
     }
 }

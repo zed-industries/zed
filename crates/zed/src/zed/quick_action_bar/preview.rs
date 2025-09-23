@@ -72,7 +72,10 @@ impl QuickActionBar {
                 Tooltip::with_meta(
                     tooltip_text,
                     Some(open_action_for_tooltip),
-                    format!("{} to open in a split", text_for_keystroke(&alt_click, cx)),
+                    format!(
+                        "{} to open in a split",
+                        text_for_keystroke(&alt_click.modifiers, &alt_click.key, cx)
+                    ),
                     window,
                     cx,
                 )

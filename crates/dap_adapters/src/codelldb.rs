@@ -385,7 +385,7 @@ impl DebugAdapter for CodeLldbDebugAdapter {
                     && let Some(source_languages) = config.get("sourceLanguages").filter(|value| {
                         value
                             .as_array()
-                            .map_or(false, |array| array.iter().all(Value::is_string))
+                            .is_some_and(|array| array.iter().all(Value::is_string))
                     })
                 {
                     let ret = vec![

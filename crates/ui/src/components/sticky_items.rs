@@ -28,7 +28,7 @@ where
     T: StickyCandidate + Clone + 'static,
 {
     let entity_compute = entity.clone();
-    let entity_render = entity.clone();
+    let entity_render = entity;
 
     let compute_fn = Rc::new(
         move |range: Range<usize>, window: &mut Window, cx: &mut App| -> SmallVec<[T; 8]> {
@@ -105,7 +105,6 @@ impl Element for StickyItemsElement {
         _window: &mut Window,
         _cx: &mut App,
     ) -> Self::PrepaintState {
-        ()
     }
 
     fn paint(

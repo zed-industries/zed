@@ -33,7 +33,7 @@ impl Snippet {
                 choices: None,
             };
 
-            if !tabstops.last().map_or(false, |t| *t == end_tabstop) {
+            if !tabstops.last().is_some_and(|t| *t == end_tabstop) {
                 tabstops.push(end_tabstop);
             }
         }

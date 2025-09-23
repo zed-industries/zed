@@ -201,12 +201,11 @@ pub fn poll_read_buf(
 }
 
 fn redact_error(mut error: reqwest::Error) -> reqwest::Error {
-    if let Some(url) = error.url_mut() {
-        if let Some(query) = url.query() {
-            if let Cow::Owned(redacted) = REDACT_REGEX.replace_all(query, "key=REDACTED") {
-                url.set_query(Some(redacted.as_str()));
-            }
-        }
+    if let Some(url) = error.url_mut()
+        && let Some(query) = url.query()
+        && let Cow::Owned(redacted) = REDACT_REGEX.replace_all(query, "key=REDACTED")
+    {
+        url.set_query(Some(redacted.as_str()));
     }
     error
 }
@@ -265,7 +264,7 @@ impl http_client::HttpClient for ReqwestClient {
 
             let bytes = response
                 .bytes_stream()
-                .map_err(|e| futures::io::Error::new(futures::io::ErrorKind::Other, e))
+                .map_err(futures::io::Error::other)
                 .into_async_read();
             let body = http_client::AsyncBody::from_reader(bytes);
 

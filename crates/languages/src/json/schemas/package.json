@@ -160,6 +160,11 @@
           "$ref": "#/definitions/packageExportsEntryOrFallback",
           "description": "The module path that is resolved when this specifier is imported as an ECMAScript module using an `import` declaration or the dynamic `import(...)` function."
         },
+        "module-sync": {
+          "$ref": "#/definitions/packageExportsEntryOrFallback",
+          "$comment": "https://nodejs.org/api/packages.html#conditional-exports#:~:text=%22module-sync%22",
+          "description": "The same as `import`, but can be used with require(esm) in Node 20+. This requires the files to not use any top-level awaits."
+        },
         "node": {
           "$ref": "#/definitions/packageExportsEntryOrFallback",
           "description": "The module path that is resolved when this environment is Node.js."
@@ -304,6 +309,33 @@
       "required": [
         "url"
       ]
+    },
+    "devEngineDependency": {
+      "description": "Specifies requirements for development environment components such as operating systems, runtimes, or package managers. Used to ensure consistent development environments across the team.",
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the dependency, with allowed values depending on the parent field"
+        },
+        "version": {
+          "type": "string",
+          "description": "The version range for the dependency"
+        },
+        "onFail": {
+          "type": "string",
+          "enum": [
+            "ignore",
+            "warn",
+            "error",
+            "download"
+          ],
+          "description": "What action to take if validation fails"
+        }
+      }
     }
   },
   "type": "object",
@@ -755,7 +787,7 @@
       ]
     },
     "resolutions": {
-      "description": "Resolutions is used to support selective version resolutions using yarn, which lets you define custom package versions or ranges inside your dependencies. For npm, use overrides instead. See: https://classic.yarnpkg.com/en/docs/selective-version-resolutions",
+      "description": "Resolutions is used to support selective version resolutions using yarn, which lets you define custom package versions or ranges inside your dependencies. For npm, use overrides instead. See: https://yarnpkg.com/configuration/manifest#resolutions",
       "type": "object"
     },
     "overrides": {
@@ -808,6 +840,82 @@
       "type": "array",
       "items": {
         "type": "string"
+      }
+    },
+    "devEngines": {
+      "description": "Define the runtime and package manager for developing the current project.",
+      "type": "object",
+      "properties": {
+        "os": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/devEngineDependency"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/devEngineDependency"
+              }
+            }
+          ],
+          "description": "Specifies which operating systems are supported for development"
+        },
+        "cpu": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/devEngineDependency"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/devEngineDependency"
+              }
+            }
+          ],
+          "description": "Specifies which CPU architectures are supported for development"
+        },
+        "libc": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/devEngineDependency"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/devEngineDependency"
+              }
+            }
+          ],
+          "description": "Specifies which C standard libraries are supported for development"
+        },
+        "runtime": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/devEngineDependency"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/devEngineDependency"
+              }
+            }
+          ],
+          "description": "Specifies which JavaScript runtimes (like Node.js, Deno, Bun) are supported for development. Values should use WinterCG Runtime Keys (see https://runtime-keys.proposal.wintercg.org/)"
+        },
+        "packageManager": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/devEngineDependency"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/devEngineDependency"
+              }
+            }
+          ],
+          "description": "Specifies which package managers are supported for development"
+        }
       }
     },
     "preferGlobal": {
@@ -973,6 +1081,7 @@
           "additionalProperties": false
         },
         "peerDependencyRules": {
+          "type": "object",
           "properties": {
             "ignoreMissing": {
               "description": "pnpm will not print warnings about missing peer dependencies from this list.",
@@ -1029,6 +1138,10 @@
           "type": "object"
         },
         "allowNonAppliedPatches": {
+          "description": "When true, installation won't fail if some of the patches from the \"patchedDependencies\" field were not applied.",
+          "type": "boolean"
+        },
+        "allowUnusedPatches": {
           "description": "When true, installation won't fail if some of the patches from the \"patchedDependencies\" field were not applied.",
           "type": "boolean"
         },
@@ -1119,6 +1232,41 @@
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "stackblitz": {
+      "description": "Defines the StackBlitz configuration for the project.",
+      "type": "object",
+      "properties": {
+        "installDependencies": {
+          "description": "StackBlitz automatically installs npm dependencies when opening a project.",
+          "type": "boolean"
+        },
+        "startCommand": {
+          "description": "A terminal command to be executed when opening the project, after installing npm dependencies.",
+          "type": [
+            "string",
+            "boolean"
+          ]
+        },
+        "compileTrigger": {
+          "description": "The compileTrigger option controls how file changes in the editor are written to the WebContainers in-memory filesystem. ",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "auto",
+                "keystroke",
+                "save"
+              ]
+            }
+          ]
+        },
+        "env": {
+          "description": "A map of default environment variables that will be set in each top-level shell process.",
+          "type": "object"
         }
       },
       "additionalProperties": false

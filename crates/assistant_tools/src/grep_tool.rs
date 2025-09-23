@@ -188,15 +188,14 @@ impl Tool for GrepTool {
                 // Check if this file should be excluded based on its worktree settings
                 if let Ok(Some(project_path)) = project.read_with(cx, |project, cx| {
                     project.find_project_path(&path, cx)
-                }) {
-                    if cx.update(|cx| {
+                })
+                    && cx.update(|cx| {
                         let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
                         worktree_settings.is_path_excluded(&project_path.path)
                             || worktree_settings.is_path_private(&project_path.path)
                     }).unwrap_or(false) {
                         continue;
                     }
-                }
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await?;
@@ -268,10 +267,8 @@ impl Tool for GrepTool {
                     let end_row = range.end.row;
                     output.push_str("\n### ");
 
-                    if let Some(parent_symbols) = &parent_symbols {
-                        for symbol in parent_symbols {
-                            write!(output, "{} › ", symbol.text)?;
-                        }
+                    for symbol in parent_symbols {
+                        write!(output, "{} › ", symbol.text)?;
                     }
 
                     if range.start.row == end_row {
@@ -284,12 +281,11 @@ impl Tool for GrepTool {
                     output.extend(snapshot.text_for_range(range));
                     output.push_str("\n```\n");
 
-                    if let Some(ancestor_range) = ancestor_range {
-                        if end_row < ancestor_range.end.row {
+                    if let Some(ancestor_range) = ancestor_range
+                        && end_row < ancestor_range.end.row {
                             let remaining_lines = ancestor_range.end.row - end_row;
                             writeln!(output, "\n{} lines remaining in ancestor node. Read the file to see all.", remaining_lines)?;
                         }
-                    }
 
                     matches_found += 1;
                 }
@@ -318,7 +314,7 @@ mod tests {
     use gpui::{AppContext, TestAppContext, UpdateGlobal};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use language_model::fake_provider::FakeLanguageModel;
-    use project::{FakeFs, Project, WorktreeSettings};
+    use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use unindent::Unindent;
@@ -329,7 +325,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/root"),
             serde_json::json!({
@@ -417,7 +413,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             path!("/root"),
             serde_json::json!({
@@ -496,7 +492,7 @@ mod tests {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let fs = FakeFs::new(cx.executor().clone());
+        let fs = FakeFs::new(cx.executor());
 
         // Create test file with syntax structures
         fs.insert_tree(
@@ -853,19 +849,21 @@ mod tests {
 
         cx.update(|cx| {
             use gpui::UpdateGlobal;
-            use project::WorktreeSettings;
             use settings::SettingsStore;
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions = Some(vec![
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions = Some(vec![
                         "**/.secretdir".to_string(),
                         "**/.mymetadata".to_string(),
                     ]);
-                    settings.private_files = Some(vec![
-                        "**/.mysecrets".to_string(),
-                        "**/*.privatekey".to_string(),
-                        "**/*.mysensitive".to_string(),
-                    ]);
+                    settings.project.worktree.private_files = Some(
+                        vec![
+                            "**/.mysecrets".to_string(),
+                            "**/*.privatekey".to_string(),
+                            "**/*.mysensitive".to_string(),
+                        ]
+                        .into(),
+                    );
                 });
             });
         });
@@ -894,7 +892,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not find files outside the project worktree"
@@ -920,7 +918,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.iter().any(|p| p.contains("allowed_file.rs")),
             "grep_tool should be able to search files inside worktrees"
@@ -946,7 +944,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search files in .secretdir (file_scan_exclusions)"
@@ -971,7 +969,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search .mymetadata files (file_scan_exclusions)"
@@ -997,7 +995,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search .mysecrets (private_files)"
@@ -1022,7 +1020,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search .privatekey files (private_files)"
@@ -1047,7 +1045,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not search .mysensitive files (private_files)"
@@ -1073,7 +1071,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.iter().any(|p| p.contains("normal_file.rs")),
             "Should be able to search normal files"
@@ -1100,7 +1098,7 @@ mod tests {
             })
             .await;
         let results = result.unwrap();
-        let paths = extract_paths_from_results(&results.content.as_str().unwrap());
+        let paths = extract_paths_from_results(results.content.as_str().unwrap());
         assert!(
             paths.is_empty(),
             "grep_tool should not allow escaping project boundaries with relative paths"
@@ -1162,10 +1160,11 @@ mod tests {
         // Set global settings
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions =
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
                         Some(vec!["**/.git".to_string(), "**/node_modules".to_string()]);
-                    settings.private_files = Some(vec!["**/.env".to_string()]);
+                    settings.project.worktree.private_files =
+                        Some(vec!["**/.env".to_string()].into());
                 });
             });
         });
@@ -1206,7 +1205,7 @@ mod tests {
             .unwrap();
 
         let content = result.content.as_str().unwrap();
-        let paths = extract_paths_from_results(&content);
+        let paths = extract_paths_from_results(content);
 
         // Should find matches in non-private files
         assert!(
@@ -1271,7 +1270,7 @@ mod tests {
             .unwrap();
 
         let content = result.content.as_str().unwrap();
-        let paths = extract_paths_from_results(&content);
+        let paths = extract_paths_from_results(content);
 
         // Should only find matches in worktree1 *.rs files (excluding private ones)
         assert!(

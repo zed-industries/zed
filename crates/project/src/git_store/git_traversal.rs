@@ -42,8 +42,8 @@ impl<'a> GitTraversal<'a> {
         //   other_repo/
         //     .git/
         //   our_query.txt
-        let mut query = path.ancestors();
-        while let Some(query) = query.next() {
+        let query = path.ancestors();
+        for query in query {
             let (_, snapshot) = self
                 .repo_root_to_snapshot
                 .range(Path::new("")..=query)
@@ -182,11 +182,11 @@ impl<'a> Iterator for ChildEntriesGitIter<'a> {
     type Item = GitEntryRef<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if let Some(item) = self.traversal.entry() {
-            if item.path.starts_with(self.parent_path) {
-                self.traversal.advance_to_sibling();
-                return Some(item);
-            }
+        if let Some(item) = self.traversal.entry()
+            && item.path.starts_with(self.parent_path)
+        {
+            self.traversal.advance_to_sibling();
+            return Some(item);
         }
         None
     }
@@ -199,7 +199,7 @@ pub struct GitEntryRef<'a> {
 }
 
 impl GitEntryRef<'_> {
-    pub fn to_owned(&self) -> GitEntry {
+    pub fn to_owned(self) -> GitEntry {
         GitEntry {
             entry: self.entry.clone(),
             git_summary: self.git_summary,
@@ -211,7 +211,7 @@ impl Deref for GitEntryRef<'_> {
     type Target = Entry;
 
     fn deref(&self) -> &Self::Target {
-        &self.entry
+        self.entry
     }
 }
 

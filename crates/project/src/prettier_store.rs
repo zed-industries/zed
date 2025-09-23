@@ -590,8 +590,8 @@ impl PrettierStore {
                             new_plugins.clear();
                         }
                         let mut needs_install = should_write_prettier_server_file(fs.as_ref()).await;
-                        if let Some(previous_installation_task) = previous_installation_task {
-                            if let Err(e) = previous_installation_task.await {
+                        if let Some(previous_installation_task) = previous_installation_task
+                            && let Err(e) = previous_installation_task.await {
                                 log::error!("Failed to install default prettier: {e:#}");
                                 prettier_store.update(cx, |prettier_store, _| {
                                     if let PrettierInstallation::NotInstalled { attempts, not_installed_plugins, .. } = &mut prettier_store.default_prettier.prettier {
@@ -601,8 +601,7 @@ impl PrettierStore {
                                         needs_install = true;
                                     };
                                 })?;
-                            }
-                        };
+                            };
                         if installation_attempt > prettier::FAIL_THRESHOLD {
                             prettier_store.update(cx, |prettier_store, _| {
                                 if let PrettierInstallation::NotInstalled { installation_task, .. } = &mut prettier_store.default_prettier.prettier {
@@ -679,13 +678,13 @@ impl PrettierStore {
     ) {
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language_settings) in language_formatters_to_check {
-            if language_settings.prettier.allowed {
-                if let Some(plugins) = prettier_plugins_for_language(&language_settings) {
-                    prettier_plugins_by_worktree
-                        .entry(worktree)
-                        .or_insert_with(HashSet::default)
-                        .extend(plugins.iter().cloned());
-                }
+            if language_settings.prettier.allowed
+                && let Some(plugins) = prettier_plugins_for_language(&language_settings)
+            {
+                prettier_plugins_by_worktree
+                    .entry(worktree)
+                    .or_insert_with(HashSet::default)
+                    .extend(plugins.iter().cloned());
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {

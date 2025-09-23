@@ -169,7 +169,7 @@ impl PickerDelegate for SymbolContextPickerDelegate {
         _window: &mut Window,
         _: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let mat = &self.matches.get(ix)?;
 
         Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
             render_symbol_context_entry(ElementId::named_usize("symbol-ctx-picker", ix), mat),
@@ -289,12 +289,12 @@ pub(crate) fn search_symbols(
                         .iter()
                         .enumerate()
                         .map(|(id, symbol)| {
-                            StringMatchCandidate::new(id, &symbol.label.filter_text())
+                            StringMatchCandidate::new(id, symbol.label.filter_text())
                         })
                         .partition(|candidate| {
                             project
                                 .entry_for_path(&symbols[candidate.id].path, cx)
-                                .map_or(false, |e| !e.is_ignored)
+                                .is_some_and(|e| !e.is_ignored)
                         })
                 })
                 .log_err()

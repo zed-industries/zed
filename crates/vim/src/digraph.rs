@@ -63,15 +63,15 @@ impl Vim {
     }
 
     fn literal(&mut self, action: &Literal, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(Operator::Literal { prefix }) = self.active_operator() {
-            if let Some(prefix) = prefix {
-                if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
-                    window.defer(cx, |window, cx| {
-                        window.dispatch_keystroke(keystroke, cx);
-                    });
-                }
-                return self.handle_literal_input(prefix, "", window, cx);
+        if let Some(Operator::Literal { prefix }) = self.active_operator()
+            && let Some(prefix) = prefix
+        {
+            if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
+                window.defer(cx, |window, cx| {
+                    window.dispatch_keystroke(keystroke, cx);
+                });
             }
+            return self.handle_literal_input(prefix, "", window, cx);
         }
 
         self.insert_literal(Some(action.1), "", window, cx);
@@ -89,7 +89,7 @@ impl Vim {
             return;
         };
 
-        if prefix.len() > 0 {
+        if !prefix.is_empty() {
             self.handle_literal_input(prefix, "", window, cx);
         } else {
             self.pop_operator(window, cx);
@@ -103,7 +103,6 @@ impl Vim {
                 window.dispatch_keystroke(keystroke, cx);
             });
         }
-        return;
     }
 
     pub fn handle_literal_input(
@@ -225,7 +224,6 @@ mod test {
     use settings::SettingsStore;
 
     use crate::{
-        VimSettings,
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
@@ -295,11 +293,11 @@ mod test {
         let mut cx: VimTestContext = VimTestContext::new(cx, true).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<VimSettings>(cx, |s| {
+            store.update_user_settings(cx, |s| {
                 let mut custom_digraphs = HashMap::default();
                 custom_digraphs.insert("|-".into(), "⊢".into());
                 custom_digraphs.insert(":)".into(), "👨‍💻".into());
-                s.custom_digraphs = Some(custom_digraphs);
+                s.vim.get_or_insert_default().custom_digraphs = Some(custom_digraphs);
             });
         });
 

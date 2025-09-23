@@ -285,7 +285,7 @@ pub async fn download_adapter_from_github(
     }
 
     if !adapter_path.exists() {
-        fs.create_dir(&adapter_path.as_path())
+        fs.create_dir(adapter_path.as_path())
             .await
             .context("Failed creating adapter path")?;
     }

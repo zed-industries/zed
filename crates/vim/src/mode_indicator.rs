@@ -20,7 +20,7 @@ impl ModeIndicator {
         })
         .detach();
 
-        let handle = cx.entity().clone();
+        let handle = cx.entity();
         let window_handle = window.window_handle();
         cx.observe_new::<Vim>(move |_, window, cx| {
             let Some(window) = window else {
@@ -29,7 +29,7 @@ impl ModeIndicator {
             if window.window_handle() != window_handle {
                 return;
             }
-            let vim = cx.entity().clone();
+            let vim = cx.entity();
             handle.update(cx, |_, cx| {
                 cx.subscribe(&vim, |mode_indicator, vim, event, cx| match event {
                     VimEvent::Focused => {
@@ -74,11 +74,7 @@ impl ModeIndicator {
                     .map(|count| format!("{}", count)),
             )
             .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
-            .chain(
-                vim.operator_stack
-                    .iter()
-                    .map(|item| item.status().to_string()),
-            )
+            .chain(vim.operator_stack.iter().map(|item| item.status()))
             .chain(
                 cx.global::<VimGlobals>()
                     .post_count

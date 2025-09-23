@@ -1,9 +1,7 @@
-mod cargo_workspace_command;
 mod context_server_command;
 mod default_command;
 mod delta_command;
 mod diagnostics_command;
-mod docs_command;
 mod fetch_command;
 mod file_command;
 mod now_command;
@@ -13,12 +11,10 @@ mod streaming_example_command;
 mod symbols_command;
 mod tab_command;
 
-pub use crate::cargo_workspace_command::*;
 pub use crate::context_server_command::*;
 pub use crate::default_command::*;
 pub use crate::delta_command::*;
 pub use crate::diagnostics_command::*;
-pub use crate::docs_command::*;
 pub use crate::fetch_command::*;
 pub use crate::file_command::*;
 pub use crate::now_command::*;

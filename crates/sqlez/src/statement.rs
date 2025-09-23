@@ -44,41 +44,41 @@ impl<'a> Statement<'a> {
             connection,
             phantom: PhantomData,
         };
-        unsafe {
-            let sql = CString::new(query.as_ref()).context("Error creating cstr")?;
-            let mut remaining_sql = sql.as_c_str();
-            while {
-                let remaining_sql_str = remaining_sql
-                    .to_str()
-                    .context("Parsing remaining sql")?
-                    .trim();
-                remaining_sql_str != ";" && !remaining_sql_str.is_empty()
-            } {
-                let mut raw_statement = ptr::null_mut::<sqlite3_stmt>();
-                let mut remaining_sql_ptr = ptr::null();
+        let sql = CString::new(query.as_ref()).context("Error creating cstr")?;
+        let mut remaining_sql = sql.as_c_str();
+        while {
+            let remaining_sql_str = remaining_sql
+                .to_str()
+                .context("Parsing remaining sql")?
+                .trim();
+            remaining_sql_str != ";" && !remaining_sql_str.is_empty()
+        } {
+            let mut raw_statement = ptr::null_mut::<sqlite3_stmt>();
+            let mut remaining_sql_ptr = ptr::null();
+            unsafe {
                 sqlite3_prepare_v2(
                     connection.sqlite3,
                     remaining_sql.as_ptr(),
                     -1,
                     &mut raw_statement,
                     &mut remaining_sql_ptr,
-                );
+                )
+            };
 
-                connection.last_error().with_context(|| {
-                    format!("Prepare call failed for query:\n{}", query.as_ref())
-                })?;
+            connection
+                .last_error()
+                .with_context(|| format!("Prepare call failed for query:\n{}", query.as_ref()))?;
 
-                remaining_sql = CStr::from_ptr(remaining_sql_ptr);
-                statement.raw_statements.push(raw_statement);
+            remaining_sql = unsafe { CStr::from_ptr(remaining_sql_ptr) };
+            statement.raw_statements.push(raw_statement);
 
-                if !connection.can_write() && sqlite3_stmt_readonly(raw_statement) == 0 {
-                    let sql = CStr::from_ptr(sqlite3_sql(raw_statement));
+            if !connection.can_write() && unsafe { sqlite3_stmt_readonly(raw_statement) == 0 } {
+                let sql = unsafe { CStr::from_ptr(sqlite3_sql(raw_statement)) };
 
-                    bail!(
-                        "Write statement prepared with connection that is not write capable. SQL:\n{} ",
-                        sql.to_str()?
-                    )
-                }
+                bail!(
+                    "Write statement prepared with connection that is not write capable. SQL:\n{} ",
+                    sql.to_str()?
+                )
             }
         }
 
@@ -271,22 +271,20 @@ impl<'a> Statement<'a> {
     }
 
     fn step(&mut self) -> Result<StepResult> {
-        unsafe {
-            match sqlite3_step(self.current_statement()) {
-                SQLITE_ROW => Ok(StepResult::Row),
-                SQLITE_DONE => {
-                    if self.current_statement >= self.raw_statements.len() - 1 {
-                        Ok(StepResult::Done)
-                    } else {
-                        self.current_statement += 1;
-                        self.step()
-                    }
+        match unsafe { sqlite3_step(self.current_statement()) } {
+            SQLITE_ROW => Ok(StepResult::Row),
+            SQLITE_DONE => {
+                if self.current_statement >= self.raw_statements.len() - 1 {
+                    Ok(StepResult::Done)
+                } else {
+                    self.current_statement += 1;
+                    self.step()
                 }
-                SQLITE_MISUSE => anyhow::bail!("Statement step returned SQLITE_MISUSE"),
-                _other_error => {
-                    self.connection.last_error()?;
-                    unreachable!("Step returned error code and last error failed to catch it");
-                }
+            }
+            SQLITE_MISUSE => anyhow::bail!("Statement step returned SQLITE_MISUSE"),
+            _other_error => {
+                self.connection.last_error()?;
+                unreachable!("Step returned error code and last error failed to catch it");
             }
         }
     }

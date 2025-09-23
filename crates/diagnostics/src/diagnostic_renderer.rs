@@ -18,7 +18,7 @@ use ui::{
 };
 use util::maybe;
 
-use crate::ProjectDiagnosticsEditor;
+use crate::toolbar_controls::DiagnosticsToolbarEditor;
 
 pub struct DiagnosticRenderer;
 
@@ -26,7 +26,7 @@ impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
         diagnostic_group: Vec<DiagnosticEntry<Point>>,
         buffer_id: BufferId,
-        diagnostics_editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
+        diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
         cx: &mut App,
     ) -> Vec<DiagnosticBlock> {
         let Some(primary_ix) = diagnostic_group
@@ -46,7 +46,7 @@ impl DiagnosticRenderer {
                     markdown.push_str(" (");
                 }
                 if let Some(source) = diagnostic.source.as_ref() {
-                    markdown.push_str(&Markdown::escape(&source));
+                    markdown.push_str(&Markdown::escape(source));
                 }
                 if diagnostic.source.is_some() && diagnostic.code.is_some() {
                     markdown.push(' ');
@@ -130,6 +130,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>> {
         let blocks = Self::diagnostic_blocks_for_group(diagnostic_group, buffer_id, None, cx);
+
         blocks
             .into_iter()
             .map(|block| {
@@ -182,7 +183,7 @@ pub(crate) struct DiagnosticBlock {
     pub(crate) initial_range: Range<Point>,
     pub(crate) severity: DiagnosticSeverity,
     pub(crate) markdown: Entity<Markdown>,
-    pub(crate) diagnostics_editor: Option<WeakEntity<ProjectDiagnosticsEditor>>,
+    pub(crate) diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
 }
 
 impl DiagnosticBlock {
@@ -233,7 +234,7 @@ impl DiagnosticBlock {
 
     pub fn open_link(
         editor: &mut Editor,
-        diagnostics_editor: &Option<WeakEntity<ProjectDiagnosticsEditor>>,
+        diagnostics_editor: &Option<Arc<dyn DiagnosticsToolbarEditor>>,
         link: SharedString,
         window: &mut Window,
         cx: &mut Context<Editor>,
@@ -254,18 +255,10 @@ impl DiagnosticBlock {
 
         if let Some(diagnostics_editor) = diagnostics_editor {
             if let Some(diagnostic) = diagnostics_editor
-                .read_with(cx, |diagnostics, _| {
-                    diagnostics
-                        .diagnostics
-                        .get(&buffer_id)
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|d| d.diagnostic.group_id == group_id)
-                        .nth(ix)
-                })
-                .ok()
-                .flatten()
+                .get_diagnostics_for_buffer(buffer_id, cx)
+                .into_iter()
+                .filter(|d| d.diagnostic.group_id == group_id)
+                .nth(ix)
             {
                 let multibuffer = editor.buffer().read(cx);
                 let Some(snapshot) = multibuffer
@@ -287,26 +280,24 @@ impl DiagnosticBlock {
                     }
                 }
             }
-        } else {
-            if let Some(diagnostic) = editor
-                .snapshot(window, cx)
-                .buffer_snapshot
-                .diagnostic_group(buffer_id, group_id)
-                .nth(ix)
-            {
-                Self::jump_to(editor, diagnostic.range, window, cx)
-            }
+        } else if let Some(diagnostic) = editor
+            .snapshot(window, cx)
+            .buffer_snapshot
+            .diagnostic_group(buffer_id, group_id)
+            .nth(ix)
+        {
+            Self::jump_to(editor, diagnostic.range, window, cx)
         };
     }
 
-    fn jump_to<T: ToOffset>(
+    fn jump_to<I: ToOffset>(
         editor: &mut Editor,
-        range: Range<T>,
+        range: Range<I>,
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) {
         let snapshot = &editor.buffer().read(cx).snapshot(cx);
-        let range = range.start.to_offset(&snapshot)..range.end.to_offset(&snapshot);
+        let range = range.start.to_offset(snapshot)..range.end.to_offset(snapshot);
 
         editor.unfold_ranges(&[range.start..range.end], true, false, cx);
         editor.change_selections(Default::default(), window, cx, |s| {

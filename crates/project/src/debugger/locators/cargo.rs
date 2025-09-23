@@ -117,7 +117,7 @@ impl DapLocator for CargoLocator {
             .cwd
             .clone()
             .context("Couldn't get cwd from debug config which is needed for locators")?;
-        let builder = ShellBuilder::new(true, &build_config.shell).non_interactive();
+        let builder = ShellBuilder::new(None, &build_config.shell).non_interactive();
         let (program, args) = builder.build(
             Some("cargo".into()),
             &build_config
@@ -126,7 +126,7 @@ impl DapLocator for CargoLocator {
                 .cloned()
                 .take_while(|arg| arg != "--")
                 .chain(Some("--message-format=json".to_owned()))
-                .collect(),
+                .collect::<Vec<_>>(),
         );
         let mut child = util::command::new_smol_command(program)
             .args(args)
@@ -146,7 +146,7 @@ impl DapLocator for CargoLocator {
         let is_test = build_config
             .args
             .first()
-            .map_or(false, |arg| arg == "test" || arg == "t");
+            .is_some_and(|arg| arg == "test" || arg == "t");
 
         let executables = output
             .lines()
@@ -187,12 +187,12 @@ impl DapLocator for CargoLocator {
                 .cloned();
         }
         let executable = {
-            if let Some(ref name) = test_name.as_ref().and_then(|name| {
+            if let Some(name) = test_name.as_ref().and_then(|name| {
                 name.strip_prefix('$')
                     .map(|name| build_config.env.get(name))
                     .unwrap_or(Some(name))
             }) {
-                find_best_executable(&executables, &name).await
+                find_best_executable(&executables, name).await
             } else {
                 None
             }

@@ -2,6 +2,7 @@ use std::{cmp::Ordering, fmt::Debug};
 
 use crate::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary};
 
+/// A cheaply-cloneable ordered map based on a [SumTree](crate::SumTree).
 #[derive(Clone, PartialEq, Eq)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where

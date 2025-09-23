@@ -22,12 +22,14 @@
 /// When handling an error you can use .error_code() to match which error it was
 /// and .error_tag() to read any tags.
 ///
-/// ```
+/// ```ignore
+/// use proto::{ErrorCode, ErrorExt};
+///
 /// match err.error_code() {
-///   ErrorCode::Forbidden => alert("I'm sorry I can't do that.")
+///   ErrorCode::Forbidden => alert("I'm sorry I can't do that."),
 ///   ErrorCode::WrongReleaseChannel =>
-///     alert(format!("You need to be on the {} release channel.", err.error_tag("required").unwrap()))
-///   ErrorCode::Internal => alert("Sorry, something went wrong")
+///     alert(format!("You need to be on the {} release channel.", err.error_tag("required").unwrap())),
+///   ErrorCode::Internal => alert("Sorry, something went wrong"),
 /// }
 /// ```
 ///
@@ -190,10 +192,10 @@ impl ErrorExt for RpcError {
     fn error_tag(&self, k: &str) -> Option<&str> {
         for tag in &self.tags {
             let mut parts = tag.split('=');
-            if let Some(key) = parts.next() {
-                if key == k {
-                    return parts.next();
-                }
+            if let Some(key) = parts.next()
+                && key == k
+            {
+                return parts.next();
             }
         }
         None

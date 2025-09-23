@@ -17,8 +17,8 @@ use gpui::{App, AsyncApp, Global, WindowHandle};
 use language::Point;
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
-use recent_projects::{SshSettings, open_ssh_project};
-use remote::SshConnectionOptions;
+use recent_projects::{SshSettings, open_remote_project};
+use remote::{RemoteConnectionOptions, WslConnectionOptions};
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -26,6 +26,7 @@ use std::thread;
 use std::time::Duration;
 use util::ResultExt;
 use util::paths::PathWithPosition;
+use workspace::PathList;
 use workspace::item::ItemHandle;
 use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
@@ -36,7 +37,7 @@ pub struct OpenRequest {
     pub diff_paths: Vec<[String; 2]>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
-    pub ssh_connection: Option<SshConnectionOptions>,
+    pub remote_connection: Option<RemoteConnectionOptions>,
 }
 
 #[derive(Debug)]
@@ -50,6 +51,23 @@ pub enum OpenRequestKind {
 impl OpenRequest {
     pub fn parse(request: RawOpenRequest, cx: &App) -> Result<Self> {
         let mut this = Self::default();
+
+        this.diff_paths = request.diff_paths;
+        if let Some(wsl) = request.wsl {
+            let (user, distro_name) = if let Some((user, distro)) = wsl.split_once('@') {
+                if user.is_empty() {
+                    anyhow::bail!("user is empty in wsl argument");
+                }
+                (Some(user.to_string()), distro.to_string())
+            } else {
+                (None, wsl)
+            };
+            this.remote_connection = Some(RemoteConnectionOptions::Wsl(WslConnectionOptions {
+                distro_name,
+                user,
+            }));
+        }
+
         for url in request.urls {
             if let Some(server_name) = url.strip_prefix("zed-cli://") {
                 this.kind = Some(OpenRequestKind::CliConnection(connect_to_cli(server_name)?));
@@ -79,8 +97,6 @@ impl OpenRequest {
             }
         }
 
-        this.diff_paths = request.diff_paths;
-
         Ok(this)
     }
 
@@ -102,47 +118,44 @@ impl OpenRequest {
             self.open_paths.is_empty(),
             "cannot open both local and ssh paths"
         );
-        let mut connection_options = SshSettings::get_global(cx).connection_options_for(
-            host.clone(),
-            port,
-            username.clone(),
-        );
+        let mut connection_options =
+            SshSettings::get_global(cx).connection_options_for(host, port, username);
         if let Some(password) = url.password() {
             connection_options.password = Some(password.to_string());
         }
-        if let Some(ssh_connection) = &self.ssh_connection {
+
+        let connection_options = RemoteConnectionOptions::Ssh(connection_options);
+        if let Some(ssh_connection) = &self.remote_connection {
             anyhow::ensure!(
                 *ssh_connection == connection_options,
-                "cannot open multiple ssh connections"
+                "cannot open multiple different remote connections"
             );
         }
-        self.ssh_connection = Some(connection_options);
+        self.remote_connection = Some(connection_options);
         self.parse_file_path(url.path());
         Ok(())
     }
 
     fn parse_request_path(&mut self, request_path: &str) -> Result<()> {
         let mut parts = request_path.split('/');
-        if parts.next() == Some("channel") {
-            if let Some(slug) = parts.next() {
-                if let Some(id_str) = slug.split('-').next_back() {
-                    if let Ok(channel_id) = id_str.parse::<u64>() {
-                        let Some(next) = parts.next() else {
-                            self.join_channel = Some(channel_id);
-                            return Ok(());
-                        };
+        if parts.next() == Some("channel")
+            && let Some(slug) = parts.next()
+            && let Some(id_str) = slug.split('-').next_back()
+            && let Ok(channel_id) = id_str.parse::<u64>()
+        {
+            let Some(next) = parts.next() else {
+                self.join_channel = Some(channel_id);
+                return Ok(());
+            };
 
-                        if let Some(heading) = next.strip_prefix("notes#") {
-                            self.open_channel_notes
-                                .push((channel_id, Some(heading.to_string())));
-                            return Ok(());
-                        }
-                        if next == "notes" {
-                            self.open_channel_notes.push((channel_id, None));
-                            return Ok(());
-                        }
-                    }
-                }
+            if let Some(heading) = next.strip_prefix("notes#") {
+                self.open_channel_notes
+                    .push((channel_id, Some(heading.to_string())));
+                return Ok(());
+            }
+            if next == "notes" {
+                self.open_channel_notes.push((channel_id, None));
+                return Ok(());
             }
         }
         anyhow::bail!("invalid zed url: {request_path}")
@@ -156,6 +169,7 @@ pub struct OpenListener(UnboundedSender<RawOpenRequest>);
 pub struct RawOpenRequest {
     pub urls: Vec<String>,
     pub diff_paths: Vec<[String; 2]>,
+    pub wsl: Option<String>,
 }
 
 impl Global for OpenListener {}
@@ -181,10 +195,10 @@ pub fn listen_for_cli_connections(opener: OpenListener) -> Result<()> {
 
     let sock_path = paths::data_dir().join(format!("zed-{}.sock", *RELEASE_CHANNEL_NAME));
     // remove the socket if the process listening on it has died
-    if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path) {
-        if e.kind() == std::io::ErrorKind::ConnectionRefused {
-            std::fs::remove_file(&sock_path)?;
-        }
+    if let Err(e) = UnixDatagram::unbound()?.connect(&sock_path)
+        && e.kind() == std::io::ErrorKind::ConnectionRefused
+    {
+        std::fs::remove_file(&sock_path)?;
     }
     let listener = UnixDatagram::bind(&sock_path)?;
     thread::spawn(move || {
@@ -244,12 +258,12 @@ pub async fn open_paths_with_positions(
         .iter()
         .map(|path_with_position| {
             let path = path_with_position.path.clone();
-            if let Some(row) = path_with_position.row {
-                if path.is_file() {
-                    let row = row.saturating_sub(1);
-                    let col = path_with_position.column.unwrap_or(0).saturating_sub(1);
-                    caret_positions.insert(path.clone(), Point::new(row, col));
-                }
+            if let Some(row) = path_with_position.row
+                && path.is_file()
+            {
+                let row = row.saturating_sub(1);
+                let col = path_with_position.column.unwrap_or(0).saturating_sub(1);
+                caret_positions.insert(path.clone(), Point::new(row, col));
             }
             path
         })
@@ -264,10 +278,9 @@ pub async fn open_paths_with_positions(
         let new_path = Path::new(&diff_pair[1]).canonicalize()?;
         if let Ok(diff_view) = workspace.update(cx, |workspace, window, cx| {
             FileDiffView::open(old_path, new_path, workspace, window, cx)
-        }) {
-            if let Some(diff_view) = diff_view.await.log_err() {
-                items.push(Some(Ok(Box::new(diff_view))))
-            }
+        }) && let Some(diff_view) = diff_view.await.log_err()
+        {
+            items.push(Some(Ok(Box::new(diff_view))))
         }
     }
 
@@ -308,13 +321,21 @@ pub async fn handle_cli_connection(
                 paths,
                 diff_paths,
                 wait,
+                wsl,
                 open_new_workspace,
                 env,
                 user_data_dir: _,
             } => {
                 if !urls.is_empty() {
                     cx.update(|cx| {
-                        match OpenRequest::parse(RawOpenRequest { urls, diff_paths }, cx) {
+                        match OpenRequest::parse(
+                            RawOpenRequest {
+                                urls,
+                                diff_paths,
+                                wsl,
+                            },
+                            cx,
+                        ) {
                             Ok(open_request) => {
                                 handle_open_request(open_request, app_state.clone(), cx);
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
@@ -367,12 +388,14 @@ async fn open_workspaces(
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
-            let locations = restorable_workspace_locations(cx, &app_state).await;
-            locations.unwrap_or_default()
+            restorable_workspace_locations(cx, &app_state)
+                .await
+                .unwrap_or_default()
         }
     } else {
-        vec![SerializedWorkspaceLocation::from_local_paths(
-            paths.into_iter().map(PathBuf::from),
+        vec![(
+            SerializedWorkspaceLocation::Local,
+            PathList::new(&paths.into_iter().map(PathBuf::from).collect::<Vec<_>>()),
         )]
     };
 
@@ -400,9 +423,9 @@ async fn open_workspaces(
         // If there are paths to open, open a workspace for each grouping of paths
         let mut errored = false;
 
-        for location in grouped_locations {
+        for (location, workspace_paths) in grouped_locations {
             match location {
-                SerializedWorkspaceLocation::Local(workspace_paths, _) => {
+                SerializedWorkspaceLocation::Local => {
                     let workspace_paths = workspace_paths
                         .paths()
                         .iter()
@@ -425,30 +448,26 @@ async fn open_workspaces(
                         errored = true
                     }
                 }
-                SerializedWorkspaceLocation::Ssh(ssh) => {
+                SerializedWorkspaceLocation::Remote(mut connection) => {
                     let app_state = app_state.clone();
-                    let connection_options = cx.update(|cx| {
-                        SshSettings::get_global(cx)
-                            .connection_options_for(ssh.host, ssh.port, ssh.user)
-                    });
-                    if let Ok(connection_options) = connection_options {
-                        cx.spawn(async move |mut cx| {
-                            open_ssh_project(
-                                connection_options,
-                                ssh.paths.into_iter().map(PathBuf::from).collect(),
-                                app_state,
-                                OpenOptions::default(),
-                                &mut cx,
-                            )
-                            .await
-                            .log_err();
-                        })
-                        .detach();
-                        // We don't set `errored` here if `open_ssh_project` fails, because for ssh projects, the
-                        // error is displayed in the window.
-                    } else {
-                        errored = false;
+                    if let RemoteConnectionOptions::Ssh(options) = &mut connection {
+                        cx.update(|cx| {
+                            SshSettings::get_global(cx)
+                                .fill_connection_options_from_settings(options)
+                        })?;
                     }
+                    cx.spawn(async move |cx| {
+                        open_remote_project(
+                            connection,
+                            workspace_paths.paths().to_vec(),
+                            app_state,
+                            OpenOptions::default(),
+                            cx,
+                        )
+                        .await
+                        .log_err();
+                    })
+                    .detach();
                 }
             }
         }
@@ -590,6 +609,7 @@ mod tests {
     };
     use editor::Editor;
     use gpui::TestAppContext;
+    use remote::SshConnectionOptions;
     use serde_json::json;
     use std::sync::Arc;
     use util::path;
@@ -612,8 +632,8 @@ mod tests {
             .unwrap()
         });
         assert_eq!(
-            request.ssh_connection.unwrap(),
-            SshConnectionOptions {
+            request.remote_connection.unwrap(),
+            RemoteConnectionOptions::Ssh(SshConnectionOptions {
                 host: "localhost".into(),
                 username: Some("me".into()),
                 port: None,
@@ -622,7 +642,7 @@ mod tests {
                 port_forwards: None,
                 nickname: None,
                 upload_binary_over_ssh: false,
-            }
+            })
         );
         assert_eq!(request.open_paths, vec!["/"]);
     }

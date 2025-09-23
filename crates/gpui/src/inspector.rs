@@ -164,7 +164,7 @@ mod conditional {
                     if let Some(render_inspector) = cx
                         .inspector_element_registry
                         .renderers_by_type_id
-                        .remove(&type_id)
+                        .remove(type_id)
                     {
                         let mut element = (render_inspector)(
                             active_element.id.clone(),

@@ -11,6 +11,12 @@ Report issues to: [https://github.com/zed-extensions/kotlin/issues](https://gith
 Workspace configuration options can be passed to the language server via lsp
 settings in `settings.json`.
 
+The full list of lsp `settings` can be found
+[here](https://github.com/fwcd/kotlin-language-server/blob/main/server/src/main/kotlin/org/javacs/kt/Configuration.kt)
+under `class Configuration` and initialization_options under `class InitializationOptions`.
+
+### JVM Target
+
 The following example changes the JVM target from `default` (which is 1.8) to
 `17`:
 
@@ -30,5 +36,20 @@ The following example changes the JVM target from `default` (which is 1.8) to
 }
 ```
 
-The full list of workspace configuration options can be found
-[here](https://github.com/fwcd/kotlin-language-server/blob/main/server/src/main/kotlin/org/javacs/kt/Configuration.kt).
+### JAVA_HOME
+
+To use a specific java installation, just specify the `JAVA_HOME` environment variable with:
+
+```json
+{
+  "lsp": {
+    "kotlin-language-server": {
+      "binary": {
+        "env": {
+          "JAVA_HOME": "/Users/whatever/Applications/Work/Android Studio.app/Contents/jbr/Contents/Home"
+        }
+      }
+    }
+  }
+}
+```

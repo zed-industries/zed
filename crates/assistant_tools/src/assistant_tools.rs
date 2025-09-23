@@ -52,7 +52,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     assistant_tool::init(cx);
 
     let registry = ToolRegistry::global(cx);
-    registry.register_tool(TerminalTool::new(cx));
+    registry.register_tool(TerminalTool);
     registry.register_tool(CreateDirectoryTool);
     registry.register_tool(CopyPathTool);
     registry.register_tool(DeletePathTool);
@@ -72,11 +72,10 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut App) {
     register_web_search_tool(&LanguageModelRegistry::global(cx), cx);
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
-        move |registry, event, cx| match event {
-            language_model::Event::DefaultModelChanged => {
+        move |registry, event, cx| {
+            if let language_model::Event::DefaultModelChanged = event {
                 register_web_search_tool(&registry, cx);
             }
-            _ => {}
         },
     )
     .detach();
@@ -86,7 +85,7 @@ fn register_web_search_tool(registry: &Entity<LanguageModelRegistry>, cx: &mut A
     let using_zed_provider = registry
         .read(cx)
         .default_model()
-        .map_or(false, |default| default.is_provided_by_zed());
+        .is_some_and(|default| default.is_provided_by_zed());
     if using_zed_provider {
         ToolRegistry::global(cx).register_tool(WebSearchTool);
     } else {

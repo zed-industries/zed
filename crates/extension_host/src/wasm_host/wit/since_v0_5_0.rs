@@ -31,6 +31,7 @@ wasmtime::component::bindgen!({
 });
 
 mod settings {
+    #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/since_v0.5.0/settings.rs"));
 }
 

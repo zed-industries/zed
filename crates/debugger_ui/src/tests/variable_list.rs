@@ -1445,11 +1445,8 @@ async fn test_variable_list_only_sends_requests_when_rendering(
 
     cx.run_until_parked();
 
-    let running_state = active_debug_session_panel(workspace, cx).update_in(cx, |item, _, _| {
-        let state = item.running_state().clone();
-
-        state
-    });
+    let running_state = active_debug_session_panel(workspace, cx)
+        .update_in(cx, |item, _, _| item.running_state().clone());
 
     client
         .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {

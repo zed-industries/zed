@@ -581,11 +581,12 @@ impl RenderOnce for Switch {
 ///
 /// ```
 /// use ui::prelude::*;
+/// use ui::{SwitchField, ToggleState};
 ///
-/// SwitchField::new(
+/// let switch_field = SwitchField::new(
 ///     "feature-toggle",
 ///     "Enable feature",
-///     "This feature adds new functionality to the app.",
+///     Some("This feature adds new functionality to the app.".into()),
 ///     ToggleState::Unselected,
 ///     |state, window, cx| {
 ///         // Logic here
@@ -616,7 +617,7 @@ impl SwitchField {
         Self {
             id: id.into(),
             label: label.into(),
-            description: description,
+            description,
             toggle_state: toggle_state.into(),
             on_click: Arc::new(on_click),
             disabled: false,

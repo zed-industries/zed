@@ -490,7 +490,7 @@ Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), b
 {
   "context": "vim_mode == visual",
   "bindings": {
-    "shift-s": ["vim::PushAddSurrounds", {}]
+    "shift-s": "vim::PushAddSurrounds"
   }
 }
 ```
