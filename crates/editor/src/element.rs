@@ -11255,189 +11255,143 @@ mod tests {
     fn test_split_runs_by_bg_segments(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
+        let dx = |start: u32, end: u32| {
+            DisplayPoint::new(DisplayRow(0), start)..DisplayPoint::new(DisplayRow(0), end)
+        };
+
         let text_color = Hsla {
             h: 210.0,
             s: 0.1,
             l: 0.4,
             a: 1.0,
         };
-        let bg1 = Hsla {
+        let bg_1 = Hsla {
             h: 30.0,
             s: 0.6,
             l: 0.8,
             a: 1.0,
         };
-        let bg2 = Hsla {
+        let bg_2 = Hsla {
             h: 200.0,
             s: 0.6,
             l: 0.2,
             a: 1.0,
         };
-        let bg3 = Hsla {
-            h: 90.0,
-            s: 0.6,
-            l: 0.3,
-            a: 1.0,
-        };
         let min_contrast = 45.0;
+        let adjusted_bg1 = ensure_minimum_contrast(text_color, bg_1, min_contrast);
+        let adjusted_bg2 = ensure_minimum_contrast(text_color, bg_2, min_contrast);
 
         // Case A: single run; disjoint segments inside the run
-        let runs = vec![generate_test_run(20, text_color)];
-        let segs = vec![
-            (
-                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10),
-                bg1,
-            ),
-            (
-                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
-                bg2,
-            ),
-        ];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
-        // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
-        assert_eq!(
-            out.iter().map(|r| r.len).collect::<Vec<_>>(),
-            vec![5, 5, 2, 4, 4]
-        );
-        assert_eq!(out[0].color, text_color);
-        assert_eq!(
-            out[1].color,
-            ensure_minimum_contrast(text_color, bg1, min_contrast)
-        );
-        assert_eq!(out[2].color, text_color);
-        assert_eq!(
-            out[3].color,
-            ensure_minimum_contrast(text_color, bg2, min_contrast)
-        );
-        assert_eq!(out[4].color, text_color);
+        {
+            let runs = vec![generate_test_run(20, text_color)];
+            let segs = vec![(dx(5, 10), bg_1), (dx(12, 16), bg_2)];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
+            // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
+            assert_eq!(
+                out.iter().map(|r| r.len).collect::<Vec<_>>(),
+                vec![5, 5, 2, 4, 4]
+            );
+            assert_eq!(out[0].color, text_color);
+            assert_eq!(out[1].color, adjusted_bg1);
+            assert_eq!(out[2].color, text_color);
+            assert_eq!(out[3].color, adjusted_bg2);
+            assert_eq!(out[4].color, text_color);
+        }
 
         // Case B: multiple runs; segment extends to end of line (u32::MAX)
-        let runs = vec![
-            generate_test_run(8, text_color),
-            generate_test_run(7, text_color),
-        ];
-        let segs = vec![(
-            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), u32::MAX),
-            bg1,
-        )];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
-        // Expected slices across runs: [0,6) [6,8) | [0,7)
-        assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
-        let adjusted = ensure_minimum_contrast(text_color, bg1, min_contrast);
-        assert_eq!(out[0].color, text_color);
-        assert_eq!(out[1].color, adjusted);
-        assert_eq!(out[2].color, adjusted);
+        {
+            let runs = vec![
+                generate_test_run(8, text_color),
+                generate_test_run(7, text_color),
+            ];
+            let segs = vec![(dx(6, u32::MAX), bg_1)];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
+            // Expected slices across runs: [0,6) [6,8) | [0,7)
+            assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
+            assert_eq!(out[0].color, text_color);
+            assert_eq!(out[1].color, adjusted_bg1);
+            assert_eq!(out[2].color, adjusted_bg1);
+        }
 
         // Case C: multi-byte characters
-        // for text: "Hello 🌍 世界!"
-        let runs = vec![
-            generate_test_run(5, text_color), // "Hello"
-            generate_test_run(6, text_color), // " 🌍 "
-            generate_test_run(6, text_color), // "世界"
-            generate_test_run(1, text_color), // "!"
-        ];
-        // selecting "🌍 世"
-        let segs = vec![(
-            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), 14),
-            bg1,
-        )];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
-        // "Hello" | " " | "🌍 " | "世" | "界" | "!"
-        assert_eq!(
-            out.iter().map(|r| r.len).collect::<Vec<_>>(),
-            vec![5, 1, 5, 3, 3, 1]
-        );
-        assert_eq!(out[0].color, text_color); // "Hello"
-        assert_eq!(
-            out[2].color,
-            ensure_minimum_contrast(text_color, bg1, min_contrast)
-        ); // "🌍 "
-        assert_eq!(
-            out[3].color,
-            ensure_minimum_contrast(text_color, bg1, min_contrast)
-        ); // "世"
-        assert_eq!(out[4].color, text_color); // "界"
-        assert_eq!(out[5].color, text_color); // "!"
+        {
+            // for text: "Hello 🌍 世界!"
+            let runs = vec![
+                generate_test_run(5, text_color), // "Hello"
+                generate_test_run(6, text_color), // " 🌍 "
+                generate_test_run(6, text_color), // "世界"
+                generate_test_run(1, text_color), // "!"
+            ];
+            // selecting "🌍 世"
+            let segs = vec![(dx(6, 14), bg_1)];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
+            // "Hello" | " " | "🌍 " | "世" | "界" | "!"
+            assert_eq!(
+                out.iter().map(|r| r.len).collect::<Vec<_>>(),
+                vec![5, 1, 5, 3, 3, 1]
+            );
+            assert_eq!(out[0].color, text_color); // "Hello"
+            assert_eq!(out[2].color, adjusted_bg1); // "🌍 "
+            assert_eq!(out[3].color, adjusted_bg1); // "世"
+            assert_eq!(out[4].color, text_color); // "界"
+            assert_eq!(out[5].color, text_color); // "!"
+        }
 
-        // Case D: three batches on the same row with multiple non-overlapping segments
-        // Segments (absolute columns): [2,4)->bg1, [4,8)->bg2, [9,11)->bg1, [12,16)->bg2, [18,19)->bg1
-        let segs_multi = vec![
-            (
-                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 4),
-                bg1,
-            ),
-            (
-                DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 8),
-                bg2,
-            ),
-            (
-                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 11),
-                bg1,
-            ),
-            (
-                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
-                bg2,
-            ),
-            (
-                DisplayPoint::new(DisplayRow(0), 18)..DisplayPoint::new(DisplayRow(0), 19),
-                bg1,
-            ),
-        ];
+        // Case D: split multiple consecutive text runs with segments
+        {
+            let segs = vec![
+                (dx(2, 4), bg_1),   // selecting "cd"
+                (dx(4, 8), bg_2),   // selecting "efgh"
+                (dx(9, 11), bg_1),  // selecting "jk"
+                (dx(12, 16), bg_2), // selecting "mnop"
+                (dx(18, 19), bg_1), // selecting "s"
+            ];
 
-        let adjusted_bg1 = ensure_minimum_contrast(text_color, bg1, min_contrast);
-        let adjusted_bg2 = ensure_minimum_contrast(text_color, bg2, min_contrast);
-        let _adjusted_bg3 = ensure_minimum_contrast(text_color, bg3, min_contrast);
+            // for text: "abcdef"
+            let runs = vec![
+                generate_test_run(2, text_color), // ab
+                generate_test_run(4, text_color), // cdef
+            ];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
+            // new splits "ab", "cd", "ef"
+            assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![2, 2, 2]);
+            assert_eq!(out[0].color, text_color);
+            assert_eq!(out[1].color, adjusted_bg1);
+            assert_eq!(out[2].color, adjusted_bg2);
 
-        // Batch 1 runs cover [0,6): [0,2) | [2,6)
-        // Expected: [0,2) normal | [2,4) bg1 | [4,6) bg2 => lens [2,2,2]
-        let runs_b1 = vec![
-            generate_test_run(2, text_color),
-            generate_test_run(4, text_color),
-        ];
-        let out_b1 =
-            LineWithInvisibles::split_runs_by_bg_segments(&runs_b1, &segs_multi, min_contrast, 0);
-        assert_eq!(
-            out_b1.iter().map(|r| r.len).collect::<Vec<_>>(),
-            vec![2, 2, 2]
-        );
-        assert_eq!(out_b1[0].color, text_color);
-        assert_eq!(out_b1[1].color, adjusted_bg1);
-        assert_eq!(out_b1[2].color, adjusted_bg2);
+            // for text: "ghijklmn"
+            let runs = vec![
+                generate_test_run(3, text_color), // ghi
+                generate_test_run(2, text_color), // jk
+                generate_test_run(3, text_color), // lmn
+            ];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 6); // 2 + 4 from first run
+            // new splits "gh", "i", "jk", "l", "mn"
+            assert_eq!(
+                out.iter().map(|r| r.len).collect::<Vec<_>>(),
+                vec![2, 1, 2, 1, 2]
+            );
+            assert_eq!(out[0].color, adjusted_bg2);
+            assert_eq!(out[1].color, text_color);
+            assert_eq!(out[2].color, adjusted_bg1);
+            assert_eq!(out[3].color, text_color);
+            assert_eq!(out[4].color, adjusted_bg2);
 
-        // Batch 2 runs cover [6,14): [6,9) | [9,11) | [11,14)
-        // Expected with segments: [6,8) bg2 | [8,9) normal | [9,11) bg1 | [11,12) normal | [12,14) bg2
-        let runs_b2 = vec![
-            generate_test_run(3, text_color),
-            generate_test_run(2, text_color),
-            generate_test_run(3, text_color),
-        ];
-        let out_b2 =
-            LineWithInvisibles::split_runs_by_bg_segments(&runs_b2, &segs_multi, min_contrast, 6);
-        assert_eq!(
-            out_b2.iter().map(|r| r.len).collect::<Vec<_>>(),
-            vec![2, 1, 2, 1, 2]
-        );
-        assert_eq!(out_b2[0].color, adjusted_bg2);
-        assert_eq!(out_b2[1].color, text_color);
-        assert_eq!(out_b2[2].color, adjusted_bg1);
-        assert_eq!(out_b2[3].color, text_color);
-        assert_eq!(out_b2[4].color, adjusted_bg2);
-
-        // Batch 3 runs cover [14,19): [14,15) | [15,19)
-        // Expected: [14,15) bg2 | [15,16) bg2 | [16,18) normal | [18,19) bg1 => lens [1,1,2,1]
-        let runs_b3 = vec![
-            generate_test_run(1, text_color),
-            generate_test_run(4, text_color),
-        ];
-        let out_b3 =
-            LineWithInvisibles::split_runs_by_bg_segments(&runs_b3, &segs_multi, min_contrast, 14);
-        assert_eq!(
-            out_b3.iter().map(|r| r.len).collect::<Vec<_>>(),
-            vec![1, 1, 2, 1]
-        );
-        assert_eq!(out_b3[0].color, adjusted_bg2);
-        assert_eq!(out_b3[1].color, adjusted_bg2);
-        assert_eq!(out_b3[2].color, text_color);
-        assert_eq!(out_b3[3].color, adjusted_bg1);
+            // for text: "opqrs"
+            let runs = vec![
+                generate_test_run(1, text_color), // o
+                generate_test_run(4, text_color), // pqrs
+            ];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 14); // 6 + 3 + 2 + 3 from first two runs
+            // new splits "o", "p", "qr", "s"
+            assert_eq!(
+                out.iter().map(|r| r.len).collect::<Vec<_>>(),
+                vec![1, 1, 2, 1]
+            );
+            assert_eq!(out[0].color, adjusted_bg2);
+            assert_eq!(out[1].color, adjusted_bg2);
+            assert_eq!(out[2].color, text_color);
+            assert_eq!(out[3].color, adjusted_bg1);
+        }
     }
 }
