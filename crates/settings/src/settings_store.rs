@@ -1022,7 +1022,7 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        TitleBarSettingsContent, TitleBarVisibility, VsCodeSettingsSource, default_settings,
+        TitleBarSettingsContent, VsCodeSettingsSource, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
     };
 
@@ -1044,7 +1044,6 @@ mod tests {
 
     #[derive(Debug, PartialEq)]
     struct TitleBarSettings {
-        show: TitleBarVisibility,
         show_branch_name: bool,
     }
 
@@ -1052,21 +1051,7 @@ mod tests {
         fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
             let content = content.title_bar.clone().unwrap();
             TitleBarSettings {
-                show: content.show.unwrap(),
                 show_branch_name: content.show_branch_name.unwrap(),
-            }
-        }
-
-        fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
-            let mut show = None;
-
-            vscode.enum_setting("window.titleBarStyle", &mut show, |value| match value {
-                "never" => Some(TitleBarVisibility::Never),
-                "always" => Some(TitleBarVisibility::Always),
-                _ => None,
-            });
-            if let Some(show) = show {
-                content.title_bar.get_or_insert_default().show.replace(show);
             }
         }
     }
@@ -1110,10 +1095,6 @@ mod tests {
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: true }
         );
-        assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Always
-        );
 
         store
             .set_user_settings(
@@ -1130,10 +1111,6 @@ mod tests {
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: false }
-        );
-        assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Never
         );
 
         store
@@ -1195,16 +1172,10 @@ mod tests {
                 tab_size: 9.try_into().unwrap(),
             }
         );
-        assert_eq!(
-            store.get::<TitleBarSettings>(Some(SettingsLocation {
-                worktree_id: WorktreeId::from_usize(1),
-                path: Path::new("/root2/something")
-            })),
-            &TitleBarSettings {
-                show: TitleBarVisibility::Never,
-                show_branch_name: true,
-            }
-        );
+        assert_eq!(store.get::<TitleBarSettings>(Some(SettingsLocation {
+            worktree_id: WorktreeId::from_usize(1),
+            path: Path::new("/root2/something")
+        })),);
     }
 
     #[gpui::test]
@@ -1219,10 +1190,6 @@ mod tests {
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: false }
-        );
-        assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Always,
         );
     }
 
@@ -1568,7 +1535,6 @@ mod tests {
         assert_eq!(
             store.get::<TitleBarSettings>(None),
             &TitleBarSettings {
-                show: TitleBarVisibility::Never,
                 show_branch_name: true,
             }
         );
@@ -1589,7 +1555,6 @@ mod tests {
         assert_eq!(
             store.get::<TitleBarSettings>(None),
             &TitleBarSettings {
-                show: TitleBarVisibility::Always,
                 show_branch_name: true, // Staff from global settings
             }
         );
