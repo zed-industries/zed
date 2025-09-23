@@ -929,6 +929,7 @@ fn add_signature(
         text: text.into(),
         text_is_truncated,
         parent_index,
+        range: parent_declaration.signature_range(),
     });
     declaration_to_signature_index.insert(declaration_id, signature_index);
     Some(signature_index)

@@ -68,7 +68,7 @@ impl Declaration {
 
     pub fn item_range(&self) -> Range<usize> {
         match self {
-            Declaration::File { declaration, .. } => declaration.item_range_in_file.clone(),
+            Declaration::File { declaration, .. } => declaration.item_range.clone(),
             Declaration::Buffer { declaration, .. } => declaration.item_range.clone(),
         }
     }
@@ -92,7 +92,7 @@ impl Declaration {
     pub fn signature_text(&self) -> (Cow<'_, str>, bool) {
         match self {
             Declaration::File { declaration, .. } => (
-                declaration.text[declaration.signature_range_in_text.clone()].into(),
+                declaration.text[self.signature_range_in_item_text()].into(),
                 declaration.signature_is_truncated,
             ),
             Declaration::Buffer {
@@ -105,14 +105,18 @@ impl Declaration {
         }
     }
 
-    pub fn signature_range_in_item_text(&self) -> Range<usize> {
+    pub fn signature_range(&self) -> Range<usize> {
         match self {
-            Declaration::File { declaration, .. } => declaration.signature_range_in_text.clone(),
-            Declaration::Buffer { declaration, .. } => {
-                declaration.signature_range.start - declaration.item_range.start
-                    ..declaration.signature_range.end - declaration.item_range.start
-            }
+            Declaration::File { declaration, .. } => declaration.signature_range.clone(),
+            Declaration::Buffer { declaration, .. } => declaration.signature_range.clone(),
         }
+    }
+
+    pub fn signature_range_in_item_text(&self) -> Range<usize> {
+        let signature_range = self.signature_range();
+        let item_range = self.item_range();
+        signature_range.start.saturating_sub(item_range.start)
+            ..(signature_range.end.saturating_sub(item_range.start)).min(item_range.len())
     }
 }
 
@@ -141,13 +145,13 @@ pub struct FileDeclaration {
     pub parent: Option<DeclarationId>,
     pub identifier: Identifier,
     /// offset range of the declaration in the file, expanded to line boundaries and truncated
-    pub item_range_in_file: Range<usize>,
-    /// text of `item_range_in_file`
+    pub item_range: Range<usize>,
+    /// text of `item_range`
     pub text: Arc<str>,
     /// whether `text` was truncated
     pub text_is_truncated: bool,
-    /// offset range of the signature within `text`
-    pub signature_range_in_text: Range<usize>,
+    /// offset range of the signature in the file, expanded to line boundaries and truncated
+    pub signature_range: Range<usize>,
     /// whether `signature` was truncated
     pub signature_is_truncated: bool,
 }
@@ -160,31 +164,33 @@ impl FileDeclaration {
             rope,
         );
 
-        // TODO: consider logging if unexpected
-        let signature_start = declaration
-            .signature_range
-            .start
-            .saturating_sub(item_range_in_file.start);
-        let mut signature_end = declaration
-            .signature_range
-            .end
-            .saturating_sub(item_range_in_file.start);
-        let signature_is_truncated = signature_end > item_range_in_file.len();
-        if signature_is_truncated {
-            signature_end = item_range_in_file.len();
+        let (mut signature_range_in_file, mut signature_is_truncated) =
+            expand_range_to_line_boundaries_and_truncate(
+                &declaration.signature_range,
+                ITEM_TEXT_TRUNCATION_LENGTH,
+                rope,
+            );
+
+        if signature_range_in_file.start < item_range_in_file.start {
+            signature_range_in_file.start = item_range_in_file.start;
+            signature_is_truncated = true;
+        }
+        if signature_range_in_file.end > item_range_in_file.end {
+            signature_range_in_file.end = item_range_in_file.end;
+            signature_is_truncated = true;
         }
 
         FileDeclaration {
             parent: None,
             identifier: declaration.identifier,
-            signature_range_in_text: signature_start..signature_end,
+            signature_range: signature_range_in_file,
             signature_is_truncated,
             text: rope
                 .chunks_in_range(item_range_in_file.clone())
                 .collect::<String>()
                 .into(),
             text_is_truncated,
-            item_range_in_file,
+            item_range: item_range_in_file,
         }
     }
 }

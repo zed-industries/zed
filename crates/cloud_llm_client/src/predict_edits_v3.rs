@@ -48,6 +48,9 @@ pub struct Signature {
     pub text_is_truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub parent_index: Option<usize>,
+    /// Range of `text` within the file, possibly truncated according to `text_is_truncated`. The
+    /// file is implicitly the file that contains the descendant declaration or excerpt.
+    pub range: Range<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +58,7 @@ pub struct ReferencedDeclaration {
     pub path: PathBuf,
     pub text: String,
     pub text_is_truncated: bool,
-    /// Range of `text` within file, potentially truncated according to `text_is_truncated`
+    /// Range of `text` within file, possibly truncated according to `text_is_truncated`
     pub range: Range<usize>,
     /// Range within `text`
     pub signature_range: Range<usize>,
