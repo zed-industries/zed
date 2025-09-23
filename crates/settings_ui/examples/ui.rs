@@ -29,7 +29,7 @@ fn main() {
 
         let keybindings =
             KeymapFile::load_asset_allow_partial_failure(DEFAULT_KEYMAP_PATH, cx).unwrap();
-        cx.bind_keys(keybindings.into_iter());
+        cx.bind_keys(keybindings);
         cx.spawn(async move |cx| {
             while let Some(content) = user_settings_file_rx.next().await {
                 cx.update(|cx| {
