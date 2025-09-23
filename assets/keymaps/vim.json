@@ -426,6 +426,7 @@
       ";": "vim::HelixCollapseSelection",
       ":": "command_palette::Toggle",
       "m": "vim::PushHelixMatch",
+      "s": "vim::HelixSelectRegex",
       "]": ["vim::PushHelixNext", { "around": true }],
       "[": ["vim::PushHelixPrevious", { "around": true }],
       "left": "vim::WrappingLeft",

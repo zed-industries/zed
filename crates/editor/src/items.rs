@@ -44,7 +44,9 @@ use workspace::{
     CollaboratorId, ItemId, ItemNavHistory, ToolbarItemLocation, ViewId, Workspace, WorkspaceId,
     invalid_buffer_view::InvalidBufferView,
     item::{FollowableItem, Item, ItemEvent, ProjectItem, SaveOptions},
-    searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
+    searchable::{
+        Direction, FilteredSearchRange, SearchEvent, SearchableItem, SearchableItemHandle,
+    },
 };
 use workspace::{
     OpenOptions,
@@ -1510,7 +1512,7 @@ impl SearchableItem for Editor {
 
     fn toggle_filtered_search_ranges(
         &mut self,
-        enabled: bool,
+        enabled: Option<FilteredSearchRange>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -1520,15 +1522,16 @@ impl SearchableItem for Editor {
                 .map(|(_, ranges)| ranges)
         }
 
-        if !enabled {
-            return;
-        }
+        if let Some(range) = enabled {
+            let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
 
-        let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
-        if ranges.iter().any(|s| s.start != s.end) {
-            self.set_search_within_ranges(&ranges, cx);
-        } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
-            self.set_search_within_ranges(&previous_search_ranges, cx)
+            if ranges.iter().any(|s| s.start != s.end) {
+                self.set_search_within_ranges(&ranges, cx);
+            } else if let Some(previous_search_ranges) = self.previous_search_ranges.take()
+                && range != FilteredSearchRange::Selection
+            {
+                self.set_search_within_ranges(&previous_search_ranges, cx);
+            }
         }
     }
 
