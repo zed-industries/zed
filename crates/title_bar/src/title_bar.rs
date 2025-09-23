@@ -349,10 +349,11 @@ impl TitleBar {
         let options = self.project.read(cx).remote_connection_options(cx)?;
         let host: SharedString = options.display_name().into();
 
-        let nickname = if let RemoteConnectionOptions::Ssh(options) = options {
-            options.nickname.map(|nick| nick.into())
-        } else {
-            None
+        let (nickname, icon) = match options {
+            RemoteConnectionOptions::Ssh(options) => {
+                (options.nickname.map(|nick| nick.into()), IconName::Server)
+            }
+            RemoteConnectionOptions::Wsl(_) => (None, IconName::Linux),
         };
         let nickname = nickname.unwrap_or_else(|| host.clone());
 
@@ -390,9 +391,7 @@ impl TitleBar {
                         .max_w_32()
                         .child(
                             IconWithIndicator::new(
-                                Icon::new(IconName::Server)
-                                    .size(IconSize::Small)
-                                    .color(icon_color),
+                                Icon::new(icon).size(IconSize::Small).color(icon_color),
                                 Some(Indicator::dot().color(indicator_color)),
                             )
                             .indicator_border_color(Some(cx.theme().colors().title_bar_background))
@@ -637,9 +636,9 @@ impl TitleBar {
                     Some(AutoUpdateStatus::Installing { .. })
                     | Some(AutoUpdateStatus::Downloading { .. })
                     | Some(AutoUpdateStatus::Checking) => "Updating...",
-                    Some(AutoUpdateStatus::Idle) | Some(AutoUpdateStatus::Errored) | None => {
-                        "Please update Zed to Collaborate"
-                    }
+                    Some(AutoUpdateStatus::Idle)
+                    | Some(AutoUpdateStatus::Errored { .. })
+                    | None => "Please update Zed to Collaborate",
                 };
 
                 Some(

@@ -1,6 +1,6 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFeatures, FontId, FontMetrics, FontRun, FontStyle, FontWeight,
-    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS,
+    GlyphId, LineLayout, Pixels, PlatformTextSystem, Point, RenderGlyphParams, SUBPIXEL_VARIANTS_X,
     ShapedGlyph, ShapedRun, SharedString, Size, point, size,
 };
 use anyhow::{Context as _, Ok, Result};
@@ -276,7 +276,7 @@ impl CosmicTextSystemState {
         let font = &self.loaded_fonts[params.font_id.0].font;
         let subpixel_shift = params
             .subpixel_variant
-            .map(|v| v as f32 / (SUBPIXEL_VARIANTS as f32 * params.scale_factor));
+            .map(|v| v as f32 / (SUBPIXEL_VARIANTS_X as f32 * params.scale_factor));
         let image = self
             .swash_cache
             .get_image(
@@ -311,7 +311,7 @@ impl CosmicTextSystemState {
             let font = &self.loaded_fonts[params.font_id.0].font;
             let subpixel_shift = params
                 .subpixel_variant
-                .map(|v| v as f32 / (SUBPIXEL_VARIANTS as f32 * params.scale_factor));
+                .map(|v| v as f32 / (SUBPIXEL_VARIANTS_X as f32 * params.scale_factor));
             let mut image = self
                 .swash_cache
                 .get_image(

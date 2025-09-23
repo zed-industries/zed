@@ -107,18 +107,21 @@ pub fn ensure_only_instance() -> IsOnlyInstance {
         }
     };
 
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let mut stream = match stream {
-                Ok(stream) => stream,
-                Err(_) => return,
-            };
+    thread::Builder::new()
+        .name("EnsureSingleton".to_string())
+        .spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = match stream {
+                    Ok(stream) => stream,
+                    Err(_) => return,
+                };
 
-            _ = stream.set_nodelay(true);
-            _ = stream.set_read_timeout(Some(SEND_TIMEOUT));
-            _ = stream.write_all(instance_handshake().as_bytes());
-        }
-    });
+                _ = stream.set_nodelay(true);
+                _ = stream.set_read_timeout(Some(SEND_TIMEOUT));
+                _ = stream.write_all(instance_handshake().as_bytes());
+            }
+        })
+        .unwrap();
 
     IsOnlyInstance::Yes
 }

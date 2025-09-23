@@ -57,6 +57,7 @@ pub trait PathExt {
                 .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+    fn local_to_wsl(&self) -> Option<PathBuf>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -95,6 +96,26 @@ impl<T: AsRef<Path>> PathExt for T {
         path.extension()
             .and_then(|e| e.to_str())
             .or_else(|| path.file_stem()?.to_str())
+    }
+
+    /// Converts a local path to one that can be used inside of WSL.
+    /// Returns `None` if the path cannot be converted into a WSL one (network share).
+    fn local_to_wsl(&self) -> Option<PathBuf> {
+        let mut new_path = PathBuf::new();
+        for component in self.as_ref().components() {
+            match component {
+                std::path::Component::Prefix(prefix) => {
+                    let drive_letter = prefix.as_os_str().to_string_lossy().to_lowercase();
+                    let drive_letter = drive_letter.strip_suffix(':')?;
+
+                    new_path.push(format!("/mnt/{}", drive_letter));
+                }
+                std::path::Component::RootDir => {}
+                _ => new_path.push(component),
+            }
+        }
+
+        Some(new_path)
     }
 }
 
@@ -340,6 +361,8 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
         \:+(\d+)\:(\d+)\:*$  # filename:row:column
         |
         \:+(\d+)\:*()$       # filename:row
+        |
+        \:+()()$
     )";
 
 /// A representation of a path-like string with optional row and column numbers.
@@ -416,8 +439,8 @@ impl PathWithPosition {
     ///     row: None,
     ///     column: None,
     /// });
-    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::"), PathWithPosition {
-    ///     path: PathBuf::from("test_file.rs::"),
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
     ///     row: None,
     ///     column: None,
     /// });
@@ -591,6 +614,7 @@ impl PathMatcher {
         })
     }
 
+    // FIXME get rid of this in favor of the default impl
     pub fn empty(path_style: PathStyle) -> Self {
         Self {
             path_style,
@@ -619,6 +643,16 @@ impl PathMatcher {
             false
         } else {
             self.glob.is_match(path_str.to_string() + separator)
+        }
+    }
+}
+
+impl Default for PathMatcher {
+    fn default() -> Self {
+        Self {
+            path_style: PathStyle::local(),
+            glob: GlobSet::empty(),
+            sources: vec![],
         }
     }
 }
@@ -975,7 +1009,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file.rs:"),
             PathWithPosition {
-                path: PathBuf::from("test_file.rs:"),
+                path: PathBuf::from("test_file.rs"),
                 row: None,
                 column: None
             }

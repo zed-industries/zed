@@ -10,6 +10,10 @@ pub struct BillingV2FeatureFlag {}
 
 impl FeatureFlag for BillingV2FeatureFlag {
     const NAME: &'static str = "billing-v2";
+
+    fn enabled_for_all() -> bool {
+        true
+    }
 }
 
 pub struct NotebookFeatureFlag;

@@ -73,7 +73,7 @@ impl DiagnosticsSlashCommand {
                 fuzzy::match_path_sets(
                     candidate_sets.as_slice(),
                     query.as_str(),
-                    None,
+                    &None,
                     false,
                     100,
                     &cancellation_flag,

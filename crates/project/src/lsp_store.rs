@@ -5838,7 +5838,8 @@ impl LspStore {
                 buffer.read(cx).file(),
                 cx,
             )
-            .completions;
+            .completions
+            .clone();
             if !completion_settings.lsp {
                 return Task::ready(Ok(Vec::new()));
             }

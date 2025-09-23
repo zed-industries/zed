@@ -7,9 +7,9 @@ use acp_thread::{AgentConnection, Plan};
 use action_log::ActionLog;
 use agent_client_protocol::{self as acp, PromptCapabilities};
 use agent_servers::{AgentServer, AgentServerDelegate};
-use agent_settings::{AgentProfileId, AgentSettings, CompletionMode, NotifyWhenAgentWaiting};
+use agent_settings::{AgentProfileId, AgentSettings, CompletionMode};
 use agent2::{DbThreadMetadata, HistoryEntry, HistoryEntryId, HistoryStore, NativeAgentServer};
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use arrayvec::ArrayVec;
 use audio::{Audio, Sound};
 use buffer_diff::BufferDiff;
@@ -35,7 +35,7 @@ use markdown::{HeadingLevelStyles, Markdown, MarkdownElement, MarkdownStyle};
 use project::{Project, ProjectEntryId};
 use prompt_store::{PromptId, PromptStore};
 use rope::Point;
-use settings::{Settings as _, SettingsStore};
+use settings::{NotifyWhenAgentWaiting, Settings as _, SettingsStore};
 use std::cell::RefCell;
 use std::path::Path;
 use std::sync::Arc;
@@ -70,9 +70,6 @@ use crate::{
     CycleModeSelector, ExpandMessageEditor, Follow, KeepAll, OpenAgentDiff, OpenHistory, RejectAll,
     RejectOnce, ToggleBurnMode, ToggleProfileSelector,
 };
-
-pub const MIN_EDITOR_LINES: usize = 4;
-pub const MAX_EDITOR_LINES: usize = 8;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -357,8 +354,8 @@ impl AcpThreadView {
                 agent.name(),
                 &placeholder,
                 editor::EditorMode::AutoHeight {
-                    min_lines: MIN_EDITOR_LINES,
-                    max_lines: Some(MAX_EDITOR_LINES),
+                    min_lines: AgentSettings::get_global(cx).message_editor_min_lines,
+                    max_lines: Some(AgentSettings::get_global(cx).set_message_editor_max_lines()),
                 },
                 window,
                 cx,
@@ -580,23 +577,21 @@ impl AcpThreadView {
 
                         AgentDiff::set_active_thread(&workspace, thread.clone(), window, cx);
 
-                        this.model_selector =
-                            thread
-                                .read(cx)
-                                .connection()
-                                .model_selector()
-                                .map(|selector| {
-                                    cx.new(|cx| {
-                                        AcpModelSelectorPopover::new(
-                                            thread.read(cx).session_id().clone(),
-                                            selector,
-                                            PopoverMenuHandle::default(),
-                                            this.focus_handle(cx),
-                                            window,
-                                            cx,
-                                        )
-                                    })
-                                });
+                        this.model_selector = thread
+                            .read(cx)
+                            .connection()
+                            .model_selector(thread.read(cx).session_id())
+                            .map(|selector| {
+                                cx.new(|cx| {
+                                    AcpModelSelectorPopover::new(
+                                        selector,
+                                        PopoverMenuHandle::default(),
+                                        this.focus_handle(cx),
+                                        window,
+                                        cx,
+                                    )
+                                })
+                            });
 
                         let mode_selector = thread
                             .read(cx)
@@ -857,10 +852,11 @@ impl AcpThreadView {
                     cx,
                 )
             } else {
+                let agent_settings = AgentSettings::get_global(cx);
                 editor.set_mode(
                     EditorMode::AutoHeight {
-                        min_lines: MIN_EDITOR_LINES,
-                        max_lines: Some(MAX_EDITOR_LINES),
+                        min_lines: agent_settings.message_editor_min_lines,
+                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
                     },
                     cx,
                 )
@@ -1042,10 +1038,7 @@ impl AcpThreadView {
             return;
         }
 
-        let contents = self
-            .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx));
-        self.send_impl(contents, window, cx)
+        self.send_impl(self.message_editor.clone(), window, cx)
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1055,15 +1048,11 @@ impl AcpThreadView {
 
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
-        let contents = self
-            .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx));
-
         cx.spawn_in(window, async move |this, cx| {
             cancelled.await;
 
             this.update_in(cx, |this, window, cx| {
-                this.send_impl(contents, window, cx);
+                this.send_impl(this.message_editor.clone(), window, cx);
             })
             .ok();
         })
@@ -1072,10 +1061,23 @@ impl AcpThreadView {
 
     fn send_impl(
         &mut self,
-        contents: Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>,
+        message_editor: Entity<MessageEditor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
+            // Include full contents when using minimal profile
+            let thread = thread.read(cx);
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(thread.profile())
+                .is_some_and(|profile| profile.tools.is_empty())
+        });
+
+        let contents = message_editor.update(cx, |message_editor, cx| {
+            message_editor.contents(full_mention_content, cx)
+        });
+
         let agent_telemetry_id = self.agent.telemetry_id();
 
         self.thread_error.take();
@@ -1204,10 +1206,8 @@ impl AcpThreadView {
             thread
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))?
                 .await?;
-            let contents =
-                message_editor.update(cx, |message_editor, cx| message_editor.contents(cx))?;
             this.update_in(cx, |this, window, cx| {
-                this.send_impl(contents, window, cx);
+                this.send_impl(message_editor, window, cx);
             })?;
             anyhow::Ok(())
         })
@@ -1584,6 +1584,19 @@ impl AcpThreadView {
 
         window.spawn(cx, async move |cx| {
             let mut task = login.clone();
+            task.command = task
+                .command
+                .map(|command| anyhow::Ok(shlex::try_quote(&command)?.to_string()))
+                .transpose()?;
+            task.args = task
+                .args
+                .iter()
+                .map(|arg| {
+                    Ok(shlex::try_quote(arg)
+                        .context("Failed to quote argument")?
+                        .to_string())
+                })
+                .collect::<Result<Vec<_>>>()?;
             task.full_label = task.label.clone();
             task.id = task::TaskId(format!("external-agent-{}-login", task.label));
             task.command_label = task.label.clone();
@@ -1593,7 +1606,7 @@ impl AcpThreadView {
             task.shell = shell;
 
             let terminal = terminal_panel.update_in(cx, |terminal_panel, window, cx| {
-                terminal_panel.spawn_task(login.clone(), window, cx)
+                terminal_panel.spawn_task(&task, window, cx)
             })?;
 
             let terminal = terminal.await?;
@@ -3184,10 +3197,14 @@ impl AcpThreadView {
                                     };
 
                                     Button::new(SharedString::from(method_id.clone()), name)
-                                        .when(ix == 0, |el| {
-                                            el.style(ButtonStyle::Tinted(ui::TintColor::Warning))
-                                        })
                                         .label_size(LabelSize::Small)
+                                        .map(|this| {
+                                            if ix == 0 {
+                                                this.style(ButtonStyle::Tinted(TintColor::Warning))
+                                            } else {
+                                                this.style(ButtonStyle::Outlined)
+                                            }
+                                        })
                                         .on_click({
                                             cx.listener(move |this, _, window, cx| {
                                                 telemetry::event!(
@@ -5668,23 +5685,6 @@ pub(crate) mod tests {
                 "Expected refusal error to be set"
             );
         });
-    }
-
-    #[gpui::test]
-    async fn test_spawn_external_agent_login_handles_spaces(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        // Verify paths with spaces aren't pre-quoted
-        let path_with_spaces = "/Users/test/Library/Application Support/Zed/cli.js";
-        let login_task = task::SpawnInTerminal {
-            command: Some("node".to_string()),
-            args: vec![path_with_spaces.to_string(), "/login".to_string()],
-            ..Default::default()
-        };
-
-        // Args should be passed as-is, not pre-quoted
-        assert!(!login_task.args[0].starts_with('"'));
-        assert!(!login_task.args[0].starts_with('\''));
     }
 
     #[gpui::test]

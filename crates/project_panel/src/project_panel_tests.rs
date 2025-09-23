@@ -2,7 +2,7 @@ use super::*;
 use collections::HashSet;
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext, WindowHandle};
 use pretty_assertions::assert_eq;
-use project::{FakeFs, WorktreeSettings};
+use project::FakeFs;
 use serde_json::json;
 use settings::SettingsStore;
 use std::path::{Path, PathBuf};
@@ -161,8 +161,8 @@ async fn test_exclusions_in_visible_list(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
                     Some(vec!["**/.git".to_string(), "**/4/**".to_string()]);
             });
         });
@@ -2748,6 +2748,111 @@ async fn test_collapse_all_entries(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_collapse_all_entries_multiple_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let worktree_content = json!({
+        "dir_1": {
+            "file_1.py": "# File contents",
+        },
+        "dir_2": {
+            "file_1.py": "# File contents",
+        }
+    });
+
+    fs.insert_tree("/project_root_1", worktree_content.clone())
+        .await;
+    fs.insert_tree("/project_root_2", worktree_content).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/project_root_1".as_ref(), "/project_root_2".as_ref()],
+        cx,
+    )
+    .await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_all_entries_with_collapsed_root(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/project_root",
+        json!({
+            "dir_1": {
+                "nested_dir": {
+                    "file_a.py": "# File contents",
+                    "file_b.py": "# File contents",
+                    "file_c.py": "# File contents",
+                },
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "file_3.py": "# File contents",
+            },
+            "dir_2": {
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "file_3.py": "# File contents",
+            }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
+    let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+    // Open project_root/dir_1 to ensure that a nested directory is expanded
+    toggle_expand_dir(&panel, "project_root/dir_1", cx);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &[
+            "v project_root",
+            "    v dir_1  <== selected",
+            "        > nested_dir",
+            "          file_1.py",
+            "          file_2.py",
+            "          file_3.py",
+            "    > dir_2",
+        ]
+    );
+
+    // Close root directory
+    toggle_expand_dir(&panel, "project_root", cx);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root  <== selected"]
+    );
+
+    // Run collapse_all_entries and make sure root is not expanded
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root  <== selected"]
+    );
+}
+
+#[gpui::test]
 async fn test_new_file_move(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -3343,11 +3448,12 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
-            });
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(false)
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(false);
             });
         })
     });
@@ -3465,8 +3571,11 @@ async fn test_autoreveal_and_gitignored_files(cx: &mut gpui::TestAppContext) {
 
     cx.update(|_, cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(true)
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(true)
             });
         })
     });
@@ -3579,13 +3688,14 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
-                worktree_settings.file_scan_inclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings.project.worktree.file_scan_inclusions =
                     Some(vec!["always_included_but_ignored_dir/*".to_string()]);
-            });
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(false)
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(false)
             });
         })
     });
@@ -3654,8 +3764,11 @@ async fn test_gitignored_and_always_included(cx: &mut gpui::TestAppContext) {
     cx.run_until_parked();
     cx.update(|_, cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(true)
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(true)
             });
         })
     });
@@ -3695,11 +3808,12 @@ async fn test_explicit_reveal(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
-            });
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_reveal_entries = Some(false)
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_reveal_entries = Some(false)
             });
         })
     });
@@ -3896,8 +4010,8 @@ async fn test_creating_excluded_entries(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
                     Some(vec!["excluded_dir".to_string(), "**/.git".to_string()]);
             });
         });
@@ -6553,11 +6667,12 @@ fn init_test(cx: &mut TestAppContext) {
         Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_fold_dirs = Some(false);
-            });
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_fold_dirs = Some(false);
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
             });
         });
     });
@@ -6575,11 +6690,12 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
         Project::init_settings(cx);
 
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<ProjectPanelSettings>(cx, |project_panel_settings| {
-                project_panel_settings.auto_fold_dirs = Some(false);
-            });
-            store.update_user_settings::<WorktreeSettings>(cx, |worktree_settings| {
-                worktree_settings.file_scan_exclusions = Some(Vec::new());
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_fold_dirs = Some(false);
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new())
             });
         });
     });

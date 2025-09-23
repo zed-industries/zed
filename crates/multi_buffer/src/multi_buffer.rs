@@ -17,11 +17,11 @@ use gpui::{App, AppContext as _, Context, Entity, EntityId, EventEmitter, Task};
 use itertools::Itertools;
 use language::{
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
-    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
-    TextDimension, TextObject, ToOffset as _, ToPoint as _, TransactionId, TreeSitterOptions,
-    Unclipped,
-    language_settings::{IndentGuideSettings, LanguageSettings, language_settings},
+    CharKind, CharScopeContext, Chunk, CursorShape, DiagnosticEntry, DiskState, File,
+    IndentGuideSettings, IndentSize, Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline,
+    OutlineItem, Point, PointUtf16, Selection, TextDimension, TextObject, ToOffset as _,
+    ToPoint as _, TransactionId, TreeSitterOptions, Unclipped,
+    language_settings::{LanguageSettings, language_settings},
 };
 
 use rope::DimensionPair;
@@ -4203,11 +4203,15 @@ impl MultiBufferSnapshot {
         self.diffs.values().any(|diff| !diff.is_empty())
     }
 
-    pub fn is_inside_word<T: ToOffset>(&self, position: T, for_completion: bool) -> bool {
+    pub fn is_inside_word<T: ToOffset>(
+        &self,
+        position: T,
+        scope_context: Option<CharScopeContext>,
+    ) -> bool {
         let position = position.to_offset(self);
         let classifier = self
             .char_classifier_at(position)
-            .for_completion(for_completion);
+            .scope_context(scope_context);
         let next_char_kind = self.chars_at(position).next().map(|c| classifier.kind(c));
         let prev_char_kind = self
             .reversed_chars_at(position)
@@ -4219,16 +4223,14 @@ impl MultiBufferSnapshot {
     pub fn surrounding_word<T: ToOffset>(
         &self,
         start: T,
-        for_completion: bool,
+        scope_context: Option<CharScopeContext>,
     ) -> (Range<usize>, Option<CharKind>) {
         let mut start = start.to_offset(self);
         let mut end = start;
         let mut next_chars = self.chars_at(start).peekable();
         let mut prev_chars = self.reversed_chars_at(start).peekable();
 
-        let classifier = self
-            .char_classifier_at(start)
-            .for_completion(for_completion);
+        let classifier = self.char_classifier_at(start).scope_context(scope_context);
 
         let word_kind = cmp::max(
             prev_chars.peek().copied().map(|c| classifier.kind(c)),
@@ -4257,12 +4259,10 @@ impl MultiBufferSnapshot {
     pub fn char_kind_before<T: ToOffset>(
         &self,
         start: T,
-        for_completion: bool,
+        scope_context: Option<CharScopeContext>,
     ) -> Option<CharKind> {
         let start = start.to_offset(self);
-        let classifier = self
-            .char_classifier_at(start)
-            .for_completion(for_completion);
+        let classifier = self.char_classifier_at(start).scope_context(scope_context);
         self.reversed_chars_at(start)
             .next()
             .map(|ch| classifier.kind(ch))
@@ -5258,7 +5258,8 @@ impl MultiBufferSnapshot {
             } else {
                 Anchor::max()
             };
-            // TODO this is a hack, remove it
+
+            // TODO this is a hack, because all APIs should be able to handle ExcerptId::min and max.
             if let Some((excerpt_id, _, _)) = self.as_singleton() {
                 anchor.excerpt_id = *excerpt_id;
             }
@@ -5912,7 +5913,7 @@ impl MultiBufferSnapshot {
                             end_row: last_row,
                             depth: next_depth,
                             tab_size,
-                            settings: settings.indent_guides,
+                            settings: settings.indent_guides.clone(),
                         });
                     }
                 }
@@ -6154,8 +6155,9 @@ impl MultiBufferSnapshot {
         let anchor = self.anchor_before(offset);
         let excerpt_id = anchor.excerpt_id;
         let excerpt = self.excerpt(excerpt_id)?;
+        let buffer_id = excerpt.buffer_id;
         Some((
-            excerpt.buffer_id,
+            buffer_id,
             excerpt
                 .buffer
                 .symbols_containing(anchor.text_anchor, theme)
@@ -6163,22 +6165,15 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
-                        range: self.anchor_in_excerpt(excerpt_id, item.range.start)?
-                            ..self.anchor_in_excerpt(excerpt_id, item.range.end)?,
+                        range: Anchor::range_in_buffer(excerpt_id, buffer_id, item.range),
                         text: item.text,
                         highlight_ranges: item.highlight_ranges,
                         name_ranges: item.name_ranges,
-                        body_range: item.body_range.and_then(|body_range| {
-                            Some(
-                                self.anchor_in_excerpt(excerpt_id, body_range.start)?
-                                    ..self.anchor_in_excerpt(excerpt_id, body_range.end)?,
-                            )
+                        body_range: item.body_range.map(|body_range| {
+                            Anchor::range_in_buffer(excerpt_id, buffer_id, body_range)
                         }),
-                        annotation_range: item.annotation_range.and_then(|body_range| {
-                            Some(
-                                self.anchor_in_excerpt(excerpt_id, body_range.start)?
-                                    ..self.anchor_in_excerpt(excerpt_id, body_range.end)?,
-                            )
+                        annotation_range: item.annotation_range.map(|body_range| {
+                            Anchor::range_in_buffer(excerpt_id, buffer_id, body_range)
                         }),
                     })
                 })

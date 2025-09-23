@@ -1,14 +1,11 @@
 use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, ManifestName, PLAIN_TEXT, ToolchainLister,
-    language_settings::{
-        AllLanguageSettingsContent, LanguageSettingsContent, all_language_settings,
-    },
-    task_context::ContextProvider,
-    with_parser,
+    language_settings::all_language_settings, task_context::ContextProvider, with_parser,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 
 use futures::{
     Future,
@@ -649,6 +646,24 @@ impl LanguageRegistry {
         async move { rx.await? }
     }
 
+    pub async fn language_for_id(self: &Arc<Self>, id: LanguageId) -> Result<Arc<Language>> {
+        let available_language = {
+            let state = self.state.read();
+
+            let Some(available_language) = state
+                .available_languages
+                .iter()
+                .find(|lang| lang.id == id)
+                .cloned()
+            else {
+                anyhow::bail!(LanguageNotFound);
+            };
+            available_language
+        };
+
+        self.load_language(&available_language).await?
+    }
+
     pub fn language_name_for_extension(self: &Arc<Self>, extension: &str) -> Option<LanguageName> {
         self.state.try_read().and_then(|state| {
             state
@@ -1175,7 +1190,7 @@ impl LanguageRegistryState {
             language.set_theme(theme.syntax());
         }
         self.language_settings.languages.0.insert(
-            language.name(),
+            language.name().0,
             LanguageSettingsContent {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,

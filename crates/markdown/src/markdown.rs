@@ -9,8 +9,6 @@ use log::Level;
 pub use path_range::{LineCol, PathWithRange};
 
 use std::borrow::Cow;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use std::iter;
 use std::mem;
 use std::ops::Range;
@@ -19,6 +17,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use collections::{HashMap, HashSet};
 use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
@@ -176,7 +175,7 @@ impl Markdown {
             options: Options {
                 parse_links_only: false,
             },
-            copied_code_blocks: HashSet::new(),
+            copied_code_blocks: HashSet::default(),
         };
         this.parse(cx);
         this
@@ -199,7 +198,7 @@ impl Markdown {
             options: Options {
                 parse_links_only: true,
             },
-            copied_code_blocks: HashSet::new(),
+            copied_code_blocks: HashSet::default(),
         };
         this.parse(cx);
         this
@@ -1082,7 +1081,7 @@ impl Element for MarkdownElement {
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
-                                    parsed_markdown.source()[range.clone()].trim(),
+                                    &parsed_markdown.source()[range.clone()],
                                 );
                                 let content_range = content_range.start + range.start
                                     ..content_range.end + range.start;
@@ -1113,7 +1112,7 @@ impl Element for MarkdownElement {
                         {
                             builder.modify_current_div(|el| {
                                 let content_range = parser::extract_code_block_content_range(
-                                    parsed_markdown.source()[range.clone()].trim(),
+                                    &parsed_markdown.source()[range.clone()],
                                 );
                                 let content_range = content_range.start + range.start
                                     ..content_range.end + range.start;

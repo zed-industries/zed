@@ -231,6 +231,10 @@ impl fmt::Debug for RelPathBuf {
 }
 
 impl RelPathBuf {
+    pub fn new() -> Self {
+        Self(String::new())
+    }
+
     pub fn pop(&mut self) {
         if let Some(ix) = self.0.rfind('/') {
             self.0.truncate(ix);

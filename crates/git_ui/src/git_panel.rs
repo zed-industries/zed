@@ -2,7 +2,6 @@ use crate::askpass_modal::AskPassModal;
 use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::CommitTooltip;
 use crate::commit_view::CommitView;
-use crate::git_panel_settings::StatusStyle;
 use crate::project_diff::{self, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::{branch_picker, picker_prompt, render_remote_button};
@@ -47,11 +46,11 @@ use panel::{
     panel_icon_button,
 };
 use project::{
-    DisableAiSettings, Fs, Project, ProjectPath,
+    Fs, Project, ProjectPath,
     git_store::{GitStoreEvent, Repository, RepositoryEvent, RepositoryId},
 };
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{Settings, SettingsStore, StatusStyle};
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
@@ -406,15 +405,11 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let mut assistant_enabled = AgentSettings::get_global(cx).enabled;
-            let mut was_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
+            let mut was_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
             let _settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-                let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
-                if assistant_enabled != AgentSettings::get_global(cx).enabled
-                    || was_ai_disabled != is_ai_disabled
-                {
-                    assistant_enabled = AgentSettings::get_global(cx).enabled;
-                    was_ai_disabled = is_ai_disabled;
+                let is_ai_enabled = AgentSettings::get_global(cx).enabled(cx);
+                if was_ai_enabled != is_ai_enabled {
+                    was_ai_enabled = is_ai_enabled;
                     cx.notify();
                 }
             });
@@ -1430,7 +1425,6 @@ impl GitPanel {
                     self.load_last_commit_message_if_empty(cx);
                 } else {
                     telemetry::event!("Git Amended", source = "Git Panel");
-                    self.set_amend_pending(false, cx);
                     self.commit_changes(
                         CommitOptions {
                             amend: true,
@@ -1604,6 +1598,9 @@ impl GitPanel {
         });
 
         self.pending_commit = Some(task);
+        if options.amend {
+            self.set_amend_pending(false, cx);
+        }
     }
 
     pub(crate) fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1740,10 +1737,7 @@ impl GitPanel {
 
     /// Generates a commit message using an LLM.
     pub fn generate_commit_message(&mut self, cx: &mut Context<Self>) {
-        if !self.can_commit()
-            || DisableAiSettings::get_global(cx).disable_ai
-            || !agent_settings::AgentSettings::get_global(cx).enabled
-        {
+        if !self.can_commit() || !AgentSettings::get_global(cx).enabled(cx) {
             return;
         }
 
@@ -2439,8 +2433,9 @@ impl GitPanel {
             let workspace = workspace.read(cx);
             let fs = workspace.app_state().fs.clone();
             cx.update_global::<SettingsStore, _>(|store, _cx| {
-                store.update_settings_file::<GitPanelSettings>(fs, move |settings, _cx| {
-                    settings.sort_by_path = Some(!current_setting);
+                store.update_settings_file(fs, move |settings, _cx| {
+                    settings.git_panel.get_or_insert_default().sort_by_path =
+                        Some(!current_setting);
                 });
             });
         }
@@ -2995,8 +2990,7 @@ impl GitPanel {
         &self,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        if !agent_settings::AgentSettings::get_global(cx).enabled
-            || DisableAiSettings::get_global(cx).disable_ai
+        if !agent_settings::AgentSettings::get_global(cx).enabled(cx)
             || LanguageModelRegistry::read_global(cx)
                 .commit_message_model()
                 .is_none()
@@ -3452,7 +3446,6 @@ impl GitPanel {
                         telemetry::event!("Git Committed", source = "Git Panel");
                         git_panel
                             .update(cx, |git_panel, cx| {
-                                git_panel.set_amend_pending(false, cx);
                                 git_panel.commit_changes(
                                     CommitOptions { amend, signoff },
                                     window,
@@ -4356,11 +4349,9 @@ impl Panel for GitPanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<GitPanelSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| settings.dock = Some(position),
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.git_panel.get_or_insert_default().dock = Some(position.into())
+        });
     }
 
     fn size(&self, _: &Window, cx: &App) -> Pixels {
@@ -4585,10 +4576,6 @@ impl RenderOnce for PanelRepoFooter {
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
             .truncate(true)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Switch,
-            ))
             .on_click(|_, window, cx| {
                 window.dispatch_action(zed_actions::git::Switch.boxed_clone(), cx);
             });

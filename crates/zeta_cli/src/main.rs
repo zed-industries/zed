@@ -2,6 +2,7 @@ mod headless;
 
 use anyhow::{Result, anyhow};
 use clap::{Args, Parser, Subcommand};
+use edit_prediction_context::EditPredictionExcerptOptions;
 use futures::channel::mpsc;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, Application, AsyncApp};
@@ -20,7 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use util::paths::PathStyle;
 use util::rel_path::RelPath;
-use zeta::{GatherContextOutput, PerformPredictEditsParams, Zeta, gather_context};
+use zeta::{PerformPredictEditsParams, Zeta};
 
 use crate::headless::ZetaCliAppState;
 
@@ -34,6 +35,12 @@ struct ZetaCliArgs {
 #[derive(Subcommand, Debug)]
 enum Commands {
     Context(ContextArgs),
+    Zeta2Context {
+        #[clap(flatten)]
+        zeta2_args: Zeta2Args,
+        #[clap(flatten)]
+        context_args: ContextArgs,
+    },
     Predict {
         #[arg(long)]
         predict_edits_body: Option<FileOrStdin>,
@@ -53,6 +60,20 @@ struct ContextArgs {
     use_language_server: bool,
     #[arg(long)]
     events: Option<FileOrStdin>,
+}
+
+#[derive(Debug, Args)]
+struct Zeta2Args {
+    #[arg(long, default_value_t = 8192)]
+    prompt_max_bytes: usize,
+    #[arg(long, default_value_t = 2048)]
+    excerpt_max_bytes: usize,
+    #[arg(long, default_value_t = 1024)]
+    excerpt_min_bytes: usize,
+    #[arg(long, default_value_t = 0.66)]
+    target_before_cursor_over_total_bytes: f32,
+    #[arg(long, default_value_t = 1024)]
+    max_diagnostic_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -114,11 +135,17 @@ impl FromStr for CursorPosition {
     }
 }
 
+enum GetContextOutput {
+    Zeta1(zeta::GatherContextOutput),
+    Zeta2(String),
+}
+
 async fn get_context(
+    zeta2_args: Option<Zeta2Args>,
     args: ContextArgs,
     app_state: &Arc<ZetaCliAppState>,
     cx: &mut AsyncApp,
-) -> Result<GatherContextOutput> {
+) -> Result<GetContextOutput> {
     let ContextArgs {
         worktree: worktree_path,
         cursor,
@@ -151,9 +178,7 @@ async fn get_context(
             open_buffer_with_language_server(&project, &worktree, &cursor.path, cx).await?;
         (Some(lsp_open_handle), buffer)
     } else {
-        let abs_path = worktree.read_with(cx, |worktree, _| worktree.absolutize(&cursor.path))?;
-        let content = smol::fs::read_to_string(&abs_path).await?;
-        let buffer = cx.new(|cx| Buffer::local(content, cx))?;
+        let buffer = open_buffer(&project, &worktree, &cursor.path, cx).await?;
         (None, buffer)
     };
 
@@ -185,17 +210,77 @@ async fn get_context(
         Some(events) => events.read_to_string().await?,
         None => String::new(),
     };
-    let prompt_for_events = move || (events, 0);
-    cx.update(|cx| {
-        gather_context(
-            full_path_str,
-            &snapshot,
-            clipped_cursor,
-            prompt_for_events,
-            cx,
-        )
-    })?
-    .await
+
+    if let Some(zeta2_args) = zeta2_args {
+        Ok(GetContextOutput::Zeta2(
+            cx.update(|cx| {
+                let zeta = cx.new(|cx| {
+                    zeta2::Zeta::new(app_state.client.clone(), app_state.user_store.clone(), cx)
+                });
+                zeta.update(cx, |zeta, cx| {
+                    zeta.register_buffer(&buffer, &project, cx);
+                    zeta.set_options(zeta2::ZetaOptions {
+                        excerpt: EditPredictionExcerptOptions {
+                            max_bytes: zeta2_args.excerpt_max_bytes,
+                            min_bytes: zeta2_args.excerpt_min_bytes,
+                            target_before_cursor_over_total_bytes: zeta2_args
+                                .target_before_cursor_over_total_bytes,
+                        },
+                        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
+                    })
+                });
+                // TODO: Actually wait for indexing.
+                let timer = cx.background_executor().timer(Duration::from_secs(5));
+                cx.spawn(async move |cx| {
+                    timer.await;
+                    let request = zeta
+                        .update(cx, |zeta, cx| {
+                            let cursor = buffer.read(cx).snapshot().anchor_before(clipped_cursor);
+                            zeta.cloud_request_for_zeta_cli(&project, &buffer, cursor, cx)
+                        })?
+                        .await?;
+                    let planned_prompt = cloud_zeta2_prompt::PlannedPrompt::populate(
+                        &request,
+                        &cloud_zeta2_prompt::PlanOptions {
+                            max_bytes: zeta2_args.prompt_max_bytes,
+                        },
+                    )?;
+                    anyhow::Ok(planned_prompt.to_prompt_string())
+                })
+            })?
+            .await?,
+        ))
+    } else {
+        let prompt_for_events = move || (events, 0);
+        Ok(GetContextOutput::Zeta1(
+            cx.update(|cx| {
+                zeta::gather_context(
+                    full_path_str,
+                    &snapshot,
+                    clipped_cursor,
+                    prompt_for_events,
+                    cx,
+                )
+            })?
+            .await?,
+        ))
+    }
+}
+
+pub async fn open_buffer(
+    project: &Entity<Project>,
+    worktree: &Entity<Worktree>,
+    path: &RelPath,
+    cx: &mut AsyncApp,
+) -> Result<Entity<Buffer>> {
+    let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
+        worktree_id: worktree.id(),
+        path: path.into(),
+    })?;
+
+    project
+        .update(cx, |project, cx| project.open_buffer(project_path, cx))?
+        .await
 }
 
 pub async fn open_buffer_with_language_server(
@@ -204,14 +289,7 @@ pub async fn open_buffer_with_language_server(
     path: &RelPath,
     cx: &mut AsyncApp,
 ) -> Result<(Entity<Entity<Buffer>>, Entity<Buffer>)> {
-    let project_path = worktree.read_with(cx, |worktree, _cx| ProjectPath {
-        worktree_id: worktree.id(),
-        path: Arc::from(path),
-    })?;
-
-    let buffer = project
-        .update(cx, |project, cx| project.open_buffer(project_path, cx))?
-        .await?;
+    let buffer = open_buffer(project, worktree, path, cx).await?;
 
     let (lsp_open_handle, path_style) = project.update(cx, |project, cx| {
         (
@@ -318,11 +396,26 @@ fn main() {
 
     app.run(move |cx| {
         let app_state = Arc::new(headless::init(cx));
+        let is_zeta2_context_command = matches!(args.command, Commands::Zeta2Context { .. });
         cx.spawn(async move |cx| {
             let result = match args.command {
-                Commands::Context(context_args) => get_context(context_args, &app_state, cx)
-                    .await
-                    .map(|output| serde_json::to_string_pretty(&output.body).unwrap()),
+                Commands::Zeta2Context {
+                    zeta2_args,
+                    context_args,
+                } => match get_context(Some(zeta2_args), context_args, &app_state, cx).await {
+                    Ok(GetContextOutput::Zeta1 { .. }) => unreachable!(),
+                    Ok(GetContextOutput::Zeta2(output)) => Ok(output),
+                    Err(err) => Err(err),
+                },
+                Commands::Context(context_args) => {
+                    match get_context(None, context_args, &app_state, cx).await {
+                        Ok(GetContextOutput::Zeta1(output)) => {
+                            Ok(serde_json::to_string_pretty(&output.body).unwrap())
+                        }
+                        Ok(GetContextOutput::Zeta2 { .. }) => unreachable!(),
+                        Err(err) => Err(err),
+                    }
+                }
                 Commands::Predict {
                     predict_edits_body,
                     context_args,
@@ -337,7 +430,10 @@ fn main() {
                             if let Some(predict_edits_body) = predict_edits_body {
                                 serde_json::from_str(&predict_edits_body.read_to_string().await?)?
                             } else if let Some(context_args) = context_args {
-                                get_context(context_args, &app_state, cx).await?.body
+                                match get_context(None, context_args, &app_state, cx).await? {
+                                    GetContextOutput::Zeta1(output) => output.body,
+                                    GetContextOutput::Zeta2 { .. } => unreachable!(),
+                                }
                             } else {
                                 return Err(anyhow!(
                                     "Expected either --predict-edits-body-file \
@@ -362,6 +458,10 @@ fn main() {
             match result {
                 Ok(output) => {
                     println!("{}", output);
+                    // TODO: Remove this once the 5 second delay is properly replaced.
+                    if is_zeta2_context_command {
+                        eprintln!("Note that zeta2-context doesn't yet wait for indexing, instead waits 5 seconds.");
+                    }
                     let _ = cx.update(|cx| cx.quit());
                 }
                 Err(e) => {
