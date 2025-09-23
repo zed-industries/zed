@@ -1,6 +1,5 @@
 use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::http::HeaderValue;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -371,6 +370,7 @@ pub async fn show_model(
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake {
     use super::*;
+    use http_client::http::HeaderValue;
     use http_client::{AsyncBody, Response, Url};
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
