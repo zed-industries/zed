@@ -206,7 +206,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
 // }),
 //     }),
 // ],
-}
+// }
 
 fn project_settings_data() -> Vec<SettingsPage> {
     vec![SettingsPage {
