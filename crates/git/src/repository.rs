@@ -1298,11 +1298,13 @@ impl GitRepository for RealGitRepository {
             OsString::from("worktree"),
             OsString::from("add"),
             OsString::from(final_path.as_os_str()),
-            OsString::from("-b"),
-            OsString::from(name.as_str()),
         ];
         if let Some(from_commit) = from_commit {
-            args.push(OsString::from(from_commit));
+            args.extend([
+                OsString::from("-b"),
+                OsString::from(name.as_str()),
+                OsString::from(from_commit),
+            ]);
         }
         self.executor
             .spawn(async move {
