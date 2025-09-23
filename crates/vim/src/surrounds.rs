@@ -316,16 +316,23 @@ impl Vim {
                                     continue;
                                 }
                             }
+
+                            // Keeps track of the length of the string that is
+                            // going to be edited on the start so we can ensure
+                            // that the end replacement string does not exceed
+                            // this value. Helpful when dealing with newlines.
+                            let mut edit_len = 0;
                             let mut chars_and_offset = display_map
                                 .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
                                 .peekable();
+
                             while let Some((ch, offset)) = chars_and_offset.next() {
                                 if ch.to_string() == will_replace_pair.start {
                                     let mut open_str = pair.start.clone();
                                     let start = offset;
                                     let mut end = start + 1;
                                     while let Some((next_ch, _)) = chars_and_offset.next()
-                                        && next_ch.is_whitespace()
+                                        && next_ch.to_string() == " "
                                     {
                                         end += 1;
 
@@ -338,6 +345,7 @@ impl Vim {
                                         open_str.push(' ');
                                     };
 
+                                    edit_len = end - start;
                                     edits.push((start..end, open_str));
                                     anchors.push(start..start);
                                     break;
@@ -355,7 +363,8 @@ impl Vim {
                                     let mut start = offset;
                                     let end = start + 1;
                                     while let Some((next_ch, _)) = reverse_chars_and_offsets.next()
-                                        && next_ch.is_whitespace()
+                                        && next_ch.to_string() == " "
+                                        && close_str.len() < edit_len - 1
                                     {
                                         start -= 1;
 
@@ -1254,7 +1263,7 @@ mod test {
             };"},
             Mode::Normal,
         );
-        cx.simulate_keystrokes("c s { [");
+        cx.simulate_keystrokes("c s } ]");
         cx.assert_state(
             indoc! {"
             fn test_surround() ˇ[
@@ -1283,7 +1292,7 @@ mod test {
             fn test_surround() ˇ[
                 if 2 > 1 ˇ[
                     println!(\"it is fine\");
-               ]
+                ]
             ];"},
             Mode::Normal,
         );
@@ -1353,7 +1362,7 @@ mod test {
         cx.assert_state(indoc! {"ˇ[ bracketed ]"}, Mode::Normal);
 
         cx.set_state(indoc! {"(< name: ˇ'Zed' >)"}, Mode::Normal);
-        cx.simulate_keystrokes("c s b {");
+        cx.simulate_keystrokes("c s b }");
         cx.assert_state(indoc! {"(ˇ{ name: 'Zed' })"}, Mode::Normal);
 
         cx.set_state(
