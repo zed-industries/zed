@@ -424,7 +424,8 @@ message Envelope {
         DirectoryEnvironment directory_environment = 383;
 
         GitWorktreesResponse git_worktrees_response = 384;
-        GitGetWorktrees git_get_worktrees = 385; // current max
+        GitGetWorktrees git_get_worktrees = 385;
+        GitCreateWorktree git_create_worktree = 386; // current max
     }
 
     reserved 87 to 88;
