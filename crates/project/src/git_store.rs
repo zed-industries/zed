@@ -2742,10 +2742,8 @@ fn make_remote_delegate(
             });
             cx.spawn(async move |_, _| {
                 let mut response = response.await?.response;
-                tx.send(EncryptedPassword::try_from(
-                    response.as_ref(),
-                )?)
-                .ok();
+                tx.send(EncryptedPassword::try_from(response.as_ref())?)
+                    .ok();
                 response.zeroize();
                 anyhow::Ok(())
             })

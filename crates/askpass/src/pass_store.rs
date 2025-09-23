@@ -42,7 +42,6 @@ impl TryFrom<EncryptedPassword> for proto::AskPassResponse {
     }
 }
 
-
 impl Drop for EncryptedPassword {
     fn drop(&mut self) {
         self.0.zeroize();

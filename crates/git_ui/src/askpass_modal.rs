@@ -59,16 +59,15 @@ impl AskPassModal {
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
         maybe!({
             let tx = self.tx.take()?;
-            let mut  text = self.editor.update(cx, |this, cx| {
+            let mut text = self.editor.update(cx, |this, cx| {
                 let text = this.text(cx);
                 this.clear(window, cx);
                 text
             });
-            let pw =
-                askpass::EncryptedPassword::try_from(text.as_ref()).ok()?;
+            let pw = askpass::EncryptedPassword::try_from(text.as_ref()).ok()?;
             text.zeroize();
-             tx.send(pw).ok();
-             Some(())
+            tx.send(pw).ok();
+            Some(())
         });
 
         cx.emit(DismissEvent);
