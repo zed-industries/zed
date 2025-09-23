@@ -126,7 +126,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     let fake_model = model.as_fake();
 
     project_context.update(cx, |project_context, _cx| {
-        project_context.os = "test-os".into()
+        project_context.shell = "test-shell".into()
     });
     thread.update(cx, |thread, _| thread.add_tool(EchoTool));
     thread
@@ -149,7 +149,7 @@ async fn test_system_prompt(cx: &mut TestAppContext) {
     let system_message = &pending_completion.messages[0];
     let system_prompt = system_message.content[0].to_str().unwrap();
     assert!(
-        system_prompt.contains("test-os"),
+        system_prompt.contains("test-shell"),
         "unexpected system message: {:?}",
         system_message
     );
