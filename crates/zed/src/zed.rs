@@ -3091,7 +3091,7 @@ mod tests {
                     .map(|i| {
                         i.project_path(cx)
                             .expect("all excluded files that got open should have a path")
-                            .path.clone()
+                            .path
                     })
                     .collect::<Vec<_>>();
                 opened_buffer_paths.sort();

@@ -72,7 +72,7 @@ impl FileSlashCommand {
                             score: 0.,
                             positions: Vec::new(),
                             worktree_id: entry.worktree_id.to_usize(),
-                            path: full_path.into(),
+                            path: full_path,
                             path_prefix: path_prefix.clone(),
                             distance_to_relative_ancestor: 0,
                             is_dir,
@@ -305,7 +305,7 @@ fn collect_files(
                             is_top_level_directory = false;
                             path_including_worktree_name.display(path_style).to_string()
                         } else {
-                            filename.into()
+                            filename
                         };
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,

@@ -2776,7 +2776,7 @@ impl Workspace {
                 worktree,
                 ProjectPath {
                     worktree_id,
-                    path: path.into(),
+                    path: path,
                 },
             ))
         })

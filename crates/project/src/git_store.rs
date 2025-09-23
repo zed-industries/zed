@@ -3349,7 +3349,7 @@ impl Repository {
         let (worktree, relative_path) = worktree_store.find_worktree(abs_path, cx)?;
         Some(ProjectPath {
             worktree_id: worktree.read(cx).id(),
-            path: relative_path.into(),
+            path: relative_path,
         })
     }
 

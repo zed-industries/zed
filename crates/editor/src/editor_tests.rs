@@ -20879,9 +20879,9 @@ async fn test_display_diff_hunks(cx: &mut TestAppContext) {
     fs.set_head_for_repo(
         path!("/test/.git").as_ref(),
         &[
-            ("file-1".into(), "one\n".into()),
-            ("file-2".into(), "two\n".into()),
-            ("file-3".into(), "three\n".into()),
+            ("file-1", "one\n".into()),
+            ("file-2", "two\n".into()),
+            ("file-3", "three\n".into()),
         ],
         "deadbeef",
     );

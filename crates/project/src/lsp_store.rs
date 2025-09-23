@@ -3173,7 +3173,7 @@ impl LocalLspStore {
                     if let Some((tree, glob)) =
                         worktree.as_local_mut().zip(Glob::new(&pattern).log_err())
                     {
-                        tree.add_path_prefix_to_scan(literal_prefix.into());
+                        tree.add_path_prefix_to_scan(literal_prefix);
                         worktree_globs
                             .entry(tree.id())
                             .or_insert_with(GlobSetBuilder::new)
@@ -7094,7 +7094,7 @@ impl LspStore {
                                     let worktree_id = tree.read(cx).id();
                                     SymbolLocation::InProject(ProjectPath {
                                         worktree_id,
-                                        path: rel_path.into(),
+                                        path: rel_path,
                                     })
                                 } else {
                                     SymbolLocation::OutsideProject {
@@ -7653,7 +7653,7 @@ impl LspStore {
             let worktree_id = worktree.read(cx).id();
             let project_path = ProjectPath {
                 worktree_id,
-                path: relative_path.into(),
+                path: relative_path,
             };
 
             if let Some(buffer_handle) = self.buffer_store.read(cx).get_by_path(&project_path) {
@@ -8420,8 +8420,7 @@ impl LspStore {
                 let project_path = ProjectPath {
                     worktree_id,
                     path: RelPath::from_proto(&message_summary.path)
-                        .context("invalid path")?
-                        .into(),
+                        .context("invalid path")?,
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message_summary.language_server_id as usize);
@@ -10277,7 +10276,7 @@ impl LspStore {
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
-            path: relative_path.into(),
+            path: relative_path,
         };
 
         Some(

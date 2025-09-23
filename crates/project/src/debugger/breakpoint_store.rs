@@ -794,7 +794,7 @@ impl BreakpointStore {
                         .update(cx, |this, cx| {
                             let path = ProjectPath {
                                 worktree_id: worktree.read(cx).id(),
-                                path: relative_path.into(),
+                                path: relative_path,
                             };
                             this.open_buffer(path, cx)
                         })?

@@ -1406,12 +1406,12 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo.txt".into(), "foo\n".into())],
+            &[("foo.txt", "foo\n".into())],
             "deadbeef",
         );
         fs.set_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo.txt".into(), "foo\n".into())],
+            &[("foo.txt", "foo\n".into())],
         );
         cx.run_until_parked();
 
@@ -1462,8 +1462,8 @@ mod tests {
         fs.set_head_and_index_for_repo(
             path!("/project/.git").as_ref(),
             &[
-                ("bar".into(), "bar\n".into()),
-                ("foo".into(), "foo\n".into()),
+                ("bar", "bar\n".into()),
+                ("foo", "foo\n".into()),
             ],
         );
         cx.run_until_parked();
@@ -1543,7 +1543,7 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo".into(), "original\n".into())],
+            &[("foo", "original\n".into())],
             "deadbeef",
         );
         cx.run_until_parked();
@@ -1766,7 +1766,7 @@ mod tests {
 
         fs.set_head_and_index_for_repo(
             Path::new("/a/.git"),
-            &[("main.rs".into(), git_contents.to_owned())],
+            &[("main.rs", git_contents.to_owned())],
         );
 
         let project = Project::test(fs, [Path::new("/a")], cx).await;

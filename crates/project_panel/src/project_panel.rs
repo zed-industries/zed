@@ -1523,7 +1523,7 @@ impl ProjectPanel {
             let new_path = if let Some(parent) = entry.path.clone().parent() {
                 parent.join(&filename)
             } else {
-                filename.clone().into()
+                filename.clone()
             };
             if let Some(existing) = worktree.read(cx).entry_for_path(&new_path) {
                 if existing.id == entry.id {
@@ -3007,7 +3007,7 @@ impl ProjectPanel {
             entry: Entry {
                 id: NEW_ENTRY_ID,
                 kind: new_entry_kind,
-                path: parent_entry.path.join(RelPath::new("\0").unwrap()).into(),
+                path: parent_entry.path.join(RelPath::new("\0").unwrap()),
                 inode: 0,
                 mtime: parent_entry.mtime,
                 size: parent_entry.size,
@@ -3323,7 +3323,7 @@ impl ProjectPanel {
             let entry = worktree.read(cx).entry_for_id(entry_id)?;
             let path = entry.path.clone();
             let target_directory = if entry.is_dir() {
-                path.clone()
+                path
             } else {
                 path.parent()?.into()
             };
@@ -3369,7 +3369,7 @@ impl ProjectPanel {
                 }
 
                 let task = worktree.update( cx, |worktree, cx| {
-                    worktree.copy_external_entries(target_directory.into(), paths, fs, cx)
+                    worktree.copy_external_entries(target_directory, paths, fs, cx)
                 })?;
 
                 let opened_entries = task.await.with_context(|| "failed to copy external paths")?;

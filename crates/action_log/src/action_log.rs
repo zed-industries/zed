@@ -2301,7 +2301,7 @@ mod tests {
         .await;
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
+            &[("file.txt", "a\nb\nc\nd\ne\nf\ng\nh\ni\nj".into())],
             "0000000",
         );
         cx.run_until_parked();
@@ -2384,7 +2384,7 @@ mod tests {
         // - Ignores the last line edit (j stays as j)
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "A\nb\nc\nf\nG\nh\ni\nj".into())],
+            &[("file.txt", "A\nb\nc\nf\nG\nh\ni\nj".into())],
             "0000001",
         );
         cx.run_until_parked();
@@ -2416,7 +2416,7 @@ mod tests {
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
             &[(
-                "file.txt".into(),
+                "file.txt",
                 "A\nb\nc\nf\nGGG\nh\nDIFFERENT\ni\nj".into(),
             )],
             "0000002",
@@ -2444,7 +2444,7 @@ mod tests {
         // Final commit that accepts all remaining edits
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("file.txt".into(), "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
+            &[("file.txt", "A\nb\nc\nf\nGGG\nh\nNEW\ni\nJ".into())],
             "0000003",
         );
         cx.run_until_parked();

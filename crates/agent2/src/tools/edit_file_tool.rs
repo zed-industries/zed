@@ -218,7 +218,7 @@ impl AgentTool for EditFileTool {
                         .read(cx)
                         .short_full_path_for_project_path(&project_path, cx)
                 })
-                .unwrap_or(input.path.to_string_lossy().to_string().into())
+                .unwrap_or(input.path.to_string_lossy().to_string())
                 .into(),
             Err(raw_input) => {
                 if let Some(input) =
@@ -235,7 +235,7 @@ impl AgentTool for EditFileTool {
                                     .read(cx)
                                     .short_full_path_for_project_path(&project_path, cx)
                             })
-                            .unwrap_or(input.path.into())
+                            .unwrap_or(input.path)
                             .into();
                     }
 
@@ -545,7 +545,7 @@ fn resolve_path(
                 .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: Arc::from(parent.path.join(file_name)),
+                path: parent.path.join(file_name),
                 ..parent
             });
 

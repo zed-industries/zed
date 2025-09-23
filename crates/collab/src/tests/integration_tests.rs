@@ -2639,11 +2639,11 @@ async fn test_git_diff_base_change(
 
     client_a.fs().set_index_for_repo(
         Path::new("/dir/.git"),
-        &[("a.txt".into(), staged_text.clone())],
+        &[("a.txt", staged_text.clone())],
     );
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("a.txt".into(), committed_text.clone())],
+        &[("a.txt", committed_text.clone())],
         "deadbeef",
     );
 
@@ -2737,11 +2737,11 @@ async fn test_git_diff_base_change(
     // Update the index text of the open buffer
     client_a.fs().set_index_for_repo(
         Path::new("/dir/.git"),
-        &[("a.txt".into(), new_staged_text.clone())],
+        &[("a.txt", new_staged_text.clone())],
     );
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("a.txt".into(), new_committed_text.clone())],
+        &[("a.txt", new_committed_text.clone())],
         "deadbeef",
     );
 
@@ -2810,7 +2810,7 @@ async fn test_git_diff_base_change(
 
     client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
-        &[("b.txt".into(), staged_text.clone())],
+        &[("b.txt", staged_text.clone())],
     );
 
     // Create the buffer
@@ -2875,7 +2875,7 @@ async fn test_git_diff_base_change(
     // Updatet the staged text
     client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
-        &[("b.txt".into(), new_staged_text.clone())],
+        &[("b.txt", new_staged_text.clone())],
     );
 
     // Wait for buffer_local_b to receive it
@@ -3126,7 +3126,7 @@ async fn test_git_status_sync(
     // and modify c.txt in the working copy.
     client_a.fs().set_index_for_repo(
         path!("/dir/.git").as_ref(),
-        &[("a.txt".into(), "a".into()), ("c.txt".into(), "c".into())],
+        &[("a.txt", "a".into()), ("c.txt", "c".into())],
     );
     client_a
         .fs()

@@ -162,7 +162,7 @@ impl WorktreeStore {
             if let Ok(relative_path) = abs_path.as_ref().strip_prefix(tree.read(cx).abs_path())
                 && let Ok(relative_path) = RelPath::from_std_path(relative_path, path_style)
             {
-                return Some((tree.clone(), relative_path.into()));
+                return Some((tree.clone(), relative_path));
             }
         }
         None

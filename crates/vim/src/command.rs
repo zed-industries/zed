@@ -1746,7 +1746,7 @@ impl Vim {
                             && let Some(file) = buffer.read(cx).file()
                             && let Some(local) = file.as_local()
                         {
-                            ret.push_str(&*local.path().display(local.path_style(cx)));
+                            ret.push_str(&local.path().display(local.path_style(cx)));
                         }
                     });
                 }

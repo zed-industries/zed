@@ -2183,7 +2183,7 @@ impl Pane {
                     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
                     let new_path = ProjectPath {
                         worktree_id,
-                        path: path.into(),
+                        path: path,
                     };
 
                     pane.update_in(cx, |pane, window, cx| {

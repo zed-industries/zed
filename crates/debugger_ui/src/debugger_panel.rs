@@ -1069,7 +1069,7 @@ impl DebugPanel {
                 };
                 ProjectPath {
                     worktree_id: id,
-                    path: Arc::from(relative_path),
+                    path: relative_path,
                 }
             }
             _ => return self.save_scenario(scenario, worktree_id, window, cx),

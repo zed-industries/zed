@@ -233,7 +233,7 @@ impl SerializableItem for ImageView {
 
             let project_path = ProjectPath {
                 worktree_id,
-                path: relative_path.into(),
+                path: relative_path,
             };
 
             let image_item = project

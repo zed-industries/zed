@@ -61,7 +61,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     .await;
     fs.set_index_for_repo(
         Path::new(path!("/code/project1/.git")),
-        &[("src/lib.rs".into(), "fn one() -> usize { 0 }".into())],
+        &[("src/lib.rs", "fn one() -> usize { 0 }".into())],
     );
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
@@ -159,7 +159,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 
     fs.set_index_for_repo(
         Path::new(path!("/code/project1/.git")),
-        &[("src/lib2.rs".into(), "fn one() -> usize { 100 }".into())],
+        &[("src/lib2.rs", "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
     diff.update(cx, |diff, _| {
@@ -1372,11 +1372,11 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     .await;
     fs.set_index_for_repo(
         Path::new("/code/project1/.git"),
-        &[("src/lib.rs".into(), text_1.clone())],
+        &[("src/lib.rs", text_1.clone())],
     );
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
-        &[("src/lib.rs".into(), text_1.clone())],
+        &[("src/lib.rs", text_1.clone())],
         "deadbeef",
     );
 
@@ -1418,7 +1418,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     // stage the current buffer's contents
     fs.set_index_for_repo(
         Path::new("/code/project1/.git"),
-        &[("src/lib.rs".into(), text_2.clone())],
+        &[("src/lib.rs", text_2.clone())],
     );
 
     cx.executor().run_until_parked();
@@ -1437,7 +1437,7 @@ async fn test_remote_git_diffs(cx: &mut TestAppContext, server_cx: &mut TestAppC
     // commit the current buffer's contents
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
-        &[("src/lib.rs".into(), text_2.clone())],
+        &[("src/lib.rs", text_2.clone())],
         "deadbeef",
     );
 
@@ -1528,11 +1528,11 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
 
     fs.set_index_for_repo(
         Path::new("/code/project1/.git"),
-        &[("src/lib.rs".into(), text_1.clone())],
+        &[("src/lib.rs", text_1.clone())],
     );
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
-        &[("src/lib.rs".into(), text_1.clone())],
+        &[("src/lib.rs", text_1.clone())],
         "sha",
     );
 
@@ -1560,7 +1560,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     // stage the current buffer's contents
     fs.set_index_for_repo(
         Path::new("/code/project1/.git"),
-        &[("src/lib.rs".into(), text_2.clone())],
+        &[("src/lib.rs", text_2.clone())],
     );
 
     cx.executor().run_until_parked();
@@ -1579,7 +1579,7 @@ async fn test_remote_git_diffs_when_recv_update_repository_delay(
     // commit the current buffer's contents
     fs.set_head_for_repo(
         Path::new("/code/project1/.git"),
-        &[("src/lib.rs".into(), text_2.clone())],
+        &[("src/lib.rs", text_2.clone())],
         "sha",
     );
 

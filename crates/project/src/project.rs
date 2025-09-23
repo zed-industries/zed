@@ -4511,9 +4511,9 @@ impl Project {
     /// If there's only one visible worktree, returns the given worktree-relative path with no prefix.
     ///
     /// Otherwise, returns the full path for the project path (obtained by prefixing the worktree-relative path with the name of the worktree).
-    pub fn short_full_path_for_project_path<'a>(
+    pub fn short_full_path_for_project_path(
         &self,
-        project_path: &'a ProjectPath,
+        project_path: &ProjectPath,
         cx: &App,
     ) -> Option<String> {
         let path_style = self.path_style(cx);
@@ -4521,14 +4521,12 @@ impl Project {
             return Some(project_path.path.display(path_style).to_string());
         }
         self.worktree_for_id(project_path.worktree_id, cx)
-            .and_then(|worktree| {
+            .map(|worktree| {
                 let worktree_name = worktree.read(cx).root_name();
-                Some(
-                    worktree_name
+                worktree_name
                         .join(&project_path.path)
                         .display(path_style)
-                        .to_string(),
-                )
+                        .to_string()
             })
     }
 
@@ -4536,7 +4534,7 @@ impl Project {
         self.find_worktree(abs_path, cx)
             .map(|(worktree, relative_path)| ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path: relative_path.into(),
+                path: relative_path,
             })
     }
 
@@ -4943,7 +4941,7 @@ impl Project {
     ) -> Result<proto::OpenBufferResponse> {
         let peer_id = envelope.original_sender_id()?;
         let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
-        let path = RelPath::from_proto(&envelope.payload.path)?.into();
+        let path = RelPath::from_proto(&envelope.payload.path)?;
         let open_buffer = this
             .update(&mut cx, |this, cx| {
                 this.open_buffer(ProjectPath { worktree_id, path }, cx)

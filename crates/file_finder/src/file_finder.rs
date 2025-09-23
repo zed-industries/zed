@@ -1202,7 +1202,7 @@ impl FileFinderDelegate {
                                 score: 1.0,
                                 positions: Vec::new(),
                                 worktree_id: worktree.read(cx).id().to_usize(),
-                                path: Arc::from(relative_path),
+                                path: relative_path,
                                 path_prefix: RelPath::empty().into(),
                                 is_dir: false, // File finder doesn't support directories
                                 distance_to_relative_ancestor: usize::MAX,

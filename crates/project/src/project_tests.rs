@@ -6993,7 +6993,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), staged_contents)],
+        &[("src/main.rs", staged_contents)],
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
@@ -7039,7 +7039,7 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), staged_contents)],
+        &[("src/main.rs", staged_contents)],
     );
 
     cx.run_until_parked();
@@ -7098,16 +7098,16 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
         &[
-            ("src/modification.rs".into(), committed_contents),
-            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+            ("src/modification.rs", committed_contents),
+            ("src/deletion.rs", "// the-deleted-contents\n".into()),
         ],
         "deadbeef",
     );
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
         &[
-            ("src/modification.rs".into(), staged_contents),
-            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+            ("src/modification.rs", staged_contents),
+            ("src/deletion.rs", "// the-deleted-contents\n".into()),
         ],
     );
 
@@ -7165,8 +7165,8 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
         &[
-            ("src/modification.rs".into(), committed_contents.clone()),
-            ("src/deletion.rs".into(), "// the-deleted-contents\n".into()),
+            ("src/modification.rs", committed_contents.clone()),
+            ("src/deletion.rs", "// the-deleted-contents\n".into()),
         ],
         "deadbeef",
     );
@@ -7220,7 +7220,7 @@ async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     // Stage the deletion of this file
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
-        &[("src/modification.rs".into(), committed_contents.clone())],
+        &[("src/modification.rs", committed_contents.clone())],
     );
     cx.run_until_parked();
     diff_2.update(cx, |diff, cx| {
@@ -7614,12 +7614,12 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     fs.set_head_for_repo(
         "/dir/.git".as_ref(),
-        &[("file.txt".into(), committed_contents.clone())],
+        &[("file.txt", committed_contents.clone())],
         "deadbeef",
     );
     fs.set_index_for_repo(
         "/dir/.git".as_ref(),
-        &[("file.txt".into(), committed_contents.clone())],
+        &[("file.txt", committed_contents.clone())],
     );
 
     let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
@@ -7811,12 +7811,12 @@ async fn test_staging_random_hunks(
     .await;
     fs.set_head_for_repo(
         path!("/dir/.git").as_ref(),
-        &[("file.txt".into(), committed_text.clone())],
+        &[("file.txt", committed_text.clone())],
         "deadbeef",
     );
     fs.set_index_for_repo(
         path!("/dir/.git").as_ref(),
-        &[("file.txt".into(), index_text.clone())],
+        &[("file.txt", index_text.clone())],
     );
     let repo = fs.open_repo(path!("/dir/.git").as_ref()).unwrap();
 
@@ -7925,12 +7925,12 @@ async fn test_single_file_diffs(cx: &mut gpui::TestAppContext) {
 
     fs.set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), committed_contents.clone())],
+        &[("src/main.rs", committed_contents.clone())],
         "deadbeef",
     );
     fs.set_index_for_repo(
         Path::new("/dir/.git"),
-        &[("src/main.rs".into(), committed_contents.clone())],
+        &[("src/main.rs", committed_contents.clone())],
     );
 
     let project = Project::test(fs.clone(), ["/dir/src/main.rs".as_ref()], cx).await;
@@ -8341,7 +8341,7 @@ async fn test_repository_subfolder_git_status(
 
     fs.set_status_for_repo(
         path!("/root/my-repo/.git").as_ref(),
-        &[(E_TXT.as_ref(), FileStatus::Untracked)],
+        &[(E_TXT, FileStatus::Untracked)],
     );
 
     let project = Project::test(
@@ -8521,9 +8521,9 @@ async fn test_update_gitignore(cx: &mut gpui::TestAppContext) {
     fs.set_index_for_repo(
         Path::new(path!("/root/.git")),
         &[
-            (".gitignore".into(), "*.txt\n".into()),
-            ("a.xml".into(), "<a></a>".into()),
-            ("b.txt".into(), "Some text".into()),
+            (".gitignore", "*.txt\n".into()),
+            ("a.xml", "<a></a>".into()),
+            ("b.txt", "Some text".into()),
         ],
     );
 
@@ -9002,9 +9002,9 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     fs.set_index_for_repo(
         path!("/root/tree/.git").as_ref(),
         &[
-            (".gitignore".into(), "ignored-dir\n".into()),
-            ("tracked-dir/tracked-file1".into(), "".into()),
-            ("tracked-dir/tracked-file2".into(), "".into()),
+            (".gitignore", "ignored-dir\n".into()),
+            ("tracked-dir/tracked-file1", "".into()),
+            ("tracked-dir/tracked-file2", "".into()),
         ],
     );
     fs.create_file(
