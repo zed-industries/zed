@@ -497,7 +497,8 @@
       "shift-u": "editor::Redo",
       "ctrl-c": "editor::ToggleComments",
       "d": "vim::HelixDelete",
-      "c": "vim::Substitute",
+      "c": "vim::HelixSubstitute",
+      "alt-c": "vim::HelixSubstituteNoYank",
       "shift-c": "editor::AddSelectionBelow",
       "alt-shift-c": "editor::AddSelectionAbove"
     }
