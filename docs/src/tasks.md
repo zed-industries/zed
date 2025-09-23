@@ -147,7 +147,7 @@ For example, the following task will appear in the spawn modal only if there is 
 Set default values to such variables to have such tasks always displayed:
 
 {
-  "label": "selected text",
+  "label": "selected text with default",
   "command": "echo \"${ZED_SELECTED_TEXT:no text selected}\""
 }
 
