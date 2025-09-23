@@ -618,10 +618,29 @@ pub trait InteractiveElement: Sized {
         self
     }
 
-    /// Set index of the tab stop order.
+    /// Designate this element as a tab stop, equivalent to `tab_index(0)`.
+    /// This should be the primary mechanism for tab navigation within the application.
+    fn tab_stop(mut self) -> Self {
+        self.tab_index(0)
+    }
+
+    /// Set index of the tab stop order. This should only be used in conjunction with `tab_group`
+    /// in order to not interfere with the tab index of other elements.
     fn tab_index(mut self, index: isize) -> Self {
         self.interactivity().focusable = true;
         self.interactivity().tab_index = Some(index);
+        self
+    }
+
+    /// Designate this div as a "tab group". Tab groups have their own location in the tab-index order,
+    /// but for children of the tab group, the tab index is reset to 0. This can be useful for swapping
+    /// the order of tab stops within the group, without having to renumber all the tab stops in the whole
+    /// application.
+    fn tab_group(mut self) -> Self {
+        self.interactivity().tab_group = true;
+        if self.interactivity().tab_index.is_none() {
+            self.interactivity().tab_index = Some(0);
+        }
         self
     }
 
@@ -1472,6 +1491,7 @@ pub struct Interactivity {
     pub(crate) window_control: Option<WindowControlArea>,
     pub(crate) hitbox_behavior: HitboxBehavior,
     pub(crate) tab_index: Option<isize>,
+    pub(crate) tab_group: bool,
 
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) source_location: Option<&'static core::panic::Location<'static>>,
@@ -1522,6 +1542,12 @@ impl Interactivity {
                     if let Some(clicked_state) = element_state.clicked_state.as_ref() {
                         *clicked_state.borrow_mut() = ElementClickedState::default();
                     }
+                }
+
+                if self.tab_group
+                    && let Some(index) = self.tab_index
+                {
+                    todo!()
                 }
 
                 // Ensure we store a focus handle in our element state if we're focusable.
