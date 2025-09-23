@@ -4,16 +4,17 @@ use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     ffi::OsStr,
+    fmt,
     ops::Deref,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 #[repr(transparent)]
-#[derive(PartialEq, Debug, Eq, Hash, Serialize)]
+#[derive(PartialEq, Eq, Hash, Serialize)]
 pub struct RelPath(str);
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct RelPathBuf(String);
 
 impl RelPath {
@@ -21,6 +22,7 @@ impl RelPath {
         unsafe { Self::new_unchecked("") }
     }
 
+    #[track_caller]
     pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> anyhow::Result<&Self> {
         let this = unsafe { Self::new_unchecked(s) };
         if this.0.starts_with("/")
@@ -34,6 +36,7 @@ impl RelPath {
         Ok(this)
     }
 
+    #[track_caller]
     pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Arc<Self>> {
         let path = path.to_str().context("non utf-8 path")?;
         let mut string = Cow::Borrowed(path);
@@ -215,6 +218,18 @@ impl Ord for RelPath {
     }
 }
 
+impl fmt::Debug for RelPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
+impl fmt::Debug for RelPathBuf {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&self.0, f)
+    }
+}
+
 impl RelPathBuf {
     pub fn pop(&mut self) {
         if let Some(ix) = self.0.rfind('/') {
@@ -277,15 +292,8 @@ impl From<&RelPath> for Arc<RelPath> {
     }
 }
 
-// FIXME remove this
 #[cfg(any(test, feature = "test-support"))]
-impl<'a> From<&'a str> for &'a RelPath {
-    fn from(value: &'a str) -> Self {
-        RelPath::new(value).unwrap()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
+#[track_caller]
 pub fn rel_path(path: &str) -> &RelPath {
     RelPath::new(path).unwrap()
 }

@@ -149,19 +149,27 @@ mod tests {
     #[test]
     fn test_insert_and_lookup() {
         let mut trie = RootPathTrie::<()>::new();
-        trie.insert(&TriePath::new("a/b/c".into()), (), LabelPresence::Present);
+        trie.insert(
+            &TriePath::new(rel_path("a/b/c")),
+            (),
+            LabelPresence::Present,
+        );
 
-        trie.walk(&TriePath::new("a/b/c".into()), &mut |path, nodes| {
+        trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, nodes| {
             assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
             assert_eq!(path.as_str(), "a/b/c");
             ControlFlow::Continue(())
         });
         // Now let's annotate a parent with "Known missing" node.
-        trie.insert(&TriePath::new("a".into()), (), LabelPresence::KnownAbsent);
+        trie.insert(
+            &TriePath::new(rel_path("a")),
+            (),
+            LabelPresence::KnownAbsent,
+        );
 
         // Ensure that we walk from the root to the leaf.
         let mut visited_paths = BTreeSet::new();
-        trie.walk(&TriePath::new("a/b/c".into()), &mut |path, nodes| {
+        trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, nodes| {
             if path.as_str() == "a/b/c" {
                 assert_eq!(visited_paths, BTreeSet::from_iter([rel_path("a").into()]));
                 assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
@@ -179,7 +187,7 @@ mod tests {
         // One can also pass a path whose prefix is in the tree, but not that path itself.
         let mut visited_paths = BTreeSet::new();
         trie.walk(
-            &TriePath::new("a/b/c/d/e/f/g".into()),
+            &TriePath::new(rel_path("a/b/c/d/e/f/g")),
             &mut |path, nodes| {
                 if path.as_str() == "a/b/c" {
                     assert_eq!(visited_paths, BTreeSet::from_iter([rel_path("a").into()]));
@@ -198,7 +206,7 @@ mod tests {
 
         // Test breaking from the tree-walk.
         let mut visited_paths = BTreeSet::new();
-        trie.walk(&TriePath::new("a/b/c".into()), &mut |path, nodes| {
+        trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, nodes| {
             if path.as_str() == "a" {
                 assert!(visited_paths.is_empty());
                 assert_eq!(nodes.get(&()), Some(&LabelPresence::KnownAbsent));
@@ -212,17 +220,21 @@ mod tests {
         assert_eq!(visited_paths.len(), 1);
 
         // Entry removal.
-        trie.insert(&TriePath::new("a/b".into()), (), LabelPresence::KnownAbsent);
+        trie.insert(
+            &TriePath::new(rel_path("a/b")),
+            (),
+            LabelPresence::KnownAbsent,
+        );
         let mut visited_paths = BTreeSet::new();
-        trie.walk(&TriePath::new("a/b/c".into()), &mut |path, _nodes| {
+        trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, _nodes| {
             // Assert that we only ever visit a path once.
             assert!(visited_paths.insert(path.clone()));
             ControlFlow::Continue(())
         });
         assert_eq!(visited_paths.len(), 3);
-        trie.remove(&TriePath::new("a/b".into()));
+        trie.remove(&TriePath::new(rel_path("a/b")));
         let mut visited_paths = BTreeSet::new();
-        trie.walk(&TriePath::new("a/b/c".into()), &mut |path, _nodes| {
+        trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, _nodes| {
             // Assert that we only ever visit a path once.
             assert!(visited_paths.insert(path.clone()));
             ControlFlow::Continue(())
@@ -237,10 +249,10 @@ mod tests {
     #[test]
     fn path_to_a_root_can_contain_multiple_known_nodes() {
         let mut trie = RootPathTrie::<()>::new();
-        trie.insert(&TriePath::new("a/b".into()), (), LabelPresence::Present);
-        trie.insert(&TriePath::new("a".into()), (), LabelPresence::Present);
+        trie.insert(&TriePath::new(rel_path("a/b")), (), LabelPresence::Present);
+        trie.insert(&TriePath::new(rel_path("a")), (), LabelPresence::Present);
         let mut visited_paths = BTreeSet::new();
-        trie.walk(&TriePath::new("a/b/c".into()), &mut |path, nodes| {
+        trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, nodes| {
             assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
             if path.as_str() != "a" && path.as_str() != "a/b" {
                 panic!("Unexpected path: {}", path.as_str());

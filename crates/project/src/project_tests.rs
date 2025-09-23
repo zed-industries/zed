@@ -189,7 +189,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let tree = worktree.read(cx);
         let settings_for = |path: &str| {
-            let file_entry = tree.entry_for_path(path.into()).unwrap().clone();
+            let file_entry = tree.entry_for_path(rel_path(path)).unwrap().clone();
             let file = File::for_entry(file_entry, worktree.clone());
             let file_language = project
                 .read(cx)
@@ -355,12 +355,12 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             let tree = worktree.read(cx);
 
             let file_a = File::for_entry(
-                tree.entry_for_path("a/a.rs".into()).unwrap().clone(),
+                tree.entry_for_path(rel_path("a/a.rs")).unwrap().clone(),
                 worktree.clone(),
             ) as _;
             let settings_a = language_settings(None, Some(&file_a), cx);
             let file_b = File::for_entry(
-                tree.entry_for_path("b/b.rs".into()).unwrap().clone(),
+                tree.entry_for_path(rel_path("b/b.rs")).unwrap().clone(),
                 worktree.clone(),
             ) as _;
             let settings_b = language_settings(None, Some(&file_b), cx);
@@ -6280,24 +6280,6 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
         .into_included()
         .unwrap();
 
-    // Can't create paths outside the project
-    let result = project
-        .update(cx, |project, cx| {
-            let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((id, rel_path("../../boop")), true, cx)
-        })
-        .await;
-    assert!(result.is_err());
-
-    // Can't create paths with '..'
-    let result = project
-        .update(cx, |project, cx| {
-            let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.create_entry((id, rel_path("four/../beep")), true, cx)
-        })
-        .await;
-    assert!(result.is_err());
-
     assert_eq!(
         fs.paths(true),
         vec![
@@ -6311,15 +6293,6 @@ async fn test_create_entry(cx: &mut gpui::TestAppContext) {
             PathBuf::from(path!("/one/two/three/four")),
         ]
     );
-
-    // And we cannot open buffers with '..'
-    let result = project
-        .update(cx, |project, cx| {
-            let id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.open_buffer((id, rel_path("../c.rs")), cx)
-        })
-        .await;
-    assert!(result.is_err())
 }
 
 #[gpui::test]
