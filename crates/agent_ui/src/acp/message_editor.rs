@@ -51,7 +51,7 @@ use ui::{
     ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _,
     FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
     LabelCommon, LabelSize, ParentElement, Render, SelectableButton, Styled, TextSize, TintColor,
-    Toggleable, Window, div, h_flex,
+    Toggleable, Window, div, h_flex, relative,
 };
 use util::{ResultExt, debug_panic};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
@@ -1288,18 +1288,14 @@ impl Render for MessageEditor {
             .flex_1()
             .child({
                 let settings = ThemeSettings::get_global(cx);
-                let font_size = TextSize::Default
-                    .rems(cx)
-                    .to_pixels(settings.buffer_font_size(cx));
-                let line_height = settings.buffer_line_height.value() * font_size;
 
                 let text_style = TextStyle {
                     color: cx.theme().colors().text,
                     font_family: settings.buffer_font.family.clone(),
                     font_fallbacks: settings.buffer_font.fallbacks.clone(),
                     font_features: settings.buffer_font.features.clone(),
-                    font_size: font_size.into(),
-                    line_height: line_height.into(),
+                    font_size: settings.buffer_font_size(cx).into(),
+                    line_height: relative(settings.buffer_line_height.value()),
                     ..Default::default()
                 };
 
