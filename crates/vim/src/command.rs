@@ -680,6 +680,12 @@ struct VimCommand {
     has_filename: bool,
 }
 
+struct ParsedQuery {
+    args: String,
+    has_bang: bool,
+    has_space: bool,
+}
+
 impl VimCommand {
     fn new(pattern: (&'static str, &'static str), action: impl Action) -> Self {
         Self {
@@ -741,7 +747,12 @@ impl VimCommand {
         workspace: WeakEntity<Workspace>,
         cx: &mut App,
     ) -> Task<Vec<String>> {
-        let Some((args, _)) = self.get_command_args_bang(query.to_string()) else {
+        let Some(ParsedQuery {
+            args,
+            has_bang: _,
+            has_space: _,
+        }) = self.get_parsed_query(query.to_string())
+        else {
             return Task::ready(Vec::new());
         };
 
@@ -754,10 +765,10 @@ impl VimCommand {
                 .project()
                 .read(cx)
                 .visible_worktrees(cx)
-                .find_map(|worktree| Some(worktree.read(cx).abs_path().to_path_buf()))
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .next()
                 .or_else(std::env::home_dir)
                 .unwrap_or_else(|| PathBuf::from(""));
-            let path = prefix.join(&args);
 
             let path = if args.ends_with(|c| matches!(c, '\\' | '/')) {
                 prefix.join(&args)
@@ -793,7 +804,7 @@ impl VimCommand {
         })
     }
 
-    fn get_command_args_bang(&self, query: String) -> Option<(String, bool)> {
+    fn get_parsed_query(&self, query: String) -> Option<ParsedQuery> {
         let rest = query
             .strip_prefix(self.prefix)?
             .to_string()
@@ -803,6 +814,7 @@ impl VimCommand {
             .filter_map(|e| e.left())
             .collect::<String>();
         let has_bang = rest.starts_with('!');
+        let has_space = rest.starts_with("! ") || rest.starts_with(' ');
         let args = if has_bang {
             rest.strip_prefix('!')?.trim().to_string()
         } else if rest.is_empty() {
@@ -810,7 +822,11 @@ impl VimCommand {
         } else {
             rest.strip_prefix(' ')?.trim().to_string()
         };
-        Some((args, has_bang))
+        Some(ParsedQuery {
+            args,
+            has_bang,
+            has_space,
+        })
     }
 
     fn parse(
@@ -819,7 +835,11 @@ impl VimCommand {
         range: &Option<CommandRange>,
         cx: &App,
     ) -> Option<Box<dyn Action>> {
-        let (args, has_bang) = self.get_command_args_bang(query.to_string())?;
+        let ParsedQuery {
+            args,
+            has_bang,
+            has_space: _,
+        } = self.get_parsed_query(query.to_string())?;
         let action = if has_bang && self.bang_action.is_some() {
             self.bang_action.as_ref().unwrap().boxed_clone()
         } else if let Some(action) = self.action.as_ref() {
@@ -1507,37 +1527,45 @@ pub fn command_interceptor(
         }]);
     }
 
-    if let Some((command, action, args, bang)) =
-        commands(cx)
-            .iter()
-            .find_map(|command: &'static VimCommand| {
-                let action = command.parse(query, &range, cx)?;
-                let (args, bang) = command.get_command_args_bang(query.into())?;
-                Some((command, action, args, bang))
-            })
+    if let Some((
+        command,
+        action,
+        ParsedQuery {
+            args,
+            has_bang,
+            has_space,
+        },
+    )) = commands(cx)
+        .iter()
+        .find_map(|command: &'static VimCommand| {
+            let action = command.parse(query, &range, cx)?;
+            let parsed_query = command.get_parsed_query(query.into())?;
+            Some((command, action, parsed_query))
+        })
     {
-        let mut display_string = ":".to_owned() + &range_prefix + command.prefix + command.suffix;
-        if query.contains('!') {
-            display_string.push('!');
-        }
+        let display_string = ":".to_owned()
+            + &range_prefix
+            + command.prefix
+            + command.suffix
+            + if has_bang { "!" } else { "" };
+        let space = if has_space { " " } else { "" };
 
-        let string = format!("{} {}", &display_string, &args);
+        let string = format!("{}{}{}", &display_string, &space, &args);
         let positions = generate_positions(&string, &(range_prefix.clone() + query));
 
         let mut results = vec![CommandInterceptResult {
             action,
             string,
-            positions: positions.clone(),
+            positions,
         }];
 
-        let no_args_positions =
-            generate_positions(&display_string, &(range_prefix.clone() + query));
+        let no_args_positions = generate_positions(&display_string, &(range_prefix + query));
 
         // The following are valid autocomplete scenarios
         // :w!filename.txt
         // :w filename.txt
         // :w[space]
-        if !command.has_filename || (!has_trailing_space && !bang && args.is_empty()) {
+        if !command.has_filename || (!has_trailing_space && !has_bang && args.is_empty()) {
             return Task::ready(results);
         }
 
@@ -1570,8 +1598,8 @@ pub fn command_interceptor(
             .await;
 
             for fuzzy::StringMatch {
-                candidate_id,
-                score,
+                candidate_id: _,
+                score: _,
                 positions,
                 string,
             } in filenames
@@ -1579,14 +1607,14 @@ pub fn command_interceptor(
                 let offset = display_string.len() + 1;
                 let mut positions: Vec<_> = positions.iter().map(|&pos| pos + offset).collect();
                 positions.splice(0..0, no_args_positions.clone());
-                let display_string = format!("{display_string} {string}");
-                let action = match cx.update(|cx| command.parse(&display_string[1..], &range, cx)) {
+                let string = format!("{display_string} {string}");
+                let action = match cx.update(|cx| command.parse(&string[1..], &range, cx)) {
                     Ok(Some(action)) => action,
                     _ => continue,
                 };
                 results.push(CommandInterceptResult {
                     action,
-                    string: display_string,
+                    string,
                     positions,
                 });
             }
