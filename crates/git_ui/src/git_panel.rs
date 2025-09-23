@@ -1425,7 +1425,6 @@ impl GitPanel {
                     self.load_last_commit_message_if_empty(cx);
                 } else {
                     telemetry::event!("Git Amended", source = "Git Panel");
-                    self.set_amend_pending(false, cx);
                     self.commit_changes(
                         CommitOptions {
                             amend: true,
@@ -1599,6 +1598,9 @@ impl GitPanel {
         });
 
         self.pending_commit = Some(task);
+        if options.amend {
+            self.set_amend_pending(false, cx);
+        }
     }
 
     pub(crate) fn uncommit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -3445,7 +3447,6 @@ impl GitPanel {
                         telemetry::event!("Git Committed", source = "Git Panel");
                         git_panel
                             .update(cx, |git_panel, cx| {
-                                git_panel.set_amend_pending(false, cx);
                                 git_panel.commit_changes(
                                     CommitOptions { amend, signoff },
                                     window,
