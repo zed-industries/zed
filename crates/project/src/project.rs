@@ -5391,6 +5391,10 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         }
     }
 
+    fn root_is_file(&self) -> bool {
+        self.snapshot.root_entry().is_some_and(|f| f.is_file())
+    }
+
     fn path_style(&self) -> PathStyle {
         self.snapshot.path_style()
     }

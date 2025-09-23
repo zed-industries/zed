@@ -1015,7 +1015,9 @@ impl FileFinderDelegate {
                         .worktree_for_id(worktree_id, cx)
                         .filter(|worktree| worktree.read(cx).is_visible());
 
-                    if let Some(worktree) = worktree {
+                    if let Some(panel_match) = panel_match {
+                        self.labels_for_path_match(&panel_match.0, path_style)
+                    } else if let Some(worktree) = worktree {
                         let full_path =
                             worktree.read(cx).root_name().join(&entry_path.project.path);
                         let mut components = full_path.components();
@@ -1032,10 +1034,10 @@ impl FileFinderDelegate {
                             entry_path
                                 .absolute
                                 .file_name()
-                                .map_or(String::new(), |f| f.to_string_lossy().to_string()),
+                                .map_or(String::new(), |f| f.to_string_lossy().into_owned()),
                             Vec::new(),
                             entry_path.absolute.parent().map_or(String::new(), |path| {
-                                path.to_string_lossy().to_string() + path_style.separator()
+                                path.to_string_lossy().into_owned() + path_style.separator()
                             }),
                             Vec::new(),
                         )

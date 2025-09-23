@@ -40,6 +40,7 @@ pub trait PathMatchCandidateSet<'a>: Send + Sync {
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    fn root_is_file(&self) -> bool;
     fn prefix(&self) -> Arc<RelPath>;
     fn candidates(&'a self, start: usize) -> Self::Candidates;
     fn path_style(&self) -> PathStyle;
@@ -169,12 +170,11 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             let candidates = candidate_set.candidates(start).take(end - start);
 
                             let worktree_id = candidate_set.id();
-                            let prefix = candidate_set
-                                .prefix()
-                                .as_str()
-                                .chars()
-                                .chain(candidate_set.path_style().separator().chars())
-                                .collect::<Vec<_>>();
+                            let mut prefix =
+                                candidate_set.prefix().as_str().chars().collect::<Vec<_>>();
+                            if !candidate_set.root_is_file() && !prefix.is_empty() {
+                                prefix.extend(candidate_set.path_style().separator().chars());
+                            }
                             let lowercase_prefix = prefix
                                 .iter()
                                 .map(|c| c.to_ascii_lowercase())

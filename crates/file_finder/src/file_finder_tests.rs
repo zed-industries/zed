@@ -4,7 +4,7 @@ use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrevious};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
 use util::{path, rel_path::rel_path};
@@ -1296,6 +1296,59 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
         "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
     2nd item, as the last opened, 3rd item should go next as it was opened right before."
     );
+}
+
+#[gpui::test]
+async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+    workspace.update_in(cx, |_workspace, window, cx| window.focused(cx));
+
+    open_close_queried_buffer("efir", 1, "first.rs", &workspace, cx).await;
+    let history = open_close_queried_buffer("second", 1, "second.rs", &workspace, cx).await;
+    assert_eq!(history.len(), 1);
+
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("fir");
+    picker.update_in(cx, |finder, window, cx| {
+        let matches = &finder.delegate.matches.matches;
+        assert_matches!(
+            matches.as_slice(),
+            [Match::History { .. }, Match::CreateNew { .. }]
+        );
+        assert_eq!(
+            matches[0].panel_match().unwrap().0.path.as_ref(),
+            rel_path("test/first.rs")
+        );
+        assert_eq!(matches[0].panel_match().unwrap().0.positions, &[5, 6, 7]);
+
+        let (file_label, path_label) =
+            finder
+                .delegate
+                .labels_for_match(&finder.delegate.matches.matches[0], window, cx);
+        assert_eq!(file_label.text(), "first.rs");
+        assert_eq!(file_label.highlight_indices(), &[0, 1, 2]);
+        assert_eq!(path_label.text(), "test/");
+        assert_eq!(path_label.highlight_indices(), &[] as &[usize]);
+    });
 }
 
 #[gpui::test]
