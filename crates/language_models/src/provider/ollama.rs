@@ -14,8 +14,9 @@ use language_model::{
 use menu;
 use ollama::{
     ChatMessage, ChatOptions, ChatRequest, ChatResponseDelta, OLLAMA_API_URL, OllamaFunctionCall,
-    OllamaFunctionTool, OllamaToolCall, discover_available_models, stream_chat_completion,
+    OllamaFunctionTool, OllamaToolCall, get_models, show_model, stream_chat_completion,
 };
+pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
 use std::sync::LazyLock;
@@ -28,8 +29,6 @@ use zed_env_vars::{EnvVar, env_var};
 use crate::AllLanguageModelSettings;
 use crate::api_key::ApiKeyState;
 use crate::ui::InstructionListItem;
-
-pub use ollama::AvailableModel;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
 const OLLAMA_LIBRARY_URL: &str = "https://ollama.com/library";
@@ -55,7 +54,7 @@ pub struct OllamaLanguageModelProvider {
 pub struct State {
     api_key_state: ApiKeyState,
     http_client: Arc<dyn HttpClient>,
-    fetched_models: Vec<AvailableModel>,
+    fetched_models: Vec<ollama::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
 }
 
@@ -106,7 +105,46 @@ impl State {
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let ollama_models = discover_available_models(http_client, &api_url, api_key).await?;
+            let models =
+                get_models(http_client.as_ref(), &api_url, api_key.as_deref(), None).await?;
+
+            let tasks = models
+                .into_iter()
+                // Since there is no metadata from the Ollama API
+                // indicating which models are embedding models,
+                // simply filter out models with "-embed" in their name
+                .filter(|model| !model.name.contains("-embed"))
+                .map(|model| {
+                    let http_client = Arc::clone(&http_client);
+                    let api_url = api_url.clone();
+                    let api_key = api_key.clone();
+                    async move {
+                        let name = model.name.as_str();
+                        let capabilities =
+                            show_model(http_client.as_ref(), &api_url, api_key.as_deref(), name)
+                                .await?;
+                        let ollama_model = ollama::Model::new(
+                            name,
+                            None,
+                            None,
+                            Some(capabilities.supports_tools()),
+                            Some(capabilities.supports_images()),
+                            Some(capabilities.supports_thinking()),
+                        );
+                        Ok(ollama_model)
+                    }
+                });
+
+            // Rate-limit capability fetches
+            // since there is an arbitrary number of models available
+            let mut ollama_models: Vec<_> = futures::stream::iter(tasks)
+                .buffer_unordered(5)
+                .collect::<Vec<Result<_>>>()
+                .await
+                .into_iter()
+                .collect::<Result<Vec<_>>>()?;
+
+            ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
             this.update(cx, |this, cx| {
                 this.fetched_models = ollama_models;
@@ -131,7 +169,7 @@ impl OllamaLanguageModelProvider {
         cx.set_global(GlobalOllamaLanguageModelProvider(provider));
     }
 
-    pub fn available_models_for_completion(&self, cx: &App) -> Vec<AvailableModel> {
+    pub fn available_models_for_completion(&self, cx: &App) -> Vec<ollama::Model> {
         self.state.read(cx).fetched_models.clone()
     }
 
@@ -231,7 +269,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: HashMap<String, AvailableModel> = HashMap::new();
+        let mut models: HashMap<String, ollama::Model> = HashMap::new();
 
         // Add models from the Ollama API
         for model in self.state.read(cx).fetched_models.iter() {
@@ -242,7 +280,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         for model in &OllamaLanguageModelProvider::settings(cx).available_models {
             models.insert(
                 model.name.clone(),
-                AvailableModel {
+                ollama::Model {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
@@ -297,7 +335,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
 pub struct OllamaLanguageModel {
     id: LanguageModelId,
-    model: AvailableModel,
+    model: ollama::Model,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
     state: gpui::Entity<State>,
@@ -673,15 +711,13 @@ impl ConfigurationView {
         let current_url = OllamaLanguageModelProvider::api_url(cx);
         if !api_url.is_empty() && &api_url != &current_url {
             let fs = <dyn Fs>::global(cx);
-            update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, _| {
-                if let Some(settings) = settings.ollama.as_mut() {
-                    settings.api_url = Some(api_url);
-                } else {
-                    settings.ollama = Some(crate::settings::OllamaSettingsContent {
-                        api_url: Some(api_url),
-                        available_models: None,
-                    });
-                }
+            update_settings_file(fs, cx, move |settings, _| {
+                settings
+                    .language_models
+                    .get_or_insert_default()
+                    .ollama
+                    .get_or_insert_default()
+                    .api_url = Some(api_url);
             });
         }
     }
@@ -690,8 +726,12 @@ impl ConfigurationView {
         self.api_url_editor
             .update(cx, |input, cx| input.set_text("", window, cx));
         let fs = <dyn Fs>::global(cx);
-        update_settings_file::<AllLanguageModelSettings>(fs, cx, |settings, _cx| {
-            if let Some(settings) = settings.ollama.as_mut() {
+        update_settings_file(fs, cx, |settings, _cx| {
+            if let Some(settings) = settings
+                .language_models
+                .as_mut()
+                .and_then(|models| models.ollama.as_mut())
+            {
                 settings.api_url = Some(OLLAMA_API_URL.into());
             }
         });

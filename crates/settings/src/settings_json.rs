@@ -1,5 +1,5 @@
 use anyhow::Result;
-use gpui::App;
+use gpui::SharedString;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 use std::{ops::Range, sync::LazyLock};
@@ -10,15 +10,9 @@ use util::RangeExt;
 pub struct SettingsJsonSchemaParams<'a> {
     pub language_names: &'a [String],
     pub font_names: &'a [String],
+    pub theme_names: &'a [SharedString],
+    pub icon_theme_names: &'a [SharedString],
 }
-
-/// Value registered which specifies JSON schemas that are generated at runtime.
-pub struct ParameterizedJsonSchema {
-    pub add_and_get_ref:
-        fn(&mut schemars::SchemaGenerator, &SettingsJsonSchemaParams, &App) -> schemars::Schema,
-}
-
-inventory::collect!(ParameterizedJsonSchema);
 
 pub fn update_value_in_json_text<'a>(
     text: &mut String,
@@ -26,7 +20,6 @@ pub fn update_value_in_json_text<'a>(
     tab_size: usize,
     old_value: &'a Value,
     new_value: &'a Value,
-    preserved_keys: &[&str],
     edits: &mut Vec<(Range<usize>, String)>,
 ) {
     // If the old and new values are both objects, then compare them key by key,
@@ -43,7 +36,6 @@ pub fn update_value_in_json_text<'a>(
                     tab_size,
                     old_sub_value,
                     new_sub_value,
-                    preserved_keys,
                     edits,
                 );
             } else {
@@ -64,17 +56,12 @@ pub fn update_value_in_json_text<'a>(
                     tab_size,
                     &Value::Null,
                     new_sub_value,
-                    preserved_keys,
                     edits,
                 );
             }
             key_path.pop();
         }
-    } else if key_path
-        .last()
-        .is_some_and(|key| preserved_keys.contains(key))
-        || old_value != new_value
-    {
+    } else if old_value != new_value {
         let mut new_value = new_value.clone();
         if let Some(new_object) = new_value.as_object_mut() {
             new_object.retain(|_, v| !v.is_null());

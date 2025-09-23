@@ -23,7 +23,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use agent::ThreadId;
-use agent_settings::{AgentProfileId, AgentSettings, LanguageModelSelection};
+use agent_settings::{AgentProfileId, AgentSettings};
 use assistant_slash_command::SlashCommandRegistry;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
@@ -39,7 +39,7 @@ use project::agent_server_store::AgentServerCommand;
 use prompt_store::PromptBuilder;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings as _, SettingsStore};
+use settings::{LanguageModelSelection, Settings as _, SettingsStore};
 use std::any::TypeId;
 
 use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};

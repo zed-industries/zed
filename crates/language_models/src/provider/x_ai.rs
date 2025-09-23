@@ -10,8 +10,7 @@ use language_model::{
     LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter, Role,
 };
 use open_ai::ResponseStreamEvent;
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+pub use settings::XaiAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::sync::{Arc, LazyLock};
 use strum::IntoEnumIterator;
@@ -33,15 +32,6 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct XAiSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
 }
 
 pub struct XAiLanguageModelProvider {

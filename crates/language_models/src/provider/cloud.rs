@@ -19,7 +19,7 @@ use gpui::{
     AnyElement, AnyView, App, AsyncApp, Context, Entity, SemanticVersion, Subscription, Task,
 };
 use http_client::http::{HeaderMap, HeaderValue};
-use http_client::{AsyncBody, HttpClient, Method, Response, StatusCode};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Response, StatusCode};
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
@@ -32,6 +32,8 @@ use release_channel::AppVersion;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use settings::SettingsStore;
+pub use settings::ZedDotDevAvailableModel as AvailableModel;
+pub use settings::ZedDotDevAvailableProvider as AvailableProvider;
 use smol::io::{AsyncReadExt, BufReader};
 use std::pin::Pin;
 use std::str::FromStr as _;
@@ -52,42 +54,6 @@ const PROVIDER_NAME: LanguageModelProviderName = language_model::ZED_CLOUD_PROVI
 pub struct ZedDotDevSettings {
     pub available_models: Vec<AvailableModel>,
 }
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum AvailableProvider {
-    Anthropic,
-    OpenAi,
-    Google,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    /// The provider of the language model.
-    pub provider: AvailableProvider,
-    /// The model's name in the provider's API. e.g. claude-3-5-sonnet-20240620
-    pub name: String,
-    /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
-    pub display_name: Option<String>,
-    /// The size of the context window, indicating the maximum number of tokens the model can process.
-    pub max_tokens: usize,
-    /// The maximum number of output tokens allowed by the model.
-    pub max_output_tokens: Option<u64>,
-    /// The maximum number of completion tokens allowed by the model (o1-* only)
-    pub max_completion_tokens: Option<u64>,
-    /// Override this model with a different Anthropic model for tool calls.
-    pub tool_override: Option<String>,
-    /// Indicates whether this custom model supports caching.
-    pub cache_configuration: Option<LanguageModelCacheConfiguration>,
-    /// The default temperature to use for this model.
-    pub default_temperature: Option<f32>,
-    /// Any extra beta headers to provide when using the model.
-    #[serde(default)]
-    pub extra_beta_headers: Vec<String>,
-    /// The model's mode (e.g. thinking)
-    pub mode: Option<ModelMode>,
-}
-
 #[derive(Default, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ModelMode {
@@ -425,20 +391,17 @@ impl CloudLanguageModel {
         let mut refreshed_token = false;
 
         loop {
-            let request_builder = http_client::Request::builder()
+            let request = http_client::Request::builder()
                 .method(Method::POST)
-                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref());
-            let request_builder = if let Some(app_version) = app_version {
-                request_builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
-            } else {
-                request_builder
-            };
-
-            let request = request_builder
+                .uri(http_client.build_zed_llm_url("/completions", &[])?.as_ref())
+                .when_some(app_version, |builder, app_version| {
+                    builder.header(ZED_VERSION_HEADER_NAME, app_version.to_string())
+                })
                 .header("Content-Type", "application/json")
                 .header("Authorization", format!("Bearer {token}"))
                 .header(CLIENT_SUPPORTS_STATUS_MESSAGES_HEADER_NAME, "true")
                 .body(serde_json::to_string(&body)?.into())?;
+
             let mut response = http_client.send(request).await?;
             let status = response.status();
             if status.is_success() {

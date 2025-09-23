@@ -18,8 +18,10 @@ use language::{
 };
 #[cfg(test)]
 use language_model::LanguageModelProvider;
-use language_models::AllLanguageModelSettings;
-use language_models::provider::ollama::OllamaLanguageModelProvider;
+use language_models::{AllLanguageModelSettings, provider::ollama::OllamaLanguageModelProvider};
+#[cfg(test)]
+use settings::OllamaAvailableModel;
+use settings::{AllLanguageModelSettingsContent, OllamaSettingsContent};
 
 use paths;
 use project::DisableAiSettings;
@@ -1008,16 +1010,23 @@ impl EditPredictionButton {
     }
 
     fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
-        update_settings_file::<AllLanguageModelSettings>(fs, cx, move |settings, cx| {
+        update_settings_file(fs, cx, move |settings, cx| {
+            // Ensure language_models settings exist
+            if settings.language_models.is_none() {
+                settings.language_models = Some(AllLanguageModelSettingsContent::default());
+            }
+
+            let language_models = settings.language_models.as_mut().unwrap();
+
             // Ensure ollama settings exist
-            if settings.ollama.is_none() {
-                settings.ollama = Some(language_models::OllamaSettingsContent {
+            if language_models.ollama.is_none() {
+                language_models.ollama = Some(OllamaSettingsContent {
                     api_url: None,
                     available_models: Some(Vec::new()),
                 });
             }
 
-            let ollama_settings = settings.ollama.as_mut().unwrap();
+            let ollama_settings = language_models.ollama.as_mut().unwrap();
 
             // Ensure available_models exists
             if ollama_settings.available_models.is_none() {
@@ -1154,8 +1163,10 @@ async fn open_disabled_globs_setting_in_editor(
             let settings = cx.global::<SettingsStore>();
 
             // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
-            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-                file.edit_predictions
+            let edits = settings.edits_for_update(&text, |file| {
+                file.project
+                    .all_languages
+                    .edit_predictions
                     .get_or_insert_with(Default::default)
                     .disabled_globs
                     .get_or_insert_with(Vec::new);
@@ -1192,9 +1203,12 @@ async fn open_disabled_globs_setting_in_editor(
 }
 
 fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.features
-            .get_or_insert(Default::default())
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .features
+            .get_or_insert_default()
             .edit_prediction_provider = Some(provider);
     });
 }
@@ -1206,18 +1220,24 @@ fn toggle_show_edit_predictions_for_language(
 ) {
     let show_edit_predictions =
         all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.languages
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .languages
             .0
-            .entry(language.name())
+            .entry(language.name().0)
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);
     });
 }
 
 fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.features
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .features
             .get_or_insert(Default::default())
             .edit_prediction_provider = Some(EditPredictionProvider::None);
     });
@@ -1228,13 +1248,14 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
     let current_mode = settings.edit_predictions_mode();
 
     if current_mode != mode {
-        update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _cx| {
-            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
-                edit_predictions.mode = mode;
+        update_settings_file(fs, cx, move |settings, _cx| {
+            if let Some(edit_predictions) = settings.project.all_languages.edit_predictions.as_mut()
+            {
+                edit_predictions.mode = Some(mode);
             } else {
-                settings.edit_predictions =
-                    Some(language_settings::EditPredictionSettingsContent {
-                        mode,
+                settings.project.all_languages.edit_predictions =
+                    Some(settings::EditPredictionSettingsContent {
+                        mode: Some(mode),
                         ..Default::default()
                     });
             }
@@ -1822,7 +1843,15 @@ mod tests {
 
                     // Add if not already in settings (settings take precedence)
                     if !available_models.iter().any(|m| m.name == model.name) {
-                        available_models.push(available_model);
+                        available_models.push(OllamaAvailableModel {
+                            name: available_model.name,
+                            display_name: available_model.display_name,
+                            max_tokens: available_model.max_tokens,
+                            keep_alive: available_model.keep_alive,
+                            supports_tools: available_model.supports_tools,
+                            supports_images: available_model.supports_images,
+                            supports_thinking: available_model.supports_thinking,
+                        });
                     }
                 }
             }

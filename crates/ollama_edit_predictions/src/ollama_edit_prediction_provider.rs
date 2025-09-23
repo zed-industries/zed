@@ -5,8 +5,9 @@ use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, EntityId, SharedString, Subscription, Task};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use language::{Anchor, Buffer, ToOffset, ToPoint};
-use language_models::provider::ollama::{AvailableModel, OllamaLanguageModelProvider};
+use language_models::provider::ollama::OllamaLanguageModelProvider;
 use ollama::KeepAlive;
+use ollama::Model;
 use project::Project;
 use serde::{Deserialize, Serialize};
 use std::{ops::Range, path::Path, sync::Arc, time::Duration};
@@ -83,7 +84,7 @@ impl OllamaEditPredictionProvider {
         }
     }
 
-    pub fn available_models(&self, cx: &App) -> Vec<AvailableModel> {
+    pub fn available_models(&self, cx: &App) -> Vec<Model> {
         if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
             provider.read(cx).available_models_for_completion(cx)
         } else {
@@ -412,7 +413,6 @@ impl OllamaEditPredictionProvider {
             max_bytes: 4000,                            // Reasonable for Ollama context window
             min_bytes: 200,                             // Ensure we get meaningful context
             target_before_cursor_over_total_bytes: 0.7, // More context before the cursor, as opposed to after
-            include_parent_signatures: false,           // Focused, immediate syntactic context
         };
 
         // Try to get intelligent excerpt, fallback to simple extraction
@@ -420,6 +420,7 @@ impl OllamaEditPredictionProvider {
             cursor_point,
             buffer_snapshot,
             &excerpt_options,
+            None,
         ) {
             let excerpt_text = excerpt.text(buffer_snapshot);
             let cursor_offset_in_excerpt = cursor_offset.saturating_sub(excerpt.range.start);

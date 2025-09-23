@@ -222,7 +222,7 @@ impl Vim {
                 let mut count = self.search.count;
                 let direction = self.search.direction;
                 search_bar.has_active_match();
-                let new_head = new_selections.last().unwrap().start;
+                let new_head = new_selections.last()?.start;
                 let is_different_head = self
                     .search
                     .prior_selections
@@ -645,7 +645,6 @@ mod test {
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
     };
-    use editor::EditorSettings;
     use editor::{DisplayPoint, display_map::DisplayRow};
 
     use indoc::indoc;
@@ -694,7 +693,7 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = Some(false));
+            store.update_user_settings(cx, |s| s.editor.search_wrap = Some(false));
         });
 
         cx.set_state("ˇhi\nhigh\nhi\n", Mode::Normal);
@@ -815,7 +814,7 @@ mod test {
 
         // check that searching with unable search wrap
         cx.update_global(|store: &mut SettingsStore, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |s| s.search_wrap = Some(false));
+            store.update_user_settings(cx, |s| s.editor.search_wrap = Some(false));
         });
         cx.set_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
         cx.simulate_keystrokes("/ c c enter");

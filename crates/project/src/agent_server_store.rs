@@ -22,7 +22,7 @@ use rpc::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{SettingsKey, SettingsSources, SettingsStore, SettingsUi};
+use settings::{SettingsContent, SettingsStore};
 use util::{ResultExt as _, debug_panic};
 
 use crate::ProjectEnvironment;
@@ -989,47 +989,18 @@ impl ExternalAgentServer for LocalCustomAgent {
 pub const GEMINI_NAME: &'static str = "gemini";
 pub const CLAUDE_CODE_NAME: &'static str = "claude";
 
-#[derive(
-    Default, Deserialize, Serialize, Clone, JsonSchema, Debug, SettingsUi, SettingsKey, PartialEq,
-)]
-#[settings_key(key = "agent_servers")]
+#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct AllAgentServersSettings {
     pub gemini: Option<BuiltinAgentServerSettings>,
     pub claude: Option<BuiltinAgentServerSettings>,
-
-    /// Custom agent servers configured by the user
-    #[serde(flatten)]
     pub custom: HashMap<SharedString, CustomAgentServerSettings>,
 }
-
-#[derive(Default, Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
 pub struct BuiltinAgentServerSettings {
-    /// Absolute path to a binary to be used when launching this agent.
-    ///
-    /// This can be used to run a specific binary without automatic downloads or searching `$PATH`.
-    #[serde(rename = "command")]
     pub path: Option<PathBuf>,
-    /// If a binary is specified in `command`, it will be passed these arguments.
     pub args: Option<Vec<String>>,
-    /// If a binary is specified in `command`, it will be passed these environment variables.
     pub env: Option<HashMap<String, String>>,
-    /// Whether to skip searching `$PATH` for an agent server binary when
-    /// launching this agent.
-    ///
-    /// This has no effect if a `command` is specified. Otherwise, when this is
-    /// `false`, Zed will search `$PATH` for an agent server binary and, if one
-    /// is found, use it for threads with this agent. If no agent binary is
-    /// found on `$PATH`, Zed will automatically install and use its own binary.
-    /// When this is `true`, Zed will not search `$PATH`, and will always use
-    /// its own binary.
-    ///
-    /// Default: true
     pub ignore_system_version: Option<bool>,
-    /// The default mode to use for this agent.
-    ///
-    /// Note: Not only all agents support modes.
-    ///
-    /// Default: None
     pub default_mode: Option<String>,
 }
 
@@ -1040,6 +1011,18 @@ impl BuiltinAgentServerSettings {
             args: self.args.unwrap_or_default(),
             env: self.env,
         })
+    }
+}
+
+impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
+    fn from(value: settings::BuiltinAgentServerSettings) -> Self {
+        BuiltinAgentServerSettings {
+            path: value.path,
+            args: value.args,
+            env: value.env,
+            ignore_system_version: value.ignore_system_version,
+            default_mode: value.default_mode,
+        }
     }
 }
 
@@ -1054,9 +1037,8 @@ impl From<AgentServerCommand> for BuiltinAgentServerSettings {
     }
 }
 
-#[derive(Deserialize, Serialize, Clone, JsonSchema, Debug, PartialEq)]
+#[derive(Clone, JsonSchema, Debug, PartialEq)]
 pub struct CustomAgentServerSettings {
-    #[serde(flatten)]
     pub command: AgentServerCommand,
     /// The default mode to use for this agent.
     ///
@@ -1066,36 +1048,32 @@ pub struct CustomAgentServerSettings {
     pub default_mode: Option<String>,
 }
 
-impl settings::Settings for AllAgentServersSettings {
-    type FileContent = Self;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let mut settings = AllAgentServersSettings::default();
-
-        for AllAgentServersSettings {
-            gemini,
-            claude,
-            custom,
-        } in sources.defaults_and_customizations()
-        {
-            if gemini.is_some() {
-                settings.gemini = gemini.clone();
-            }
-            if claude.is_some() {
-                settings.claude = claude.clone();
-            }
-
-            // Merge custom agents
-            for (name, config) in custom {
-                // Skip built-in agent names to avoid conflicts
-                if name != GEMINI_NAME && name != CLAUDE_CODE_NAME {
-                    settings.custom.insert(name.clone(), config.clone());
-                }
-            }
+impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
+    fn from(value: settings::CustomAgentServerSettings) -> Self {
+        CustomAgentServerSettings {
+            command: AgentServerCommand {
+                path: value.path,
+                args: value.args,
+                env: value.env,
+            },
+            default_mode: value.default_mode,
         }
+    }
+}
 
-        Ok(settings)
+impl settings::Settings for AllAgentServersSettings {
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let agent_settings = content.agent_servers.clone().unwrap();
+        Self {
+            gemini: agent_settings.gemini.map(Into::into),
+            claude: agent_settings.claude.map(Into::into),
+            custom: agent_settings
+                .custom
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+        }
     }
 
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
+    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut SettingsContent) {}
 }

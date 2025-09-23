@@ -6,8 +6,7 @@ use gpui::{AnyWindowHandle, App, AppContext as _, Context, Entity, WeakEntity};
 
 use language::language_settings::{EditPredictionProvider, all_language_settings};
 use language_model::LanguageModelProvider;
-use language_models::AllLanguageModelSettings;
-use language_models::provider::ollama::OllamaLanguageModelProvider;
+use language_models::{AllLanguageModelSettings, provider::ollama::OllamaLanguageModelProvider};
 use ollama;
 use ollama_edit_predictions::OllamaEditPredictionProvider;
 use settings::{Settings as _, SettingsStore};
@@ -253,21 +252,43 @@ fn assign_edit_prediction_provider(
                     }
                 }
 
-                let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
-
-                if let Some(buffer) = &singleton_buffer
-                    && buffer.read(cx).file().is_some()
-                    && let Some(project) = editor.project()
-                {
-                    zeta.update(cx, |zeta, cx| {
-                        zeta.register_buffer(buffer, project, cx);
+                if std::env::var("ZED_ZETA2").is_ok() {
+                    let zeta = zeta2::Zeta::global(client, &user_store, cx);
+                    let provider = cx.new(|cx| {
+                        zeta2::ZetaEditPredictionProvider::new(
+                            editor.project(),
+                            &client,
+                            &user_store,
+                            cx,
+                        )
                     });
+
+                    if let Some(buffer) = &singleton_buffer
+                        && buffer.read(cx).file().is_some()
+                        && let Some(project) = editor.project()
+                    {
+                        zeta.update(cx, |zeta, cx| {
+                            zeta.register_buffer(buffer, project, cx);
+                        });
+                    }
+
+                    editor.set_edit_prediction_provider(Some(provider), window, cx);
+                } else {
+                    let zeta = zeta::Zeta::register(worktree, client.clone(), user_store, cx);
+
+                    if let Some(buffer) = &singleton_buffer
+                        && buffer.read(cx).file().is_some()
+                        && let Some(project) = editor.project()
+                    {
+                        zeta.update(cx, |zeta, cx| {
+                            zeta.register_buffer(buffer, project, cx);
+                        });
+                    }
+
+                    let provider =
+                        cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, singleton_buffer));
+                    editor.set_edit_prediction_provider(Some(provider), window, cx);
                 }
-
-                let provider =
-                    cx.new(|_| zeta::ZetaEditPredictionProvider::new(zeta, singleton_buffer));
-
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
             }
         }
         EditPredictionProvider::Ollama => {
@@ -313,10 +334,10 @@ mod tests {
     use super::*;
     use crate::zed::tests::init_test;
     use editor::{Editor, MultiBuffer};
+    use fs::Fs;
     use gpui::TestAppContext;
     use language::Buffer;
-
-    use language_models::{AllLanguageModelSettings, provider::ollama::OllamaSettings};
+    use settings::{OllamaAvailableModel, update_settings_file};
 
     #[gpui::test]
     async fn test_assign_edit_prediction_provider_with_no_ollama_models(cx: &mut TestAppContext) {
@@ -328,15 +349,20 @@ mod tests {
             cx.add_window_view(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
 
         // Override settings to have empty available_models
-        cx.update(|_, cx| {
-            let new_settings = AllLanguageModelSettings {
-                ollama: OllamaSettings {
-                    api_url: "http://localhost:11434".to_string(),
-                    available_models: vec![], // Empty models list
-                },
-                ..Default::default()
-            };
-            AllLanguageModelSettings::override_global(new_settings, cx);
+        cx.update(|_window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            update_settings_file(fs, cx, |settings, _cx| {
+                if settings.language_models.is_none() {
+                    settings.language_models = Some(Default::default());
+                }
+                let language_models = settings.language_models.as_mut().unwrap();
+                if language_models.ollama.is_none() {
+                    language_models.ollama = Some(Default::default());
+                }
+                let ollama_settings = language_models.ollama.as_mut().unwrap();
+                ollama_settings.api_url = Some("http://localhost:11434".to_string());
+                ollama_settings.available_models = Some(vec![]); // Empty models list
+            });
         });
 
         // Call assign_edit_prediction_provider with Ollama provider
@@ -394,22 +420,28 @@ mod tests {
         let updated_model = "codellama:7b-code".to_string();
 
         cx.update(|cx| {
-            let initial_settings = AllLanguageModelSettings {
-                ollama: OllamaSettings {
-                    api_url: "http://localhost:11434".to_string(),
-                    available_models: vec![ollama::AvailableModel {
-                        name: initial_model.clone(),
-                        display_name: None,
-                        max_tokens: 4096,
-                        keep_alive: None,
-                        supports_tools: None,
-                        supports_images: None,
-                        supports_thinking: None,
-                    }],
-                },
-                ..Default::default()
-            };
-            AllLanguageModelSettings::override_global(initial_settings, cx);
+            let fs = <dyn Fs>::global(cx);
+            let initial_model_clone = initial_model.clone();
+            update_settings_file(fs, cx, |settings, _cx| {
+                if settings.language_models.is_none() {
+                    settings.language_models = Some(Default::default());
+                }
+                let language_models = settings.language_models.as_mut().unwrap();
+                if language_models.ollama.is_none() {
+                    language_models.ollama = Some(Default::default());
+                }
+                let ollama_settings = language_models.ollama.as_mut().unwrap();
+                ollama_settings.api_url = Some("http://localhost:11434".to_string());
+                ollama_settings.available_models = Some(vec![OllamaAvailableModel {
+                    name: initial_model_clone,
+                    display_name: None,
+                    max_tokens: 4096,
+                    keep_alive: None,
+                    supports_tools: None,
+                    supports_images: None,
+                    supports_thinking: None,
+                }]);
+            });
 
             // Also set the edit prediction provider to Ollama
             let mut language_settings =
@@ -456,23 +488,29 @@ mod tests {
         });
 
         // Change settings to use a different model
-        visual_cx.update(|_, cx| {
-            let updated_settings = AllLanguageModelSettings {
-                ollama: OllamaSettings {
-                    api_url: "http://localhost:11434".to_string(),
-                    available_models: vec![ollama::AvailableModel {
-                        name: updated_model.clone(),
-                        display_name: None,
-                        max_tokens: 4096,
-                        keep_alive: None,
-                        supports_tools: None,
-                        supports_images: None,
-                        supports_thinking: None,
-                    }],
-                },
-                ..Default::default()
-            };
-            AllLanguageModelSettings::override_global(updated_settings, cx);
+        visual_cx.update(|_window, cx| {
+            let fs = <dyn Fs>::global(cx);
+            let updated_model_clone = updated_model.clone();
+            update_settings_file(fs, cx, |settings, _cx| {
+                if settings.language_models.is_none() {
+                    settings.language_models = Some(Default::default());
+                }
+                let language_models = settings.language_models.as_mut().unwrap();
+                if language_models.ollama.is_none() {
+                    language_models.ollama = Some(Default::default());
+                }
+                let ollama_settings = language_models.ollama.as_mut().unwrap();
+                ollama_settings.api_url = Some("http://localhost:11434".to_string());
+                ollama_settings.available_models = Some(vec![OllamaAvailableModel {
+                    name: updated_model_clone,
+                    display_name: None,
+                    max_tokens: 4096,
+                    keep_alive: None,
+                    supports_tools: None,
+                    supports_images: None,
+                    supports_thinking: None,
+                }]);
+            });
         });
 
         // Allow the settings change observer to run

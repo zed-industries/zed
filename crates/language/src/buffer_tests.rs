@@ -1,8 +1,5 @@
 use super::*;
 use crate::Buffer;
-use crate::language_settings::{
-    AllLanguageSettings, AllLanguageSettingsContent, LanguageSettingsContent,
-};
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
@@ -13,6 +10,7 @@ use proto::deserialize_operation;
 use rand::prelude::*;
 use regex::RegexBuilder;
 use settings::SettingsStore;
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 use std::collections::BTreeSet;
 use std::{
     env,
@@ -271,15 +269,15 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
     cx.update(|cx| {
         init_settings(cx, |settings| {
             settings.file_types.extend([
-                ("TypeScript".into(), vec!["js".into()]),
+                ("TypeScript".into(), vec!["js".into()].into()),
                 (
                     "JavaScript".into(),
-                    vec!["*longer.ts".into(), "ecmascript".into()],
+                    vec!["*longer.ts".into(), "ecmascript".into()].into(),
                 ),
-                ("C++".into(), vec!["c".into(), "*.dev".into()]),
+                ("C++".into(), vec!["c".into(), "*.dev".into()].into()),
                 (
                     "Dockerfile".into(),
-                    vec!["Dockerfile".into(), "Dockerfile.*".into()],
+                    vec!["Dockerfile".into(), "Dockerfile.*".into()].into(),
                 ),
             ]);
         })
@@ -1054,6 +1052,21 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
             })
             .collect()
     }
+
+    let (text, offsets) = marked_text_offsets(
+        &"
+        // ˇ😅 //
+        fn test() {
+        }
+    "
+        .unindent(),
+    );
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    // note, it would be nice to actually return the method test in this
+    // case, but primarily asserting we don't crash because of the multibyte character.
+    assert_eq!(snapshot.symbols_containing(offsets[0], None), vec![]);
 }
 
 #[gpui::test]
@@ -3849,7 +3862,7 @@ fn init_settings(cx: &mut App, f: fn(&mut AllLanguageSettingsContent)) {
     cx.set_global(settings_store);
     crate::init(cx);
     cx.update_global::<SettingsStore, _>(|settings, cx| {
-        settings.update_user_settings::<AllLanguageSettings>(cx, f);
+        settings.update_user_settings(cx, |content| f(&mut content.project.all_languages));
     });
 }
 

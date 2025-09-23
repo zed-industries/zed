@@ -1,39 +1,17 @@
 use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use http_client::http::HeaderValue;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{sync::Arc, time::Duration};
+pub use settings::KeepAlive;
+use std::time::Duration;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(untagged)]
-pub enum KeepAlive {
-    /// Keep model alive for N seconds
-    Seconds(isize),
-    /// Keep model alive for a fixed duration. Accepts durations like "5m", "10m", "1h", "1d", etc.
-    Duration(String),
-}
-
-impl KeepAlive {
-    /// Keep model alive until a new model is loaded or until Ollama shuts down
-    fn indefinite() -> Self {
-        Self::Seconds(-1)
-    }
-}
-
-impl Default for KeepAlive {
-    fn default() -> Self {
-        Self::indefinite()
-    }
-}
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct AvailableModel {
-    /// The model name in the Ollama API (e.g. "llama3.2:latest")
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Model {
     pub name: String,
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
@@ -71,7 +49,7 @@ fn get_max_tokens(name: &str) -> u64 {
     .clamp(1, MAXIMUM_TOKENS)
 }
 
-impl AvailableModel {
+impl Model {
     pub fn new(
         name: &str,
         display_name: Option<&str>,
@@ -294,16 +272,15 @@ pub async fn stream_chat_completion(
     request: ChatRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    let mut request_builder = http::Request::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json");
+        .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
 
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
-    }
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -333,16 +310,14 @@ pub async fn get_models(
     _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
-    let mut request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
-        .header("Accept", "application/json");
-
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"));
-    }
-
-    let request = request_builder.body(AsyncBody::default())?;
+        .header("Accept", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::default())?;
 
     let mut response = client.send(request).await?;
 
@@ -368,18 +343,16 @@ pub async fn show_model(
     model: &str,
 ) -> Result<ModelShow> {
     let uri = format!("{api_url}/api/show");
-    let mut request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json");
-
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"));
-    }
-
-    let request = request_builder.body(AsyncBody::from(
-        serde_json::json!({ "model": model }).to_string(),
-    ))?;
+        .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::from(
+            serde_json::json!({ "model": model }).to_string(),
+        ))?;
 
     let mut response = client.send(request).await?;
     let mut body = String::new();
@@ -393,49 +366,6 @@ pub async fn show_model(
     );
     let details: ModelShow = serde_json::from_str(body.as_str())?;
     Ok(details)
-}
-
-/// Discover available models from the Ollama API with their capabilities
-pub async fn discover_available_models(
-    client: Arc<dyn HttpClient>,
-    api_url: &str,
-    api_key: Option<Arc<str>>,
-) -> Result<Vec<AvailableModel>> {
-    let models = get_models(client.as_ref(), api_url, api_key.as_deref(), None).await?;
-
-    let tasks = models
-        .into_iter()
-        // Since there is no metadata from the Ollama API
-        // indicating which models are embedding models,
-        // simply filter out models with "-embed" in their name
-        .filter(|model| !model.name.contains("-embed"))
-        .map(|model| {
-            let client = client.clone();
-            let api_key = api_key.clone();
-            let api_url = api_url.to_string();
-            async move {
-                let capabilities =
-                    show_model(client.as_ref(), &api_url, api_key.as_deref(), &model.name).await?;
-                Ok(AvailableModel::new(
-                    &model.name,
-                    None,
-                    None,
-                    Some(capabilities.supports_tools()),
-                    Some(capabilities.supports_images()),
-                    Some(capabilities.supports_thinking()),
-                ))
-            }
-        });
-
-    let mut available_models: Vec<_> = futures::stream::iter(tasks)
-        .buffer_unordered(5)
-        .collect::<Vec<Result<_>>>()
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>>>()?;
-
-    available_models.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(available_models)
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -499,7 +429,7 @@ pub mod fake {
             "FakeHttpClient"
         }
 
-        fn user_agent(&self) -> Option<&http::HeaderValue> {
+        fn user_agent(&self) -> Option<&HeaderValue> {
             None
         }
 
@@ -763,110 +693,5 @@ mod tests {
         let message_images = parsed["messages"][0]["images"].as_array().unwrap();
         assert_eq!(message_images.len(), 1);
         assert_eq!(message_images[0].as_str().unwrap(), base64_image);
-    }
-
-    #[test]
-    fn test_discover_available_models() {
-        use crate::fake::FakeHttpClient;
-        use std::sync::Arc;
-
-        let fake_http_client = Arc::new(FakeHttpClient::new());
-
-        // Mock /api/tags response (list models)
-        let models_response = serde_json::json!({
-            "models": [
-                {
-                    "name": "qwen2.5-coder:3b",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 1000000,
-                    "digest": "abc123",
-                    "details": {
-                        "format": "gguf",
-                        "family": "qwen2",
-                        "families": ["qwen2"],
-                        "parameter_size": "3B",
-                        "quantization_level": "Q4_0"
-                    }
-                },
-                {
-                    "name": "codellama:7b-code",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 2000000,
-                    "digest": "def456",
-                    "details": {
-                        "format": "gguf",
-                        "family": "codellama",
-                        "families": ["codellama"],
-                        "parameter_size": "7B",
-                        "quantization_level": "Q4_0"
-                    }
-                },
-                {
-                    "name": "nomic-embed-text",
-                    "modified_at": "2024-01-01T00:00:00Z",
-                    "size": 500000,
-                    "digest": "ghi789",
-                    "details": {
-                        "format": "gguf",
-                        "family": "nomic-embed",
-                        "families": ["nomic-embed"],
-                        "parameter_size": "137M",
-                        "quantization_level": "Q4_0"
-                    }
-                }
-            ]
-        });
-
-        fake_http_client.set_response("/api/tags", models_response.to_string());
-
-        // Mock /api/show responses for model capabilities
-        let capabilities_response = serde_json::json!({
-            "capabilities": ["tools", "thinking"]
-        });
-        fake_http_client.set_response("/api/show", capabilities_response.to_string());
-
-        // Test the shared discover_available_models function
-        let models = futures::executor::block_on(discover_available_models(
-            fake_http_client,
-            "http://localhost:11434",
-            None,
-        ))
-        .unwrap();
-
-        // Should have 2 models (excluding the embedding model)
-        assert_eq!(models.len(), 2);
-
-        let model_names: Vec<&str> = models.iter().map(|m| m.name.as_str()).collect();
-        assert!(model_names.contains(&"codellama:7b-code"));
-        assert!(model_names.contains(&"qwen2.5-coder:3b"));
-        assert!(!model_names.contains(&"nomic-embed-text"));
-
-        // Verify models are sorted alphabetically
-        assert_eq!(models[0].name, "codellama:7b-code");
-        assert_eq!(models[1].name, "qwen2.5-coder:3b");
-
-        // Verify capabilities were detected
-        assert_eq!(models[0].supports_tools, Some(true));
-        assert_eq!(models[0].supports_thinking, Some(true));
-        assert_eq!(models[1].supports_tools, Some(true));
-        assert_eq!(models[1].supports_thinking, Some(true));
-    }
-
-    #[test]
-    fn test_discover_available_models_api_failure() {
-        use crate::fake::FakeHttpClient;
-        use std::sync::Arc;
-
-        let fake_http_client = Arc::new(FakeHttpClient::new());
-        fake_http_client.set_error("Connection refused");
-
-        // Test that API failure is properly handled
-        let result = futures::executor::block_on(discover_available_models(
-            fake_http_client,
-            "http://localhost:11434",
-            None,
-        ));
-
-        assert!(result.is_err());
     }
 }

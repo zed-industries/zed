@@ -549,6 +549,7 @@ pub fn main() {
         language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
         agent_settings::init(cx);
         acp_tools::init(cx);
+        edit_prediction_tools::init(cx);
         web_search::init(cx);
         web_search_providers::init(app_state.client.clone(), cx);
         snippet_provider::init(cx);
@@ -614,7 +615,6 @@ pub fn main() {
         markdown_preview::init(cx);
         svg_preview::init(cx);
         onboarding::init(cx);
-        settings_ui::init(cx);
         keymap_editor::init(cx);
         extensions_ui::init(cx);
         zeta::init(cx);
