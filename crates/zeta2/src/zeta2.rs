@@ -900,13 +900,13 @@ fn make_cloud_request(
 
     for snippet in context.snippets {
         let project_entry_id = snippet.declaration.project_entry_id();
-        // TODO: Use full paths (worktree rooted) - need to move full_path method to the snapshot.
-        // Note that currently full_path is currently being used for excerpt_path.
         let Some(path) = worktrees.iter().find_map(|worktree| {
-            let abs_path = worktree.abs_path();
-            worktree
-                .entry_for_id(project_entry_id)
-                .map(|e| abs_path.join(&e.path))
+            worktree.entry_for_id(project_entry_id).map(|entry| {
+                let mut full_path = PathBuf::new();
+                full_path.push(worktree.root_name());
+                full_path.push(&entry.path);
+                full_path
+            })
         }) else {
             continue;
         };
