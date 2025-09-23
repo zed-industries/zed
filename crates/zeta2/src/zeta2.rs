@@ -15,8 +15,8 @@ use futures::AsyncReadExt as _;
 use futures::channel::mpsc;
 use gpui::http_client::Method;
 use gpui::{
-    App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, http_client,
-    prelude::*,
+    App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
+    http_client, prelude::*,
 };
 use language::{Anchor, Buffer, OffsetRangeExt as _, ToPoint};
 use language::{BufferSnapshot, EditPreview};
@@ -59,6 +59,8 @@ pub struct PredictionDebugInfo {
     pub context: EditPredictionContext,
     pub retrieval_time: TimeDelta,
     pub request: RequestDebugInfo,
+    pub buffer: WeakEntity<Buffer>,
+    pub position: language::Anchor,
 }
 
 pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
@@ -299,6 +301,7 @@ impl Zeta {
 
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
+            let buffer = buffer.clone();
             async move {
                 let index_state = if let Some(index_state) = index_state {
                     Some(index_state.lock_owned().await)
@@ -354,6 +357,8 @@ impl Zeta {
                                     context,
                                     request,
                                     retrieval_time,
+                                    buffer: buffer.downgrade(),
+                                    position,
                                 })
                             },
                         ))

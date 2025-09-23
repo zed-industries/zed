@@ -9,16 +9,13 @@ use std::{
 use chrono::TimeDelta;
 use client::{Client, UserStore};
 use collections::HashMap;
-use editor::{
-    Editor, EditorElement, EditorEvent, EditorMode, EditorStyle, ExcerptRange, MultiBuffer,
-};
+use editor::{Editor, EditorEvent, EditorMode, ExcerptRange, MultiBuffer};
 use futures::StreamExt as _;
 use gpui::{
-    BorderStyle, EdgesRefinement, Entity, EventEmitter, FocusHandle, Focusable, Length,
-    StyleRefinement, Subscription, Task, TextStyleRefinement, UnderlineStyle, actions, prelude::*,
+    Entity, EventEmitter, FocusHandle, Focusable, Subscription, Task, WeakEntity, actions,
+    prelude::*,
 };
 use language::{Buffer, DiskState};
-use markdown::{HeadingLevelStyles, MarkdownStyle};
 use project::{Project, WorktreeId};
 use ui::prelude::*;
 use ui_input::SingleLineInput;
@@ -62,7 +59,7 @@ pub fn init(cx: &mut App) {
 pub struct Zeta2Inspector {
     focus_handle: FocusHandle,
     project: Entity<Project>,
-    last_prediction: Option<Result<LastPredictionState, SharedString>>,
+    last_prediction: Option<LastPredictionState>,
     max_bytes_input: Entity<SingleLineInput>,
     min_bytes_input: Entity<SingleLineInput>,
     cursor_context_ratio_input: Entity<SingleLineInput>,
@@ -79,7 +76,13 @@ enum ActiveView {
     Inference,
 }
 
-struct LastPredictionState {
+enum LastPredictionState {
+    Failed(SharedString),
+    Success(LastPrediction),
+    Replaying(LastPrediction),
+}
+
+struct LastPrediction {
     context_editor: Entity<Editor>,
     retrieval_time: TimeDelta,
     prompt_planning_time: TimeDelta,
@@ -87,6 +90,8 @@ struct LastPredictionState {
     parsing_time: TimeDelta,
     prompt_editor: Entity<Editor>,
     model_response_editor: Entity<Editor>,
+    buffer: WeakEntity<Buffer>,
+    position: language::Anchor,
 }
 
 impl Zeta2Inspector {
@@ -140,11 +145,26 @@ impl Zeta2Inspector {
                         ),
                     };
 
-                    // todo! undo on drop
-                    this.zeta.update(cx, |zeta, cx| {
+                    this.zeta.update(cx, |zeta, _cx| {
                         zeta.set_options(options);
-                        // todo! replay request
                     });
+
+                    if let Some(LastPredictionState::Success(state)) = this.last_prediction.take() {
+                        if let Some(buffer) = state.buffer.upgrade() {
+                            let position = state.position;
+                            this.last_prediction = Some(LastPredictionState::Replaying(state));
+                            this.zeta
+                                .update(cx, |zeta, cx| {
+                                    zeta.request_prediction(&this.project, &buffer, position, cx)
+                                })
+                                .detach();
+                        } else {
+                            this.last_prediction =
+                                Some(LastPredictionState::Failed("Buffer dropped".into()));
+                        }
+                    }
+
+                    cx.notify();
                 },
             )
             .detach();
@@ -160,7 +180,7 @@ impl Zeta2Inspector {
                         this.update_last_prediction(prediction, window, cx);
                     }
                     Err(err) => {
-                        this.last_prediction = Some(Err(err.into()));
+                        this.last_prediction = Some(LastPredictionState::Failed(err.into()));
                         cx.notify();
                     }
                 })
@@ -173,6 +193,7 @@ impl Zeta2Inspector {
             project: project.clone(),
             last_prediction: None,
             active_view: ActiveView::Context,
+            // todo! load these from zeta
             max_bytes_input: number_input("Max Bytes", "512", window, cx),
             min_bytes_input: number_input("Min Bytes", "128", window, cx),
             cursor_context_ratio_input: number_input("Cursor Context Ratio", "0.5", window, cx),
@@ -297,7 +318,7 @@ impl Zeta2Inspector {
                         Editor::new(EditorMode::full(), multibuffer, None, window, cx)
                     });
 
-                    this.last_prediction = Some(Ok(LastPredictionState {
+                    let last_prediction = LastPrediction {
                         context_editor,
                         prompt_editor: cx.new(|cx| {
                             let buffer = cx.new(|cx| {
@@ -334,7 +355,10 @@ impl Zeta2Inspector {
                         prompt_planning_time: prediction.request.prompt_planning_time,
                         inference_time: prediction.request.inference_time,
                         parsing_time: prediction.request.parsing_time,
-                    }));
+                        buffer: prediction.buffer,
+                        position: prediction.position,
+                    };
+                    this.last_prediction = Some(LastPredictionState::Success(last_prediction));
                     cx.notify();
                 })
                 .ok();
@@ -354,6 +378,38 @@ impl Zeta2Inspector {
                 })
                 .size(LabelSize::Small),
             )
+    }
+
+    fn render_last_prediction(&self, prediction: &LastPrediction, cx: &mut Context<Self>) -> Div {
+        match &self.active_view {
+            ActiveView::Context => div().size_full().child(prediction.context_editor.clone()),
+            ActiveView::Inference => h_flex()
+                .items_start()
+                .w_full()
+                .flex_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .bg(cx.theme().colors().editor_background)
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .gap_2()
+                        .p_4()
+                        .h_full()
+                        .child(ui::Headline::new("Prompt").size(ui::HeadlineSize::XSmall))
+                        .child(prediction.prompt_editor.clone()),
+                )
+                .child(ui::vertical_divider())
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .gap_2()
+                        .h_full()
+                        .p_4()
+                        .child(ui::Headline::new("Model Response").size(ui::HeadlineSize::XSmall))
+                        .child(prediction.model_response_editor.clone()),
+                ),
+        }
     }
 }
 
@@ -380,42 +436,16 @@ impl Render for Zeta2Inspector {
                 .size_full()
                 .justify_center()
                 .items_center()
-                .child(Label::new("No predictions requested yet").size(LabelSize::Large))
+                .child(Label::new("No prediction").size(LabelSize::Large))
                 .into_any(),
-            Some(Ok(state)) => match &self.active_view {
-                ActiveView::Context => state.context_editor.clone().into_any_element(),
-                ActiveView::Inference => h_flex()
-                    .items_start()
-                    .w_full()
-                    .flex_1()
-                    .border_t_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().editor_background)
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .gap_2()
-                            .p_4()
-                            .h_full()
-                            .child(ui::Headline::new("Prompt").size(ui::HeadlineSize::XSmall))
-                            .child(state.prompt_editor.clone()),
-                    )
-                    .child(ui::vertical_divider())
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .gap_2()
-                            .h_full()
-                            .p_4()
-                            .child(
-                                ui::Headline::new("Model Response").size(ui::HeadlineSize::XSmall),
-                            )
-                            .child(state.model_response_editor.clone()),
-                    )
-                    .into_any(),
-            },
-
-            Some(Err(err)) => v_flex()
+            Some(LastPredictionState::Success(prediction)) => {
+                self.render_last_prediction(prediction, cx).into_any()
+            }
+            Some(LastPredictionState::Replaying(prediction)) => self
+                .render_last_prediction(prediction, cx)
+                .opacity(0.6)
+                .into_any(),
+            Some(LastPredictionState::Failed(err)) => v_flex()
                 .p_4()
                 .gap_2()
                 .child(Label::new(err.clone()).buffer_font(cx))
@@ -448,9 +478,12 @@ impl Render for Zeta2Inspector {
                                             .child(self.cursor_context_ratio_input.clone()),
                                     ),
                             )
-                            .when(
-                                self.last_prediction.as_ref().is_some_and(|r| r.is_ok()),
-                                |this| {
+                            .map(|this| {
+                                if let Some(
+                                    LastPredictionState::Success { .. }
+                                    | LastPredictionState::Replaying { .. },
+                                ) = self.last_prediction.as_ref()
+                                {
                                     this.child(
                                         ui::ToggleButtonGroup::single_row(
                                             "prediction",
@@ -480,13 +513,18 @@ impl Render for Zeta2Inspector {
                                             },
                                         ),
                                     )
-                                },
-                            ),
+                                } else {
+                                    this
+                                }
+                            }),
                     )
                     .child(ui::vertical_divider())
-                    .when_some(
-                        self.last_prediction.as_ref().and_then(|r| r.as_ref().ok()),
-                        |this, last_prediction| {
+                    .map(|this| {
+                        if let Some(
+                            LastPredictionState::Success(prediction)
+                            | LastPredictionState::Replaying(prediction),
+                        ) = self.last_prediction.as_ref()
+                        {
                             this.child(
                                 v_flex()
                                     .p_4()
@@ -495,23 +533,25 @@ impl Render for Zeta2Inspector {
                                     .child(Headline::new("Stats").size(HeadlineSize::Small))
                                     .child(Self::render_duration(
                                         "Context retrieval",
-                                        last_prediction.retrieval_time,
+                                        prediction.retrieval_time,
                                     ))
                                     .child(Self::render_duration(
                                         "Prompt planning",
-                                        last_prediction.prompt_planning_time,
+                                        prediction.prompt_planning_time,
                                     ))
                                     .child(Self::render_duration(
                                         "Inference",
-                                        last_prediction.inference_time,
+                                        prediction.inference_time,
                                     ))
                                     .child(Self::render_duration(
                                         "Parsing",
-                                        last_prediction.parsing_time,
+                                        prediction.parsing_time,
                                     )),
                             )
-                        },
-                    ),
+                        } else {
+                            this
+                        }
+                    }),
             )
             .child(content)
     }
