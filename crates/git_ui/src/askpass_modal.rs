@@ -8,7 +8,9 @@ use ui::{
     LabelSize, ParentElement, Render, SharedString, StyledExt, StyledTypography, Window, div,
     h_flex, v_flex,
 };
+use util::maybe;
 use workspace::ModalView;
+use zeroize::Zeroize;
 
 pub(crate) struct AskPassModal {
     operation: SharedString,
@@ -54,13 +56,21 @@ impl AskPassModal {
         cx.emit(DismissEvent);
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(tx) = self.tx.take()
-            && let Ok(pw) =
-                askpass::EncryptedPassword::try_from(self.editor.read(cx).text(cx).as_ref())
-        {
-            tx.send(pw).ok();
-        }
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
+        maybe!({
+            let tx = self.tx.take()?;
+            let mut  text = self.editor.update(cx, |this, cx| {
+                let text = this.text(cx);
+                this.clear(window, cx);
+                text
+            });
+            let pw =
+                askpass::EncryptedPassword::try_from(text.as_ref()).ok()?;
+            text.zeroize();
+             tx.send(pw).ok();
+             Some(())
+        });
+
         cx.emit(DismissEvent);
     }
 

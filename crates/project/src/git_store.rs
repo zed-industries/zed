@@ -68,6 +68,7 @@ use worktree::{
     File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
     UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
 };
+use zeroize::Zeroize;
 
 pub struct GitStore {
     state: GitStoreState,
@@ -2740,10 +2741,12 @@ fn make_remote_delegate(
                 prompt,
             });
             cx.spawn(async move |_, _| {
+                let mut response = response.await?.response;
                 tx.send(EncryptedPassword::try_from(
-                    response.await?.response.as_ref(),
+                    response.as_ref(),
                 )?)
                 .ok();
+                response.zeroize();
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);

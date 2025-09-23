@@ -6976,6 +6976,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zeroize",
  "zlog",
 ]
 
@@ -13171,6 +13172,7 @@ dependencies = [
  "which 6.0.3",
  "workspace-hack",
  "worktree",
+ "zeroize",
  "zlog",
 ]
 
