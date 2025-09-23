@@ -138,7 +138,6 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
-/// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     default_settings: Rc<SettingsContent>,
