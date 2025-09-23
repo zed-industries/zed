@@ -1,5 +1,6 @@
 use super::*;
 use arrayvec::ArrayVec;
+use smallvec::SmallVec;
 use std::{cmp::Ordering, mem, sync::Arc};
 
 #[derive(Clone)]
@@ -21,7 +22,7 @@ impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
 #[derive(Clone)]
 pub struct Cursor<'a, T: Item, D> {
     tree: &'a SumTree<T>,
-    stack: ArrayVec<StackEntry<'a, T, D>, 16>,
+    stack: SmallVec<[StackEntry<'a, T, D>; 4]>,
     position: D,
     did_seek: bool,
     at_end: bool,
@@ -45,7 +46,7 @@ where
 
 pub struct Iter<'a, T: Item> {
     tree: &'a SumTree<T>,
-    stack: ArrayVec<StackEntry<'a, T, ()>, 16>,
+    stack: SmallVec<[StackEntry<'a, T, ()>; 4]>,
 }
 
 impl<'a, T, D> Cursor<'a, T, D>
@@ -56,7 +57,7 @@ where
     pub fn new(tree: &'a SumTree<T>, cx: &'a <T::Summary as Summary>::Context) -> Self {
         Self {
             tree,
-            stack: ArrayVec::new(),
+            stack: SmallVec::new(),
             position: D::zero(cx),
             did_seek: false,
             at_end: tree.is_empty(),
@@ -110,10 +111,8 @@ where
     pub fn item_summary(&self) -> Option<&'a T::Summary> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
-            match *entry.tree.0 {
-                Node::Leaf {
-                    ref item_summaries, ..
-                } => {
+            match &*entry.tree.0 {
+                Node::Leaf { item_summaries, .. } => {
                     if entry.index == item_summaries.len() {
                         None
                     } else {
@@ -138,8 +137,8 @@ where
                     None
                 }
             } else {
-                match *entry.tree.0 {
-                    Node::Leaf { ref items, .. } => Some(&items[entry.index + 1]),
+                match &*entry.tree.0 {
+                    Node::Leaf { items, .. } => Some(&items[entry.index + 1]),
                     _ => unreachable!(),
                 }
             }
@@ -154,10 +153,10 @@ where
     fn next_leaf(&self) -> Option<&'a SumTree<T>> {
         for entry in self.stack.iter().rev().skip(1) {
             if entry.index < entry.tree.0.child_trees().len() - 1 {
-                match *entry.tree.0 {
-                    Node::Internal {
-                        ref child_trees, ..
-                    } => return Some(child_trees[entry.index + 1].leftmost_leaf()),
+                match &*entry.tree.0 {
+                    Node::Internal { child_trees, .. } => {
+                        return Some(child_trees[entry.index + 1].leftmost_leaf());
+                    }
                     Node::Leaf { .. } => unreachable!(),
                 };
             }
@@ -176,8 +175,8 @@ where
                     None
                 }
             } else {
-                match *entry.tree.0 {
-                    Node::Leaf { ref items, .. } => Some(&items[entry.index - 1]),
+                match &*entry.tree.0 {
+                    Node::Leaf { items, .. } => Some(&items[entry.index - 1]),
                     _ => unreachable!(),
                 }
             }
@@ -454,10 +453,10 @@ where
 
         let mut ascending = false;
         'outer: while let Some(entry) = self.stack.last_mut() {
-            match *entry.tree.0 {
+            match &*entry.tree.0 {
                 Node::Internal {
-                    ref child_summaries,
-                    ref child_trees,
+                    child_summaries,
+                    child_trees,
                     ..
                 } => {
                     if ascending {
@@ -492,8 +491,8 @@ where
                     }
                 }
                 Node::Leaf {
-                    ref items,
-                    ref item_summaries,
+                    items,
+                    item_summaries,
                     ..
                 } => {
                     aggregate.begin_leaf();

@@ -15335,6 +15335,7 @@ dependencies = [
  "log",
  "rand 0.9.1",
  "rayon",
+ "smallvec",
  "workspace-hack",
  "zlog",
 ]
