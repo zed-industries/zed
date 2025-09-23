@@ -186,20 +186,31 @@ pub enum ContextServerSettingsContent {
         /// are supported.
         settings: serde_json::Value,
     },
+    Remote {
+        /// Whether the context server is enabled.
+        #[serde(default = "default_true")]
+        enabled: bool,
+        /// The URL of the remote context server.
+        url: String,
+    },
 }
 impl ContextServerSettingsContent {
     pub fn set_enabled(&mut self, enabled: bool) {
         match self {
             ContextServerSettingsContent::Custom {
                 enabled: custom_enabled,
-                command: _,
+                ..
             } => {
                 *custom_enabled = enabled;
             }
             ContextServerSettingsContent::Extension {
                 enabled: ext_enabled,
-                settings: _,
+                ..
             } => *ext_enabled = enabled,
+            ContextServerSettingsContent::Remote {
+                enabled: remote_enabled,
+                ..
+            } => *remote_enabled = enabled,
         }
     }
 }
