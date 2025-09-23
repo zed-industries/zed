@@ -149,13 +149,6 @@ impl Vim {
         self.move_to_match_internal(self.search.direction.opposite(), window, cx)
     }
 
-    // Option 1: Modify this action to have a toggle for selection search
-    // How does SearchOptions work?
-    // Option 2: `"s": ["buffer_search::Deploy", { "selection_search_enabled": true }]` as per dgmulf on github
-    // however he reports inconsistent behavior
-    // Option 3: Implement a new action that toggles selection search, probably in the Helix crate titled 'select_regex'
-    //
-    // Look into disabling search results when nothing is selected
     fn search(&mut self, action: &Search, window: &mut Window, cx: &mut Context<Self>) {
         let Some(pane) = self.pane(window, cx) else {
             return;
