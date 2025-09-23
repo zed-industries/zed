@@ -1,5 +1,5 @@
 //! # settings_ui
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
@@ -13,7 +13,6 @@ use ui::{
     InteractiveElement as _, Label, LabelCommon as _, LabelSize, ParentElement, SharedString,
     StatefulInteractiveElement as _, Styled, Switch, v_flex,
 };
-use workspace::Open;
 
 pub struct SettingsUiFeatureFlag;
 
@@ -98,7 +97,7 @@ impl SettingsPageItem {
             SettingsPageItem::SettingItem(setting_item) => div()
                 .child(setting_item.title)
                 .child(setting_item.description)
-                .child((setting_item.render)(window, cx))
+                .child((setting_item.render)(SettingsFile::User, window, cx))
                 .into_any_element(),
         }
     }
@@ -117,7 +116,7 @@ impl SettingsPageItem {
 struct SettingItem {
     title: &'static str,
     description: &'static str,
-    render: std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+    render: std::rc::Rc<dyn Fn(SettingsFile, &mut Window, &mut App) -> AnyElement>,
 }
 
 enum SettingsFile {
@@ -145,7 +144,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
-                    render: Rc::new(|_, cx|
+                    render: Rc::new(|_, _, cx|
                         render_toggle_button("confirm_quit", cx, |settings_content| {
                             &mut settings_content.workspace.confirm_quit
                         })),
@@ -153,7 +152,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Update",
                     description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
-                    render: Rc::new(|_, cx| render_toggle_button("Auto Update", cx, |settings_content| {
+                    render: Rc::new(|_, _, cx| render_toggle_button("Auto Update", cx, |settings_content| {
                         &mut settings_content.auto_update
                     })),
                 }),
@@ -166,7 +165,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Name",
                     description: "The displayed name of this project. If not set, the root directory name",
-                    render: Rc::new(|window, cx| {
+                    render: Rc::new(|_, window, cx| {
 
                         render_text_field("project_name", window, cx, |settings_content| {
                             &mut settings_content.project.worktree.project_name
@@ -182,31 +181,6 @@ fn user_settings_data() -> Vec<SettingsPage> {
 // X 0. Make this turn on and look ok-ish
 // X 1. Do text input for the worktree settings content (might need to stash an editor in a use_state near the page)
 // 2. Let's introduce settings files and settings source
-//
-//
-// get_value(SettingsContent) -> (Same as other)
-// enum SettingsSource {
-//  User,
-//  Project,
-//  etc,
-// }
-//
-//
-// items: vec![
-//     SettingsPageItem::SectionHeader("Worktree Settings Content"),
-//     SettingsPageItem::SettingItem(SettingItem {
-//         title: "Project Name",
-//         description: " The displayed name of this project. If not set, the root directory name",
-//         render: Rc::new(|source, window, cx| {
-//  SettingsStore.sources.get_value(get_value, source, cx)
-//     source.get_value(get_value, cx) {
-//    UsersSettingsFile -> Project
-//
-// }
-// }),
-//     }),
-// ],
-// }
 
 fn project_settings_data() -> Vec<SettingsPage> {
     vec![SettingsPage {
@@ -216,7 +190,7 @@ fn project_settings_data() -> Vec<SettingsPage> {
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Name",
                 description: " The displayed name of this project. If not set, the root directory name",
-                render: Rc::new(|_, _| todo!()),
+                render: Rc::new(|_, _, _| todo!()),
             }),
         ],
     }]
@@ -322,6 +296,9 @@ fn render_text_field(
 ) -> AnyElement {
     // TODO: Updating file does not cause the editor text to reload, suspicious it may be a missing global update/notify in SettingsStore
     let store = SettingsStore::global(cx);
+    // let initial_text = store
+    //     .get_value_from_file_mut(settings::SettingsFile, get_value)
+    //     .unwrap_or_default();
     let mut defaults = store.raw_default_settings().clone();
     let mut user_settings = store
         .raw_user_settings()

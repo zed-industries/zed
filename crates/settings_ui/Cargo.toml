@@ -41,3 +41,6 @@ ui.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 zlog.workspace = true
+
+[dev-dependencies]
+settings = { workspace = true, features = ["test-support"] }

@@ -1052,6 +1052,7 @@ impl SettingsStore {
                 continue;
             }
 
+            // TODO: We could unwrap this because all files checks for Some variant
             let Some(content) = self.get_content_for_file_mut(other_file.clone()) else {
                 continue;
             };

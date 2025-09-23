@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use settings::{SettingsStore, default_settings, watch_config_file};
+use settings::{
+    DEFAULT_KEYMAP_PATH, KeymapFile, SettingsStore, default_settings, watch_config_file,
+};
 use settings_ui::open_settings_editor;
 use ui::BorrowAppContext;
 
@@ -9,23 +11,17 @@ fn main() {
     let app = gpui::Application::new().with_assets(assets::Assets);
 
     let fs = Arc::new(fs::RealFs::new(None, app.background_executor()));
-    let user_settings_file_rx = watch_config_file(
+    let mut user_settings_file_rx = watch_config_file(
         &app.background_executor(),
         fs.clone(),
         paths::settings_file().clone(),
-    );
-    let global_settings_file_rx = watch_config_file(
-        &app.background_executor(),
-        fs.clone(),
-        paths::global_settings_file().clone(),
     );
     zlog::init();
     zlog::init_output_stderr();
 
     app.run(move |cx| {
         <dyn fs::Fs>::set_global(fs.clone(), cx);
-        let store = SettingsStore::new(cx, &default_settings());
-        cx.set_global(store);
+        settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
         workspace::init_settings(cx);
         project::Project::init_settings(cx);
@@ -33,21 +29,15 @@ fn main() {
         editor::init(cx);
         menu::init();
 
-        cx.spawn(async move |cx| {
-            let mut settings_streams = futures::stream::select(
-                global_settings_file_rx.map(|content| (content, false)),
-                user_settings_file_rx.map(|content| (content, true)),
-            );
+        let keybindings =
+            KeymapFile::load_asset_allow_partial_failure(DEFAULT_KEYMAP_PATH, cx).unwrap();
+        cx.bind_keys(keybindings.into_iter());
 
-            while let Some((content, is_user)) = settings_streams.next().await {
+        cx.spawn(async move |cx| {
+            while let Some(content) = user_settings_file_rx.next().await {
                 cx.update(|cx| {
                     cx.update_global(|store: &mut SettingsStore, cx| {
-                        if is_user {
-                            store.set_user_settings(&content, cx).unwrap()
-                        } else {
-                            store.set_global_settings(&content, cx).unwrap()
-                        };
-                        cx.refresh_windows();
+                        store.set_user_settings(&content, cx).unwrap()
                     })
                 })
                 .ok();
