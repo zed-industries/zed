@@ -40,10 +40,9 @@ impl ScoredSnippet {
     }
 
     pub fn size(&self, style: SnippetStyle) -> usize {
-        // TODO: how to handle truncation?
         match &self.declaration {
             Declaration::File { declaration, .. } => match style {
-                SnippetStyle::Signature => declaration.signature_range_in_text.len(),
+                SnippetStyle::Signature => declaration.signature_range.len(),
                 SnippetStyle::Declaration => declaration.text.len(),
             },
             Declaration::Buffer { declaration, .. } => match style {
@@ -276,6 +275,8 @@ pub struct Scores {
 
 impl Scores {
     fn score(components: &ScoreComponents) -> Scores {
+        // TODO: handle truncation
+
         // Score related to how likely this is the correct declaration, range 0 to 1
         let accuracy_score = if components.is_same_file {
             // TODO: use declaration_line_distance_rank

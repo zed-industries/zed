@@ -578,11 +578,11 @@ mod tests {
 
             let decl = expect_file_decl("c.rs", &decls[0].1, &project, cx);
             assert_eq!(decl.identifier, main.clone());
-            assert_eq!(decl.item_range_in_file, 32..280);
+            assert_eq!(decl.item_range, 32..280);
 
             let decl = expect_file_decl("a.rs", &decls[1].1, &project, cx);
             assert_eq!(decl.identifier, main);
-            assert_eq!(decl.item_range_in_file, 0..98);
+            assert_eq!(decl.item_range, 0..98);
         });
     }
 
