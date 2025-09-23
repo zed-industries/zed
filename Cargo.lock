@@ -813,11 +813,13 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "net",
- "parking_lot",
+ "proto",
  "smol",
  "tempfile",
  "util",
+ "windows 0.61.1",
  "workspace-hack",
+ "zeroize",
 ]
 
 [[package]]
@@ -3231,6 +3233,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "cloud_llm_client",
+ "indoc",
  "ordered-float 2.10.1",
  "rustc-hash 2.1.1",
  "strum 0.27.1",
@@ -6953,6 +6956,7 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
+ "zeroize",
  "zlog",
 ]
 
@@ -9630,6 +9634,7 @@ dependencies = [
  "credentials_provider",
  "deepseek",
  "editor",
+ "feature_flags",
  "fs",
  "futures 0.3.31",
  "google_ai",
@@ -13176,6 +13181,7 @@ dependencies = [
  "which 6.0.3",
  "workspace-hack",
  "worktree",
+ "zeroize",
  "zlog",
 ]
 
@@ -13874,6 +13880,7 @@ name = "recent_projects"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "askpass",
  "auto_update",
  "dap",
  "editor",
@@ -21245,7 +21252,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.206.0"
+version = "0.207.0"
 dependencies = [
  "acp_tools",
  "activity_indicator",
@@ -21682,6 +21689,7 @@ dependencies = [
  "chrono",
  "client",
  "cloud_llm_client",
+ "cloud_zeta2_prompt",
  "edit_prediction",
  "edit_prediction_context",
  "futures 0.3.31",

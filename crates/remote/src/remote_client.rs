@@ -8,6 +8,7 @@ use crate::{
     },
 };
 use anyhow::{Context as _, Result, anyhow};
+use askpass::EncryptedPassword;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -60,7 +61,12 @@ pub struct CommandTemplate {
 }
 
 pub trait RemoteClientDelegate: Send + Sync {
-    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp);
+    fn ask_password(
+        &self,
+        prompt: String,
+        tx: oneshot::Sender<EncryptedPassword>,
+        cx: &mut AsyncApp,
+    );
     fn get_download_params(
         &self,
         platform: RemotePlatform,
@@ -1373,6 +1379,7 @@ mod fake {
     use super::{ChannelClient, RemoteClientDelegate, RemoteConnection, RemotePlatform};
     use crate::remote_client::{CommandTemplate, RemoteConnectionOptions};
     use anyhow::Result;
+    use askpass::EncryptedPassword;
     use async_trait::async_trait;
     use collections::HashMap;
     use futures::{
@@ -1517,7 +1524,7 @@ mod fake {
     pub(super) struct Delegate;
 
     impl RemoteClientDelegate for Delegate {
-        fn ask_password(&self, _: String, _: oneshot::Sender<String>, _: &mut AsyncApp) {
+        fn ask_password(&self, _: String, _: oneshot::Sender<EncryptedPassword>, _: &mut AsyncApp) {
             unreachable!()
         }
 

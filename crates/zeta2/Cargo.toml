@@ -17,6 +17,7 @@ arrayvec.workspace = true
 chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
+cloud_zeta2_prompt.workspace = true
 edit_prediction.workspace = true
 edit_prediction_context.workspace = true
 futures.workspace = true

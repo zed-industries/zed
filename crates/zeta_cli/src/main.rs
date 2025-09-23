@@ -63,13 +63,15 @@ struct ContextArgs {
 #[derive(Debug, Args)]
 struct Zeta2Args {
     #[arg(long, default_value_t = 8192)]
-    prompt_max_bytes: usize,
+    max_prompt_bytes: usize,
     #[arg(long, default_value_t = 2048)]
-    excerpt_max_bytes: usize,
+    max_excerpt_bytes: usize,
     #[arg(long, default_value_t = 1024)]
-    excerpt_min_bytes: usize,
+    min_excerpt_bytes: usize,
     #[arg(long, default_value_t = 0.66)]
     target_before_cursor_over_total_bytes: f32,
+    #[arg(long, default_value_t = 1024)]
+    max_diagnostic_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -221,12 +223,16 @@ async fn get_context(
                 });
                 zeta.update(cx, |zeta, cx| {
                     zeta.register_buffer(&buffer, &project, cx);
-                    zeta.excerpt_options = EditPredictionExcerptOptions {
-                        max_bytes: zeta2_args.excerpt_max_bytes,
-                        min_bytes: zeta2_args.excerpt_min_bytes,
-                        target_before_cursor_over_total_bytes: zeta2_args
-                            .target_before_cursor_over_total_bytes,
-                    }
+                    zeta.set_options(zeta2::ZetaOptions {
+                        excerpt: EditPredictionExcerptOptions {
+                            max_bytes: zeta2_args.max_excerpt_bytes,
+                            min_bytes: zeta2_args.min_excerpt_bytes,
+                            target_before_cursor_over_total_bytes: zeta2_args
+                                .target_before_cursor_over_total_bytes,
+                        },
+                        max_diagnostic_bytes: zeta2_args.max_diagnostic_bytes,
+                        max_prompt_bytes: zeta2_args.max_prompt_bytes,
+                    })
                 });
                 // TODO: Actually wait for indexing.
                 let timer = cx.background_executor().timer(Duration::from_secs(5));
@@ -241,7 +247,7 @@ async fn get_context(
                     let planned_prompt = cloud_zeta2_prompt::PlannedPrompt::populate(
                         &request,
                         &cloud_zeta2_prompt::PlanOptions {
-                            max_bytes: zeta2_args.prompt_max_bytes,
+                            max_bytes: zeta2_args.max_prompt_bytes,
                         },
                     )?;
                     anyhow::Ok(planned_prompt.to_prompt_string())

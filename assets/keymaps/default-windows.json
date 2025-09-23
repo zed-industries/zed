@@ -17,7 +17,6 @@
       "up": "menu::SelectPrevious",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
-      "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
       "escape": "menu::Cancel",
       "shift-alt-enter": "menu::Restart",
@@ -1249,8 +1248,8 @@
       "ctrl-1": "onboarding::ActivateBasicsPage",
       "ctrl-2": "onboarding::ActivateEditingPage",
       "ctrl-3": "onboarding::ActivateAISetupPage",
-      "ctrl-escape": "onboarding::Finish",
-      "alt-tab": "onboarding::SignIn",
+      "ctrl-enter": "onboarding::Finish",
+      "alt-shift-l": "onboarding::SignIn",
       "shift-alt-a": "onboarding::OpenAccount"
     }
   }

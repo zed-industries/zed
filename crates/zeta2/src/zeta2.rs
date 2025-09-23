@@ -6,6 +6,7 @@ use cloud_llm_client::predict_edits_v3::{self, Signature};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
+use cloud_zeta2_prompt::DEFAULT_MAX_PROMPT_BYTES;
 use edit_prediction::{DataCollectionState, Direction, EditPredictionProvider};
 use edit_prediction_context::{
     DeclarationId, EditPredictionContext, EditPredictionExcerptOptions, SyntaxIndex,
@@ -18,7 +19,9 @@ use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
     http_client, prelude::*,
 };
-use language::{Anchor, Buffer, OffsetRangeExt as _, ToPoint};
+use language::{
+    Anchor, Buffer, DiagnosticSet, LanguageServerId, OffsetRangeExt as _, ToOffset as _, ToPoint,
+};
 use language::{BufferSnapshot, EditPreview};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::Project;
@@ -45,6 +48,12 @@ pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPrediction
     target_before_cursor_over_total_bytes: 0.5,
 };
 
+pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
+    excerpt: DEFAULT_EXCERPT_OPTIONS,
+    max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
+    max_diagnostic_bytes: 2048,
+};
+
 #[derive(Clone)]
 struct ZetaGlobal(Entity<Zeta>);
 
@@ -56,9 +65,16 @@ pub struct Zeta {
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
     projects: HashMap<EntityId, ZetaProject>,
-    pub excerpt_options: EditPredictionExcerptOptions,
+    options: ZetaOptions,
     update_required: bool,
     debug_tx: Option<mpsc::UnboundedSender<Result<PredictionDebugInfo, String>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ZetaOptions {
+    pub excerpt: EditPredictionExcerptOptions,
+    pub max_prompt_bytes: usize,
+    pub max_diagnostic_bytes: usize,
 }
 
 pub struct PredictionDebugInfo {
@@ -113,7 +129,7 @@ impl Zeta {
             projects: HashMap::new(),
             client,
             user_store,
-            excerpt_options: DEFAULT_EXCERPT_OPTIONS,
+            options: DEFAULT_OPTIONS,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -138,12 +154,12 @@ impl Zeta {
         debug_watch_rx
     }
 
-    pub fn excerpt_options(&self) -> &EditPredictionExcerptOptions {
-        &self.excerpt_options
+    pub fn options(&self) -> &ZetaOptions {
+        &self.options
     }
 
-    pub fn set_excerpt_options(&mut self, options: EditPredictionExcerptOptions) {
-        self.excerpt_options = options;
+    pub fn set_options(&mut self, options: ZetaOptions) {
+        self.options = options;
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -290,7 +306,7 @@ impl Zeta {
                 .syntax_index
                 .read_with(cx, |index, _cx| index.state().clone())
         });
-        let excerpt_options = self.excerpt_options.clone();
+        let options = self.options.clone();
         let snapshot = buffer.read(cx).snapshot();
         let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx)) else {
             return Task::ready(Err(anyhow!("No file path for excerpt")));
@@ -305,6 +321,46 @@ impl Zeta {
             .collect::<Vec<_>>();
         let debug_tx = self.debug_tx.clone();
 
+        let events = project_state
+            .map(|state| {
+                state
+                    .events
+                    .iter()
+                    .map(|event| match event {
+                        Event::BufferChange {
+                            old_snapshot,
+                            new_snapshot,
+                            ..
+                        } => {
+                            let path = new_snapshot.file().map(|f| f.path().to_path_buf());
+
+                            let old_path = old_snapshot.file().and_then(|f| {
+                                let old_path = f.path().as_ref();
+                                if Some(old_path) != path.as_deref() {
+                                    Some(old_path.to_path_buf())
+                                } else {
+                                    None
+                                }
+                            });
+
+                            predict_edits_v3::Event::BufferChange {
+                                old_path,
+                                path,
+                                diff: language::unified_diff(
+                                    &old_snapshot.text(),
+                                    &new_snapshot.text(),
+                                ),
+                                //todo: Actually detect if this edit was predicted or not
+                                predicted: false,
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let diagnostics = snapshot.diagnostic_sets().clone();
+
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
             let buffer = buffer.clone();
@@ -315,14 +371,15 @@ impl Zeta {
                     None
                 };
 
-                let cursor_point = position.to_point(&snapshot);
+                let cursor_offset = position.to_offset(&snapshot);
+                let cursor_point = cursor_offset.to_point(&snapshot);
 
                 let before_retrieval = chrono::Utc::now();
 
                 let Some(context) = EditPredictionContext::gather_context(
                     cursor_point,
                     &snapshot,
-                    &excerpt_options,
+                    &options.excerpt,
                     index_state.as_deref(),
                 ) else {
                     return Ok(None);
@@ -334,17 +391,27 @@ impl Zeta {
                     None
                 };
 
+                let (diagnostic_groups, diagnostic_groups_truncated) =
+                    Self::gather_nearby_diagnostics(
+                        cursor_offset,
+                        &diagnostics,
+                        &snapshot,
+                        options.max_diagnostic_bytes,
+                    );
+
                 let request = make_cloud_request(
                     excerpt_path.clone(),
                     context,
-                    // TODO pass everything
-                    Vec::new(),
+                    events,
+                    // TODO data collection
                     false,
-                    Vec::new(),
+                    diagnostic_groups,
+                    diagnostic_groups_truncated,
                     None,
                     debug_context.is_some(),
                     &worktree_snapshots,
                     index_state.as_deref(),
+                    Some(options.max_prompt_bytes),
                 );
 
                 let retrieval_time = chrono::Utc::now() - before_retrieval;
@@ -537,6 +604,52 @@ impl Zeta {
         }
     }
 
+    fn gather_nearby_diagnostics(
+        cursor_offset: usize,
+        diagnostic_sets: &[(LanguageServerId, DiagnosticSet)],
+        snapshot: &BufferSnapshot,
+        max_diagnostics_bytes: usize,
+    ) -> (Vec<predict_edits_v3::DiagnosticGroup>, bool) {
+        // TODO: Could make this more efficient
+        let mut diagnostic_groups = Vec::new();
+        for (language_server_id, diagnostics) in diagnostic_sets {
+            let mut groups = Vec::new();
+            diagnostics.groups(*language_server_id, &mut groups, &snapshot);
+            diagnostic_groups.extend(
+                groups
+                    .into_iter()
+                    .map(|(_, group)| group.resolve::<usize>(&snapshot)),
+            );
+        }
+
+        // sort by proximity to cursor
+        diagnostic_groups.sort_by_key(|group| {
+            let range = &group.entries[group.primary_ix].range;
+            if range.start >= cursor_offset {
+                range.start - cursor_offset
+            } else if cursor_offset >= range.end {
+                cursor_offset - range.end
+            } else {
+                (cursor_offset - range.start).min(range.end - cursor_offset)
+            }
+        });
+
+        let mut results = Vec::new();
+        let mut diagnostic_groups_truncated = false;
+        let mut diagnostics_byte_count = 0;
+        for group in diagnostic_groups {
+            let raw_value = serde_json::value::to_raw_value(&group).unwrap();
+            diagnostics_byte_count += raw_value.get().len();
+            if diagnostics_byte_count > max_diagnostics_bytes {
+                diagnostic_groups_truncated = true;
+                break;
+            }
+            results.push(predict_edits_v3::DiagnosticGroup(raw_value));
+        }
+
+        (results, diagnostic_groups_truncated)
+    }
+
     // TODO: Dedupe with similar code in request_prediction?
     pub fn cloud_request_for_zeta_cli(
         &mut self,
@@ -552,7 +665,7 @@ impl Zeta {
                 .syntax_index
                 .read_with(cx, |index, _cx| index.state().clone())
         });
-        let excerpt_options = self.excerpt_options.clone();
+        let options = self.options.clone();
         let snapshot = buffer.read(cx).snapshot();
         let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx)) else {
             return Task::ready(Err(anyhow!("No file path for excerpt")));
@@ -576,7 +689,7 @@ impl Zeta {
             EditPredictionContext::gather_context(
                 cursor_point,
                 &snapshot,
-                &excerpt_options,
+                &options.excerpt,
                 index_state.as_deref(),
             )
             .context("Failed to select excerpt")
@@ -588,10 +701,12 @@ impl Zeta {
                     Vec::new(),
                     false,
                     Vec::new(),
+                    false,
                     None,
                     debug_info,
                     &worktree_snapshots,
                     index_state.as_deref(),
+                    Some(options.max_prompt_bytes),
                 )
             })
         })
@@ -947,10 +1062,12 @@ fn make_cloud_request(
     events: Vec<predict_edits_v3::Event>,
     can_collect_data: bool,
     diagnostic_groups: Vec<predict_edits_v3::DiagnosticGroup>,
+    diagnostic_groups_truncated: bool,
     git_info: Option<cloud_llm_client::PredictEditsGitInfo>,
     debug_info: bool,
     worktrees: &Vec<worktree::Snapshot>,
     index_state: Option<&SyntaxIndexState>,
+    prompt_max_bytes: Option<usize>,
 ) -> predict_edits_v3::PredictEditsRequest {
     let mut signatures = Vec::new();
     let mut declaration_to_signature_index = HashMap::default();
@@ -1020,8 +1137,10 @@ fn make_cloud_request(
         events,
         can_collect_data,
         diagnostic_groups,
+        diagnostic_groups_truncated,
         git_info,
         debug_info,
+        prompt_max_bytes,
     }
 }
 
@@ -1103,7 +1222,6 @@ fn interpolate(
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use language::ToOffset as _;
 
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
