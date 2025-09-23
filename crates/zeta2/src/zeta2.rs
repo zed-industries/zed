@@ -305,6 +305,44 @@ impl Zeta {
             .collect::<Vec<_>>();
         let debug_tx = self.debug_tx.clone();
 
+        let events = project_state
+            .map(|state| {
+                state
+                    .events
+                    .iter()
+                    .map(|event| match event {
+                        Event::BufferChange {
+                            old_snapshot,
+                            new_snapshot,
+                            ..
+                        } => {
+                            let path = new_snapshot.file().map(|f| f.path().to_path_buf());
+
+                            let old_path = old_snapshot.file().and_then(|f| {
+                                let old_path = f.path().as_ref();
+                                if Some(old_path) != path.as_deref() {
+                                    Some(old_path.to_path_buf())
+                                } else {
+                                    None
+                                }
+                            });
+
+                            predict_edits_v3::Event::BufferChange {
+                                old_path,
+                                path,
+                                diff: language::unified_diff(
+                                    &old_snapshot.text(),
+                                    &new_snapshot.text(),
+                                ),
+                                //todo: Actually detect if this edit was predicted or not
+                                predicted: false,
+                            }
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
             let buffer = buffer.clone();
@@ -337,8 +375,8 @@ impl Zeta {
                 let request = make_cloud_request(
                     excerpt_path.clone(),
                     context,
-                    // TODO pass everything
-                    Vec::new(),
+                    events,
+                    // TODO data collection
                     false,
                     Vec::new(),
                     None,
