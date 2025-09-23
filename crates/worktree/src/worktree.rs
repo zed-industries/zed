@@ -36,7 +36,7 @@ use postage::{
 };
 use rpc::{
     AnyProtoClient,
-    proto::{self, FromProto, ToProto, split_worktree_update},
+    proto::{self, split_worktree_update},
 };
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -465,7 +465,7 @@ impl Worktree {
                 worktree.id,
                 RelPath::from_proto(&worktree.root_name)
                     .unwrap_or_else(|_| RelPath::empty().into()),
-                Arc::<Path>::from_proto(worktree.abs_path),
+                Path::new(&worktree.abs_path).into(),
                 path_style,
             );
 
@@ -620,7 +620,7 @@ impl Worktree {
             id: self.id().to_proto(),
             root_name: self.root_name().to_proto(),
             visible: self.is_visible(),
-            abs_path: self.abs_path().to_proto(),
+            abs_path: self.abs_path().to_string_lossy().to_string(),
         }
     }
 
@@ -2064,7 +2064,7 @@ impl Snapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
-            abs_path: self.abs_path().to_proto(),
+            abs_path: self.abs_path().to_string_lossy().to_string(),
             root_name: self.root_name().to_proto(),
             updated_entries,
             removed_entries: Vec::new(),
@@ -2169,7 +2169,7 @@ impl Snapshot {
         );
         if let Some(root_name) = RelPath::from_proto(&update.root_name).log_err() {
             self.update_abs_path(
-                SanitizedPath::new_arc(&PathBuf::from_proto(update.abs_path)),
+                SanitizedPath::new_arc(&Path::new(&update.abs_path)),
                 root_name,
             );
         }
@@ -2407,7 +2407,7 @@ impl LocalSnapshot {
         proto::UpdateWorktree {
             project_id,
             worktree_id,
-            abs_path: self.abs_path().to_proto(),
+            abs_path: self.abs_path().to_string_lossy().to_string(),
             root_name: self.root_name().to_proto(),
             updated_entries,
             removed_entries,
@@ -5346,7 +5346,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             canonical_path: entry
                 .canonical_path
                 .as_ref()
-                .map(|path| path.as_ref().to_proto()),
+                .map(|path| path.to_string_lossy().to_string()),
         }
     }
 }
@@ -5376,7 +5376,7 @@ impl TryFrom<(&CharBag, &PathMatcher, proto::Entry)> for Entry {
             size: entry.size.unwrap_or(0),
             canonical_path: entry
                 .canonical_path
-                .map(|path_string| Arc::from(PathBuf::from_proto(path_string))),
+                .map(|path_string| Arc::from(PathBuf::from(path_string))),
             is_ignored: entry.is_ignored,
             is_always_included,
             is_external: entry.is_external,

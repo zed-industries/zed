@@ -45,7 +45,7 @@ use parking_lot::Mutex;
 use postage::stream::Stream as _;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
-    proto::{self, ToProto, git_reset, split_repository_update},
+    proto::{self, git_reset, split_repository_update},
 };
 use serde::Deserialize;
 use std::{
@@ -194,7 +194,7 @@ impl StatusEntry {
         };
 
         proto::StatusEntry {
-            repo_path: self.repo_path.as_ref().to_proto(),
+            repo_path: self.repo_path.to_proto(),
             simple_status,
             status: Some(status_to_proto(self.status)),
         }
@@ -2802,7 +2802,7 @@ impl RepositorySnapshot {
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
-            abs_path: self.work_directory_abs_path.to_proto(),
+            abs_path: self.work_directory_abs_path.to_string_lossy().to_string(),
             entry_ids: vec![self.id.to_proto()],
             scan_id: self.scan_id,
             is_last_update: true,
@@ -2840,13 +2840,13 @@ impl RepositorySnapshot {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Greater => {
-                            removed_statuses.push(old_entry.repo_path.as_ref().to_proto());
+                            removed_statuses.push(old_entry.repo_path.to_proto());
                             current_old_entry = old_statuses.next();
                         }
                     }
                 }
                 (None, Some(old_entry)) => {
-                    removed_statuses.push(old_entry.repo_path.as_ref().to_proto());
+                    removed_statuses.push(old_entry.repo_path.to_proto());
                     current_old_entry = old_statuses.next();
                 }
                 (Some(new_entry), None) => {
@@ -2866,12 +2866,12 @@ impl RepositorySnapshot {
                 .merge
                 .conflicted_paths
                 .iter()
-                .map(|path| path.as_ref().to_proto())
+                .map(|path| path.to_proto())
                 .collect(),
             merge_message: self.merge.message.as_ref().map(|msg| msg.to_string()),
             project_id,
             id: self.id.to_proto(),
-            abs_path: self.work_directory_abs_path.to_proto(),
+            abs_path: self.work_directory_abs_path.to_string_lossy().to_string(),
             entry_ids: vec![],
             scan_id: self.scan_id,
             is_last_update: true,
@@ -3630,7 +3630,7 @@ impl Repository {
                                     repository_id: id.to_proto(),
                                     paths: entries
                                         .into_iter()
-                                        .map(|repo_path| repo_path.as_ref().to_proto())
+                                        .map(|repo_path| repo_path.to_proto())
                                         .collect(),
                                 })
                                 .await
@@ -3696,7 +3696,7 @@ impl Repository {
                                     repository_id: id.to_proto(),
                                     paths: entries
                                         .into_iter()
-                                        .map(|repo_path| repo_path.as_ref().to_proto())
+                                        .map(|repo_path| repo_path.to_proto())
                                         .collect(),
                                 })
                                 .await
@@ -3760,7 +3760,7 @@ impl Repository {
                                     repository_id: id.to_proto(),
                                     paths: entries
                                         .into_iter()
-                                        .map(|repo_path| repo_path.as_ref().to_proto())
+                                        .map(|repo_path| repo_path.to_proto())
                                         .collect(),
                                 })
                                 .await
@@ -4178,7 +4178,7 @@ impl Repository {
                             .request(proto::SetIndexText {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
-                                path: path.as_ref().to_proto(),
+                                path: path.to_proto(),
                                 text: content,
                             })
                             .await?;

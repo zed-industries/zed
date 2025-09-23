@@ -1,4 +1,3 @@
-use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
 use lsp::LanguageServerId;
 
@@ -405,7 +404,7 @@ impl HeadlessProject {
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
         let fs = this.read_with(&cx, |this, _| this.fs.clone())?;
-        let path = PathBuf::from_proto(shellexpand::tilde(&message.payload.path).to_string());
+        let path = PathBuf::from(shellexpand::tilde(&message.payload.path).to_string());
 
         let canonicalized = match fs.canonicalize(&path).await {
             Ok(path) => path,
@@ -443,7 +442,7 @@ impl HeadlessProject {
             let worktree = worktree.read(cx);
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonicalized_path: canonicalized.to_proto(),
+                canonicalized_path: canonicalized.to_string_lossy().to_string(),
             }
         })?;
 
@@ -660,7 +659,7 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
         let check_info = envelope
             .payload
             .config
@@ -692,7 +691,7 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::GetPathMetadataResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
 
         let metadata = fs.metadata(&expanded).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
@@ -700,7 +699,7 @@ impl HeadlessProject {
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: expanded.to_proto(),
+            path: expanded.to_string_lossy().to_string(),
         })
     }
 

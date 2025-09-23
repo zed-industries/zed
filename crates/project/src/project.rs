@@ -96,7 +96,7 @@ use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent}
 use remote::{RemoteClient, RemoteConnectionOptions};
 use rpc::{
     AnyProtoClient, ErrorCode,
-    proto::{FromProto, LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID, ToProto},
+    proto::{LanguageServerPromptResponse, REMOTE_SERVER_PROJECT_ID},
 };
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
@@ -4225,7 +4225,7 @@ impl Project {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
-                        path: PathBuf::from_proto(response.path),
+                        path: PathBuf::from(response.path),
                         is_dir: response.is_dir,
                     })
                 } else {
@@ -4323,10 +4323,9 @@ impl Project {
         if self.is_local() {
             DirectoryLister::Local(cx.entity(), self.fs.clone()).list_directory(query, cx)
         } else if let Some(session) = self.remote_client.as_ref() {
-            let path_buf = PathBuf::from(query);
             let request = proto::ListRemoteDirectory {
                 dev_server_id: REMOTE_SERVER_PROJECT_ID,
-                path: path_buf.to_proto(),
+                path: query,
                 config: Some(proto::ListRemoteDirectoryConfig { is_dir: true }),
             };
 
@@ -4524,9 +4523,9 @@ impl Project {
             .map(|worktree| {
                 let worktree_name = worktree.read(cx).root_name();
                 worktree_name
-                        .join(&project_path.path)
-                        .display(path_style)
-                        .to_string()
+                    .join(&project_path.path)
+                    .display(path_style)
+                    .to_string()
             })
     }
 

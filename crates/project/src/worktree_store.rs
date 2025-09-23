@@ -18,7 +18,7 @@ use gpui::{
 use postage::oneshot;
 use rpc::{
     AnyProtoClient, ErrorExt, TypedEnvelope,
-    proto::{self, FromProto, REMOTE_SERVER_PROJECT_ID, ToProto},
+    proto::{self, REMOTE_SERVER_PROJECT_ID},
 };
 use smol::{
     channel::{Receiver, Sender},
@@ -532,7 +532,7 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
-            let root_path_buf = PathBuf::from_proto(response.canonicalized_path.clone());
+            let root_path_buf = PathBuf::from(response.canonicalized_path.clone());
             let root_name = root_path_buf
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
@@ -859,7 +859,7 @@ impl WorktreeStore {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name_str().to_owned(),
                     visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_proto(),
+                    abs_path: worktree.abs_path().to_string_lossy().to_string(),
                 }
             })
             .collect()

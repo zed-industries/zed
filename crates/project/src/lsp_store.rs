@@ -87,7 +87,7 @@ use postage::{mpsc, sink::Sink, stream::Stream, watch};
 use rand::prelude::*;
 use rpc::{
     AnyProtoClient,
-    proto::{FromProto, LspRequestId, LspRequestMessage as _, ToProto},
+    proto::{LspRequestId, LspRequestMessage as _},
 };
 use serde::Serialize;
 use settings::{Settings, SettingsLocation, SettingsStore};
@@ -8419,8 +8419,7 @@ impl LspStore {
             {
                 let project_path = ProjectPath {
                     worktree_id,
-                    path: RelPath::from_proto(&message_summary.path)
-                        .context("invalid path")?,
+                    path: RelPath::from_proto(&message_summary.path).context("invalid path")?,
                 };
                 let path = project_path.path.clone();
                 let server_id = LanguageServerId(message_summary.language_server_id as usize);
@@ -10950,7 +10949,7 @@ impl LspStore {
                 abs_path,
                 signature,
             } => {
-                result.path = abs_path.to_proto();
+                result.path = abs_path.to_string_lossy().to_string();
                 result.signature = signature.to_vec();
             }
         }
@@ -10970,7 +10969,7 @@ impl LspStore {
             })
         } else {
             SymbolLocation::OutsideProject {
-                abs_path: <Arc<Path>>::from_proto(serialized_symbol.path),
+                abs_path: Path::new(&serialized_symbol.path).into(),
                 signature: serialized_symbol
                     .signature
                     .try_into()

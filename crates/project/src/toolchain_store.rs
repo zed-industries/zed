@@ -14,7 +14,7 @@ use language::{
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{
-        self, FromProto, ResolveToolchainResponse, ToProto,
+        self, ResolveToolchainResponse,
         resolve_toolchain_response::Response as ResolveResponsePayload,
     },
 };
@@ -237,7 +237,7 @@ impl ToolchainStore {
                 name: toolchain.name.into(),
                 // todo(windows)
                 // Do we need to convert path to native string?
-                path: PathBuf::from(toolchain.path).to_proto().into(),
+                path: toolchain.path.into(),
                 as_json: serde_json::Value::from_str(&toolchain.raw_json)?,
                 language_name,
             };
@@ -278,7 +278,7 @@ impl ToolchainStore {
                 let path = PathBuf::from(toolchain.path.to_string());
                 proto::Toolchain {
                     name: toolchain.name.into(),
-                    path: path.to_proto(),
+                    path: path.to_string_lossy().to_string(),
                     raw_json: toolchain.as_json.to_string(),
                 }
             }),
@@ -330,7 +330,7 @@ impl ToolchainStore {
                     let path = PathBuf::from(toolchain.path.to_string());
                     proto::Toolchain {
                         name: toolchain.name.to_string(),
-                        path: path.to_proto(),
+                        path: path.to_string_lossy().to_string(),
                         raw_json: toolchain.as_json.to_string(),
                     }
                 })
@@ -609,7 +609,7 @@ impl RemoteToolchainStore {
                             language_name: toolchain.language_name.into(),
                             toolchain: Some(proto::Toolchain {
                                 name: toolchain.name.into(),
-                                path: path.to_proto(),
+                                path: path.to_string_lossy().to_string(),
                                 raw_json: toolchain.as_json.to_string(),
                             }),
                             path: Some(project_path.path.to_proto()),
@@ -708,12 +708,7 @@ impl RemoteToolchainStore {
                 Some(Toolchain {
                     language_name: language_name.clone(),
                     name: toolchain.name.into(),
-                    // todo(windows)
-                    // Do we need to convert path to native string?
-                    path: PathBuf::from_proto(toolchain.path)
-                        .to_string_lossy()
-                        .to_string()
-                        .into(),
+                    path: toolchain.path.into(),
                     as_json: serde_json::Value::from_str(&toolchain.raw_json).ok()?,
                 })
             })
@@ -742,20 +737,13 @@ impl RemoteToolchainStore {
                 .context("Failed to resolve toolchain via RPC")?;
             use proto::resolve_toolchain_response::Response;
             match response {
-                Response::Toolchain(toolchain) => {
-                    Ok(Toolchain {
-                        language_name: language_name.clone(),
-                        name: toolchain.name.into(),
-                        // todo(windows)
-                        // Do we need to convert path to native string?
-                        path: PathBuf::from_proto(toolchain.path)
-                            .to_string_lossy()
-                            .to_string()
-                            .into(),
-                        as_json: serde_json::Value::from_str(&toolchain.raw_json)
-                            .context("Deserializing ResolveToolchain LSP response")?,
-                    })
-                }
+                Response::Toolchain(toolchain) => Ok(Toolchain {
+                    language_name: language_name.clone(),
+                    name: toolchain.name.into(),
+                    path: toolchain.path.into(),
+                    as_json: serde_json::Value::from_str(&toolchain.raw_json)
+                        .context("Deserializing ResolveToolchain LSP response")?,
+                }),
                 Response::Error(error) => {
                     anyhow::bail!("{error}");
                 }
