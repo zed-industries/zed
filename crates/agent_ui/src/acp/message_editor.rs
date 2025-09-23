@@ -47,12 +47,7 @@ use std::{
 };
 use text::OffsetRangeExt;
 use theme::ThemeSettings;
-use ui::{
-    ActiveTheme, AnyElement, App, ButtonCommon, ButtonLike, ButtonStyle, Color, Element as _,
-    FluentBuilder as _, Icon, IconName, IconSize, InteractiveElement, IntoElement, Label,
-    LabelCommon, LabelSize, ParentElement, Render, SelectableButton, Styled, TextSize, TintColor,
-    Toggleable, Window, div, h_flex, relative,
-};
+use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
 use util::{ResultExt, debug_panic};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
