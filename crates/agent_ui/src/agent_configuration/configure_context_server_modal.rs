@@ -8,7 +8,7 @@ use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
+    TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity, prelude::*,
 };
 use language::{Language, LanguageRegistry};
 use markdown::{Markdown, MarkdownElement, MarkdownStyle};
@@ -609,36 +609,133 @@ impl ConfigureContextServerModal {
         }
     }
 
-    fn render_modal_content(&self, _cx: &App) -> AnyElement {
+    fn render_modal_content(&self, cx: &App) -> AnyElement {
+        // Handle remote servers separately since they have two editors
         match &self.source {
-            ConfigurationSource::New { editor } | ConfigurationSource::Existing { editor } => {
-                EditorElement::new(editor, EditorStyle::default()).into_any_element()
-            }
             ConfigurationSource::NewRemote { name_editor, url_editor } 
             | ConfigurationSource::ExistingRemote { name_editor, url_editor } => {
-                v_flex()
+                return v_flex()
                     .gap_4()
                     .child(
                         v_flex()
                             .gap_2()
                             .child(Label::new("Server Name"))
-                            .child(EditorElement::new(name_editor, EditorStyle::default())),
+                            .child(
+                                div()
+                                    .p_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child({
+                                        let settings = ThemeSettings::get_global(cx);
+                                        let text_style = TextStyle {
+                                            color: cx.theme().colors().text,
+                                            font_family: settings.buffer_font.family.clone(),
+                                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                                            font_size: settings.buffer_font_size(cx).into(),
+                                            font_weight: settings.buffer_font.weight,
+                                            line_height: relative(settings.buffer_line_height.value()),
+                                            ..Default::default()
+                                        };
+                                        EditorElement::new(
+                                            name_editor,
+                                            EditorStyle {
+                                                background: cx.theme().colors().editor_background,
+                                                local_player: cx.theme().players().local(),
+                                                text: text_style,
+                                                syntax: cx.theme().syntax().clone(),
+                                                ..Default::default()
+                                            },
+                                        )
+                                    })
+                            ),
                     )
                     .child(
                         v_flex()
                             .gap_2()
                             .child(Label::new("Server URL"))
-                            .child(EditorElement::new(url_editor, EditorStyle::default())),
+                            .child(
+                                div()
+                                    .p_2()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .child({
+                                        let settings = ThemeSettings::get_global(cx);
+                                        let text_style = TextStyle {
+                                            color: cx.theme().colors().text,
+                                            font_family: settings.buffer_font.family.clone(),
+                                            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                                            font_size: settings.buffer_font_size(cx).into(),
+                                            font_weight: settings.buffer_font.weight,
+                                            line_height: relative(settings.buffer_line_height.value()),
+                                            ..Default::default()
+                                        };
+                                        EditorElement::new(
+                                            url_editor,
+                                            EditorStyle {
+                                                background: cx.theme().colors().editor_background,
+                                                local_player: cx.theme().players().local(),
+                                                text: text_style,
+                                                syntax: cx.theme().syntax().clone(),
+                                                ..Default::default()
+                                            },
+                                        )
+                                    })
+                            ),
                     )
-                    .into_any_element()
+                    .into_any_element();
             }
+            _ => {} // Continue with original logic for other variants
+        }
+
+        // Original logic for single-editor variants
+        let editor = match &self.source {
+            ConfigurationSource::New { editor } => editor,
+            ConfigurationSource::Existing { editor } => editor,
             ConfigurationSource::Extension { editor, .. } => {
                 let Some(editor) = editor else {
                     return div().into_any_element();
                 };
-                EditorElement::new(editor, EditorStyle::default()).into_any_element()
+                editor
             }
-        }
+            // Remote variants are handled above
+            ConfigurationSource::NewRemote { .. } | ConfigurationSource::ExistingRemote { .. } => {
+                unreachable!("Remote variants should be handled above")
+            }
+        };
+
+        div()
+            .p_2()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().editor_background)
+            .child({
+                let settings = ThemeSettings::get_global(cx);
+                let text_style = TextStyle {
+                    color: cx.theme().colors().text,
+                    font_family: settings.buffer_font.family.clone(),
+                    font_fallbacks: settings.buffer_font.fallbacks.clone(),
+                    font_size: settings.buffer_font_size(cx).into(),
+                    font_weight: settings.buffer_font.weight,
+                    line_height: relative(settings.buffer_line_height.value()),
+                    ..Default::default()
+                };
+                EditorElement::new(
+                    editor,
+                    EditorStyle {
+                        background: cx.theme().colors().editor_background,
+                        local_player: cx.theme().players().local(),
+                        text: text_style,
+                        syntax: cx.theme().syntax().clone(),
+                        ..Default::default()
+                    },
+                )
+            })
+            .into_any_element()
     }
 
     fn render_modal_footer(&self, window: &mut Window, cx: &mut Context<Self>) -> ModalFooter {
