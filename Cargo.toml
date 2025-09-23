@@ -525,7 +525,6 @@ indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"
 itertools = "0.14.0"
-jj-lib = { git = "https://github.com/jj-vcs/jj", rev = "e18eb8e05efaa153fad5ef46576af145bba1807f" }
 json_dotpath = "1.1"
 jsonschema = "0.30.0"
 jsonwebtoken = "9.3"
