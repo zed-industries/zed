@@ -29,8 +29,10 @@ pub struct PredictEditsRequest {
     /// Info about the git repository state, only present when can_collect_data is true.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub git_info: Option<PredictEditsGitInfo>,
+    // Only available to staff
     #[serde(default)]
     pub debug_info: bool,
+    pub prompt_max_bytes: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
