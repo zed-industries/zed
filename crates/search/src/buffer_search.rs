@@ -794,10 +794,13 @@ impl BufferSearchBar {
 
         if let Some(search) = search {
             cx.spawn_in(window, async move |this, cx| {
-                search.await?;
-                this.update_in(cx, |this, window, cx| {
-                    this.activate_current_match(window, cx)
-                })
+                if search.await.is_ok() {
+                    this.update_in(cx, |this, window, cx| {
+                        this.activate_current_match(window, cx)
+                    })
+                } else {
+                    Ok(())
+                }
             })
             .detach_and_log_err(cx);
         }
@@ -1057,10 +1060,13 @@ impl BufferSearchBar {
                 cx.notify();
 
                 cx.spawn_in(window, async move |this, cx| {
-                    search.await?;
-                    this.update_in(cx, |this, window, cx| {
-                        this.activate_current_match(window, cx)
-                    })
+                    if search.await.is_ok() {
+                        this.update_in(cx, |this, window, cx| {
+                            this.activate_current_match(window, cx)
+                        })
+                    } else {
+                        Ok(())
+                    }
                 })
                 .detach_and_log_err(cx);
             }

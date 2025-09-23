@@ -123,6 +123,20 @@ You can choose between `thread` (the default) and `text_thread`:
 }
 ```
 
+### Font Size
+
+Use the `agent_font_size` setting to change the font size of rendered agent responses in the panel.
+
+```json
+{
+  "agent": {
+    "agent_font_size": 18
+  }
+}
+```
+
+> (Preview Version Note): Editors in the Agent Panel—whether that is the main message textarea or previous messages—use monospace fonts and therefore, are controlled by the `buffer_font_size` setting, which is defined globally in your `settings.json`.
+
 ### Auto-run Commands
 
 Control whether you want to allow the agent to run commands without asking you for permission.

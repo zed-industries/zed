@@ -14,6 +14,7 @@ path = "src/zeta2.rs"
 [dependencies]
 anyhow.workspace = true
 arrayvec.workspace = true
+chrono.workspace = true
 client.workspace = true
 cloud_llm_client.workspace = true
 edit_prediction.workspace = true
@@ -29,8 +30,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
-workspace.workspace = true
 workspace-hack.workspace = true
+workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]

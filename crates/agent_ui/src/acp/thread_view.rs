@@ -1038,10 +1038,7 @@ impl AcpThreadView {
             return;
         }
 
-        let contents = self
-            .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx));
-        self.send_impl(contents, window, cx)
+        self.send_impl(self.message_editor.clone(), window, cx)
     }
 
     fn stop_current_and_send_new_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1051,15 +1048,11 @@ impl AcpThreadView {
 
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
-        let contents = self
-            .message_editor
-            .update(cx, |message_editor, cx| message_editor.contents(cx));
-
         cx.spawn_in(window, async move |this, cx| {
             cancelled.await;
 
             this.update_in(cx, |this, window, cx| {
-                this.send_impl(contents, window, cx);
+                this.send_impl(this.message_editor.clone(), window, cx);
             })
             .ok();
         })
@@ -1068,10 +1061,23 @@ impl AcpThreadView {
 
     fn send_impl(
         &mut self,
-        contents: Task<Result<(Vec<acp::ContentBlock>, Vec<Entity<Buffer>>)>>,
+        message_editor: Entity<MessageEditor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let full_mention_content = self.as_native_thread(cx).is_some_and(|thread| {
+            // Include full contents when using minimal profile
+            let thread = thread.read(cx);
+            AgentSettings::get_global(cx)
+                .profiles
+                .get(thread.profile())
+                .is_some_and(|profile| profile.tools.is_empty())
+        });
+
+        let contents = message_editor.update(cx, |message_editor, cx| {
+            message_editor.contents(full_mention_content, cx)
+        });
+
         let agent_telemetry_id = self.agent.telemetry_id();
 
         self.thread_error.take();
@@ -1200,10 +1206,8 @@ impl AcpThreadView {
             thread
                 .update(cx, |thread, cx| thread.rewind(user_message_id, cx))?
                 .await?;
-            let contents =
-                message_editor.update(cx, |message_editor, cx| message_editor.contents(cx))?;
             this.update_in(cx, |this, window, cx| {
-                this.send_impl(contents, window, cx);
+                this.send_impl(message_editor, window, cx);
             })?;
             anyhow::Ok(())
         })
