@@ -421,7 +421,10 @@ message Envelope {
         RemoteStarted remote_started = 381;
 
         GetDirectoryEnvironment get_directory_environment = 382;
-        DirectoryEnvironment directory_environment = 383; // current max
+        DirectoryEnvironment directory_environment = 383;
+
+        GitWorktreesResponse git_worktrees_response = 384;
+        GitGetWorktrees git_get_worktrees = 385; // current max
     }
 
     reserved 87 to 88;
