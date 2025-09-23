@@ -1,6 +1,6 @@
-mod pass_store;
+mod encrypted_password;
 
-pub use pass_store::{EncryptedPassword, ProcessExt};
+pub use encrypted_password::{EncryptedPassword, ProcessExt};
 
 #[cfg(target_os = "windows")]
 use std::sync::OnceLock;
@@ -16,7 +16,7 @@ use gpui::{AsyncApp, BackgroundExecutor, Task};
 use smol::fs;
 use util::ResultExt as _;
 
-use crate::pass_store::decrypt_password;
+use crate::encrypted_password::decrypt;
 
 #[derive(PartialEq, Eq)]
 pub enum AskPassResult {

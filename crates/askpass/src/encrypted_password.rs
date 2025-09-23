@@ -27,7 +27,7 @@ pub trait ProcessExt {
 
 impl ProcessExt for smol::process::Command {
     fn encrypted_env(&mut self, name: &str, value: EncryptedPassword) -> &mut Self {
-        if let Ok(password) = decrypt_password(value) {
+        if let Ok(password) = decrypt(value) {
             self.env(name, password);
         }
         self
@@ -37,7 +37,7 @@ impl ProcessExt for smol::process::Command {
 impl TryFrom<EncryptedPassword> for proto::AskPassResponse {
     type Error = anyhow::Error;
     fn try_from(pw: EncryptedPassword) -> Result<Self, Self::Error> {
-        let pw = decrypt_password(pw)?;
+        let pw = decrypt(pw)?;
         Ok(Self { response: pw })
     }
 }
@@ -77,7 +77,7 @@ impl TryFrom<&str> for EncryptedPassword {
     }
 }
 
-pub(crate) fn decrypt_password(mut password: EncryptedPassword) -> Result<String> {
+pub(crate) fn decrypt(mut password: EncryptedPassword) -> Result<String> {
     #[cfg(windows)]
     {
         use anyhow::Context;
