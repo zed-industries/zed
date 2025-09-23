@@ -813,7 +813,6 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "net",
- "parking_lot",
  "proto",
  "smol",
  "tempfile",
@@ -13904,7 +13903,6 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "zed_actions",
- "zeroize",
 ]
 
 [[package]]
