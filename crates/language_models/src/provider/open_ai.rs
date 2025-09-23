@@ -509,7 +509,7 @@ fn add_message_content_part(
 }
 
 pub struct OpenAiEventMapper {
-    tool_calls_by_index: HashMap<usize, RawToolCall>,
+    tool_calls_by_index: HashMap<isize, RawToolCall>,
 }
 
 impl OpenAiEventMapper {
@@ -558,21 +558,25 @@ impl OpenAiEventMapper {
 
         if let Some(tool_calls) = choice.delta.tool_calls.as_ref() {
             for tool_call in tool_calls {
-                let mut index = tool_call.index.unwrap_or_default();
-                if index < 0 {
-                    index = 0;
-                }
-                let entry = self.tool_calls_by_index.entry(index as usize).or_default();
+                let index = tool_call.index.unwrap_or_default();
+                let entry = self.tool_calls_by_index.entry(index).or_default();
 
+                // Only update id when it's not empty (avoid overwriting existing id)
                 if let Some(tool_id) = tool_call.id.clone() {
-                    entry.id = tool_id;
+                    if !tool_id.is_empty() {
+                        entry.id = tool_id;
+                    }
                 }
 
                 if let Some(function) = tool_call.function.as_ref() {
+                    // Only update name when it's not empty (avoid overwriting existing name)
                     if let Some(name) = function.name.clone() {
-                        entry.name = name;
+                        if !name.is_empty() {
+                            entry.name = name;
+                        }
                     }
 
+                    // Always append arguments (this is the core of incremental updates)
                     if let Some(arguments) = function.arguments.clone() {
                         entry.arguments.push_str(&arguments);
                     }
