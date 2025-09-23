@@ -20,9 +20,9 @@ use ui::{
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
-            title: "General",
+            title: "General Page",
             items: vec![
-                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SectionHeader("General Section"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
@@ -137,10 +137,7 @@ pub fn init(cx: &mut App) {
 pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
     cx.open_window(
         WindowOptions {
-            titlebar: Some(gpui::TitlebarOptions {
-                title: Some("Zed Settings".into()),
-                ..Default::default()
-            }),
+            titlebar: None,
             focus: true,
             show: true,
             kind: gpui::WindowKind::Normal,

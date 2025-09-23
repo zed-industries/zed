@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Instant};
+use std::sync::Arc;
 
 use futures::StreamExt;
 use settings::{DEFAULT_KEYMAP_PATH, KeymapFile, SettingsStore, watch_config_file};
@@ -42,14 +42,7 @@ fn main() {
         })
         .detach();
 
-        let handle = open_settings_editor(cx).unwrap();
-        cx.spawn(async move |cx| {
-            handle
-                .update(cx, |_, window, _cx| {
-                    window.activate_window();
-                })
-                .unwrap();
-        })
-        .detach();
+        open_settings_editor(cx).unwrap();
+        cx.activate(true);
     });
 }
