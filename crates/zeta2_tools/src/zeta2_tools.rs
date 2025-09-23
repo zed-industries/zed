@@ -22,7 +22,7 @@ use ui::prelude::*;
 use ui_input::SingleLineInput;
 use util::ResultExt;
 use workspace::{Item, SplitDirection, Workspace};
-use zeta2::Zeta;
+use zeta2::{Zeta, ZetaOptions};
 
 use edit_prediction_context::{EditPredictionExcerptOptions, SnippetStyle};
 
@@ -137,25 +137,28 @@ impl Zeta2Inspector {
             _update_state_task: Task::ready(()),
             _receive_task: receive_task,
         };
-        this.set_input_options(&zeta.read(cx).excerpt_options().clone(), window, cx);
+        this.set_input_options(&zeta.read(cx).options().clone(), window, cx);
         this
     }
 
     fn set_input_options(
         &mut self,
-        options: &EditPredictionExcerptOptions,
+        options: &ZetaOptions,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.max_bytes_input.update(cx, |input, cx| {
-            input.set_text(options.max_bytes.to_string(), window, cx);
+            input.set_text(options.excerpt.max_bytes.to_string(), window, cx);
         });
         self.min_bytes_input.update(cx, |input, cx| {
-            input.set_text(options.min_bytes.to_string(), window, cx);
+            input.set_text(options.excerpt.min_bytes.to_string(), window, cx);
         });
         self.cursor_context_ratio_input.update(cx, |input, cx| {
             input.set_text(
-                format!("{:.2}", options.target_before_cursor_over_total_bytes),
+                format!(
+                    "{:.2}",
+                    options.excerpt.target_before_cursor_over_total_bytes
+                ),
                 window,
                 cx,
             );
@@ -163,9 +166,8 @@ impl Zeta2Inspector {
         cx.notify();
     }
 
-    fn set_options(&mut self, options: EditPredictionExcerptOptions, cx: &mut Context<Self>) {
-        self.zeta
-            .update(cx, |this, _cx| this.set_excerpt_options(options));
+    fn set_options(&mut self, options: ZetaOptions, cx: &mut Context<Self>) {
+        self.zeta.update(cx, |this, _cx| this.set_options(options));
 
         const THROTTLE_TIME: Duration = Duration::from_millis(100);
 
@@ -233,7 +235,7 @@ impl Zeta2Inspector {
                         .unwrap_or_default()
                 }
 
-                let options = EditPredictionExcerptOptions {
+                let excerpt_options = EditPredictionExcerptOptions {
                     max_bytes: number_input_value(&this.max_bytes_input, cx),
                     min_bytes: number_input_value(&this.min_bytes_input, cx),
                     target_before_cursor_over_total_bytes: number_input_value(
@@ -242,7 +244,13 @@ impl Zeta2Inspector {
                     ),
                 };
 
-                this.set_options(options, cx);
+                this.set_options(
+                    ZetaOptions {
+                        excerpt: excerpt_options,
+                        ..this.zeta.read(cx).options().clone()
+                    },
+                    cx,
+                );
             },
         )
         .detach();
@@ -525,15 +533,15 @@ impl Render for Zeta2Inspector {
                                             .child(
                                                 ui::Button::new("reset-options", "Reset")
                                                     .disabled(
-                                                        self.zeta.read(cx).excerpt_options()
-                                                            == &zeta2::DEFAULT_EXCERPT_OPTIONS,
+                                                        self.zeta.read(cx).options()
+                                                            == &zeta2::DEFAULT_OPTIONS,
                                                     )
                                                     .style(ButtonStyle::Outlined)
                                                     .size(ButtonSize::Large)
                                                     .on_click(cx.listener(
                                                         |this, _, window, cx| {
                                                             this.set_input_options(
-                                                                &zeta2::DEFAULT_EXCERPT_OPTIONS,
+                                                                &zeta2::DEFAULT_OPTIONS,
                                                                 window,
                                                                 cx,
                                                             );
