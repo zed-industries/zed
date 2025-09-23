@@ -3,7 +3,7 @@ use itertools::Itertools as _;
 use language::BufferSnapshot;
 use ordered_float::OrderedFloat;
 use serde::Serialize;
-use std::{collections::HashMap, ops::Range};
+use std::{cmp::Reverse, collections::HashMap, ops::Range};
 use strum::EnumIter;
 use text::{Point, ToPoint};
 
@@ -159,11 +159,10 @@ pub fn scored_snippets(
         .collect::<Vec<_>>();
 
     snippets.sort_unstable_by_key(|snippet| {
-        OrderedFloat(
-            snippet
-                .score_density(SnippetStyle::Declaration)
-                .max(snippet.score_density(SnippetStyle::Signature)),
-        )
+        let score_density = snippet
+            .score_density(SnippetStyle::Declaration)
+            .max(snippet.score_density(SnippetStyle::Signature));
+        Reverse(OrderedFloat(score_density))
     });
 
     snippets

@@ -5215,33 +5215,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "edit_prediction_tools"
-version = "0.1.0"
-dependencies = [
- "clap",
- "collections",
- "edit_prediction_context",
- "editor",
- "futures 0.3.31",
- "gpui",
- "indoc",
- "language",
- "log",
- "pretty_assertions",
- "project",
- "serde",
- "serde_json",
- "settings",
- "text",
- "ui",
- "ui_input",
- "util",
- "workspace",
- "workspace-hack",
- "zlog",
-]
-
-[[package]]
 name = "editor"
 version = "0.1.0"
 dependencies = [
@@ -21274,7 +21247,6 @@ dependencies = [
  "debugger_ui",
  "diagnostics",
  "edit_prediction_button",
- "edit_prediction_tools",
  "editor",
  "env_logger 0.11.8",
  "extension",
@@ -21386,6 +21358,7 @@ dependencies = [
  "zed_env_vars",
  "zeta",
  "zeta2",
+ "zeta2_tools",
  "zlog",
  "zlog_settings",
 ]
@@ -21669,6 +21642,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arrayvec",
+ "chrono",
  "client",
  "cloud_llm_client",
  "edit_prediction",
@@ -21687,6 +21661,36 @@ dependencies = [
  "workspace",
  "workspace-hack",
  "worktree",
+]
+
+[[package]]
+name = "zeta2_tools"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "client",
+ "collections",
+ "edit_prediction_context",
+ "editor",
+ "futures 0.3.31",
+ "gpui",
+ "indoc",
+ "language",
+ "log",
+ "pretty_assertions",
+ "project",
+ "serde",
+ "serde_json",
+ "settings",
+ "text",
+ "ui",
+ "ui_input",
+ "util",
+ "workspace",
+ "workspace-hack",
+ "zeta2",
+ "zlog",
 ]
 
 [[package]]

@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Result, anyhow};
 use arrayvec::ArrayVec;
+use chrono::TimeDelta;
 use client::{Client, EditPredictionUsage, UserStore};
 use cloud_llm_client::predict_edits_v3::{self, Signature};
 use cloud_llm_client::{
@@ -11,10 +12,11 @@ use edit_prediction_context::{
     SyntaxIndexState,
 };
 use futures::AsyncReadExt as _;
+use futures::channel::mpsc;
 use gpui::http_client::Method;
 use gpui::{
-    App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, http_client,
-    prelude::*,
+    App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
+    http_client, prelude::*,
 };
 use language::{Anchor, Buffer, OffsetRangeExt as _, ToPoint};
 use language::{BufferSnapshot, EditPreview};
@@ -28,7 +30,7 @@ use std::str::FromStr as _;
 use std::time::{Duration, Instant};
 use std::{ops::Range, sync::Arc};
 use thiserror::Error;
-use util::ResultExt as _;
+use util::{ResultExt as _, some_or_debug_panic};
 use uuid::Uuid;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
@@ -36,6 +38,12 @@ const BUFFER_CHANGE_GROUPING_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Maximum number of events to track.
 const MAX_EVENT_COUNT: usize = 16;
+
+pub const DEFAULT_EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
+    max_bytes: 512,
+    min_bytes: 128,
+    target_before_cursor_over_total_bytes: 0.5,
+};
 
 #[derive(Clone)]
 struct ZetaGlobal(Entity<Zeta>);
@@ -50,7 +58,18 @@ pub struct Zeta {
     projects: HashMap<EntityId, ZetaProject>,
     pub excerpt_options: EditPredictionExcerptOptions,
     update_required: bool,
+    debug_tx: Option<mpsc::UnboundedSender<Result<PredictionDebugInfo, String>>>,
 }
+
+pub struct PredictionDebugInfo {
+    pub context: EditPredictionContext,
+    pub retrieval_time: TimeDelta,
+    pub request: RequestDebugInfo,
+    pub buffer: WeakEntity<Buffer>,
+    pub position: language::Anchor,
+}
+
+pub type RequestDebugInfo = predict_edits_v3::DebugInfo;
 
 struct ZetaProject {
     syntax_index: Entity<SyntaxIndex>,
@@ -94,11 +113,7 @@ impl Zeta {
             projects: HashMap::new(),
             client,
             user_store,
-            excerpt_options: EditPredictionExcerptOptions {
-                max_bytes: 512,
-                min_bytes: 128,
-                target_before_cursor_over_total_bytes: 0.5,
-            },
+            excerpt_options: DEFAULT_EXCERPT_OPTIONS,
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
                 &refresh_llm_token_listener,
@@ -113,7 +128,22 @@ impl Zeta {
                 },
             ),
             update_required: false,
+            debug_tx: None,
         }
+    }
+
+    pub fn debug_info(&mut self) -> mpsc::UnboundedReceiver<Result<PredictionDebugInfo, String>> {
+        let (debug_watch_tx, debug_watch_rx) = mpsc::unbounded();
+        self.debug_tx = Some(debug_watch_tx);
+        debug_watch_rx
+    }
+
+    pub fn excerpt_options(&self) -> &EditPredictionExcerptOptions {
+        &self.excerpt_options
+    }
+
+    pub fn set_excerpt_options(&mut self, options: EditPredictionExcerptOptions) {
+        self.excerpt_options = options;
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -273,9 +303,11 @@ impl Zeta {
             .worktrees(cx)
             .map(|worktree| worktree.read(cx).snapshot())
             .collect::<Vec<_>>();
+        let debug_tx = self.debug_tx.clone();
 
         let request_task = cx.background_spawn({
             let snapshot = snapshot.clone();
+            let buffer = buffer.clone();
             async move {
                 let index_state = if let Some(index_state) = index_state {
                     Some(index_state.lock_owned().await)
@@ -285,35 +317,61 @@ impl Zeta {
 
                 let cursor_point = position.to_point(&snapshot);
 
-                // TODO: make this only true if debug view is open
-                let debug_info = true;
+                let before_retrieval = chrono::Utc::now();
 
-                let Some(request) = EditPredictionContext::gather_context(
+                let Some(context) = EditPredictionContext::gather_context(
                     cursor_point,
                     &snapshot,
                     &excerpt_options,
                     index_state.as_deref(),
-                )
-                .map(|context| {
-                    make_cloud_request(
-                        excerpt_path.clone(),
-                        context,
-                        // TODO pass everything
-                        Vec::new(),
-                        false,
-                        Vec::new(),
-                        None,
-                        debug_info,
-                        &worktree_snapshots,
-                        index_state.as_deref(),
-                    )
-                }) else {
+                ) else {
                     return Ok(None);
                 };
 
-                anyhow::Ok(Some(
-                    Self::perform_request(client, llm_token, app_version, request).await?,
-                ))
+                let debug_context = if let Some(debug_tx) = debug_tx {
+                    Some((debug_tx, context.clone()))
+                } else {
+                    None
+                };
+
+                let request = make_cloud_request(
+                    excerpt_path.clone(),
+                    context,
+                    // TODO pass everything
+                    Vec::new(),
+                    false,
+                    Vec::new(),
+                    None,
+                    debug_context.is_some(),
+                    &worktree_snapshots,
+                    index_state.as_deref(),
+                );
+
+                let retrieval_time = chrono::Utc::now() - before_retrieval;
+                let response = Self::perform_request(client, llm_token, app_version, request).await;
+
+                if let Some((debug_tx, context)) = debug_context {
+                    debug_tx
+                        .unbounded_send(response.as_ref().map_err(|err| err.to_string()).and_then(
+                            |response| {
+                                let Some(request) =
+                                    some_or_debug_panic(response.0.debug_info.clone())
+                                else {
+                                    return Err("Missing debug info".to_string());
+                                };
+                                Ok(PredictionDebugInfo {
+                                    context,
+                                    request,
+                                    retrieval_time,
+                                    buffer: buffer.downgrade(),
+                                    position,
+                                })
+                            },
+                        ))
+                        .ok();
+                }
+
+                anyhow::Ok(Some(response?))
             }
         });
 
