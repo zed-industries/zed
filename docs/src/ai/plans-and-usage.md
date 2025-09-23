@@ -36,4 +36,4 @@ Cost per request for each model can be found on [the models page](./models.md).
 
 ## Business Usage {#business-usage}
 
-Email [sales@zed.dev](mailto:sales@zed.dev) with any questions on business plans, metering, and usage-based pricing.
+Email [sales@zed.dev](mailto:sales@zed.dev) with any questions on business plans.
