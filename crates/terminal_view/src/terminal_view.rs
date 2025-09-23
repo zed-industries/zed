@@ -476,7 +476,7 @@ impl TerminalView {
             .terminal
             .read(cx)
             .task()
-            .map(|task| terminal_rerun_override(&task.id))
+            .map(|task| terminal_rerun_override(&task.spawned_task.id))
             .unwrap_or_default();
         window.dispatch_action(Box::new(task), cx);
     }
@@ -831,11 +831,11 @@ impl TerminalView {
     }
 
     fn rerun_button(task: &TaskState) -> Option<IconButton> {
-        if !task.show_rerun {
+        if !task.spawned_task.show_rerun {
             return None;
         }
 
-        let task_id = task.id.clone();
+        let task_id = task.spawned_task.id.clone();
         Some(
             IconButton::new("rerun-icon", IconName::Rerun)
                 .icon_size(IconSize::Small)

@@ -17156,6 +17156,7 @@ dependencies = [
  "itertools 0.14.0",
  "language",
  "log",
+ "pretty_assertions",
  "project",
  "rand 0.9.1",
  "regex",
