@@ -7616,7 +7616,7 @@ impl LineWithInvisibles {
                     let text_runs: &[TextRun] = if segments.is_empty() {
                         &styles
                     } else {
-                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
+                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
                     };
                     let shaped_line = window.text_system().shape_line(
                         line.clone().into(),
@@ -7703,7 +7703,7 @@ impl LineWithInvisibles {
                         let text_runs = if segments.is_empty() {
                             &styles
                         } else {
-                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
+                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
                         };
                         let shaped_line = window.text_system().shape_line(
                             line.clone().into(),
@@ -7802,9 +7802,10 @@ impl LineWithInvisibles {
         text_runs: &[TextRun],
         bg_segments: &[(Range<DisplayPoint>, Hsla)],
         min_contrast: f32,
+        start_col_offset: usize,
     ) -> Vec<TextRun> {
         let mut output_runs: Vec<TextRun> = Vec::with_capacity(text_runs.len());
-        let mut line_col = 0usize;
+        let mut line_col = start_col_offset;
         let mut segment_ix = 0usize;
 
         for text_run in text_runs.iter() {
@@ -11272,6 +11273,12 @@ mod tests {
             l: 0.2,
             a: 1.0,
         };
+        let bg3 = Hsla {
+            h: 90.0,
+            s: 0.6,
+            l: 0.3,
+            a: 1.0,
+        };
         let min_contrast = 45.0;
 
         // Case A: single run; disjoint segments inside the run
@@ -11286,7 +11293,7 @@ mod tests {
                 bg2,
             ),
         ];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
         // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
         assert_eq!(
             out.iter().map(|r| r.len).collect::<Vec<_>>(),
@@ -11313,7 +11320,7 @@ mod tests {
             DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), u32::MAX),
             bg1,
         )];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
         // Expected slices across runs: [0,6) [6,8) | [0,7)
         assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
         let adjusted = ensure_minimum_contrast(text_color, bg1, min_contrast);
@@ -11334,7 +11341,7 @@ mod tests {
             DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), 14),
             bg1,
         )];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
+        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
         // "Hello" | " " | "🌍 " | "世" | "界" | "!"
         assert_eq!(
             out.iter().map(|r| r.len).collect::<Vec<_>>(),
@@ -11351,5 +11358,86 @@ mod tests {
         ); // "世"
         assert_eq!(out[4].color, text_color); // "界"
         assert_eq!(out[5].color, text_color); // "!"
+
+        // Case D: three batches on the same row with multiple non-overlapping segments
+        // Segments (absolute columns): [2,4)->bg1, [4,8)->bg2, [9,11)->bg1, [12,16)->bg2, [18,19)->bg1
+        let segs_multi = vec![
+            (
+                DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 4),
+                bg1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 4)..DisplayPoint::new(DisplayRow(0), 8),
+                bg2,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 9)..DisplayPoint::new(DisplayRow(0), 11),
+                bg1,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
+                bg2,
+            ),
+            (
+                DisplayPoint::new(DisplayRow(0), 18)..DisplayPoint::new(DisplayRow(0), 19),
+                bg1,
+            ),
+        ];
+
+        let adjusted_bg1 = ensure_minimum_contrast(text_color, bg1, min_contrast);
+        let adjusted_bg2 = ensure_minimum_contrast(text_color, bg2, min_contrast);
+        let _adjusted_bg3 = ensure_minimum_contrast(text_color, bg3, min_contrast);
+
+        // Batch 1 runs cover [0,6): [0,2) | [2,6)
+        // Expected: [0,2) normal | [2,4) bg1 | [4,6) bg2 => lens [2,2,2]
+        let runs_b1 = vec![
+            generate_test_run(2, text_color),
+            generate_test_run(4, text_color),
+        ];
+        let out_b1 =
+            LineWithInvisibles::split_runs_by_bg_segments(&runs_b1, &segs_multi, min_contrast, 0);
+        assert_eq!(
+            out_b1.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![2, 2, 2]
+        );
+        assert_eq!(out_b1[0].color, text_color);
+        assert_eq!(out_b1[1].color, adjusted_bg1);
+        assert_eq!(out_b1[2].color, adjusted_bg2);
+
+        // Batch 2 runs cover [6,14): [6,9) | [9,11) | [11,14)
+        // Expected with segments: [6,8) bg2 | [8,9) normal | [9,11) bg1 | [11,12) normal | [12,14) bg2
+        let runs_b2 = vec![
+            generate_test_run(3, text_color),
+            generate_test_run(2, text_color),
+            generate_test_run(3, text_color),
+        ];
+        let out_b2 =
+            LineWithInvisibles::split_runs_by_bg_segments(&runs_b2, &segs_multi, min_contrast, 6);
+        assert_eq!(
+            out_b2.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![2, 1, 2, 1, 2]
+        );
+        assert_eq!(out_b2[0].color, adjusted_bg2);
+        assert_eq!(out_b2[1].color, text_color);
+        assert_eq!(out_b2[2].color, adjusted_bg1);
+        assert_eq!(out_b2[3].color, text_color);
+        assert_eq!(out_b2[4].color, adjusted_bg2);
+
+        // Batch 3 runs cover [14,19): [14,15) | [15,19)
+        // Expected: [14,15) bg2 | [15,16) bg2 | [16,18) normal | [18,19) bg1 => lens [1,1,2,1]
+        let runs_b3 = vec![
+            generate_test_run(1, text_color),
+            generate_test_run(4, text_color),
+        ];
+        let out_b3 =
+            LineWithInvisibles::split_runs_by_bg_segments(&runs_b3, &segs_multi, min_contrast, 14);
+        assert_eq!(
+            out_b3.iter().map(|r| r.len).collect::<Vec<_>>(),
+            vec![1, 1, 2, 1]
+        );
+        assert_eq!(out_b3[0].color, adjusted_bg2);
+        assert_eq!(out_b3[1].color, adjusted_bg2);
+        assert_eq!(out_b3[2].color, text_color);
+        assert_eq!(out_b3[3].color, adjusted_bg1);
     }
 }
