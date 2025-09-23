@@ -2,7 +2,7 @@ use alacritty_terminal::vte::ansi::{
     CursorShape as AlacCursorShape, CursorStyle as AlacCursorStyle,
 };
 use collections::HashMap;
-use gpui::{App, FontFallbacks, FontFeatures, FontWeight, Pixels, px};
+use gpui::{FontFallbacks, FontFeatures, FontWeight, Pixels, px};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -72,7 +72,7 @@ fn settings_shell_to_task_shell(shell: settings::Shell) -> Shell {
 }
 
 impl settings::Settings for TerminalSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let content = content.terminal.clone().unwrap();
         TerminalSettings {
             shell: settings_shell_to_task_shell(content.shell.unwrap()),

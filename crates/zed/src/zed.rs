@@ -1968,7 +1968,7 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use theme::{ThemeRegistry, ThemeSettings};
+    use theme::{SystemAppearance, ThemeRegistry, ThemeSettings};
     use util::path;
     use workspace::{
         NewFile, OpenOptions, OpenVisible, SERIALIZATION_THROTTLE_TIME, SaveIntent, SplitDirection,
@@ -4569,7 +4569,12 @@ mod tests {
         for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
-            if theme.name == ThemeSettings::get(None, cx).active_theme.name {
+            if theme.name
+                == &ThemeSettings::get_global(cx)
+                    .theme
+                    .name(SystemAppearance::global(cx).0)
+                    .0
+            {
                 has_default_theme = true;
             }
         }

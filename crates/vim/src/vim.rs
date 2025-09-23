@@ -1849,7 +1849,7 @@ impl From<settings::ModeContent> for Mode {
 }
 
 impl Settings for VimSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let vim = content.vim.clone().unwrap();
         Self {
             default_mode: vim.default_mode.unwrap().into(),

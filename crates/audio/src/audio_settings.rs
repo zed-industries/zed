@@ -22,7 +22,7 @@ pub struct AudioSettings {
 
 /// Configuration of audio in Zed
 impl Settings for AudioSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let audio = &content.audio.as_ref().unwrap();
         AudioSettings {
             control_input_volume: audio.control_input_volume.unwrap(),

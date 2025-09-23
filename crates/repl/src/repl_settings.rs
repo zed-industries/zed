@@ -1,4 +1,3 @@
-use gpui::App;
 use settings::Settings;
 
 /// Settings for configuring REPL display and behavior.
@@ -17,7 +16,7 @@ pub struct ReplSettings {
 }
 
 impl Settings for ReplSettings {
-    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
         let repl = content.repl.as_ref().unwrap();
 
         Self {
