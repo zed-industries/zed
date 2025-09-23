@@ -5,12 +5,27 @@ type LengthWithoutPadding = u32;
 #[derive(Clone)]
 pub struct EncryptedPassword(Vec<u8>, LengthWithoutPadding);
 
-impl TryFrom<EncryptedPassword> for String {
+pub trait ProcessExt {
+    fn encrypted_env(&mut self, name: &str, value: EncryptedPassword) -> &mut Self;
+}
+
+impl TryFrom<EncryptedPassword> for proto::AskPassResponse {
     type Error = anyhow::Error;
-    fn try_from(this: EncryptedPassword) -> Result<String> {
-        decrypt_password(this)
+    fn try_from(pw: EncryptedPassword) -> Result<Self, Self::Error> {
+        let pw = decrypt_password(pw)?;
+        Ok(Self { response: pw })
     }
 }
+
+impl ProcessExt for smol::process::Command {
+    fn encrypted_env(&mut self, name: &str, value: EncryptedPassword) -> &mut Self {
+        if let Ok(password) = decrypt_password(value) {
+            self.env(name, password);
+        }
+        self
+    }
+}
+
 impl Drop for EncryptedPassword {
     fn drop(&mut self) {
         self.0.zeroize();

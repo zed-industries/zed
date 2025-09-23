@@ -2100,16 +2100,13 @@ impl GitStore {
             anyhow::bail!("no askpass found");
         };
 
-        let response = askpass
-            .ask_password(envelope.payload.prompt)
-            .await?
-            .try_into()?;
+        let response = askpass.ask_password(envelope.payload.prompt).await?;
 
         delegates
             .lock()
             .insert(envelope.payload.askpass_id, askpass);
 
-        Ok(proto::AskPassResponse { response })
+        response.try_into()
     }
 
     async fn handle_check_for_pushed_commits(

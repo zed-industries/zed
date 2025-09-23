@@ -814,6 +814,7 @@ dependencies = [
  "gpui",
  "net",
  "parking_lot",
+ "proto",
  "smol",
  "tempfile",
  "util",

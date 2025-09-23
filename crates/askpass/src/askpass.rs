@@ -1,6 +1,6 @@
 mod pass_store;
 
-pub use pass_store::EncryptedPassword;
+pub use pass_store::{EncryptedPassword, ProcessExt};
 
 #[cfg(target_os = "windows")]
 use std::sync::OnceLock;

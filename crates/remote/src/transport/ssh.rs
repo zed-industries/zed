@@ -74,6 +74,8 @@ struct SshSocket {
     #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
     envs: HashMap<String, String>,
+    #[cfg(target_os = "windows")]
+    password: askpass::EncryptedPassword,
 }
 
 macro_rules! shell_script {
@@ -681,16 +683,21 @@ impl SshSocket {
     }
 
     #[cfg(target_os = "windows")]
-    fn new(options: SshConnectionOptions, temp_dir: &TempDir, secret: String) -> Result<Self> {
+    fn new(
+        options: SshConnectionOptions,
+        temp_dir: &TempDir,
+        password: askpass::EncryptedPassword,
+    ) -> Result<Self> {
         let askpass_script = temp_dir.path().join("askpass.bat");
         std::fs::write(&askpass_script, "@ECHO OFF\necho %ZED_SSH_ASKPASS%")?;
         let mut envs = HashMap::default();
         envs.insert("SSH_ASKPASS_REQUIRE".into(), "force".into());
         envs.insert("SSH_ASKPASS".into(), askpass_script.display().to_string());
-        envs.insert("ZED_SSH_ASKPASS".into(), secret);
+
         Ok(Self {
             connection_options: options,
             envs,
+            password,
         })
     }
 
@@ -744,12 +751,14 @@ impl SshSocket {
 
     #[cfg(target_os = "windows")]
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+        use askpass::ProcessExt;
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .args(self.connection_options.additional_args())
             .envs(self.envs.clone())
+            .encrypted_env("ZED_SSH_ASKPASS", self.password.clone())
     }
 
     // On Windows, we need to use `SSH_ASKPASS` to provide the password to ssh.
