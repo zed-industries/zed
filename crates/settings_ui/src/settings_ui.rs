@@ -4,8 +4,8 @@ use std::{rc::Rc, sync::Arc};
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, IntoElement, Render, Window, WindowHandle, actions,
-    div, px, size,
+    App, AppContext as _, Context, Div, Entity, IntoElement, ReadGlobal as _, Render, Window,
+    WindowHandle, WindowOptions, actions, div, px, size,
 };
 use project::WorktreeId;
 use settings::{SettingsContent, SettingsStore};
@@ -136,7 +136,7 @@ pub fn init(cx: &mut App) {
 
 pub fn open_settings_editor(cx: &mut App) -> anyhow::Result<WindowHandle<SettingsWindow>> {
     cx.open_window(
-        gpui::WindowOptions {
+        WindowOptions {
             titlebar: Some(gpui::TitlebarOptions {
                 title: Some("Zed Settings".into()),
                 ..Default::default()
@@ -187,7 +187,7 @@ impl SettingsPageItem {
 }
 
 impl SettingsPageItem {
-    fn header(&self) -> Option<&'static str> {
+    fn _header(&self) -> Option<&'static str> {
         match self {
             SettingsPageItem::SectionHeader(header) => Some(header),
             _ => None,
@@ -224,16 +224,6 @@ impl SettingsFile {
             SettingsFile::User => "User".to_string(),
             SettingsFile::Local((_, path)) => format!("Local ({})", path.display()),
             SettingsFile::Server(file) => format!("Server ({})", file),
-        }
-    }
-}
-
-impl Into<settings::SettingsFile> for SettingsFile {
-    fn into(self) -> settings::SettingsFile {
-        match self {
-            SettingsFile::User => settings::SettingsFile::User,
-            SettingsFile::Local(location) => settings::SettingsFile::Local(location),
-            SettingsFile::Server(_ /*TODO*/) => settings::SettingsFile::Server,
         }
     }
 }
@@ -369,30 +359,33 @@ fn write_setting_value<T: Send + 'static>(
 
 fn render_text_field(
     id: &'static str,
-    file: SettingsFile,
+    _file: SettingsFile,
     window: &mut Window,
     cx: &mut App,
     get_value: fn(&mut SettingsContent) -> &mut Option<String>,
 ) -> AnyElement {
     // TODO: Updating file does not cause the editor text to reload, suspicious it may be a missing global update/notify in SettingsStore
 
+    // TODO: in settings window state
+    let store = SettingsStore::global(cx);
+
+    // TODO: This clone needs to go!!
+    let mut defaults = store.raw_default_settings().clone();
+    let mut user_settings = store
+        .raw_user_settings()
+        .cloned()
+        .unwrap_or_default()
+        .content;
+
     // TODO: unwrap_or_default here because project name is null
-    let initial_text = cx.update_global(|store: &mut SettingsStore, _| {
-        store
-            .get_value_from_file_mut(file.into(), get_value)
-            .clone()
-            .unwrap_or_default()
-    });
+    let initial_text = get_value(user_settings.as_mut())
+        .clone()
+        .unwrap_or_else(|| get_value(&mut defaults).clone().unwrap_or_default());
 
     let editor = window.use_keyed_state((id.into(), initial_text.clone()), cx, {
         move |window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_text(initial_text, window, cx);
-
-            // TODO: is this redundant with the same logic in the SettingsWindow::new function?
-            cx.observe_global_in::<SettingsStore>(window, move |_editor, _window, cx| cx.notify())
-                .detach();
-
             editor
         }
     });
@@ -424,19 +417,27 @@ fn render_text_field(
 
 fn render_toggle_button(
     id: &'static str,
-    file: SettingsFile,
+    _: SettingsFile,
     cx: &mut App,
     get_value: fn(&mut SettingsContent) -> &mut Option<bool>,
 ) -> AnyElement {
-    let toggle_state = if cx.update_global(|store: &mut SettingsStore, _| {
-        store
-            .get_value_from_file_mut(file.into(), get_value)
-            .unwrap_or_default()
-    }) {
-        ui::ToggleState::Selected
-    } else {
-        ui::ToggleState::Unselected
-    };
+    // TODO: in settings window state
+    let store = SettingsStore::global(cx);
+
+    // TODO: This clone needs to go!!
+    let mut defaults = store.raw_default_settings().clone();
+    let mut user_settings = store
+        .raw_user_settings()
+        .cloned()
+        .unwrap_or_default()
+        .content;
+
+    let toggle_state =
+        if get_value(&mut user_settings).unwrap_or_else(|| get_value(&mut defaults).unwrap()) {
+            ui::ToggleState::Selected
+        } else {
+            ui::ToggleState::Unselected
+        };
 
     Switch::new(id, toggle_state)
         .on_click({

@@ -137,16 +137,6 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
-#[derive(Clone, PartialEq)]
-pub enum SettingsFile {
-    User,
-    Default,
-    Global,
-    Extension,
-    Server,
-    Local((WorktreeId, Arc<Path>)),
-}
-
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     default_settings: Box<SettingsContent>,
@@ -960,112 +950,6 @@ impl SettingsStore {
 
         properties.use_fallbacks();
         Some(properties)
-    }
-
-    fn get_all_files(&self) -> Vec<SettingsFile> {
-        // - _Default_: The ones we ship with Zed, this file will **always** have a default value for every setting.
-        // - _Global_: An additional settings file that is loaded before user settings, located in the user's config directory.
-        // - _Extensions_: Extensions can provide their own default values for certain language settings (e.g. `tab_size`)
-        // - _User_: The user's own settings file, which is located in the user's config directory
-        // - _Release Channel_: Any setting can be customized to your current release channel (This is located inside the user settings file)
-        // - _Operating System_: Any setting can be customized to your current operating system. (This is located inside the user settings file)
-        // - _Profile_: Any setting can be customized to your current profile. (Both the current profile and the customizations for that profile are inside the user settings file)
-        // - _Server_ or _Remote_: This is placed second-to-last in the list, but this (and default / global settings) is the only settings file that is loaded on the remote server when connecting over SSH. User settings and the sources derived from them don't have an effect on the remote server's behavior.
-        // - _Project_: Any folder in a project can have it's own `.zed/settings.json` file, that applies those settings to the directories under it. Some of these settings can even come from external sources, like `.editorconfig` files.
-        //   - Despite having the highest precedence, these are only respected if the code that accesses the setting uses the `Settings::get` API and passes it a workspace location.
-
-        let mut files = Vec::from_iter(
-            self.local_settings
-                .keys()
-                // rev because these are sorted by path, so highest precedence is last
-                .rev()
-                .cloned()
-                .map(SettingsFile::Local),
-        );
-
-        if self.server_settings.is_some() {
-            files.push(SettingsFile::Server);
-        }
-        // ignoring profiles
-        // ignoring os profiles
-        // ignoring release channel profiles
-
-        if self.user_settings.is_some() {
-            files.push(SettingsFile::User);
-        }
-        if self.extension_settings.is_some() {
-            files.push(SettingsFile::Extension);
-        }
-        if self.global_settings.is_some() {
-            files.push(SettingsFile::Global);
-        }
-        files.push(SettingsFile::Default);
-        files
-    }
-
-    fn get_content_for_file_mut<'a>(
-        &'a mut self,
-        file: SettingsFile,
-    ) -> Option<&'a mut SettingsContent> {
-        match file {
-            SettingsFile::User => self
-                .user_settings
-                .as_mut()
-                .map(|settings| settings.content.as_mut()),
-            SettingsFile::Default => Some(self.default_settings.as_mut()),
-            SettingsFile::Global => self.global_settings.as_deref_mut(),
-            SettingsFile::Extension => self.extension_settings.as_deref_mut(),
-            SettingsFile::Server => self.server_settings.as_deref_mut(),
-            SettingsFile::Local(key) => self.local_settings.get_mut(&key),
-        }
-    }
-
-    pub fn get_value_from_file_mut<T>(
-        &mut self,
-        file: SettingsFile,
-        get: fn(&mut SettingsContent) -> &mut Option<T>,
-    ) -> &mut Option<T> {
-        let all_files = self.get_all_files();
-        let pos = all_files
-            .iter()
-            .position(|other_file| *other_file == file)
-            .unwrap_or({
-                debug_assert!(
-                    all_files[all_files.len() - 1] == SettingsFile::Default,
-                    "Default settings file is always lowest precedence"
-                );
-                // default settings file only
-                all_files.len() - 1
-            });
-
-        let mut valid_position = all_files.len() - 1;
-        // We find the valid position using this loop to avoid borrow errors
-        // the borrow checker will complain if we return `value` in this loop
-        // because content is a mutable reference of self and so is value
-        // TODO: figure out a cleaner way to do this
-        for (ix, other_file) in all_files.iter().skip(pos).enumerate() {
-            if let SettingsFile::Local((other_wt_id, _)) = other_file
-                && let SettingsFile::Local((wt_id, _)) = file
-                && *other_wt_id != wt_id
-            {
-                // if requesting value from a local file, don't return values from local files in different worktrees
-                continue;
-            }
-
-            // TODO: We could unwrap this because all files checks for Some variant
-            let Some(content) = self.get_content_for_file_mut(other_file.clone()) else {
-                continue;
-            };
-            let value = get(content);
-            if value.is_some() {
-                valid_position = ix;
-                break;
-            }
-        }
-
-        return get(self
-            .get_content_for_file_mut(all_files[valid_position].clone())
-            .unwrap());
     }
 }
 
