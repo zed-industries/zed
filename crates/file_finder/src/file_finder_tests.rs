@@ -1038,10 +1038,7 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     let (_worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
-        (
-            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
-            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
-        )
+        (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
     });
 
     let finder = open_file_picker(&workspace, cx);

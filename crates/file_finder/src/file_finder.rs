@@ -938,47 +938,44 @@ impl FileFinderDelegate {
                 extend_old_matches,
             );
 
-            let mut query_path = query.raw_query.as_str();
-            // add option of creating new file only if path is relative
-            let available_worktree = self
-                .project
-                .read(cx)
-                .visible_worktrees(cx)
-                .filter(|worktree| !worktree.read(cx).is_single_file())
-                .collect::<Vec<_>>();
-            let worktree_count = available_worktree.len();
-            let mut expect_worktree = available_worktree.first().cloned();
-            for worktree in available_worktree {
-                let worktree_root = worktree
+            let path_style = self.project.read(cx).path_style(cx);
+            let query_path = query.raw_query.as_str();
+            if let Ok(mut query_path) = RelPath::from_std_path(Path::new(query_path), path_style) {
+                let available_worktree = self
+                    .project
                     .read(cx)
-                    .abs_path()
-                    .file_name()
-                    .map_or(String::new(), |f| f.to_string_lossy().to_string());
-                if worktree_count > 1 && query_path.starts_with(&worktree_root) {
-                    query_path = query_path
-                        .strip_prefix(&worktree_root)
-                        .unwrap_or(query_path);
-                    expect_worktree = Some(worktree);
-                    break;
+                    .visible_worktrees(cx)
+                    .filter(|worktree| !worktree.read(cx).is_single_file())
+                    .collect::<Vec<_>>();
+                let worktree_count = available_worktree.len();
+                let mut expect_worktree = available_worktree.first().cloned();
+                for worktree in available_worktree {
+                    let worktree_root = worktree.read(cx).root_name();
+                    if worktree_count > 1 {
+                        if let Ok(suffix) = query_path.strip_prefix(worktree_root) {
+                            query_path = suffix.into();
+                            expect_worktree = Some(worktree);
+                            break;
+                        }
+                    }
                 }
-            }
 
-            if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
-                let worktree_id = project.worktree_id;
-                expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
-            }
+                if let Some(FoundPath { ref project, .. }) = self.currently_opened_path {
+                    let worktree_id = project.worktree_id;
+                    expect_worktree = self.project.read(cx).worktree_for_id(worktree_id, cx);
+                }
 
-            if let Some(worktree) = expect_worktree {
-                let worktree = worktree.read(cx);
-                if let Ok(query_path) =
-                    RelPath::from_std_path(Path::new(query_path), worktree.path_style())
-                    && worktree.entry_for_path(&query_path).is_none()
-                    && !(&query.raw_query).ends_with("/")
-                {
-                    self.matches.matches.push(Match::CreateNew(ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: query_path,
-                    }));
+                if let Some(worktree) = expect_worktree {
+                    let worktree = worktree.read(cx);
+                    if worktree.entry_for_path(&query_path).is_none()
+                        && !query.raw_query.ends_with("/")
+                        && !(path_style.is_windows() && query.raw_query.ends_with("\\"))
+                    {
+                        self.matches.matches.push(Match::CreateNew(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: query_path,
+                        }));
+                    }
                 }
             }
 
@@ -1125,12 +1122,11 @@ impl FileFinderDelegate {
         path_match: &PathMatch,
         path_style: PathStyle,
     ) -> (String, Vec<usize>, String, Vec<usize>) {
-        let path_string = path_match.path.display(path_style);
         let full_path = path_match.path_prefix.join(&path_match.path);
         let mut path_positions = path_match.positions.clone();
 
         let file_name = full_path.file_name().unwrap_or("");
-        let file_name_start = path_match.path_prefix.len() + path_string.len() - file_name.len();
+        let file_name_start = full_path.as_str().len() - file_name.len();
         let file_name_positions = path_positions
             .iter()
             .filter_map(|pos| {
@@ -1140,13 +1136,26 @@ impl FileFinderDelegate {
                     None
                 }
             })
-            .collect();
+            .collect::<Vec<_>>();
 
         let full_path = full_path
             .display(path_style)
             .trim_end_matches(&file_name)
             .to_string();
         path_positions.retain(|idx| *idx < full_path.len());
+
+        debug_assert!(
+            file_name_positions
+                .iter()
+                .all(|ix| file_name[*ix..].chars().next().is_some()),
+            "invalid file name positions {file_name:?} {file_name_positions:?}"
+        );
+        debug_assert!(
+            path_positions
+                .iter()
+                .all(|ix| full_path[*ix..].chars().next().is_some()),
+            "invalid path positions {full_path:?} {path_positions:?}"
+        );
 
         (
             file_name.to_string(),
