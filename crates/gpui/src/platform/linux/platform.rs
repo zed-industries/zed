@@ -442,6 +442,8 @@ impl<P: LinuxClient + 'static> Platform for P {
         });
     }
 
+    fn on_action_triggered(&self, _action: &dyn Action) {}
+
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
         let app_path = env::current_exe()?;
