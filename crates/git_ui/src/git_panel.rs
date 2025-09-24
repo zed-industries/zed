@@ -1055,24 +1055,31 @@ impl GitPanel {
             cx.spawn(async move |_, cx| {
                 let file_path_str = repo_path.0.to_string_lossy();
 
-                let (worktree, _relative_path) = project.read_with(cx, |project, cx| {
-                    project.find_worktree(&abs_path, cx)
-                })?.ok_or_else(|| anyhow::anyhow!("No worktree found for file: {}", abs_path.display()))?;
+                let (worktree, _relative_path) = project
+                    .read_with(cx, |project, cx| project.find_worktree(&abs_path, cx))?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("No worktree found for file: {}", abs_path.display())
+                    })?;
 
                 let gitignore_project_path = ProjectPath {
                     worktree_id: worktree.read_with(cx, |worktree, _| worktree.id())?,
                     path: Arc::from(Path::new(".gitignore")),
                 };
 
-                let buffer = project.update(cx, |project, cx| {
-                    project.open_buffer(gitignore_project_path.clone(), cx)
-                })?.await?;
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_buffer(gitignore_project_path.clone(), cx)
+                    })?
+                    .await?;
 
                 let mut should_save = false;
                 buffer.update(cx, |buffer, cx| {
                     let existing_content = buffer.text();
 
-                    if existing_content.lines().any(|line| line.trim() == file_path_str) {
+                    if existing_content
+                        .lines()
+                        .any(|line| line.trim() == file_path_str)
+                    {
                         return;
                     }
 
@@ -1090,9 +1097,9 @@ impl GitPanel {
                 })?;
 
                 if should_save {
-                    project.update(cx, |project, cx| {
-                        project.save_buffer(buffer, cx)
-                    })?.await?;
+                    project
+                        .update(cx, |project, cx| project.save_buffer(buffer, cx))?
+                        .await?;
                 }
 
                 anyhow::Ok(())
@@ -4222,7 +4229,8 @@ impl GitPanel {
                 .action(restore_title, git::RestoreFile::default().boxed_clone());
 
             if entry.status.is_created() {
-                context_menu = context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone());
+                context_menu =
+                    context_menu.action("Add to .gitignore", git::AddToGitignore.boxed_clone());
             }
 
             context_menu
