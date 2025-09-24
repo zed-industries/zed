@@ -278,36 +278,6 @@ impl CodestralCompletionProvider {
             Err(anyhow::anyhow!("No completion returned from Codestral"))
         }
     }
-
-    /// Creates an edit for inserting the completion text at the cursor position.
-    ///
-    /// In the simplified implementation, we just need to create a single edit
-    /// that inserts the completion text at the cursor.
-    ///
-    /// # Arguments
-    /// * `completion_text` - The text to insert at the cursor
-    /// * `cursor_offset` - The offset in the buffer where the cursor is
-    /// * `snapshot` - The buffer snapshot for creating anchors
-    ///
-    /// # Returns
-    /// A vector containing a single edit for the insertion
-    fn parse_edits(
-        completion_text: String,
-        cursor_offset: usize,
-        snapshot: &BufferSnapshot,
-    ) -> Result<Vec<(Range<Anchor>, String)>> {
-        log::debug!(
-            "Codestral: Creating insertion edit at offset {} with {} chars",
-            cursor_offset,
-            completion_text.len()
-        );
-
-        // Create an anchor at the cursor position
-        let cursor_anchor = snapshot.anchor_after(cursor_offset);
-
-        // Return a single edit that inserts the completion at the cursor
-        Ok(vec![(cursor_anchor..cursor_anchor, completion_text)])
-    }
 }
 
 impl EditPredictionProvider for CodestralCompletionProvider {
@@ -441,29 +411,15 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 return Ok(());
             }
 
-            // Create a simple insertion edit at the cursor position
-            let edits = match Self::parse_edits(completion_text, cursor_offset, &snapshot) {
-                Ok(edits) => edits,
-                Err(e) => {
-                    log::error!("Codestral: Failed to parse edits: {}", e);
-                    this.update(cx, |this, cx| {
-                        this.pending_request = None;
-                        cx.notify();
-                    })?;
-                    return Err(e);
-                }
-            };
-
-            // Create edit preview
-            let edits_arc: Arc<[(Range<Anchor>, String)]> = edits.into();
+            let edits = vec![(cursor_position..cursor_position, completion_text)].into();
             let edit_preview = buffer_handle
-                .read_with(cx, |buffer, cx| buffer.preview_edits(edits_arc.clone(), cx))?;
-            let edit_preview = edit_preview.await;
+                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
+                .await;
 
             this.update(cx, |this, cx| {
                 this.current_completion = Some(CurrentCompletion {
                     snapshot,
-                    edits: edits_arc,
+                    edits,
                     edit_preview,
                 });
                 this.pending_request = None;
