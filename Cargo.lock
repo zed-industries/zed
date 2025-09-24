@@ -12103,6 +12103,7 @@ dependencies = [
  "regex",
  "release_channel",
  "remote",
+ "repo_name",
  "rpc",
  "schemars 1.0.1",
  "semver",
@@ -13135,6 +13136,13 @@ dependencies = [
  "uuid",
  "workspace",
  "workspace-hack",
+]
+
+[[package]]
+name = "repo_name"
+version = "0.1.0"
+dependencies = [
+ "gpui",
 ]
 
 [[package]]
@@ -19559,10 +19567,12 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
+ "gpui_tokio",
  "http_client",
  "itertools 0.14.0",
  "language",
  "log",
+ "maplit",
  "menu",
  "node_runtime",
  "parking_lot",
@@ -19570,6 +19580,7 @@ dependencies = [
  "pretty_assertions",
  "project",
  "remote",
+ "repo_name",
  "schemars 1.0.1",
  "serde",
  "serde_json",
@@ -20184,6 +20195,7 @@ dependencies = [
  "debugger_tools",
  "debugger_ui",
  "diagnostics",
+ "dotenvy",
  "edit_prediction_button",
  "editor",
  "env_logger 0.11.8",
@@ -20244,6 +20256,7 @@ dependencies = [
  "release_channel",
  "remote",
  "repl",
+ "repo_name",
  "reqwest 0.12.15 (git+https://github.com/zed-industries/reqwest.git?rev=951c770a32f1998d6e999cef3e59e0013e6c4415)",
  "reqwest_client",
  "rope",
