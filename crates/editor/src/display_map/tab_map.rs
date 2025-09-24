@@ -551,7 +551,7 @@ impl TabChunks<'_> {
         self.chunk = Chunk {
             text: &SPACES[0..(to_next_stop as usize)],
             is_tab: true,
-            chars: (1u128 << to_next_stop) - 1,
+            chars: 1u128.unbounded_shl(to_next_stop) - 1,
             ..Default::default()
         };
         self.inside_leading_tab = to_next_stop > 0;
@@ -623,7 +623,7 @@ impl<'a> Iterator for TabChunks<'a> {
                         return Some(Chunk {
                             text: &SPACES[..len as usize],
                             is_tab: true,
-                            chars: (1 << len) - 1,
+                            chars: 1u128.unbounded_shl(len) - 1,
                             tabs: 0,
                             ..self.chunk.clone()
                         });

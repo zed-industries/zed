@@ -2626,6 +2626,7 @@ The following settings can be overridden for each specific language:
 - [`remove_trailing_whitespace_on_save`](#remove-trailing-whitespace-on-save)
 - [`show_edit_predictions`](#show-edit-predictions)
 - [`show_whitespaces`](#show-whitespaces)
+- [`whitespace_map`](#whitespace-map)
 - [`soft_wrap`](#soft-wrap)
 - [`tab_size`](#tab-size)
 - [`use_autoclose`](#use-autoclose)
@@ -3348,6 +3349,20 @@ Positive integer values
 3. `none`
 4. `boundary`
 
+## Whitespace Map
+
+- Description: Specify the characters used to render whitespace when show_whitespaces is enabled.
+- Setting: `whitespace_map`
+- Default:
+
+```json
+{
+  "whitespace_map": {
+    "space": "•",
+    "tab": "→"
+  },
+```
+
 ## Soft Wrap
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
@@ -3776,11 +3791,11 @@ See Buffer Font Features
 
 - Description: Set the terminal's line height.
 - Setting: `line_height`
-- Default: `comfortable`
+- Default: `standard`
 
 **Options**
 
-1. Use a line height that's `comfortable` for reading, 1.618. (default)
+1. Use a line height that's `comfortable` for reading, 1.618.
 
 ```json
 {
@@ -3790,7 +3805,7 @@ See Buffer Font Features
 }
 ```
 
-2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters
+2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters. (default)
 
 ```json
 {
@@ -4125,7 +4140,6 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json
 "title_bar": {
-  "show": "always",
   "show_branch_icon": false,
   "show_branch_name": true,
   "show_project_items": true,

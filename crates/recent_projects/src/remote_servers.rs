@@ -1,8 +1,7 @@
 use crate::{
     remote_connections::{
-        Connection, RemoteConnectionModal, RemoteConnectionPrompt, RemoteSettingsContent,
-        SshConnection, SshConnectionHeader, SshProject, SshSettings, connect, connect_over_ssh,
-        open_remote_project,
+        Connection, RemoteConnectionModal, RemoteConnectionPrompt, SshConnection,
+        SshConnectionHeader, SshSettings, connect, connect_over_ssh, open_remote_project,
     },
     ssh_config::parse_ssh_config_hosts,
 };
@@ -22,7 +21,10 @@ use remote::{
     RemoteClient, RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
     remote_client::ConnectionIdentifier,
 };
-use settings::{Settings, SettingsStore, update_settings_file, watch_config_file};
+use settings::{
+    RemoteSettingsContent, Settings as _, SettingsStore, SshProject, update_settings_file,
+    watch_config_file,
+};
 use smol::stream::StreamExt as _;
 use std::{
     borrow::Cow,
@@ -83,7 +85,7 @@ impl CreateRemoteServer {
 
 #[cfg(target_os = "windows")]
 struct AddWslDistro {
-    picker: Entity<Picker<WslPickerDelegate>>,
+    picker: Entity<Picker<crate::wsl_picker::WslPickerDelegate>>,
     connection_prompt: Option<Entity<RemoteConnectionPrompt>>,
     _creating: Option<Task<()>>,
 }
@@ -91,6 +93,8 @@ struct AddWslDistro {
 #[cfg(target_os = "windows")]
 impl AddWslDistro {
     fn new(window: &mut Window, cx: &mut Context<RemoteServerProjects>) -> Self {
+        use crate::wsl_picker::{WslDistroSelected, WslPickerDelegate, WslPickerDismissed};
+
         let delegate = WslPickerDelegate::new();
         let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
 
@@ -117,184 +121,6 @@ impl AddWslDistro {
             connection_prompt: None,
             _creating: None,
         }
-    }
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Clone, Debug)]
-pub struct WslDistroSelected(pub String);
-
-#[cfg(target_os = "windows")]
-#[derive(Clone, Debug)]
-pub struct WslPickerDismissed;
-
-#[cfg(target_os = "windows")]
-struct WslPickerDelegate {
-    selected_index: usize,
-    distro_list: Option<Vec<String>>,
-    matches: Vec<fuzzy::StringMatch>,
-}
-
-#[cfg(target_os = "windows")]
-impl WslPickerDelegate {
-    fn new() -> Self {
-        WslPickerDelegate {
-            selected_index: 0,
-            distro_list: None,
-            matches: Vec::new(),
-        }
-    }
-
-    pub fn selected_distro(&self) -> Option<String> {
-        self.matches
-            .get(self.selected_index)
-            .map(|m| m.string.clone())
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl WslPickerDelegate {
-    fn fetch_distros() -> anyhow::Result<Vec<String>> {
-        use anyhow::Context;
-        use windows_registry::CURRENT_USER;
-
-        let lxss_key = CURRENT_USER
-            .open("Software\\Microsoft\\Windows\\CurrentVersion\\Lxss")
-            .context("failed to get lxss wsl key")?;
-
-        let distros = lxss_key
-            .keys()
-            .context("failed to get wsl distros")?
-            .filter_map(|key| {
-                lxss_key
-                    .open(&key)
-                    .context("failed to open subkey for distro")
-                    .log_err()
-            })
-            .filter_map(|distro| distro.get_string("DistributionName").ok())
-            .collect::<Vec<_>>();
-
-        Ok(distros)
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl EventEmitter<WslDistroSelected> for Picker<WslPickerDelegate> {}
-
-#[cfg(target_os = "windows")]
-impl EventEmitter<WslPickerDismissed> for Picker<WslPickerDelegate> {}
-
-#[cfg(target_os = "windows")]
-impl picker::PickerDelegate for WslPickerDelegate {
-    type ListItem = ListItem;
-
-    fn match_count(&self) -> usize {
-        self.matches.len()
-    }
-
-    fn selected_index(&self) -> usize {
-        self.selected_index
-    }
-
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
-        self.selected_index = ix;
-        cx.notify();
-    }
-
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from("Enter WSL distro name")
-    }
-
-    fn update_matches(
-        &mut self,
-        query: String,
-        _window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) -> Task<()> {
-        use fuzzy::StringMatchCandidate;
-
-        let needs_fetch = self.distro_list.is_none();
-        if needs_fetch {
-            let distros = Self::fetch_distros().log_err();
-            self.distro_list = distros;
-        }
-
-        if let Some(distro_list) = &self.distro_list {
-            use ordered_float::OrderedFloat;
-
-            let candidates = distro_list
-                .iter()
-                .enumerate()
-                .map(|(id, distro)| StringMatchCandidate::new(id, distro))
-                .collect::<Vec<_>>();
-
-            let query = query.trim_start();
-            let smart_case = query.chars().any(|c| c.is_uppercase());
-            self.matches = smol::block_on(fuzzy::match_strings(
-                candidates.as_slice(),
-                query,
-                smart_case,
-                true,
-                100,
-                &Default::default(),
-                cx.background_executor().clone(),
-            ));
-            self.matches.sort_unstable_by_key(|m| m.candidate_id);
-
-            self.selected_index = self
-                .matches
-                .iter()
-                .enumerate()
-                .rev()
-                .max_by_key(|(_, m)| OrderedFloat(m.score))
-                .map(|(index, _)| index)
-                .unwrap_or(0);
-        }
-
-        Task::ready(())
-    }
-
-    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        if let Some(distro) = self.matches.get(self.selected_index) {
-            cx.emit(WslDistroSelected(distro.string.clone()));
-        }
-    }
-
-    fn dismissed(&mut self, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
-        cx.emit(WslPickerDismissed);
-    }
-
-    fn render_match(
-        &self,
-        ix: usize,
-        selected: bool,
-        _: &mut Window,
-        _: &mut Context<Picker<Self>>,
-    ) -> Option<Self::ListItem> {
-        use ui::HighlightedLabel;
-
-        let matched = self.matches.get(ix)?;
-        Some(
-            ListItem::new(ix)
-                .toggle_state(selected)
-                .inset(true)
-                .spacing(ui::ListItemSpacing::Sparse)
-                .child(
-                    h_flex()
-                        .flex_grow()
-                        .gap_3()
-                        .child(Icon::new(IconName::Linux))
-                        .child(v_flex().child(HighlightedLabel::new(
-                            matched.string.clone(),
-                            matched.positions.clone(),
-                        ))),
-                ),
-        )
     }
 }
 
@@ -409,14 +235,15 @@ impl ProjectPicker {
 
                     cx.update(|_, cx| {
                         let fs = app_state.fs.clone();
-                        update_settings_file::<SshSettings>(fs, cx, {
+                        update_settings_file(fs, cx, {
                             let paths = paths
                                 .iter()
                                 .map(|path| path.to_string_lossy().to_string())
                                 .collect();
-                            move |setting, _| match index {
+                            move |settings, _| match index {
                                 ServerIndex::Ssh(index) => {
-                                    if let Some(server) = setting
+                                    if let Some(server) = settings
+                                        .remote
                                         .ssh_connections
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
@@ -425,7 +252,8 @@ impl ProjectPicker {
                                     };
                                 }
                                 ServerIndex::Wsl(index) => {
-                                    if let Some(server) = setting
+                                    if let Some(server) = settings
+                                        .remote
                                         .wsl_connections
                                         .as_mut()
                                         .and_then(|connections| connections.get_mut(index.0))
@@ -698,7 +526,43 @@ impl Mode {
 }
 
 impl RemoteServerProjects {
+    #[cfg(target_os = "windows")]
+    pub fn wsl(
+        create_new_window: bool,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::AddWslDistro(AddWslDistro::new(window, cx)),
+            create_new_window,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
     pub fn new(
+        create_new_window: bool,
+        fs: Arc<dyn Fs>,
+        window: &mut Window,
+        workspace: WeakEntity<Workspace>,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        Self::new_inner(
+            Mode::default_mode(&BTreeSet::new(), cx),
+            create_new_window,
+            fs,
+            window,
+            workspace,
+            cx,
+        )
+    }
+
+    fn new_inner(
+        mode: Mode,
         create_new_window: bool,
         fs: Arc<dyn Fs>,
         window: &mut Window,
@@ -734,7 +598,7 @@ impl RemoteServerProjects {
             });
 
         Self {
-            mode: Mode::default_mode(&BTreeSet::new(), cx),
+            mode,
             focus_handle,
             workspace,
             retained_connections: Vec::new(),
@@ -862,7 +726,7 @@ impl RemoteServerProjects {
     #[cfg(target_os = "windows")]
     fn connect_wsl_distro(
         &mut self,
-        picker: Entity<Picker<WslPickerDelegate>>,
+        picker: Entity<Picker<crate::wsl_picker::WslPickerDelegate>>,
         distro: String,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1457,7 +1321,7 @@ impl RemoteServerProjects {
         else {
             return;
         };
-        update_settings_file::<SshSettings>(fs, cx, move |setting, cx| f(setting, cx));
+        update_settings_file(fs, cx, move |setting, cx| f(&mut setting.remote, cx));
     }
 
     fn delete_ssh_server(&mut self, server: SshServerIndex, cx: &mut Context<Self>) {
@@ -1496,7 +1360,7 @@ impl RemoteServerProjects {
             setting
                 .wsl_connections
                 .get_or_insert(Default::default())
-                .push(crate::remote_connections::WslConnection {
+                .push(settings::WslConnection {
                     distro_name: SharedString::from(connection_options.distro_name),
                     user: connection_options.user,
                     projects: BTreeSet::new(),
@@ -2021,41 +1885,27 @@ impl RemoteServerProjects {
         let ssh_settings = SshSettings::get_global(cx);
         let mut should_rebuild = false;
 
-        let ssh_connections_changed =
-            ssh_settings
-                .ssh_connections
-                .as_ref()
-                .is_some_and(|connections| {
-                    state
-                        .servers
-                        .iter()
-                        .filter_map(|server| match server {
-                            RemoteEntry::Project {
-                                connection: Connection::Ssh(connection),
-                                ..
-                            } => Some(connection),
-                            _ => None,
-                        })
-                        .ne(connections.iter())
-                });
+        let ssh_connections_changed = ssh_settings.ssh_connections.0.iter().ne(state
+            .servers
+            .iter()
+            .filter_map(|server| match server {
+                RemoteEntry::Project {
+                    connection: Connection::Ssh(connection),
+                    ..
+                } => Some(connection),
+                _ => None,
+            }));
 
-        let wsl_connections_changed =
-            ssh_settings
-                .wsl_connections
-                .as_ref()
-                .is_some_and(|connections| {
-                    state
-                        .servers
-                        .iter()
-                        .filter_map(|server| match server {
-                            RemoteEntry::Project {
-                                connection: Connection::Wsl(connection),
-                                ..
-                            } => Some(connection),
-                            _ => None,
-                        })
-                        .ne(connections.iter())
-                });
+        let wsl_connections_changed = ssh_settings.wsl_connections.0.iter().ne(state
+            .servers
+            .iter()
+            .filter_map(|server| match server {
+                RemoteEntry::Project {
+                    connection: Connection::Wsl(connection),
+                    ..
+                } => Some(connection),
+                _ => None,
+            }));
 
         if ssh_connections_changed || wsl_connections_changed {
             should_rebuild = true;

@@ -1300,7 +1300,9 @@ mod tests {
 
     use super::*;
 
-    #[test]
+    use util_macros::perf;
+
+    #[perf]
     fn test_basic_highlight_style_combination() {
         let style_a = HighlightStyle::default();
         let style_b = HighlightStyle::default();
@@ -1385,7 +1387,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[perf]
     fn test_combine_highlights() {
         assert_eq!(
             combine_highlights(

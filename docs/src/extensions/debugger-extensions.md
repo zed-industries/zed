@@ -65,7 +65,7 @@ Put another way, it is supposed to answer the question: "Given a program, a list
 Zed offers an automatic way to create debug scenarios with _debug locators_.
 A locator locates the debug target and figures out how to spawn a debug session for it. Thanks to locators, we can automatically convert existing user tasks (e.g. `cargo run`) and convert them into debug scenarios (e.g. `cargo build` followed by spawning a debugger with `target/debug/my_program` as the program to debug).
 
-> Your extension can define it's own debug locators even if it does not expose a debug adapter. We strongly recommend doing so when your extension already exposes language tasks, as it allows users to spawn a debug session without having to manually configure the debug adapter.
+> Your extension can define its own debug locators even if it does not expose a debug adapter. We strongly recommend doing so when your extension already exposes language tasks, as it allows users to spawn a debug session without having to manually configure the debug adapter.
 
 Locators can (but don't have to) be agnostic to the debug adapter they are used with. They are simply responsible for locating the debug target and figuring out how to spawn a debug session for it. This allows for a more flexible and extensible debugging experience.
 

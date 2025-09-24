@@ -186,8 +186,8 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
                 value = base_keymap.to_string()
             );
 
-            update_settings_file::<BaseKeymap>(self.fs.clone(), cx, move |setting, _| {
-                setting.base_keymap = Some(base_keymap)
+            update_settings_file(self.fs.clone(), cx, move |setting, _| {
+                setting.base_keymap = Some(base_keymap.into())
             });
         }
 

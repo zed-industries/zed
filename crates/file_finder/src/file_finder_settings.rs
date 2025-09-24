@@ -1,55 +1,26 @@
-use anyhow::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+use settings::Settings;
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct FileFinderSettings {
     pub file_icons: bool,
-    pub modal_max_width: Option<FileFinderWidth>,
+    pub modal_max_width: FileFinderWidth,
     pub skip_focus_for_active_in_search: bool,
     pub include_ignored: Option<bool>,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug, SettingsUi, SettingsKey)]
-#[settings_key(key = "file_finder")]
-pub struct FileFinderSettingsContent {
-    /// Whether to show file icons in the file finder.
-    ///
-    /// Default: true
-    pub file_icons: Option<bool>,
-    /// Determines how much space the file finder can take up in relation to the available window width.
-    ///
-    /// Default: small
-    pub modal_max_width: Option<FileFinderWidth>,
-    /// Determines whether the file finder should skip focus for the active file in search results.
-    ///
-    /// Default: true
-    pub skip_focus_for_active_in_search: Option<bool>,
-    /// Determines whether to show the git status in the file finder
-    ///
-    /// Default: true
-    pub git_status: Option<bool>,
-    /// Whether to use gitignored files when searching.
-    /// Only the file Zed had indexed will be used, not necessary all the gitignored files.
-    ///
-    /// Can accept 3 values:
-    /// * `Some(true)`: Use all gitignored files
-    /// * `Some(false)`: Use only the files Zed had indexed
-    /// * `None`: Be smart and search for ignored when called from a gitignored worktree
-    ///
-    /// Default: None
-    pub include_ignored: Option<Option<bool>>,
-}
-
 impl Settings for FileFinderSettings {
-    type FileContent = FileFinderSettingsContent;
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut ui::App) -> Self {
+        let file_finder = content.file_finder.as_ref().unwrap();
 
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut gpui::App) -> Result<Self> {
-        sources.json_merge()
+        Self {
+            file_icons: file_finder.file_icons.unwrap(),
+            modal_max_width: file_finder.modal_max_width.unwrap().into(),
+            skip_focus_for_active_in_search: file_finder.skip_focus_for_active_in_search.unwrap(),
+            include_ignored: file_finder.include_ignored,
+        }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
@@ -61,4 +32,16 @@ pub enum FileFinderWidth {
     Large,
     XLarge,
     Full,
+}
+
+impl From<settings::FileFinderWidthContent> for FileFinderWidth {
+    fn from(content: settings::FileFinderWidthContent) -> Self {
+        match content {
+            settings::FileFinderWidthContent::Small => FileFinderWidth::Small,
+            settings::FileFinderWidthContent::Medium => FileFinderWidth::Medium,
+            settings::FileFinderWidthContent::Large => FileFinderWidth::Large,
+            settings::FileFinderWidthContent::XLarge => FileFinderWidth::XLarge,
+            settings::FileFinderWidthContent::Full => FileFinderWidth::Full,
+        }
+    }
 }

@@ -1,4 +1,4 @@
-use crate::{CharClassifier, CharKind, LanguageScope};
+use crate::{CharClassifier, CharKind, CharScopeContext, LanguageScope};
 use anyhow::{Context, anyhow};
 use imara_diff::{
     Algorithm, UnifiedDiffBuilder, diff,
@@ -181,7 +181,8 @@ fn diff_internal(
 }
 
 fn tokenize(text: &str, language_scope: Option<LanguageScope>) -> impl Iterator<Item = &str> {
-    let classifier = CharClassifier::new(language_scope).for_completion(true);
+    let classifier =
+        CharClassifier::new(language_scope).scope_context(Some(CharScopeContext::Completion));
     let mut chars = text.char_indices();
     let mut prev = None;
     let mut start_ix = 0;

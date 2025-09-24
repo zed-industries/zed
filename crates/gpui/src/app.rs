@@ -2401,6 +2401,20 @@ impl<'a, T: 'static> std::borrow::BorrowMut<T> for GpuiBorrow<'a, T> {
     }
 }
 
+impl<'a, T: 'static> std::ops::Deref for GpuiBorrow<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref().unwrap()
+    }
+}
+
+impl<'a, T: 'static> std::ops::DerefMut for GpuiBorrow<'a, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.inner.as_mut().unwrap()
+    }
+}
+
 impl<'a, T> Drop for GpuiBorrow<'a, T> {
     fn drop(&mut self) {
         let lease = self.inner.take().unwrap();

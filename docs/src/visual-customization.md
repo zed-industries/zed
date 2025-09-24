@@ -58,7 +58,7 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "font_family": "",
     "font_size": 15,
     // Terminal line height: comfortable (1.618), standard(1.3) or `{ "custom": 2 }`
-    "line_height": "comfortable",
+    "line_height": "standard",
   },
 
   // Agent Panel Font Settings
@@ -108,7 +108,6 @@ To disable this behavior use:
 ```json
   // Control which items are shown/hidden in the title bar
   "title_bar": {
-    "show": "always",               // When to show: always | never | hide_in_full_screen
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
@@ -185,6 +184,10 @@ TBD: Centered layout related settings
 
   // Visually show tabs and spaces  (none, all, selection, boundary, trailing)
   "show_whitespaces": "selection",
+  "whitespace_map": { // Which characters to show when `show_whitespaces` enabled
+    "space": "•",
+    "tab": "→"
+  },
 
   "unnecessary_code_fade": 0.3, // How much to fade out unused code.
 
@@ -223,7 +226,7 @@ TBD: Centered layout related settings
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
-      "delay": 0,                  // Show after delay (ms)
+      "delay_ms": 0,                  // Show after delay (ms)
       "min_column": 0,             // Minimum column to inline display blame
       "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary

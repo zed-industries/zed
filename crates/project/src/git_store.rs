@@ -7,7 +7,7 @@ use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
-use askpass::AskPassDelegate;
+use askpass::{AskPassDelegate, EncryptedPassword};
 use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
@@ -68,6 +68,7 @@ use worktree::{
     File, PathChange, PathKey, PathProgress, PathSummary, PathTarget, ProjectEntryId,
     UpdatedGitRepositoriesSet, UpdatedGitRepository, Worktree,
 };
+use zeroize::Zeroize;
 
 pub struct GitStore {
     state: GitStoreState,
@@ -208,7 +209,7 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
 impl sum_tree::Item for StatusEntry {
     type Summary = PathSummary<GitSummary>;
 
-    fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
+    fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
         PathSummary {
             max_path: self.repo_path.0.clone(),
             item_summary: self.status.summary(),
@@ -398,6 +399,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_create_branch);
+        client.add_entity_request_handler(Self::handle_rename_branch);
         client.add_entity_request_handler(Self::handle_git_init);
         client.add_entity_request_handler(Self::handle_push);
         client.add_entity_request_handler(Self::handle_pull);
@@ -1944,6 +1946,25 @@ impl GitStore {
         Ok(proto::Ack {})
     }
 
+    async fn handle_rename_branch(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRenameBranch>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let branch = envelope.payload.branch;
+        let new_name = envelope.payload.new_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.rename_branch(branch, new_name)
+            })?
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
     async fn handle_show(
         this: Entity<Self>,
         envelope: TypedEnvelope<proto::GitShow>,
@@ -2086,7 +2107,7 @@ impl GitStore {
             .lock()
             .insert(envelope.payload.askpass_id, askpass);
 
-        Ok(proto::AskPassResponse { response })
+        response.try_into()
     }
 
     async fn handle_check_for_pushed_commits(
@@ -2720,7 +2741,10 @@ fn make_remote_delegate(
                 prompt,
             });
             cx.spawn(async move |_, _| {
-                tx.send(response.await?.response).ok();
+                let mut response = response.await?.response;
+                tx.send(EncryptedPassword::try_from(response.as_ref())?)
+                    .ok();
+                response.zeroize();
                 anyhow::Ok(())
             })
             .detach_and_log_err(cx);
@@ -2866,7 +2890,7 @@ impl RepositorySnapshot {
 
     pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
         self.statuses_by_path
-            .get(&PathKey(path.0.clone()), &())
+            .get(&PathKey(path.0.clone()), ())
             .cloned()
     }
 
@@ -4331,6 +4355,36 @@ impl Repository {
         )
     }
 
+    pub fn rename_branch(
+        &mut self,
+        branch: String,
+        new_name: String,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            Some(format!("git branch -m {branch} {new_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local { backend, .. } => {
+                        backend.rename_branch(branch, new_name).await
+                    }
+                    RepositoryState::Remote { project_id, client } => {
+                        client
+                            .request(proto::GitRenameBranch {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                branch,
+                                new_name,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
     pub fn check_for_pushed_commits(&mut self) -> oneshot::Receiver<Result<Vec<SharedString>>> {
         let id = self.id;
         self.send_job(None, move |repo, _cx| async move {
@@ -4416,7 +4470,7 @@ impl Repository {
                     }),
             )
             .collect::<Vec<_>>();
-        self.snapshot.statuses_by_path.edit(edits, &());
+        self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
@@ -4717,7 +4771,7 @@ impl Repository {
                     .background_spawn(async move {
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
-                        let mut cursor = prev_statuses.cursor::<PathProgress>(&());
+                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
@@ -4732,7 +4786,7 @@ impl Repository {
                                 status: *status,
                             }));
                         }
-                        let mut cursor = prev_statuses.cursor::<PathProgress>(&());
+                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
                         for path in changed_paths.into_iter() {
                             if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
                                 changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
@@ -4749,7 +4803,7 @@ impl Repository {
                     if !changed_path_statuses.is_empty() {
                         this.snapshot
                             .statuses_by_path
-                            .edit(changed_path_statuses, &());
+                            .edit(changed_path_statuses, ());
                         this.snapshot.scan_id += 1;
                     }
 
@@ -5018,7 +5072,7 @@ async fn compute_snapshot(
                 repo_path: repo_path.clone(),
                 status: *status,
             }),
-        &(),
+        (),
     );
     let (merge_details, merge_heads_changed) =
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;

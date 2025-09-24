@@ -13,6 +13,7 @@ use crate::{
     },
 };
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind};
+use collections::HashMap;
 use futures::StreamExt;
 use gpui::{
     BackgroundExecutor, DismissEvent, Rgba, SemanticVersion, TestAppContext, UpdateGlobal,
@@ -22,15 +23,15 @@ use indoc::indoc;
 use language::{
     BracketPairConfig,
     Capability::ReadWrite,
-    DiagnosticSourceKind, FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
-    LanguageName, Override, Point,
+    DiagnosticSourceKind, FakeLspAdapter, IndentGuideSettings, LanguageConfig,
+    LanguageConfigOverride, LanguageMatcher, LanguageName, Override, Point,
     language_settings::{
-        AllLanguageSettings, AllLanguageSettingsContent, CompletionSettings, FormatterList,
-        LanguageSettingsContent, LspInsertMode, PrettierSettings, SelectedFormatter,
+        CompletionSettingsContent, FormatterList, LanguageSettingsContent, LspInsertMode,
+        SelectedFormatter,
     },
     tree_sitter_python,
 };
-use language_settings::{Formatter, IndentGuideSettings};
+use language_settings::Formatter;
 use lsp::CompletionParams;
 use multi_buffer::{IndentGuide, PathKey};
 use parking_lot::Mutex;
@@ -38,9 +39,13 @@ use pretty_assertions::{assert_eq, assert_ne};
 use project::{
     FakeFs,
     debugger::breakpoint_store::{BreakpointState, SourceBreakpoint},
-    project_settings::{LspSettings, ProjectSettings},
+    project_settings::LspSettings,
 };
 use serde_json::{self, json};
+use settings::{
+    AllLanguageSettingsContent, IndentGuideBackgroundColoring, IndentGuideColoring,
+    ProjectSettingsContent,
+};
 use std::{cell::RefCell, future::Future, rc::Rc, sync::atomic::AtomicBool, time::Instant};
 use std::{
     iter,
@@ -11699,10 +11704,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     update_test_language_settings(cx, |settings| {
         // Enable Prettier formatting for the same buffer, and ensure
         // LSP is called instead of Prettier.
-        settings.defaults.prettier = Some(PrettierSettings {
-            allowed: true,
-            ..PrettierSettings::default()
-        });
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
     let mut fake_servers = language_registry.register_fake_lsp(
         "Rust",
@@ -12088,10 +12090,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
-        settings.defaults.prettier = Some(PrettierSettings {
-            allowed: true,
-            ..PrettierSettings::default()
-        });
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
     let mut fake_servers = language_registry.register_fake_lsp(
         "TypeScript",
@@ -12402,8 +12401,8 @@ async fn test_handle_input_for_show_signature_help_auto_signature_help_true(
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(true);
             });
         });
     });
@@ -12542,9 +12541,9 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(false);
-                settings.show_signature_help_after_edits = Some(false);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(false);
+                settings.editor.show_signature_help_after_edits = Some(false);
             });
         });
     });
@@ -12669,9 +12668,9 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
     // Ensure that signature_help is called when enabled afte edits
     cx.update(|_, cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(false);
-                settings.show_signature_help_after_edits = Some(true);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(false);
+                settings.editor.show_signature_help_after_edits = Some(true);
             });
         });
     });
@@ -12711,9 +12710,9 @@ async fn test_handle_input_with_different_show_signature_settings(cx: &mut TestA
     // Ensure that signature_help is called when auto signature help override is enabled
     cx.update(|_, cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
-                settings.show_signature_help_after_edits = Some(false);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(true);
+                settings.editor.show_signature_help_after_edits = Some(false);
             });
         });
     });
@@ -12755,8 +12754,8 @@ async fn test_signature_help(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.auto_signature_help = Some(true);
+            settings.update_user_settings(cx, |settings| {
+                settings.editor.auto_signature_help = Some(true);
             });
         });
     });
@@ -13346,12 +13345,11 @@ async fn test_completion_mode(cx: &mut TestAppContext) {
             );
 
             update_test_language_settings(&mut cx, |settings| {
-                settings.defaults.completions = Some(CompletionSettings {
-                    lsp_insert_mode,
-                    words: WordsCompletionMode::Disabled,
-                    words_min_length: 0,
-                    lsp: true,
-                    lsp_fetch_timeout_ms: 0,
+                settings.defaults.completions = Some(CompletionSettingsContent {
+                    lsp_insert_mode: Some(lsp_insert_mode),
+                    words: Some(WordsCompletionMode::Disabled),
+                    words_min_length: Some(0),
+                    ..Default::default()
                 });
             });
 
@@ -13406,13 +13404,12 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     let expected_with_replace_mode = "SubscriptionErrorˇ";
 
     update_test_language_settings(&mut cx, |settings| {
-        settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Disabled,
-            words_min_length: 0,
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
             // set the opposite here to ensure that the action is overriding the default behavior
-            lsp_insert_mode: LspInsertMode::Insert,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -13443,13 +13440,12 @@ async fn test_completion_with_mode_specified_by_action(cx: &mut TestAppContext) 
     apply_additional_edits.await.unwrap();
 
     update_test_language_settings(&mut cx, |settings| {
-        settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Disabled,
-            words_min_length: 0,
+        settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
             // set the opposite here to ensure that the action is overriding the default behavior
-            lsp_insert_mode: LspInsertMode::Replace,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
+            lsp_insert_mode: Some(LspInsertMode::Replace),
+            ..Default::default()
         });
     });
 
@@ -14185,12 +14181,11 @@ async fn test_completion_reuse(cx: &mut TestAppContext) {
 async fn test_word_completion(cx: &mut TestAppContext) {
     let lsp_fetch_timeout_ms = 10;
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Fallback,
-            words_min_length: 0,
-            lsp: true,
-            lsp_fetch_timeout_ms: 10,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words_min_length: Some(0),
+            lsp_fetch_timeout_ms: Some(10),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14282,12 +14277,11 @@ async fn test_word_completion(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Enabled,
-            words_min_length: 0,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Enabled),
+            words_min_length: Some(0),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14346,12 +14340,11 @@ async fn test_word_completions_do_not_duplicate_lsp_ones(cx: &mut TestAppContext
 #[gpui::test]
 async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Disabled,
-            words_min_length: 0,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14420,12 +14413,11 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Fallback,
-            words_min_length: 0,
-            lsp: false,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words_min_length: Some(0),
+            lsp: Some(false),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14483,12 +14475,11 @@ async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Enabled,
-            words_min_length: 3,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Enabled),
+            words_min_length: Some(3),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -14553,12 +14544,11 @@ async fn test_word_completions_do_not_show_before_threshold(cx: &mut TestAppCont
 #[gpui::test]
 async fn test_word_completions_disabled(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
-        language_settings.defaults.completions = Some(CompletionSettings {
-            words: WordsCompletionMode::Enabled,
-            words_min_length: 0,
-            lsp: true,
-            lsp_fetch_timeout_ms: 0,
-            lsp_insert_mode: LspInsertMode::Insert,
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Enabled),
+            words_min_length: Some(0),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
         });
     });
 
@@ -17067,7 +17057,7 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut TestAppCon
     let _fake_server = fake_servers.next().await.unwrap();
     update_test_language_settings(cx, |language_settings| {
         language_settings.languages.0.insert(
-            language_name.clone(),
+            language_name.clone().0,
             LanguageSettingsContent {
                 tab_size: NonZeroU32::new(8),
                 ..Default::default()
@@ -17991,10 +17981,7 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
         Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
-        settings.defaults.prettier = Some(PrettierSettings {
-            allowed: true,
-            ..PrettierSettings::default()
-        });
+        settings.defaults.prettier.get_or_insert_default().allowed = Some(true);
     });
 
     let test_plugin = "test_plugin";
@@ -19982,7 +19969,8 @@ fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -
             enabled: true,
             line_width: 1,
             active_line_width: 1,
-            ..Default::default()
+            coloring: IndentGuideColoring::default(),
+            background_coloring: IndentGuideBackgroundColoring::default(),
         },
     }
 }
@@ -23672,8 +23660,8 @@ println!("5");
     });
 
     cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
-            s.restore_on_file_reopen = Some(false);
+        store.update_user_settings(cx, |s| {
+            s.workspace.restore_on_file_reopen = Some(false);
         });
     });
     editor.update_in(cx, |editor, window, cx| {
@@ -23697,8 +23685,8 @@ println!("5");
         assert!(pane.active_item().is_none());
     });
     cx.update_global(|store: &mut SettingsStore, cx| {
-        store.update_user_settings::<WorkspaceSettings>(cx, |s| {
-            s.restore_on_file_reopen = Some(true);
+        store.update_user_settings(cx, |s| {
+            s.workspace.restore_on_file_reopen = Some(true);
         });
     });
 
@@ -23786,6 +23774,28 @@ async fn test_hide_mouse_context_menu_on_modal_opened(cx: &mut TestAppContext) {
     });
 }
 
+fn set_linked_edit_ranges(
+    opening: (Point, Point),
+    closing: (Point, Point),
+    editor: &mut Editor,
+    cx: &mut Context<Editor>,
+) {
+    let Some((buffer, _)) = editor
+        .buffer
+        .read(cx)
+        .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
+    else {
+        panic!("Failed to get buffer for selection position");
+    };
+    let buffer = buffer.read(cx);
+    let buffer_id = buffer.remote_id();
+    let opening_range = buffer.anchor_before(opening.0)..buffer.anchor_after(opening.1);
+    let closing_range = buffer.anchor_before(closing.0)..buffer.anchor_after(closing.1);
+    let mut linked_ranges = HashMap::default();
+    linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
+    editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+}
+
 #[gpui::test]
 async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -23864,22 +23874,12 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
             selections.select_ranges([Point::new(0, 3)..Point::new(0, 3)]);
         });
-        let Some((buffer, _)) = editor
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(editor.selections.newest_anchor().start, cx)
-        else {
-            panic!("Failed to get buffer for selection position");
-        };
-        let buffer = buffer.read(cx);
-        let buffer_id = buffer.remote_id();
-        let opening_range =
-            buffer.anchor_before(Point::new(0, 1))..buffer.anchor_after(Point::new(0, 3));
-        let closing_range =
-            buffer.anchor_before(Point::new(0, 6))..buffer.anchor_after(Point::new(0, 8));
-        let mut linked_ranges = HashMap::default();
-        linked_ranges.insert(buffer_id, vec![(opening_range, vec![closing_range])]);
-        editor.linked_edit_ranges = LinkedEditingRanges(linked_ranges);
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 3)),
+            (Point::new(0, 6), Point::new(0, 8)),
+            editor,
+            cx,
+        );
     });
     let mut completion_handle =
         fake_server.set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
@@ -23921,6 +23921,77 @@ async fn test_html_linked_edits_on_completion(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| {
         assert_eq!(editor.text(cx), "<head></head>");
     });
+}
+
+#[gpui::test]
+async fn test_linked_edits_on_typing_punctuation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "TSX".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["tsx".to_string()],
+                ..LanguageMatcher::default()
+            },
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "<".into(),
+                    end: ">".into(),
+                    close: true,
+                    ..Default::default()
+                }],
+                ..Default::default()
+            },
+            linked_edit_characters: HashSet::from_iter(['.']),
+            ..Default::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TSX.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Test typing > does not extend linked pair
+    cx.set_state("<divˇ<div></div>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 4)),
+            (Point::new(0, 11), Point::new(0, 14)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(">", window, cx);
+    });
+    cx.assert_editor_state("<div>ˇ<div></div>");
+
+    // Test typing . do extend linked pair
+    cx.set_state("<Animatedˇ></Animated>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 9)),
+            (Point::new(0, 12), Point::new(0, 20)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input(".", window, cx);
+    });
+    cx.assert_editor_state("<Animated.ˇ></Animated.>");
+    cx.update_editor(|editor, _, cx| {
+        set_linked_edit_ranges(
+            (Point::new(0, 1), Point::new(0, 10)),
+            (Point::new(0, 13), Point::new(0, 21)),
+            editor,
+            cx,
+        );
+    });
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("V", window, cx);
+    });
+    cx.assert_editor_state("<Animated.Vˇ></Animated.V>");
 }
 
 #[gpui::test]
@@ -25120,18 +25191,18 @@ pub(crate) fn update_test_language_settings(
 ) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, f);
+            store.update_user_settings(cx, |settings| f(&mut settings.project.all_languages));
         });
     });
 }
 
 pub(crate) fn update_test_project_settings(
     cx: &mut TestAppContext,
-    f: impl Fn(&mut ProjectSettings),
+    f: impl Fn(&mut ProjectSettingsContent),
 ) {
     cx.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, f);
+            store.update_user_settings(cx, |settings| f(&mut settings.project));
         });
     });
 }
@@ -25630,7 +25701,7 @@ async fn test_document_colors(cx: &mut TestAppContext) {
     workspace
         .update(cx, |workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
-                pane.navigate_backward(&Default::default(), window, cx);
+                pane.navigate_backward(&workspace::GoBack, window, cx);
             })
         })
         .unwrap();
@@ -25656,6 +25727,50 @@ async fn test_document_colors(cx: &mut TestAppContext) {
             vec![expected_color],
             extract_color_inlays(editor, cx),
             "Should have an initial inlay"
+        );
+    });
+
+    drop(color_request_handle);
+    let closure_requests_made = Arc::clone(&requests_made);
+    let mut empty_color_request_handle = fake_language_server
+        .set_request_handler::<lsp::request::DocumentColor, _, _>(move |params, _| {
+            let requests_made = Arc::clone(&closure_requests_made);
+            async move {
+                assert_eq!(
+                    params.text_document.uri,
+                    lsp::Uri::from_file_path(path!("/a/first.rs")).unwrap()
+                );
+                requests_made.fetch_add(1, atomic::Ordering::Release);
+                Ok(Vec::new())
+            }
+        });
+    let save = editor.update_in(cx, |editor, window, cx| {
+        editor.move_to_end(&MoveToEnd, window, cx);
+        editor.handle_input("dirty_again", window, cx);
+        editor.save(
+            SaveOptions {
+                format: false,
+                autosave: true,
+            },
+            project.clone(),
+            window,
+            cx,
+        )
+    });
+    save.await.unwrap();
+
+    empty_color_request_handle.next().await.unwrap();
+    cx.run_until_parked();
+    assert_eq!(
+        4,
+        requests_made.load(atomic::Ordering::Acquire),
+        "Should query for colors once per save only, as formatting was not requested"
+    );
+    editor.update(cx, |editor, cx| {
+        assert_eq!(
+            Vec::<Rgba>::new(),
+            extract_color_inlays(editor, cx),
+            "Should clear all colors when the server returns an empty response"
         );
     });
 }
@@ -25901,6 +26016,217 @@ let result = variable * 2;",
 let another = variable + 1;
 let result = variable * 2;",
     );
+}
+
+#[gpui::test]
+async fn test_paste_url_from_other_app_creates_markdown_link_over_selected_text(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("Hello, «editorˇ».\nZed is «ˇgreat» (see this link: ˇ)");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!(
+        "Hello, [editor]({url})ˇ.\nZed is [great]({url})ˇ (see this link: {url}ˇ)"
+    ));
+}
+
+#[gpui::test]
+async fn test_paste_url_from_zed_copy_creates_markdown_link_over_selected_text(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state(&format!(
+        "Hello, editor.\nZed is great (see this link: )\n«{url}ˇ»"
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.copy(&Copy, window, cx);
+    });
+
+    cx.set_state(&format!(
+        "Hello, «editorˇ».\nZed is «ˇgreat» (see this link: ˇ)\n{url}"
+    ));
+
+    cx.update_editor(|editor, window, cx| {
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!(
+        "Hello, [editor]({url})ˇ.\nZed is [great]({url})ˇ (see this link: {url}ˇ)\n{url}"
+    ));
+}
+
+#[gpui::test]
+async fn test_paste_url_from_other_app_replaces_existing_url_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("Please visit zed's homepage: «https://www.apple.comˇ»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("Please visit zed's homepage: {url}ˇ"));
+}
+
+#[gpui::test]
+async fn test_paste_plain_text_from_other_app_replaces_selection_without_creating_markdown_link(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let text = "Awesome";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("Hello, «editorˇ».\nZed is «ˇgreat»");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!("Hello, {text}ˇ.\nZed is {text}ˇ"));
+}
+
+#[gpui::test]
+async fn test_paste_url_from_other_app_without_creating_markdown_link_in_non_markdown_language(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Rust".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_language), cx));
+    cx.set_state("// Hello, «editorˇ».\n// Zed is «ˇgreat» (see this link: ˇ)");
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!(
+        "// Hello, {url}ˇ.\n// Zed is {url}ˇ (see this link: {url}ˇ)"
+    ));
+}
+
+#[gpui::test]
+async fn test_paste_url_from_other_app_creates_markdown_link_selectively_in_multi_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let url = "https://zed.dev";
+
+    let markdown_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "Markdown".into(),
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        let multi_buffer = MultiBuffer::build_multi(
+            [
+                ("this will embed -> link", vec![Point::row_range(0..1)]),
+                ("this will replace -> link", vec![Point::row_range(0..1)]),
+            ],
+            cx,
+        );
+        let mut editor = Editor::new(EditorMode::full(), multi_buffer.clone(), None, window, cx);
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges(vec![
+                Point::new(0, 19)..Point::new(0, 23),
+                Point::new(1, 21)..Point::new(1, 25),
+            ])
+        });
+        let first_buffer_id = multi_buffer
+            .read(cx)
+            .excerpt_buffer_ids()
+            .into_iter()
+            .next()
+            .unwrap();
+        let first_buffer = multi_buffer.read(cx).buffer(first_buffer_id).unwrap();
+        first_buffer.update(cx, |buffer, cx| {
+            buffer.set_language(Some(markdown_language.clone()), cx);
+        });
+
+        editor
+    });
+    let mut cx = EditorTestContext::for_editor_in(editor.clone(), cx).await;
+
+    cx.update_editor(|editor, window, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(url.to_string()));
+        editor.paste(&Paste, window, cx);
+    });
+
+    cx.assert_editor_state(&format!(
+        "this will embed -> [link]({url})ˇ\nthis will replace -> {url}ˇ"
+    ));
 }
 
 #[track_caller]
