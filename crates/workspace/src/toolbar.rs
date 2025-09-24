@@ -1,12 +1,11 @@
 use crate::ItemHandle;
-use convex::Client;
+use convex::ConvexClient;
 use gpui::{
     AnyView, App, Context, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled,
     Window,
 };
-use gupi_tokio::Tokio;
+use gpui_tokio::Tokio;
 use repo_name::RepoName;
-use std::env;
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
 
@@ -201,6 +200,33 @@ impl Toolbar {
         .detach();
         self.items.push((Box::new(item), location));
         cx.notify();
+    }
+
+    async fn update_current_file(
+        file_path: String,
+        function_name: String,
+        class_name: String,
+        repo_name: String,
+    ) -> anyhow::Result<()> {
+        let url = env::var("CONVEX_URL")?;
+        let convex_user = env::var("CONVEX_USER")?;
+        let mut client = ConvexClient::new(&url).await?;
+
+        let result = client
+            .mutation(
+                "activity:update",
+                maplit::btreemap! {
+                    String::from("name") => Value::from(convex_user),
+                    String::from("file_name") => Value::from(file_path),
+                    String::from("function_name") => Value::from(function_name),
+                    String::from("class_name") => Value::from(class_name),
+                    String::from("repo_name") => Value::from(repo_name),
+                },
+            )
+            .await?;
+        println!("{result:#?}");
+
+        Ok(())
     }
 
     pub fn set_active_item(
