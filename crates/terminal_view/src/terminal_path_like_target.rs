@@ -1014,30 +1014,32 @@ mod tests {
                     test_local!(
                         "foo/./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339"
+                        "/tmp/issue28339",
+                        WorktreeExact
                     );
                     test_local!(
                         "foo/../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                     test_local!(
                         "foo/..///foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                     test_local!(
                         "issue28339/../issue28339/foo/../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                     test_local!(
                         "./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339/foo"
+                        "/tmp/issue28339/foo",
+                        WorktreeExact
                     );
                     test_local!(
                         "../foo/bar.txt",

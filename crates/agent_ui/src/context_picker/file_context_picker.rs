@@ -275,11 +275,12 @@ pub fn extract_file_name_and_directory(
     path_style: PathStyle,
 ) -> (SharedString, Option<SharedString>) {
     let full_path = path_prefix.join(path);
-    let file_name = RelPath::new(full_path.file_name().unwrap_or_default()).unwrap();
-    let directory = full_path.parent();
+    let file_name = full_path.file_name().unwrap_or_default();
+    let display_path = full_path.display(path_style);
+    let (directory, file_name) = display_path.split_at(display_path.len() - file_name.len());
     (
-        file_name.display(path_style).to_string().into(),
-        directory.map(|d| d.display(path_style).to_string().into()),
+        file_name.to_string().into(),
+        Some(SharedString::new(directory)).filter(|dir| !dir.is_empty()),
     )
 }
 

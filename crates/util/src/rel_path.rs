@@ -51,17 +51,21 @@ impl RelPath {
             string = Cow::Owned(string.as_ref().replace('\\', "/"))
         }
 
-        if string.ends_with('/') && string.len() > 1 {
-            string = match string {
-                Cow::Borrowed(string) => Cow::Borrowed(&string[..string.len() - 1]),
-                Cow::Owned(mut string) => {
-                    string.truncate(string.len() - 1);
-                    Cow::Owned(string)
+        let mut this = RelPathBuf::new();
+        for component in unsafe { Self::new_unchecked(string.as_ref()) }.components() {
+            match component {
+                "" => {}
+                "." => {}
+                ".." => {
+                    if !this.pop() {
+                        return Err(anyhow!("path is not relative: {string:?}"));
+                    }
                 }
-            };
+                other => this.push(RelPath::new(other)?),
+            }
         }
 
-        Self::new(&string).map(Arc::from)
+        Ok(this.into())
     }
 
     pub unsafe fn new_unchecked<S: AsRef<str> + ?Sized>(s: &S) -> &Self {
@@ -235,11 +239,15 @@ impl RelPathBuf {
         Self(String::new())
     }
 
-    pub fn pop(&mut self) {
+    pub fn pop(&mut self) -> bool {
         if let Some(ix) = self.0.rfind('/') {
             self.0.truncate(ix);
-        } else {
+            true
+        } else if !self.is_empty() {
             self.0.clear();
+            true
+        } else {
+            false
         }
     }
 
@@ -396,6 +404,16 @@ mod tests {
         assert_eq!(
             RelPath::from_std_path(&PathBuf::from_iter(["foo", ""]), PathStyle::local()).unwrap(),
             Arc::from(rel_path("foo"))
+        );
+    }
+
+    #[test]
+    fn test_rel_path_from_std_path() {
+        assert_eq!(
+            RelPath::from_std_path(Path::new("foo/bar/../baz/./quux/"), PathStyle::local())
+                .unwrap()
+                .as_ref(),
+            rel_path("foo/baz/quux")
         );
     }
 
