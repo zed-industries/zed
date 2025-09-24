@@ -400,26 +400,37 @@ impl PickerDelegate for StashListDelegate {
         let stash_label = HighlightedLabel::new(stash_message, positions)
             .truncate()
             .into_any_element();
+
         let branch_name = entry_match.entry.branch.clone().unwrap_or_default();
         let branch_label = h_flex()
-            .gap_1()
+            .gap_1p5()
             .w_full()
             .child(
-                Icon::new(IconName::GitBranch)
-                    .color(Color::Muted)
-                    .size(IconSize::Small),
+                h_flex()
+                    .gap_0p5()
+                    .child(
+                        Icon::new(IconName::GitBranch)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .child(
+                        Label::new(branch_name)
+                            .truncate()
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    ),
             )
             .child(
-                Label::new(branch_name)
-                    .truncate()
+                Label::new("•")
+                    .alpha(0.5)
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            )
+            .child(
+                Label::new(entry_match.formatted_timestamp.clone())
                     .color(Color::Muted)
                     .size(LabelSize::Small),
             );
-
-        let tooltip_text = format!(
-            "stash@{{{}}} created {}",
-            entry_match.entry.index, entry_match.formatted_timestamp
-        );
 
         Some(
             ListItem::new(SharedString::from(format!("stash-{ix}")))
@@ -433,7 +444,10 @@ impl PickerDelegate for StashListDelegate {
                         .child(stash_label)
                         .child(branch_label.into_element()),
                 )
-                .tooltip(Tooltip::text(tooltip_text)),
+                .tooltip(Tooltip::text(format!(
+                    "stash@{{{}}}",
+                    entry_match.entry.index
+                ))),
         )
     }
 
@@ -452,60 +466,49 @@ impl PickerDelegate for StashListDelegate {
             h_flex()
                 .w_full()
                 .p_1p5()
-                .justify_between()
+                .gap_0p5()
+                .justify_end()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(
-                            Button::new("apply-stash", "Apply")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::Confirm,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                                }),
+                    Button::new("apply-stash", "Apply")
+                        .key_binding(
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
-                        .child(
-                            Button::new("pop-stash", "Pop")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::SecondaryConfirm,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                                }),
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        }),
+                )
+                .child(
+                    Button::new("pop-stash", "Pop")
+                        .key_binding(
+                            KeyBinding::for_action_in(
+                                &menu::SecondaryConfirm,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(12.))),
                         )
-                        .child(
-                            Button::new("drop-stash", "Drop")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &stash_picker::DropStashItem,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(
-                                        stash_picker::DropStashItem.boxed_clone(),
-                                        cx,
-                                    )
-                                }),
-                        ),
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                        }),
+                )
+                .child(
+                    Button::new("drop-stash", "Drop")
+                        .key_binding(
+                            KeyBinding::for_action_in(
+                                &stash_picker::DropStashItem,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(stash_picker::DropStashItem.boxed_clone(), cx)
+                        }),
                 )
                 .into_any(),
         )
