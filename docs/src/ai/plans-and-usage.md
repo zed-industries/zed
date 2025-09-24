@@ -20,7 +20,7 @@ At the top of [the Account page](https://zed.dev/account), you'll find an input 
 
 The default value for all Pro users is $10, for a total monthly spend with Zed of $20 ($10 for your Pro subscription, $10 in incremental token spend). This can be set to $0 to limit your spend with Zed to exactly $10/month. If you adjust this limit _higher_ than $10 and consume more than $10 of incremental token spend, you'll be billed via [threshold billing](./billing.md#threshold-billing).
 
-Once the spend limit is hit, we’ll stop any further usage until your token spent limit resets.
+Once the spend limit is hit, we’ll stop any further usage until your token spend limit resets.
 
 ## Business Usage {#business-usage}
 
