@@ -51,18 +51,18 @@ To view all historical conversations, reach for the `View All` option from withi
 
 ### Following the Agent {#following-the-agent}
 
-Zed is built with collaboration natively integrated, and this design patter extends to collaboration with AI. To follow the agent as it reads and edits in your codebase, click on the "crosshair" icon button at the bottom left of the panel.
+Zed is built with collaboration natively integrated, and this design pattern extends to collaboration with AI. To follow the agent as it reads and edits in your codebase, click on the "crosshair" icon button at the bottom left of the panel.
 
 You can also do that with the keyboard by pressing the `cmd`/`ctrl` modifier with `enter` when submitting a message.
 
 ### Get Notified {#get-notified}
 
-If you send a prompt to the Agent and then move elsewhere, putting Zed in the background, you can be notified of whether its response is finished either via:
+If you send a prompt to the Agent and then move elsewhere, putting Zed in the background, you can be notified when its response is finished via:
 
 - a visual notification that appears in the top right of your screen
-- or a sound notification
+- a sound notification
 
-Both notification methods can be used together or individually according to your preference.
+These notifications can be used together or individually, according to your preference.
 
 You can customize their behavior, including turning them off entirely, by using the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys.
 
@@ -74,7 +74,7 @@ To see which files specifically have been edited, expand the accordion bar that 
 
 You're able to reject or accept each individual change hunk, or the whole set of changes made by the agent.
 
-Edit diffs also appear in individual buffers. So, if your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
+Edit diffs also appear in individual buffers. If your active tab had edits made by the AI, you'll see diffs with the same accept/reject controls as in the multi-buffer.
 
 ## Adding Context {#adding-context}
 
@@ -93,7 +93,7 @@ You can also do this at any time with an ongoing thread via the "Agent Options" 
 
 ## Changing Models {#changing-models}
 
-After you've configured your LLM providers—either via [a custom API key](./llm-providers.md#use-your-own-keys) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
+After you've configured your LLM providers—either via [a custom API key](./llm-providers.md) or through [Zed's hosted models](./models.md)—you can switch between them by clicking on the model selector on the message editor or by using the {#kb agent::ToggleModelSelector} keybinding.
 
 > The same model can be offered via multiple providers - for example, Claude Sonnet 4 is available via Zed Pro, OpenRouter, Anthropic directly, and more. Make sure you've selected the correct model **_provider_** for the model you'd like to use, delineated by the logo to the left of the model in the model selector.
 
