@@ -358,6 +358,7 @@ impl SshRemoteConnection {
             &temp_dir,
             askpass
                 .get_password()
+                .or_else(|| askpass::EncryptedPassword::try_from("").ok())
                 .context("Failed to fetch askpass password")?,
         )?;
         drop(askpass);

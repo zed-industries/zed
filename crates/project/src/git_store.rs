@@ -214,7 +214,7 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
 impl sum_tree::Item for StatusEntry {
     type Summary = PathSummary<GitSummary>;
 
-    fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
+    fn summary(&self, _: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
         PathSummary {
             max_path: self.repo_path.0.clone(),
             item_summary: self.status.summary(),
@@ -2894,7 +2894,7 @@ impl RepositorySnapshot {
 
     pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
         self.statuses_by_path
-            .get(&PathKey(path.0.clone()), &())
+            .get(&PathKey(path.0.clone()), ())
             .cloned()
     }
 
@@ -4482,7 +4482,7 @@ impl Repository {
                     }),
             )
             .collect::<Vec<_>>();
-        self.snapshot.statuses_by_path.edit(edits, &());
+        self.snapshot.statuses_by_path.edit(edits, ());
         if update.is_last_update {
             self.snapshot.scan_id = update.scan_id;
         }
@@ -4783,7 +4783,7 @@ impl Repository {
                     .background_spawn(async move {
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
-                        let mut cursor = prev_statuses.cursor::<PathProgress>(&());
+                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
                         for (repo_path, status) in &*statuses.entries {
                             changed_paths.remove(repo_path);
@@ -4798,7 +4798,7 @@ impl Repository {
                                 status: *status,
                             }));
                         }
-                        let mut cursor = prev_statuses.cursor::<PathProgress>(&());
+                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
                         for path in changed_paths.into_iter() {
                             if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
                                 changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
@@ -4815,7 +4815,7 @@ impl Repository {
                     if !changed_path_statuses.is_empty() {
                         this.snapshot
                             .statuses_by_path
-                            .edit(changed_path_statuses, &());
+                            .edit(changed_path_statuses, ());
                         this.snapshot.scan_id += 1;
                     }
 
@@ -5082,7 +5082,7 @@ async fn compute_snapshot(
                 repo_path: repo_path.clone(),
                 status: *status,
             }),
-        &(),
+        (),
     );
     let (merge_details, merge_heads_changed) =
         MergeDetails::load(&backend, &statuses_by_path, &prev_snapshot).await?;

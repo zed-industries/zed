@@ -1,10 +1,8 @@
-pub use settings::TitleBarVisibility;
 use settings::{Settings, SettingsContent};
 use ui::App;
 
 #[derive(Copy, Clone, Debug)]
 pub struct TitleBarSettings {
-    pub show: TitleBarVisibility,
     pub show_branch_icon: bool,
     pub show_onboarding_banner: bool,
     pub show_user_picture: bool,
@@ -18,7 +16,6 @@ impl Settings for TitleBarSettings {
     fn from_settings(s: &SettingsContent, _: &mut App) -> Self {
         let content = s.title_bar.clone().unwrap();
         TitleBarSettings {
-            show: content.show.unwrap(),
             show_branch_icon: content.show_branch_icon.unwrap(),
             show_onboarding_banner: content.show_onboarding_banner.unwrap(),
             show_user_picture: content.show_user_picture.unwrap(),

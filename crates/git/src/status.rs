@@ -378,14 +378,12 @@ impl From<FileStatus> for GitSummary {
     }
 }
 
-impl sum_tree::Summary for GitSummary {
-    type Context = ();
-
-    fn zero(_: &Self::Context) -> Self {
+impl sum_tree::ContextLessSummary for GitSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, rhs: &Self, _: &Self::Context) {
+    fn add_summary(&mut self, rhs: &Self) {
         *self += *rhs;
     }
 }

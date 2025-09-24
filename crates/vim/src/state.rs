@@ -991,6 +991,7 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
+    pub helix_select: bool,
 }
 
 impl Operator {

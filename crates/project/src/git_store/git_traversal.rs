@@ -13,7 +13,10 @@ pub struct GitTraversal<'a> {
     traversal: Traversal<'a>,
     current_entry_summary: Option<GitSummary>,
     repo_root_to_snapshot: BTreeMap<&'a Path, &'a RepositorySnapshot>,
-    repo_location: Option<(RepositoryId, Cursor<'a, StatusEntry, PathProgress<'a>>)>,
+    repo_location: Option<(
+        RepositoryId,
+        Cursor<'a, 'static, StatusEntry, PathProgress<'a>>,
+    )>,
 }
 
 impl<'a> GitTraversal<'a> {
@@ -83,7 +86,7 @@ impl<'a> GitTraversal<'a> {
                 .map(|(prev_repo_id, _)| *prev_repo_id)
                 != Some(repo.id)
         {
-            self.repo_location = Some((repo.id, repo.statuses_by_path.cursor::<PathProgress>(&())));
+            self.repo_location = Some((repo.id, repo.statuses_by_path.cursor::<PathProgress>(())));
         }
 
         let Some((_, statuses)) = &mut self.repo_location else {

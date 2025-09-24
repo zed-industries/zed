@@ -2049,11 +2049,6 @@ impl Workspace {
         cx.notify();
     }
 
-    pub fn clear_titlebar_item(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.titlebar_item = None;
-        cx.notify();
-    }
-
     pub fn set_prompt_for_new_path(&mut self, prompt: PromptForNewPath) {
         self.on_prompt_for_new_path = Some(prompt)
     }

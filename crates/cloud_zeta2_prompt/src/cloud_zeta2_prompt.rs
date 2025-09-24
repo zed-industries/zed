@@ -1,17 +1,28 @@
 //! Zeta2 prompt planning and generation code shared with cloud.
 
 use anyhow::{Result, anyhow};
-use cloud_llm_client::predict_edits_v3::{self, ReferencedDeclaration};
+use cloud_llm_client::predict_edits_v3::{self, Event, ReferencedDeclaration};
+use indoc::indoc;
 use ordered_float::OrderedFloat;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::fmt::Write;
 use std::{cmp::Reverse, collections::BinaryHeap, ops::Range, path::Path};
 use strum::{EnumIter, IntoEnumIterator};
 
+pub const DEFAULT_MAX_PROMPT_BYTES: usize = 10 * 1024;
+
 pub const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
 /// NOTE: Differs from zed version of constant - includes a newline
-pub const EDITABLE_REGION_START_MARKER: &str = "<|editable_region_start|>\n";
+pub const EDITABLE_REGION_START_MARKER_WITH_NEWLINE: &str = "<|editable_region_start|>\n";
 /// NOTE: Differs from zed version of constant - includes a newline
-pub const EDITABLE_REGION_END_MARKER: &str = "<|editable_region_end|>\n";
+pub const EDITABLE_REGION_END_MARKER_WITH_NEWLINE: &str = "<|editable_region_end|>\n";
+
+// TODO: use constants for markers?
+pub const SYSTEM_PROMPT: &str = indoc! {"
+    You are a code completion assistant and your task is to analyze user edits and then rewrite an excerpt that the user provides, suggesting the appropriate edits within the excerpt, taking into account the cursor location.
+
+    The excerpt to edit will be wrapped in markers <|editable_region_start|> and <|editable_region_end|>. The cursor position is marked with <|user_cursor_is_here|>. Please respond with edited code for that region.
+"};
 
 pub struct PlannedPrompt<'a> {
     request: &'a predict_edits_v3::PredictEditsRequest,
@@ -286,7 +297,7 @@ impl<'a> PlannedPrompt<'a> {
         let mut excerpt_file_insertions = vec![
             (
                 self.request.excerpt_range.start,
-                EDITABLE_REGION_START_MARKER,
+                EDITABLE_REGION_START_MARKER_WITH_NEWLINE,
             ),
             (
                 self.request.excerpt_range.start + self.request.cursor_offset,
@@ -298,10 +309,67 @@ impl<'a> PlannedPrompt<'a> {
                     .end
                     .saturating_sub(0)
                     .max(self.request.excerpt_range.start),
-                EDITABLE_REGION_END_MARKER,
+                EDITABLE_REGION_END_MARKER_WITH_NEWLINE,
             ),
         ];
 
+        let mut output = String::new();
+        output.push_str("## User Edits\n\n");
+        Self::push_events(&mut output, &self.request.events);
+
+        output.push_str("\n## Code\n\n");
+        Self::push_file_snippets(&mut output, &mut excerpt_file_insertions, file_snippets);
+        output
+    }
+
+    fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
+        for event in events {
+            match event {
+                Event::BufferChange {
+                    path,
+                    old_path,
+                    diff,
+                    predicted,
+                } => {
+                    if let Some(old_path) = &old_path
+                        && let Some(new_path) = &path
+                    {
+                        if old_path != new_path {
+                            writeln!(
+                                output,
+                                "User renamed {} to {}\n\n",
+                                old_path.display(),
+                                new_path.display()
+                            )
+                            .unwrap();
+                        }
+                    }
+
+                    let path = path
+                        .as_ref()
+                        .map_or_else(|| "untitled".to_string(), |path| path.display().to_string());
+
+                    if *predicted {
+                        writeln!(
+                            output,
+                            "User accepted prediction {:?}:\n```diff\n{}\n```\n",
+                            path, diff
+                        )
+                        .unwrap();
+                    } else {
+                        writeln!(output, "User edited {:?}:\n```diff\n{}\n```\n", path, diff)
+                            .unwrap();
+                    }
+                }
+            }
+        }
+    }
+
+    fn push_file_snippets(
+        output: &mut String,
+        excerpt_file_insertions: &mut Vec<(usize, &'static str)>,
+        file_snippets: Vec<(&Path, Vec<&PlannedSnippet>, bool)>,
+    ) {
         fn push_excerpt_file_range(
             range: Range<usize>,
             text: &str,
@@ -325,7 +393,6 @@ impl<'a> PlannedPrompt<'a> {
             output.push_str(&text[last_offset - range.start..]);
         }
 
-        let mut output = String::new();
         for (file_path, mut snippets, is_excerpt_file) in file_snippets {
             output.push_str(&format!("```{}\n", file_path.display()));
 
@@ -345,8 +412,8 @@ impl<'a> PlannedPrompt<'a> {
                         push_excerpt_file_range(
                             last_range.end..snippet.range.end,
                             text,
-                            &mut excerpt_file_insertions,
-                            &mut output,
+                            excerpt_file_insertions,
+                            output,
                         );
                     } else {
                         output.push_str(text);
@@ -361,8 +428,8 @@ impl<'a> PlannedPrompt<'a> {
                     push_excerpt_file_range(
                         snippet.range.clone(),
                         snippet.text,
-                        &mut excerpt_file_insertions,
-                        &mut output,
+                        excerpt_file_insertions,
+                        output,
                     );
                 } else {
                     output.push_str(snippet.text);
@@ -372,8 +439,6 @@ impl<'a> PlannedPrompt<'a> {
 
             output.push_str("```\n\n");
         }
-
-        output
     }
 }
 
