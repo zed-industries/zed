@@ -46,6 +46,7 @@ pub(crate) fn play_remote_audio_track(
     speaker: Speaker,
     cx: &mut gpui::App,
 ) -> Result<AudioStream> {
+    info!("speaker: {speaker:?}");
     let stream = source::LiveKitStream::new(
         cx.background_executor(),
         track,
@@ -62,6 +63,7 @@ pub(crate) fn play_remote_audio_track(
             }
         });
 
+    info!("sample_rate: {:?}", stream.sample_rate());
     audio::Audio::play_voip_stream(stream, speaker.name, speaker.is_staff, cx)
         .context("Could not play audio")?;
 

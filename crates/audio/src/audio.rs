@@ -178,7 +178,7 @@ impl Audio {
             .open_stream()?;
         info!("Opened microphone: {:?}", stream.config());
 
-        let (replay, stream) = stream
+        let stream = stream
             .possibly_disconnected_channels_to_mono()
             .constant_samplerate(SAMPLE_RATE)
             .limit(LimitSettings::live_performance())
@@ -203,25 +203,24 @@ impl Audio {
             })
             .denoise()
             .context("Could not set up denoiser")?
-            .periodic_access(Duration::from_millis(100), move |denoise| {
-                denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
-            })
             .automatic_gain_control(1.0, 2.0, 0.0, 5.0)
             .periodic_access(Duration::from_millis(100), move |agc_source| {
                 agc_source
                     .set_enabled(LIVE_SETTINGS.auto_microphone_volume.load(Ordering::Relaxed));
-            })
-            .replayable(REPLAY_DURATION)?;
-
-        voip_parts
-            .replays
-            .add_voip_stream("local microphone".to_string(), replay);
+                let denoise = agc_source.inner_mut();
+                denoise.set_enabled(LIVE_SETTINGS.denoise.load(Ordering::Relaxed));
+            });
 
         let stream = if voip_parts.legacy_audio_compatible {
             stream.constant_params(LEGACY_CHANNEL_COUNT, LEGACY_SAMPLE_RATE)
         } else {
             stream.constant_params(CHANNEL_COUNT, SAMPLE_RATE)
         };
+
+        let (replay, stream) = stream.replayable(REPLAY_DURATION)?;
+        voip_parts
+            .replays
+            .add_voip_stream("local microphone".to_string(), replay);
 
         Ok(stream)
     }
