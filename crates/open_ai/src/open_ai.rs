@@ -77,6 +77,8 @@ pub enum Model {
     O4Mini,
     #[serde(rename = "gpt-5")]
     Five,
+    #[serde(rename = "gpt-5-codex")]
+    FiveCodex,
     #[serde(rename = "gpt-5-mini")]
     FiveMini,
     #[serde(rename = "gpt-5-nano")]
@@ -115,6 +117,7 @@ impl Model {
             "o3" => Ok(Self::O3),
             "o4-mini" => Ok(Self::O4Mini),
             "gpt-5" => Ok(Self::Five),
+            "gpt-5-codex" => Ok(Self::FiveCodex),
             "gpt-5-mini" => Ok(Self::FiveMini),
             "gpt-5-nano" => Ok(Self::FiveNano),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
@@ -136,6 +139,7 @@ impl Model {
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
+            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::Custom { name, .. } => name,
@@ -157,6 +161,7 @@ impl Model {
             Self::O3 => "o3",
             Self::O4Mini => "o4-mini",
             Self::Five => "gpt-5",
+            Self::FiveCodex => "gpt-5-codex",
             Self::FiveMini => "gpt-5-mini",
             Self::FiveNano => "gpt-5-nano",
             Self::Custom {
@@ -180,6 +185,7 @@ impl Model {
             Self::O3 => 200_000,
             Self::O4Mini => 200_000,
             Self::Five => 272_000,
+            Self::FiveCodex => 272_000,
             Self::FiveMini => 272_000,
             Self::FiveNano => 272_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
@@ -204,6 +210,7 @@ impl Model {
             Self::O3 => Some(100_000),
             Self::O4Mini => Some(100_000),
             Self::Five => Some(128_000),
+            Self::FiveCodex => Some(128_000),
             Self::FiveMini => Some(128_000),
             Self::FiveNano => Some(128_000),
         }
@@ -232,6 +239,7 @@ impl Model {
             | Self::FourPointOneMini
             | Self::FourPointOneNano
             | Self::Five
+            | Self::FiveCodex
             | Self::FiveMini
             | Self::FiveNano => true,
             Self::O1 | Self::O3 | Self::O3Mini | Self::O4Mini | Model::Custom { .. } => false,

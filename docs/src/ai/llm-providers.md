@@ -403,7 +403,7 @@ Zed will also use the `OPENAI_API_KEY` environment variable if it's defined.
 
 #### Custom Models {#openai-custom-models}
 
-The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 mini, o4-mini, GPT-4.1, and others).
+The Zed agent comes pre-configured to use the latest version for common models (GPT-5, GPT-5 codex, GPT-5 mini, o4-mini, GPT-4.1, and others).
 To use alternate models, perhaps a preview release, or if you wish to control the request parameters, you can do so by adding the following to your Zed `settings.json`:
 
 ```json
