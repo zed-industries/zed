@@ -545,8 +545,8 @@ impl settings::Settings for AllLanguageSettings {
                 edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
                 show_whitespaces: settings.show_whitespaces.unwrap(),
                 whitespace_map: WhitespaceMap {
-                    space: SharedString::new(whitespace_map.space.to_string()),
-                    tab: SharedString::new(whitespace_map.tab.to_string()),
+                    space: SharedString::new(whitespace_map.space.unwrap().to_string()),
+                    tab: SharedString::new(whitespace_map.tab.unwrap().to_string()),
                 },
                 extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
                 inlay_hints: InlayHintSettings {
