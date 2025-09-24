@@ -1544,12 +1544,6 @@ impl Interactivity {
                     }
                 }
 
-                if self.tab_group
-                    && let Some(index) = self.tab_index
-                {
-                    todo!()
-                }
-
                 // Ensure we store a focus handle in our element state if we're focusable.
                 // If there's an explicit focus handle we're tracking, use that. Otherwise
                 // create a new handle and store it in the element state, which lives for as
@@ -1783,6 +1777,10 @@ impl Interactivity {
                     return ((), element_state);
                 }
 
+                let mut tab_group = None;
+                if self.tab_group {
+                    tab_group = self.tab_index;
+                }
                 if let Some(focus_handle) = &self.tracked_focus_handle {
                     window.next_frame.tab_stops.insert(focus_handle);
                 }
@@ -1793,55 +1791,59 @@ impl Interactivity {
                             window.with_content_mask(
                                 style.overflow_mask(bounds, window.rem_size()),
                                 |window| {
-                                    if let Some(hitbox) = hitbox {
-                                        #[cfg(debug_assertions)]
-                                        self.paint_debug_info(
-                                            global_id, hitbox, &style, window, cx,
-                                        );
+                                    window.with_tab_group(tab_group, |window| {
+                                        if let Some(hitbox) = hitbox {
+                                            #[cfg(debug_assertions)]
+                                            self.paint_debug_info(
+                                                global_id, hitbox, &style, window, cx,
+                                            );
 
-                                        if let Some(drag) = cx.active_drag.as_ref() {
-                                            if let Some(mouse_cursor) = drag.cursor_style {
-                                                window.set_window_cursor_style(mouse_cursor);
+                                            if let Some(drag) = cx.active_drag.as_ref() {
+                                                if let Some(mouse_cursor) = drag.cursor_style {
+                                                    window.set_window_cursor_style(mouse_cursor);
+                                                }
+                                            } else {
+                                                if let Some(mouse_cursor) = style.mouse_cursor {
+                                                    window.set_cursor_style(mouse_cursor, hitbox);
+                                                }
                                             }
-                                        } else {
-                                            if let Some(mouse_cursor) = style.mouse_cursor {
-                                                window.set_cursor_style(mouse_cursor, hitbox);
+
+                                            if let Some(group) = self.group.clone() {
+                                                GroupHitboxes::push(group, hitbox.id, cx);
+                                            }
+
+                                            if let Some(area) = self.window_control {
+                                                window.insert_window_control_hitbox(
+                                                    area,
+                                                    hitbox.clone(),
+                                                );
+                                            }
+
+                                            self.paint_mouse_listeners(
+                                                hitbox,
+                                                element_state.as_mut(),
+                                                window,
+                                                cx,
+                                            );
+                                            self.paint_scroll_listener(hitbox, &style, window, cx);
+                                        }
+
+                                        self.paint_keyboard_listeners(window, cx);
+                                        f(&style, window, cx);
+
+                                        if let Some(_hitbox) = hitbox {
+                                            #[cfg(any(feature = "inspector", debug_assertions))]
+                                            window.insert_inspector_hitbox(
+                                                _hitbox.id,
+                                                _inspector_id,
+                                                cx,
+                                            );
+
+                                            if let Some(group) = self.group.as_ref() {
+                                                GroupHitboxes::pop(group, cx);
                                             }
                                         }
-
-                                        if let Some(group) = self.group.clone() {
-                                            GroupHitboxes::push(group, hitbox.id, cx);
-                                        }
-
-                                        if let Some(area) = self.window_control {
-                                            window
-                                                .insert_window_control_hitbox(area, hitbox.clone());
-                                        }
-
-                                        self.paint_mouse_listeners(
-                                            hitbox,
-                                            element_state.as_mut(),
-                                            window,
-                                            cx,
-                                        );
-                                        self.paint_scroll_listener(hitbox, &style, window, cx);
-                                    }
-
-                                    self.paint_keyboard_listeners(window, cx);
-                                    f(&style, window, cx);
-
-                                    if let Some(_hitbox) = hitbox {
-                                        #[cfg(any(feature = "inspector", debug_assertions))]
-                                        window.insert_inspector_hitbox(
-                                            _hitbox.id,
-                                            _inspector_id,
-                                            cx,
-                                        );
-
-                                        if let Some(group) = self.group.as_ref() {
-                                            GroupHitboxes::pop(group, cx);
-                                        }
-                                    }
+                                    })
                                 },
                             );
                         });

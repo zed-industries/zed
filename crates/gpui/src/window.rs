@@ -2658,6 +2658,19 @@ impl Window {
         }
     }
 
+    /// Executes the given closure within the context of a tab group.
+    #[inline]
+    pub fn with_tab_group<R>(&mut self, index: Option<isize>, f: impl FnOnce(&mut Self) -> R) -> R {
+        if let Some(index) = index {
+            self.next_frame.tab_stops.begin_group(index);
+            let result = f(self);
+            self.next_frame.tab_stops.end_group();
+            result
+        } else {
+            f(self)
+        }
+    }
+
     /// Defers the drawing of the given element, scheduling it to be painted on top of the currently-drawn tree
     /// at a later time. The `priority` parameter determines the drawing order relative to other deferred elements,
     /// with higher values being drawn on top.
