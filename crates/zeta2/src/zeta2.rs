@@ -826,7 +826,10 @@ mod tests {
     use client::UserStore;
     use clock::FakeSystemClock;
     use cloud_llm_client::predict_edits_v3;
-    use futures::AsyncReadExt;
+    use futures::{
+        AsyncReadExt, StreamExt,
+        channel::{mpsc, oneshot},
+    };
     use gpui::{
         Entity, TestAppContext,
         http_client::{FakeHttpClient, Response},
@@ -843,30 +846,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_simple_request(cx: &mut TestAppContext) {
-        let src = "Hello!\nHow\nBye";
-
-        let zeta = init_test(
-            |req| {
-                assert_eq!(req.excerpt_path.as_path(), Path::new("root/foo.md"));
-                assert_eq!(req.cursor_offset, 10);
-
-                predict_edits_v3::PredictEditsResponse {
-                    request_id: Uuid::new_v4(),
-                    edits: vec![predict_edits_v3::Edit {
-                        path: PathBuf::from("/root/foo.md"),
-                        range: 0..src.len(),
-                        content: "Hello!\nHow are you?\nBye".into(),
-                    }],
-                    debug_info: None,
-                }
-            },
-            cx,
-        );
+        let (zeta, mut req_rx) = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
-                "foo.md": src
+                "foo.md":  "Hello!\nHow\nBye"
             }),
         )
         .await;
@@ -882,13 +867,27 @@ mod tests {
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let position = snapshot.anchor_before(language::Point::new(1, 3));
 
-        let prediction = zeta
-            .update(cx, |zeta, cx| {
-                zeta.request_prediction(&project, &buffer, position, cx)
+        let prediction_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_prediction(&project, &buffer, position, cx)
+        });
+
+        let (request, respond_tx) = req_rx.next().await.unwrap();
+        assert_eq!(request.excerpt_path.as_path(), Path::new("root/foo.md"));
+        assert_eq!(request.cursor_offset, 10);
+
+        respond_tx
+            .send(predict_edits_v3::PredictEditsResponse {
+                request_id: Uuid::new_v4(),
+                edits: vec![predict_edits_v3::Edit {
+                    path: PathBuf::from("/root/foo.md"),
+                    range: 0..snapshot.len(),
+                    content: "Hello!\nHow are you?\nBye".into(),
+                }],
+                debug_info: None,
             })
-            .await
-            .unwrap()
             .unwrap();
+
+        let prediction = prediction_task.await.unwrap().unwrap();
 
         assert_eq!(prediction.edits.len(), 1);
         assert_eq!(
@@ -900,45 +899,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_request_includes_events(cx: &mut TestAppContext) {
-        let start = "Hello!\n\nBye";
-
-        let zeta = init_test(
-            |req| {
-                assert_eq!(req.events.len(), 1);
-                assert_eq!(
-                    req.events[0],
-                    predict_edits_v3::Event::BufferChange {
-                        path: Some(PathBuf::from("root/foo.md")),
-                        old_path: None,
-                        diff: indoc! {"
-                            @@ -1,3 +1,3 @@
-                             Hello!
-                            -
-                            +How
-                             Bye
-                        "}
-                        .to_string(),
-                        predicted: false
-                    }
-                );
-
-                predict_edits_v3::PredictEditsResponse {
-                    request_id: Uuid::new_v4(),
-                    edits: vec![predict_edits_v3::Edit {
-                        path: PathBuf::from("/root/foo.md"),
-                        range: 0..start.len() + 3, // We inserted `How` below
-                        content: "Hello!\nHow are you?\nBye".into(),
-                    }],
-                    debug_info: None,
-                }
-            },
-            cx,
-        );
+        let (zeta, mut req_rx) = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
             "/root",
             json!({
-                "foo.md": start
+                "foo.md": "Hello!\n\nBye"
             }),
         )
         .await;
@@ -963,13 +929,43 @@ mod tests {
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let position = snapshot.anchor_before(language::Point::new(1, 3));
 
-        let prediction = zeta
-            .update(cx, |zeta, cx| {
-                zeta.request_prediction(&project, &buffer, position, cx)
+        let prediction_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_prediction(&project, &buffer, position, cx)
+        });
+
+        let (request, respond_tx) = req_rx.next().await.unwrap();
+
+        assert_eq!(request.events.len(), 1);
+        assert_eq!(
+            request.events[0],
+            predict_edits_v3::Event::BufferChange {
+                path: Some(PathBuf::from("root/foo.md")),
+                old_path: None,
+                diff: indoc! {"
+                        @@ -1,3 +1,3 @@
+                         Hello!
+                        -
+                        +How
+                         Bye
+                    "}
+                .to_string(),
+                predicted: false
+            }
+        );
+
+        respond_tx
+            .send(predict_edits_v3::PredictEditsResponse {
+                request_id: Uuid::new_v4(),
+                edits: vec![predict_edits_v3::Edit {
+                    path: PathBuf::from("/root/foo.md"),
+                    range: 0..snapshot.len(),
+                    content: "Hello!\nHow are you?\nBye".into(),
+                }],
+                debug_info: None,
             })
-            .await
-            .unwrap()
             .unwrap();
+
+        let prediction = prediction_task.await.unwrap().unwrap();
 
         assert_eq!(prediction.edits.len(), 1);
         assert_eq!(
@@ -980,26 +976,27 @@ mod tests {
     }
 
     fn init_test(
-        request_callback: impl Fn(
-            predict_edits_v3::PredictEditsRequest,
-        ) -> predict_edits_v3::PredictEditsResponse
-        + Send
-        + Sync
-        + 'static,
         cx: &mut TestAppContext,
-    ) -> Entity<Zeta> {
+    ) -> (
+        Entity<Zeta>,
+        mpsc::UnboundedReceiver<(
+            predict_edits_v3::PredictEditsRequest,
+            oneshot::Sender<predict_edits_v3::PredictEditsResponse>,
+        )>,
+    ) {
         cx.update(move |cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             language::init(cx);
             Project::init_settings(cx);
 
+            let (req_tx, req_rx) = mpsc::unbounded();
+
             let http_client = FakeHttpClient::create({
-                let request_callback = Arc::new(request_callback);
                 move |req| {
                     let uri = req.uri().path().to_string();
                     let mut body = req.into_body();
-                    let request_callback = request_callback.clone();
+                    let req_tx = req_tx.clone();
                     async move {
                         let resp = match uri.as_str() {
                             "/client/llm_tokens" => serde_json::to_string(&json!({
@@ -1010,9 +1007,10 @@ mod tests {
                                 let mut buf = Vec::new();
                                 body.read_to_end(&mut buf).await.ok();
                                 let req = serde_json::from_slice(&buf).unwrap();
-                                let resp = request_callback(req);
 
-                                serde_json::to_string(&resp).unwrap()
+                                let (res_tx, res_rx) = oneshot::channel();
+                                req_tx.unbounded_send((req, res_tx)).unwrap();
+                                serde_json::to_string(&res_rx.await.unwrap()).unwrap()
                             }
                             _ => {
                                 panic!("Unexpected path: {}", uri)
@@ -1030,7 +1028,8 @@ mod tests {
             language_model::init(client.clone(), cx);
 
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-            Zeta::global(&client, &user_store, cx)
+            let zeta = Zeta::global(&client, &user_store, cx);
+            (zeta, req_rx)
         })
     }
 }
