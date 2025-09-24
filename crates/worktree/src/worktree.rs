@@ -391,12 +391,12 @@ struct LocalRepositoryEntry {
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
-    type Summary = PathSummary<&'static ()>;
+    type Summary = PathSummary<sum_tree::NoSummary>;
 
-    fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
+    fn summary(&self, _: <Self::Summary as Summary>::Context<'_>) -> Self::Summary {
         PathSummary {
             max_path: self.work_directory.path_key().0,
-            item_summary: &(),
+            item_summary: sum_tree::NoSummary,
         }
     }
 }
@@ -2429,7 +2429,7 @@ impl Snapshot {
     }
 
     pub fn contains_entry(&self, entry_id: ProjectEntryId) -> bool {
-        self.entries_by_id.get(&entry_id, &()).is_some()
+        self.entries_by_id.get(&entry_id, ()).is_some()
     }
 
     fn insert_entry(
@@ -2445,30 +2445,30 @@ impl Snapshot {
                 is_ignored: entry.is_ignored,
                 scan_id: 0,
             },
-            &(),
+            (),
         );
         if let Some(old_entry) = old_entry {
-            self.entries_by_path.remove(&PathKey(old_entry.path), &());
+            self.entries_by_path.remove(&PathKey(old_entry.path), ());
         }
-        self.entries_by_path.insert_or_replace(entry.clone(), &());
+        self.entries_by_path.insert_or_replace(entry.clone(), ());
         Ok(entry)
     }
 
     fn delete_entry(&mut self, entry_id: ProjectEntryId) -> Option<Arc<Path>> {
-        let removed_entry = self.entries_by_id.remove(&entry_id, &())?;
+        let removed_entry = self.entries_by_id.remove(&entry_id, ())?;
         self.entries_by_path = {
-            let mut cursor = self.entries_by_path.cursor::<TraversalProgress>(&());
+            let mut cursor = self.entries_by_path.cursor::<TraversalProgress>(());
             let mut new_entries_by_path =
                 cursor.slice(&TraversalTarget::path(&removed_entry.path), Bias::Left);
             while let Some(entry) = cursor.item() {
                 if entry.path.starts_with(&removed_entry.path) {
-                    self.entries_by_id.remove(&entry.id, &());
+                    self.entries_by_id.remove(&entry.id, ());
                     cursor.next();
                 } else {
                     break;
                 }
             }
-            new_entries_by_path.append(cursor.suffix(), &());
+            new_entries_by_path.append(cursor.suffix(), ());
             new_entries_by_path
         };
 
@@ -2511,10 +2511,10 @@ impl Snapshot {
 
         for entry in update.updated_entries {
             let entry = Entry::from((&self.root_char_bag, always_included_paths, entry));
-            if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, &()) {
+            if let Some(PathEntry { path, .. }) = self.entries_by_id.get(&entry.id, ()) {
                 entries_by_path_edits.push(Edit::Remove(PathKey(path.clone())));
             }
-            if let Some(old_entry) = self.entries_by_path.get(&PathKey(entry.path.clone()), &())
+            if let Some(old_entry) = self.entries_by_path.get(&PathKey(entry.path.clone()), ())
                 && old_entry.id != entry.id
             {
                 entries_by_id_edits.push(Edit::Remove(old_entry.id));
@@ -2528,8 +2528,8 @@ impl Snapshot {
             entries_by_path_edits.push(Edit::Insert(entry));
         }
 
-        self.entries_by_path.edit(entries_by_path_edits, &());
-        self.entries_by_id.edit(entries_by_id_edits, &());
+        self.entries_by_path.edit(entries_by_path_edits, ());
+        self.entries_by_id.edit(entries_by_id_edits, ());
 
         self.scan_id = update.scan_id as usize;
         if update.is_last_update {
@@ -2570,7 +2570,7 @@ impl Snapshot {
         include_ignored: bool,
         start_offset: usize,
     ) -> Traversal<'_> {
-        let mut cursor = self.entries_by_path.cursor(&());
+        let mut cursor = self.entries_by_path.cursor(());
         cursor.seek(
             &TraversalTarget::Count {
                 count: start_offset,
@@ -2614,7 +2614,7 @@ impl Snapshot {
     pub fn paths(&self) -> impl Iterator<Item = &Arc<Path>> {
         let empty_path = Path::new("");
         self.entries_by_path
-            .cursor::<()>(&())
+            .cursor::<()>(())
             .filter(move |entry| entry.path.as_ref() != empty_path)
             .map(|entry| &entry.path)
     }
@@ -2633,7 +2633,7 @@ impl Snapshot {
         parent_path: &'a Path,
         options: ChildEntriesOptions,
     ) -> ChildEntriesIter<'a> {
-        let mut cursor = self.entries_by_path.cursor(&());
+        let mut cursor = self.entries_by_path.cursor(());
         cursor.seek(&TraversalTarget::path(parent_path), Bias::Right);
         let traversal = Traversal {
             snapshot: self,
@@ -2683,7 +2683,7 @@ impl Snapshot {
     }
 
     pub fn entry_for_id(&self, id: ProjectEntryId) -> Option<&Entry> {
-        let entry = self.entries_by_id.get(&id, &())?;
+        let entry = self.entries_by_id.get(&id, ())?;
         self.entry_for_path(&entry.path)
     }
 
@@ -2757,18 +2757,17 @@ impl LocalSnapshot {
         }
 
         if entry.kind == EntryKind::PendingDir
-            && let Some(existing_entry) =
-                self.entries_by_path.get(&PathKey(entry.path.clone()), &())
+            && let Some(existing_entry) = self.entries_by_path.get(&PathKey(entry.path.clone()), ())
         {
             entry.kind = existing_entry.kind;
         }
 
         let scan_id = self.scan_id;
-        let removed = self.entries_by_path.insert_or_replace(entry.clone(), &());
+        let removed = self.entries_by_path.insert_or_replace(entry.clone(), ());
         if let Some(removed) = removed
             && removed.id != entry.id
         {
-            self.entries_by_id.remove(&removed.id, &());
+            self.entries_by_id.remove(&removed.id, ());
         }
         self.entries_by_id.insert_or_replace(
             PathEntry {
@@ -2777,7 +2776,7 @@ impl LocalSnapshot {
                 is_ignored: entry.is_ignored,
                 scan_id,
             },
-            &(),
+            (),
         );
 
         entry
@@ -2838,7 +2837,7 @@ impl LocalSnapshot {
     #[cfg(test)]
     fn expanded_entries(&self) -> impl Iterator<Item = &Entry> {
         self.entries_by_path
-            .cursor::<()>(&())
+            .cursor::<()>(())
             .filter(|entry| entry.kind == EntryKind::Dir && (entry.is_external || entry.is_ignored))
     }
 
@@ -2848,11 +2847,11 @@ impl LocalSnapshot {
 
         assert_eq!(
             self.entries_by_path
-                .cursor::<()>(&())
+                .cursor::<()>(())
                 .map(|e| (&e.path, e.id))
                 .collect::<Vec<_>>(),
             self.entries_by_id
-                .cursor::<()>(&())
+                .cursor::<()>(())
                 .map(|e| (&e.path, e.id))
                 .collect::<collections::BTreeSet<_>>()
                 .into_iter()
@@ -2862,7 +2861,7 @@ impl LocalSnapshot {
 
         let mut files = self.files(true, 0);
         let mut visible_files = self.files(false, 0);
-        for entry in self.entries_by_path.cursor::<()>(&()) {
+        for entry in self.entries_by_path.cursor::<()>(()) {
             if entry.is_file() {
                 assert_eq!(files.next().unwrap().inode, entry.inode);
                 if (!entry.is_ignored && !entry.is_external) || entry.is_always_included {
@@ -2890,7 +2889,7 @@ impl LocalSnapshot {
 
         let dfs_paths_via_iter = self
             .entries_by_path
-            .cursor::<()>(&())
+            .cursor::<()>(())
             .map(|e| e.path.as_ref())
             .collect::<Vec<_>>();
         assert_eq!(bfs_paths, dfs_paths_via_iter);
@@ -2918,7 +2917,7 @@ impl LocalSnapshot {
     #[cfg(test)]
     pub fn entries_without_ids(&self, include_ignored: bool) -> Vec<(&Path, u64, bool)> {
         let mut paths = Vec::new();
-        for entry in self.entries_by_path.cursor::<()>(&()) {
+        for entry in self.entries_by_path.cursor::<()>(()) {
             if include_ignored || !entry.is_ignored {
                 paths.push((entry.path.as_ref(), entry.inode, entry.is_ignored));
             }
@@ -3012,7 +3011,7 @@ impl BackgroundScannerState {
         let mut parent_entry = if let Some(parent_entry) = self
             .snapshot
             .entries_by_path
-            .get(&PathKey(parent_path.clone()), &())
+            .get(&PathKey(parent_path.clone()), ())
         {
             parent_entry.clone()
         } else {
@@ -3053,8 +3052,8 @@ impl BackgroundScannerState {
 
         self.snapshot
             .entries_by_path
-            .edit(entries_by_path_edits, &());
-        self.snapshot.entries_by_id.edit(entries_by_id_edits, &());
+            .edit(entries_by_path_edits, ());
+        self.snapshot.entries_by_id.edit(entries_by_id_edits, ());
 
         if let Err(ix) = self.changed_paths.binary_search(parent_path) {
             self.changed_paths.insert(ix, parent_path.clone());
@@ -3072,15 +3071,15 @@ impl BackgroundScannerState {
             let mut cursor = self
                 .snapshot
                 .entries_by_path
-                .cursor::<TraversalProgress>(&());
+                .cursor::<TraversalProgress>(());
             new_entries = cursor.slice(&TraversalTarget::path(path), Bias::Left);
             removed_entries = cursor.slice(&TraversalTarget::successor(path), Bias::Left);
-            new_entries.append(cursor.suffix(), &());
+            new_entries.append(cursor.suffix(), ());
         }
         self.snapshot.entries_by_path = new_entries;
 
         let mut removed_ids = Vec::with_capacity(removed_entries.summary().count);
-        for entry in removed_entries.cursor::<()>(&()) {
+        for entry in removed_entries.cursor::<()>(()) {
             match self.removed_entries.entry(entry.inode) {
                 hash_map::Entry::Occupied(mut e) => {
                     let prev_removed_entry = e.get_mut();
@@ -3113,10 +3112,9 @@ impl BackgroundScannerState {
             }
         }
 
-        self.snapshot.entries_by_id.edit(
-            removed_ids.iter().map(|&id| Edit::Remove(id)).collect(),
-            &(),
-        );
+        self.snapshot
+            .entries_by_id
+            .edit(removed_ids.iter().map(|&id| Edit::Remove(id)).collect(), ());
         self.snapshot
             .git_repositories
             .retain(|id, _| removed_ids.binary_search(id).is_err());
@@ -3560,23 +3558,23 @@ pub struct PathSummary<S> {
 }
 
 impl<S: Summary> Summary for PathSummary<S> {
-    type Context = S::Context;
+    type Context<'a> = S::Context<'a>;
 
-    fn zero(cx: &Self::Context) -> Self {
+    fn zero(cx: Self::Context<'_>) -> Self {
         Self {
             max_path: Path::new("").into(),
             item_summary: S::zero(cx),
         }
     }
 
-    fn add_summary(&mut self, rhs: &Self, cx: &Self::Context) {
+    fn add_summary(&mut self, rhs: &Self, cx: Self::Context<'_>) {
         self.max_path = rhs.max_path.clone();
         self.item_summary.add_summary(&rhs.item_summary, cx);
     }
 }
 
 impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for PathProgress<'a> {
-    fn zero(_: &<PathSummary<S> as Summary>::Context) -> Self {
+    fn zero(_: <PathSummary<S> as Summary>::Context<'_>) -> Self {
         Self {
             max_path: Path::new(""),
         }
@@ -3585,18 +3583,18 @@ impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for PathProgress<'a
     fn add_summary(
         &mut self,
         summary: &'a PathSummary<S>,
-        _: &<PathSummary<S> as Summary>::Context,
+        _: <PathSummary<S> as Summary>::Context<'_>,
     ) {
         self.max_path = summary.max_path.as_ref()
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, PathSummary<GitSummary>> for GitSummary {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a PathSummary<GitSummary>, _: &()) {
+    fn add_summary(&mut self, summary: &'a PathSummary<GitSummary>, _: ()) {
         *self += summary.item_summary
     }
 }
@@ -3608,28 +3606,28 @@ impl<'a>
     fn cmp(
         &self,
         cursor_location: &Dimensions<TraversalProgress<'a>, GitSummary>,
-        _: &(),
+        _: (),
     ) -> Ordering {
         self.cmp_path(cursor_location.0.max_path)
     }
 }
 
 impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for PathKey {
-    fn zero(_: &S::Context) -> Self {
+    fn zero(_: S::Context<'_>) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a PathSummary<S>, _: &S::Context) {
+    fn add_summary(&mut self, summary: &'a PathSummary<S>, _: S::Context<'_>) {
         self.0 = summary.max_path.clone();
     }
 }
 
 impl<'a, S: Summary> sum_tree::Dimension<'a, PathSummary<S>> for TraversalProgress<'a> {
-    fn zero(_cx: &S::Context) -> Self {
+    fn zero(_cx: S::Context<'_>) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a PathSummary<S>, _: &S::Context) {
+    fn add_summary(&mut self, summary: &'a PathSummary<S>, _: S::Context<'_>) {
         self.max_path = summary.max_path.as_ref();
     }
 }
@@ -3697,7 +3695,7 @@ impl EntryKind {
 impl sum_tree::Item for Entry {
     type Summary = EntrySummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         let non_ignored_count = if (self.is_ignored || self.is_external) && !self.is_always_included
         {
             0
@@ -3753,14 +3751,12 @@ impl Default for EntrySummary {
     }
 }
 
-impl sum_tree::Summary for EntrySummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl sum_tree::ContextLessSummary for EntrySummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, rhs: &Self, _: &()) {
+    fn add_summary(&mut self, rhs: &Self) {
         self.max_path = rhs.max_path.clone();
         self.count += rhs.count;
         self.non_ignored_count += rhs.non_ignored_count;
@@ -3780,7 +3776,7 @@ struct PathEntry {
 impl sum_tree::Item for PathEntry {
     type Summary = PathEntrySummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         PathEntrySummary { max_id: self.id }
     }
 }
@@ -3798,24 +3794,22 @@ struct PathEntrySummary {
     max_id: ProjectEntryId,
 }
 
-impl sum_tree::Summary for PathEntrySummary {
-    type Context = ();
-
-    fn zero(_cx: &Self::Context) -> Self {
+impl sum_tree::ContextLessSummary for PathEntrySummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &Self, _: &Self::Context) {
+    fn add_summary(&mut self, summary: &Self) {
         self.max_id = summary.max_id;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, PathEntrySummary> for ProjectEntryId {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a PathEntrySummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a PathEntrySummary, _: ()) {
         *self = summary.max_id;
     }
 }
@@ -3830,11 +3824,11 @@ impl Default for PathKey {
 }
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for PathKey {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: ()) {
         self.0 = summary.max_path.clone();
     }
 }
@@ -4889,7 +4883,7 @@ impl BackgroundScanner {
             }
 
             if entry.is_ignored != was_ignored {
-                let mut path_entry = snapshot.entries_by_id.get(&entry.id, &()).unwrap().clone();
+                let mut path_entry = snapshot.entries_by_id.get(&entry.id, ()).unwrap().clone();
                 path_entry.scan_id = snapshot.scan_id;
                 path_entry.is_ignored = entry.is_ignored;
                 entries_by_id_edits.push(Edit::Insert(path_entry));
@@ -4909,8 +4903,8 @@ impl BackgroundScanner {
         state
             .snapshot
             .entries_by_path
-            .edit(entries_by_path_edits, &());
-        state.snapshot.entries_by_id.edit(entries_by_id_edits, &());
+            .edit(entries_by_path_edits, ());
+        state.snapshot.entries_by_id.edit(entries_by_id_edits, ());
     }
 
     fn update_git_repositories(&self, dot_git_paths: Vec<PathBuf>) -> Vec<Arc<Path>> {
@@ -5094,8 +5088,8 @@ fn build_diff(
     // Identify which paths have changed. Use the known set of changed
     // parent paths to optimize the search.
     let mut changes = Vec::new();
-    let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>(&());
-    let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>(&());
+    let mut old_paths = old_snapshot.entries_by_path.cursor::<PathKey>(());
+    let mut new_paths = new_snapshot.entries_by_path.cursor::<PathKey>(());
     let mut last_newly_loaded_dir_path = None;
     old_paths.next();
     new_paths.next();
@@ -5384,11 +5378,11 @@ impl TraversalProgress<'_> {
 }
 
 impl<'a> sum_tree::Dimension<'a, EntrySummary> for TraversalProgress<'a> {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a EntrySummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a EntrySummary, _: ()) {
         self.max_path = summary.max_path.as_ref();
         self.count += summary.count;
         self.non_ignored_count += summary.non_ignored_count;
@@ -5412,7 +5406,7 @@ impl Default for TraversalProgress<'_> {
 #[derive(Debug)]
 pub struct Traversal<'a> {
     snapshot: &'a Snapshot,
-    cursor: sum_tree::Cursor<'a, Entry, TraversalProgress<'a>>,
+    cursor: sum_tree::Cursor<'a, 'static, Entry, TraversalProgress<'a>>,
     include_ignored: bool,
     include_files: bool,
     include_dirs: bool,
@@ -5426,7 +5420,7 @@ impl<'a> Traversal<'a> {
         include_ignored: bool,
         start_path: &Path,
     ) -> Self {
-        let mut cursor = snapshot.entries_by_path.cursor(&());
+        let mut cursor = snapshot.entries_by_path.cursor(());
         cursor.seek(&TraversalTarget::path(start_path), Bias::Left);
         let mut traversal = Self {
             snapshot,
@@ -5536,13 +5530,13 @@ impl PathTarget<'_> {
 }
 
 impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, PathProgress<'a>> for PathTarget<'_> {
-    fn cmp(&self, cursor_location: &PathProgress<'a>, _: &S::Context) -> Ordering {
+    fn cmp(&self, cursor_location: &PathProgress<'a>, _: S::Context<'_>) -> Ordering {
         self.cmp_path(cursor_location.max_path)
     }
 }
 
 impl<'a, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>> for PathTarget<'_> {
-    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &S::Context) -> Ordering {
+    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: S::Context<'_>) -> Ordering {
         self.cmp_path(cursor_location.max_path)
     }
 }
@@ -5584,13 +5578,15 @@ impl<'a> TraversalTarget<'a> {
 }
 
 impl<'a> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget<'_> {
-    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
+    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: ()) -> Ordering {
         self.cmp_progress(cursor_location)
     }
 }
 
-impl<'a> SeekTarget<'a, PathSummary<&'static ()>, TraversalProgress<'a>> for TraversalTarget<'_> {
-    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: &()) -> Ordering {
+impl<'a> SeekTarget<'a, PathSummary<sum_tree::NoSummary>, TraversalProgress<'a>>
+    for TraversalTarget<'_>
+{
+    fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: ()) -> Ordering {
         self.cmp_progress(cursor_location)
     }
 }

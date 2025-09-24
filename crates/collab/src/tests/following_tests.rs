@@ -12,7 +12,6 @@ use gpui::{
     VisualContext, VisualTestContext, point,
 };
 use language::Capability;
-use project::WorktreeSettings;
 use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
@@ -1710,8 +1709,9 @@ async fn test_following_into_excluded_file(
     for cx in [&mut cx_a, &mut cx_b] {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions = Some(vec!["**/.git".to_string()]);
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string()]);
                 });
             });
         });

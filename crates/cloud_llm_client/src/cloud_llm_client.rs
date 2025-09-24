@@ -1,3 +1,5 @@
+pub mod predict_edits_v3;
+
 use std::str::FromStr;
 use std::sync::Arc;
 

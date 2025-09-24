@@ -1775,13 +1775,13 @@ impl Default for SyntaxLayerSummary {
 }
 
 impl sum_tree::Summary for SyntaxLayerSummary {
-    type Context = BufferSnapshot;
+    type Context<'a> = &'a BufferSnapshot;
 
     fn zero(_cx: &BufferSnapshot) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
+    fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
         if other.max_depth > self.max_depth {
             self.max_depth = other.max_depth;
             self.range = other.range.clone();

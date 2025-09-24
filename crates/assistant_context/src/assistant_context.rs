@@ -2445,7 +2445,7 @@ impl AssistantContext {
                 .message_anchors
                 .get(next_message_ix)
                 .map_or(buffer.len(), |message| {
-                    buffer.clip_offset(message.start.to_offset(buffer) - 1, Bias::Left)
+                    buffer.clip_offset(message.start.to_previous_offset(buffer), Bias::Left)
                 });
             Some(self.insert_message_at_offset(offset, role, status, cx))
         } else {

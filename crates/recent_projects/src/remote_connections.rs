@@ -1,7 +1,7 @@
-use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
+use askpass::EncryptedPassword;
 use auto_update::AutoUpdater;
 use editor::Editor;
 use extension_host::ExtensionStore;
@@ -17,35 +17,31 @@ use markdown::{Markdown, MarkdownElement, MarkdownStyle};
 use release_channel::ReleaseChannel;
 use remote::{
     ConnectionIdentifier, RemoteClient, RemoteConnectionOptions, RemotePlatform,
-    SshConnectionOptions, SshPortForwardOption, WslConnectionOptions,
+    SshConnectionOptions,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsKey, SettingsSources, SettingsUi};
+pub use settings::SshConnection;
+use settings::{ExtendingVec, Settings, WslConnection};
 use theme::ThemeSettings;
 use ui::{
     ActiveTheme, Color, CommonAnimationExt, Context, Icon, IconName, IconSize, InteractiveElement,
     IntoElement, Label, LabelCommon, Styled, Window, prelude::*,
 };
-use util::serde::default_true;
 use workspace::{AppState, ModalView, Workspace};
 
-#[derive(Deserialize)]
 pub struct SshSettings {
-    pub ssh_connections: Option<Vec<SshConnection>>,
-    pub wsl_connections: Option<Vec<WslConnection>>,
+    pub ssh_connections: ExtendingVec<SshConnection>,
+    pub wsl_connections: ExtendingVec<WslConnection>,
     /// Whether to read ~/.ssh/config for ssh connection sources.
-    #[serde(default = "default_true")]
     pub read_ssh_config: bool,
 }
 
 impl SshSettings {
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> + use<> {
-        self.ssh_connections.clone().into_iter().flatten()
+        self.ssh_connections.clone().0.into_iter()
     }
 
     pub fn wsl_connections(&self) -> impl Iterator<Item = WslConnection> + use<> {
-        self.wsl_connections.clone().into_iter().flatten()
+        self.wsl_connections.clone().0.into_iter()
     }
 
     pub fn fill_connection_options_from_settings(&self, options: &mut SshConnectionOptions) {
@@ -80,66 +76,7 @@ impl SshSettings {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct SshConnection {
-    pub host: SharedString,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port: Option<u16>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub projects: BTreeSet<SshProject>,
-    /// Name to use for this server in UI.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nickname: Option<String>,
-    // By default Zed will download the binary to the host directly.
-    // If this is set to true, Zed will download the binary to your local machine,
-    // and then upload it over the SSH connection. Useful if your SSH server has
-    // limited outbound internet access.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upload_binary_over_ssh: Option<bool>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub port_forwards: Option<Vec<SshPortForwardOption>>,
-}
-
-impl From<SshConnection> for SshConnectionOptions {
-    fn from(val: SshConnection) -> Self {
-        SshConnectionOptions {
-            host: val.host.into(),
-            username: val.username,
-            port: val.port,
-            password: None,
-            args: Some(val.args),
-            nickname: val.nickname,
-            upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
-            port_forwards: val.port_forwards,
-        }
-    }
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct WslConnection {
-    pub distro_name: SharedString,
-    #[serde(default)]
-    pub user: Option<String>,
-    #[serde(default)]
-    pub projects: BTreeSet<SshProject>,
-}
-
-impl From<WslConnection> for WslConnectionOptions {
-    fn from(val: WslConnection) -> Self {
-        WslConnectionOptions {
-            distro_name: val.distro_name.into(),
-            user: val.user,
-        }
-    }
-}
-
-#[derive(Clone, Serialize, Deserialize, PartialEq, JsonSchema)]
+#[derive(Clone, PartialEq)]
 pub enum Connection {
     Ssh(SshConnection),
     Wsl(WslConnection),
@@ -166,27 +103,15 @@ impl From<WslConnection> for Connection {
     }
 }
 
-#[derive(Clone, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema)]
-pub struct SshProject {
-    pub paths: Vec<String>,
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, SettingsUi, SettingsKey)]
-#[settings_key(None)]
-pub struct RemoteSettingsContent {
-    pub ssh_connections: Option<Vec<SshConnection>>,
-    pub wsl_connections: Option<Vec<WslConnection>>,
-    pub read_ssh_config: Option<bool>,
-}
-
 impl Settings for SshSettings {
-    type FileContent = RemoteSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        let remote = &content.remote;
+        Self {
+            ssh_connections: remote.ssh_connections.clone().unwrap_or_default().into(),
+            wsl_connections: remote.wsl_connections.clone().unwrap_or_default().into(),
+            read_ssh_config: remote.read_ssh_config.unwrap(),
+        }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
 }
 
 pub struct RemoteConnectionPrompt {
@@ -194,7 +119,7 @@ pub struct RemoteConnectionPrompt {
     nickname: Option<SharedString>,
     is_wsl: bool,
     status_message: Option<SharedString>,
-    prompt: Option<(Entity<Markdown>, oneshot::Sender<String>)>,
+    prompt: Option<(Entity<Markdown>, oneshot::Sender<EncryptedPassword>)>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: Entity<Editor>,
 }
@@ -236,10 +161,10 @@ impl RemoteConnectionPrompt {
         self.cancellation = Some(tx);
     }
 
-    pub fn set_prompt(
+    fn set_prompt(
         &mut self,
         prompt: String,
-        tx: oneshot::Sender<String>,
+        tx: oneshot::Sender<EncryptedPassword>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -279,8 +204,12 @@ impl RemoteConnectionPrompt {
     pub fn confirm(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
             self.status_message = Some("Connecting".into());
+
             self.editor.update(cx, |editor, cx| {
-                tx.send(editor.text(cx)).ok();
+                let pw = editor.text(cx);
+                if let Ok(secure) = EncryptedPassword::try_from(pw.as_ref()) {
+                    tx.send(secure).ok();
+                }
                 editor.clear(window, cx);
             });
         }
@@ -514,11 +443,16 @@ impl ModalView for RemoteConnectionModal {
 pub struct RemoteClientDelegate {
     window: AnyWindowHandle,
     ui: WeakEntity<RemoteConnectionPrompt>,
-    known_password: Option<String>,
+    known_password: Option<EncryptedPassword>,
 }
 
 impl remote::RemoteClientDelegate for RemoteClientDelegate {
-    fn ask_password(&self, prompt: String, tx: oneshot::Sender<String>, cx: &mut AsyncApp) {
+    fn ask_password(
+        &self,
+        prompt: String,
+        tx: oneshot::Sender<EncryptedPassword>,
+        cx: &mut AsyncApp,
+    ) {
         let mut known_password = self.known_password.clone();
         if let Some(password) = known_password.take() {
             tx.send(password).ok();
@@ -607,7 +541,10 @@ pub fn connect_over_ssh(
     cx: &mut App,
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
-    let known_password = connection_options.password.clone();
+    let known_password = connection_options
+        .password
+        .as_deref()
+        .and_then(|pw| EncryptedPassword::try_from(pw).ok());
     let (tx, rx) = oneshot::channel();
     ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
 
@@ -633,9 +570,10 @@ pub fn connect(
 ) -> Task<Result<Option<Entity<RemoteClient>>>> {
     let window = window.window_handle();
     let known_password = match &connection_options {
-        RemoteConnectionOptions::Ssh(ssh_connection_options) => {
-            ssh_connection_options.password.clone()
-        }
+        RemoteConnectionOptions::Ssh(ssh_connection_options) => ssh_connection_options
+            .password
+            .as_deref()
+            .and_then(|pw| pw.try_into().ok()),
         _ => None,
     };
     let (tx, rx) = oneshot::channel();
@@ -720,7 +658,10 @@ pub async fn open_remote_project(
                     known_password: if let RemoteConnectionOptions::Ssh(options) =
                         &connection_options
                     {
-                        options.password.clone()
+                        options
+                            .password
+                            .as_deref()
+                            .and_then(|pw| EncryptedPassword::try_from(pw).ok())
                     } else {
                         None
                     },

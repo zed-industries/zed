@@ -4140,7 +4140,6 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ```json
 "title_bar": {
-  "show": "always",
   "show_branch_icon": false,
   "show_branch_name": true,
   "show_project_items": true,

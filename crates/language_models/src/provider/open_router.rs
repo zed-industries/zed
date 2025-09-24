@@ -14,12 +14,9 @@ use language_model::{
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
 };
 use open_router::{
-    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, Provider, ResponseStreamEvent,
-    list_models,
+    Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore};
+use settings::{OpenRouterAvailableModel as AvailableModel, Settings, SettingsStore};
 use std::pin::Pin;
 use std::str::FromStr as _;
 use std::sync::{Arc, LazyLock};
@@ -40,51 +37,6 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct OpenRouterSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
-    pub supports_tools: Option<bool>,
-    pub supports_images: Option<bool>,
-    pub mode: Option<ModelMode>,
-    pub provider: Option<Provider>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "lowercase")]
-pub enum ModelMode {
-    #[default]
-    Default,
-    Thinking {
-        budget_tokens: Option<u32>,
-    },
-}
-
-impl From<ModelMode> for OpenRouterModelMode {
-    fn from(value: ModelMode) -> Self {
-        match value {
-            ModelMode::Default => OpenRouterModelMode::Default,
-            ModelMode::Thinking { budget_tokens } => {
-                OpenRouterModelMode::Thinking { budget_tokens }
-            }
-        }
-    }
-}
-
-impl From<OpenRouterModelMode> for ModelMode {
-    fn from(value: OpenRouterModelMode) -> Self {
-        match value {
-            OpenRouterModelMode::Default => ModelMode::Default,
-            OpenRouterModelMode::Thinking { budget_tokens } => {
-                ModelMode::Thinking { budget_tokens }
-            }
-        }
-    }
 }
 
 pub struct OpenRouterLanguageModelProvider {
@@ -259,7 +211,7 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
                 max_tokens: model.max_tokens,
                 supports_tools: model.supports_tools,
                 supports_images: model.supports_images,
-                mode: model.mode.clone().unwrap_or_default().into(),
+                mode: model.mode.unwrap_or_default(),
                 provider: model.provider.clone(),
             });
         }

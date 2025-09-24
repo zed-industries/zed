@@ -81,11 +81,13 @@ These are disabled by default, but can be enabled in your settings. For example:
 {
   "languages": {
     "Python": {
-      "language_servers": {
+      "language_servers": [
         // Disable basedpyright and enable Ty, and otherwise
         // use the default configuration.
-        "ty", "!basedpyright", ".."
-      }
+        "ty",
+        "!basedpyright",
+        "..."
+      ]
     }
   }
 }
@@ -196,7 +198,7 @@ You can disable format-on-save for Python files in your `settings.json`:
 {
   "languages": {
     "Python": {
-      "format_on_save": false
+      "format_on_save": "off"
     }
   }
 }

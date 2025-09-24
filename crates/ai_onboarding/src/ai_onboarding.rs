@@ -120,7 +120,7 @@ impl ZedAiOnboarding {
                 .max_w_full()
                 .gap_1()
                 .child(Headline::new("Welcome to Zed AI"))
-                .child(YoungAccountBanner)
+                .child(YoungAccountBanner::new(is_v2))
                 .child(
                     v_flex()
                         .mt_2()
@@ -372,7 +372,7 @@ impl Component for ZedAiOnboarding {
                         "Free Plan",
                         onboarding(
                             SignInStatus::SignedIn,
-                            Some(Plan::V1(PlanV1::ZedFree)),
+                            Some(Plan::V2(PlanV2::ZedFree)),
                             false,
                         ),
                     ),
@@ -380,7 +380,7 @@ impl Component for ZedAiOnboarding {
                         "Pro Trial",
                         onboarding(
                             SignInStatus::SignedIn,
-                            Some(Plan::V1(PlanV1::ZedProTrial)),
+                            Some(Plan::V2(PlanV2::ZedProTrial)),
                             false,
                         ),
                     ),
@@ -388,7 +388,7 @@ impl Component for ZedAiOnboarding {
                         "Pro Plan",
                         onboarding(
                             SignInStatus::SignedIn,
-                            Some(Plan::V1(PlanV1::ZedPro)),
+                            Some(Plan::V2(PlanV2::ZedPro)),
                             false,
                         ),
                     ),
