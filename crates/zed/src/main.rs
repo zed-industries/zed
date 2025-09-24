@@ -4,7 +4,6 @@ mod zed;
 use dotenvy;
 use repo_name;
 
-
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
 use clap::{Parser, command};
@@ -383,6 +382,8 @@ pub fn main() {
         menu::init();
         zed_actions::init();
         repo_name::init();
+
+        convex::init(cx);
 
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);

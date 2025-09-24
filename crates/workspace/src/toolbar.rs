@@ -1,11 +1,13 @@
 use crate::ItemHandle;
 use convex::ConvexClient;
+use convex::Value;
 use gpui::{
     AnyView, App, Context, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled,
     Window,
 };
 use gpui_tokio::Tokio;
 use repo_name::RepoName;
+use std::env;
 use ui::prelude::*;
 use ui::{h_flex, v_flex};
 

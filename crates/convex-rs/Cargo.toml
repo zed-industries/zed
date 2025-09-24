@@ -19,6 +19,8 @@ rustls-tls-webpki-roots = [ "tokio-tungstenite/rustls-tls-webpki-roots" ]
 testing = [ "convex_sync_types/testing", "proptest", "proptest-derive", "parking_lot" ]
 
 [dependencies]
+gpui.workspace = true
+gpui_tokio.workspace = true
 anyhow = { version = "1" }
 async-trait = { version = "0.1" }
 base64 = { version = "0.13" }
