@@ -8,24 +8,24 @@ use crate::{FocusHandle, FocusId};
 
 /// Represents a collection of focus handles using the tab-index APIs.
 #[derive(Debug)]
-pub(crate) struct TabIndexMap {
-    current_path: TabIndexPath,
-    pub(crate) insertion_history: Vec<TabIndexOperation>,
-    by_id: FxHashMap<FocusId, TabIndexNode>,
-    order: SumTree<TabIndexNode>,
+pub(crate) struct TabStopMap {
+    current_path: TabStopPath,
+    pub(crate) insertion_history: Vec<TabStopOperation>,
+    by_id: FxHashMap<FocusId, TabStopNode>,
+    order: SumTree<TabStopNode>,
 }
 
 #[derive(Debug, Clone)]
-pub enum TabIndexOperation {
+pub enum TabStopOperation {
     Insert(FocusHandle),
     Group(TabIndex),
     GroupEnd,
 }
 
-impl TabIndexOperation {
+impl TabStopOperation {
     fn focus_handle(&self) -> Option<&FocusHandle> {
         match self {
-            TabIndexOperation::Insert(focus_handle) => Some(focus_handle),
+            TabStopOperation::Insert(focus_handle) => Some(focus_handle),
             _ => None,
         }
     }
@@ -34,14 +34,14 @@ impl TabIndexOperation {
 type TabIndex = isize;
 
 #[derive(Debug, Default, PartialEq, Eq, Clone, Ord, PartialOrd)]
-struct TabIndexPath(smallvec::SmallVec<[TabIndex; 6]>);
+struct TabStopPath(smallvec::SmallVec<[TabIndex; 6]>);
 
 #[derive(Clone, Debug, Default, Ord, Eq, PartialEq)]
-struct TabIndexNode {
+struct TabStopNode {
     /// Path to access the node in the tree
     /// The final node in the list is a leaf node corresponding to an actual focus handle,
     /// all other nodes are group nodes
-    path: TabIndexPath,
+    path: TabStopPath,
     /// index into the backing array of nodes. Corresponds to insertion order
     node_insertion_index: usize,
 
@@ -49,7 +49,7 @@ struct TabIndexNode {
     tab_stop: bool,
 }
 
-impl PartialOrd for TabIndexNode {
+impl PartialOrd for TabStopNode {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(
             self.path
@@ -59,10 +59,10 @@ impl PartialOrd for TabIndexNode {
     }
 }
 
-impl Default for TabIndexMap {
+impl Default for TabStopMap {
     fn default() -> Self {
         Self {
-            current_path: TabIndexPath::default(),
+            current_path: TabStopPath::default(),
             insertion_history: Vec::new(),
             by_id: FxHashMap::default(),
             order: SumTree::new(&()),
@@ -70,13 +70,13 @@ impl Default for TabIndexMap {
     }
 }
 
-impl TabIndexMap {
+impl TabStopMap {
     pub fn insert(&mut self, focus_handle: &FocusHandle) {
         self.insertion_history
-            .push(TabIndexOperation::Insert(focus_handle.clone()));
+            .push(TabStopOperation::Insert(focus_handle.clone()));
         let mut path = self.current_path.clone();
         path.0.push(focus_handle.tab_index);
-        let order = TabIndexNode {
+        let order = TabStopNode {
             node_insertion_index: self.insertion_history.len() - 1,
             tab_stop: focus_handle.tab_stop,
             path,
@@ -87,12 +87,12 @@ impl TabIndexMap {
 
     pub fn begin_group(&mut self, tab_index: isize) {
         self.insertion_history
-            .push(TabIndexOperation::Group(tab_index));
+            .push(TabStopOperation::Group(tab_index));
         self.current_path.0.push(tab_index);
     }
 
     pub fn end_group(&mut self) {
-        self.insertion_history.push(TabIndexOperation::GroupEnd);
+        self.insertion_history.push(TabStopOperation::GroupEnd);
         self.current_path.0.pop();
     }
 
@@ -126,8 +126,8 @@ impl TabIndexMap {
         }
     }
 
-    fn next_inner(&self, node: &TabIndexNode) -> Option<&TabIndexNode> {
-        let mut cursor = self.order.cursor::<TabIndexNode>(&());
+    fn next_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {
+        let mut cursor = self.order.cursor::<TabStopNode>(&());
         cursor.seek(&node, Bias::Left);
         cursor.next();
         while let Some(item) = cursor.item()
@@ -161,8 +161,8 @@ impl TabIndexMap {
         }
     }
 
-    fn prev_inner(&self, node: &TabIndexNode) -> Option<&TabIndexNode> {
-        let mut cursor = self.order.cursor::<TabIndexNode>(&());
+    fn prev_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {
+        let mut cursor = self.order.cursor::<TabStopNode>(&());
         cursor.seek(&node, Bias::Left);
         cursor.prev();
         while let Some(item) = cursor.item()
@@ -174,12 +174,12 @@ impl TabIndexMap {
         cursor.item()
     }
 
-    pub fn replay(&mut self, nodes: &[TabIndexOperation]) {
+    pub fn replay(&mut self, nodes: &[TabStopOperation]) {
         for node in nodes {
             match node {
-                TabIndexOperation::Insert(focus_handle) => self.insert(focus_handle),
-                TabIndexOperation::Group(tab_index) => self.begin_group(*tab_index),
-                TabIndexOperation::GroupEnd => self.end_group(),
+                TabStopOperation::Insert(focus_handle) => self.insert(focus_handle),
+                TabStopOperation::Group(tab_index) => self.begin_group(*tab_index),
+                TabStopOperation::GroupEnd => self.end_group(),
             }
         }
     }
@@ -188,7 +188,7 @@ impl TabIndexMap {
         self.insertion_history.len()
     }
 
-    fn focus_handle_for_order(&self, order: &TabIndexNode) -> Option<FocusHandle> {
+    fn focus_handle_for_order(&self, order: &TabStopNode) -> Option<FocusHandle> {
         let handle = self.insertion_history[order.node_insertion_index].focus_handle();
         debug_assert!(
             handle.is_some(),
@@ -197,7 +197,7 @@ impl TabIndexMap {
         handle.cloned()
     }
 
-    fn tab_node_for_focus_id(&self, focused_id: &FocusId) -> Option<&TabIndexNode> {
+    fn tab_node_for_focus_id(&self, focused_id: &FocusId) -> Option<&TabStopNode> {
         let Some(order) = self.by_id.get(focused_id) else {
             return None;
         };
@@ -208,24 +208,24 @@ impl TabIndexMap {
 mod sum_tree_impl {
     use sum_tree::SeekTarget;
 
-    use crate::tab_stop::{TabIndexNode, TabIndexPath};
+    use crate::tab_stop::{TabStopNode, TabStopPath};
 
     #[derive(Clone, Debug)]
-    pub struct TabOrderNodeSummary {
+    pub struct TabStopOrderNodeSummary {
         max_index: usize,
-        max_path: TabIndexPath,
+        max_path: TabStopPath,
         pub tab_stops: usize,
     }
 
     pub type TabStopCount = usize;
 
-    impl sum_tree::Summary for TabOrderNodeSummary {
+    impl sum_tree::Summary for TabStopOrderNodeSummary {
         type Context = ();
 
         fn zero(_cx: &Self::Context) -> Self {
-            TabOrderNodeSummary {
+            TabStopOrderNodeSummary {
                 max_index: 0,
-                max_path: TabIndexPath::default(),
+                max_path: TabStopPath::default(),
                 tab_stops: 0,
             }
         }
@@ -237,7 +237,7 @@ mod sum_tree_impl {
         }
     }
 
-    impl sum_tree::KeyedItem for TabIndexNode {
+    impl sum_tree::KeyedItem for TabStopNode {
         type Key = Self;
 
         fn key(&self) -> Self::Key {
@@ -245,11 +245,11 @@ mod sum_tree_impl {
         }
     }
 
-    impl sum_tree::Item for TabIndexNode {
-        type Summary = TabOrderNodeSummary;
+    impl sum_tree::Item for TabStopNode {
+        type Summary = TabStopOrderNodeSummary;
 
         fn summary(&self, _cx: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
-            TabOrderNodeSummary {
+            TabStopOrderNodeSummary {
                 max_index: self.node_insertion_index,
                 max_path: self.path.clone(),
                 tab_stops: if self.tab_stop { 1 } else { 0 },
@@ -257,37 +257,37 @@ mod sum_tree_impl {
         }
     }
 
-    impl<'a> sum_tree::Dimension<'a, TabOrderNodeSummary> for TabStopCount {
-        fn zero(_: &<TabOrderNodeSummary as sum_tree::Summary>::Context) -> Self {
+    impl<'a> sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopCount {
+        fn zero(_: &<TabStopOrderNodeSummary as sum_tree::Summary>::Context) -> Self {
             0
         }
 
         fn add_summary(
             &mut self,
-            summary: &'a TabOrderNodeSummary,
-            _: &<TabOrderNodeSummary as sum_tree::Summary>::Context,
+            summary: &'a TabStopOrderNodeSummary,
+            _: &<TabStopOrderNodeSummary as sum_tree::Summary>::Context,
         ) {
             *self += summary.tab_stops;
         }
     }
 
-    impl<'a> sum_tree::Dimension<'a, TabOrderNodeSummary> for TabIndexNode {
-        fn zero(_: &<TabOrderNodeSummary as sum_tree::Summary>::Context) -> Self {
-            TabIndexNode::default()
+    impl<'a> sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopNode {
+        fn zero(_: &<TabStopOrderNodeSummary as sum_tree::Summary>::Context) -> Self {
+            TabStopNode::default()
         }
 
         fn add_summary(
             &mut self,
-            summary: &'a TabOrderNodeSummary,
-            _: &<TabOrderNodeSummary as sum_tree::Summary>::Context,
+            summary: &'a TabStopOrderNodeSummary,
+            _: &<TabStopOrderNodeSummary as sum_tree::Summary>::Context,
         ) {
             self.node_insertion_index = summary.max_index;
             self.path = summary.max_path.clone();
         }
     }
 
-    impl<'a, 'b> SeekTarget<'a, TabOrderNodeSummary, TabIndexNode> for &'b TabIndexNode {
-        fn cmp(&self, cursor_location: &TabIndexNode, _: &()) -> std::cmp::Ordering {
+    impl<'a, 'b> SeekTarget<'a, TabStopOrderNodeSummary, TabStopNode> for &'b TabStopNode {
+        fn cmp(&self, cursor_location: &TabStopNode, _: &()) -> std::cmp::Ordering {
             Iterator::cmp(self.path.0.iter(), cursor_location.path.0.iter()).then(
                 <usize as Ord>::cmp(
                     &self.node_insertion_index,
@@ -302,13 +302,13 @@ mod sum_tree_impl {
 mod tests {
     use itertools::Itertools as _;
 
-    use crate::{FocusHandle, FocusId, FocusMap, TabIndexMap};
+    use crate::{FocusHandle, FocusId, FocusMap, TabStopMap};
     use std::sync::Arc;
 
     #[test]
     fn test_tab_handles() {
         let focus_map = Arc::new(FocusMap::default());
-        let mut tab_index_map = TabIndexMap::default();
+        let mut tab_index_map = TabStopMap::default();
 
         let focus_handles = vec![
             FocusHandle::new(&focus_map).tab_stop(true).tab_index(0),
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn test_tab_non_stop_filtering() {
         let focus_map = Arc::new(FocusMap::default());
-        let mut tab_index_map = TabIndexMap::default();
+        let mut tab_index_map = TabStopMap::default();
 
         // Check that we can query next from a non-stop tab
         let tab_non_stop_1 = FocusHandle::new(&focus_map).tab_stop(false).tab_index(1);
@@ -420,17 +420,17 @@ mod tests {
     }
 
     #[must_use]
-    struct TabIndexMapTest {
-        tab_map: TabIndexMap,
+    struct TabStopMapTest {
+        tab_map: TabStopMap,
         focus_map: Arc<FocusMap>,
         expected: Vec<(usize, FocusId)>,
     }
 
-    impl TabIndexMapTest {
+    impl TabStopMapTest {
         #[must_use]
         fn new() -> Self {
             Self {
-                tab_map: TabIndexMap::default(),
+                tab_map: TabStopMap::default(),
                 focus_map: Arc::new(FocusMap::default()),
                 expected: Vec::default(),
             }
@@ -466,7 +466,7 @@ mod tests {
 
         fn traverse_tab_map(
             &self,
-            traverse: impl Fn(&TabIndexMap, Option<&FocusId>) -> Option<FocusHandle>,
+            traverse: impl Fn(&TabStopMap, Option<&FocusId>) -> Option<FocusHandle>,
         ) -> Vec<FocusId> {
             let mut last_focus_id = None;
             let mut found = vec![];
@@ -510,7 +510,7 @@ mod tests {
 
     #[test]
     fn test_with_disabled_tab_stop() {
-        TabIndexMapTest::new()
+        TabStopMapTest::new()
             .tab_stop(0, 0)
             .tab_non_stop(1)
             .tab_stop(2, 1)
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn test_with_multiple_disabled_tab_stops() {
-        TabIndexMapTest::new()
+        TabStopMapTest::new()
             .tab_non_stop(0)
             .tab_stop(1, 0)
             .tab_non_stop(3)
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_tab_group_functionality() {
-        TabIndexMapTest::new()
+        TabStopMapTest::new()
             .tab_stop(0, 0)
             .tab_stop(0, 1)
             .tab_group(2, |t| t.tab_stop(0, 2).tab_stop(1, 3))
@@ -542,7 +542,7 @@ mod tests {
 
     #[test]
     fn test_sibling_groups() {
-        TabIndexMapTest::new()
+        TabStopMapTest::new()
             .tab_stop(0, 0)
             .tab_stop(1, 1)
             .tab_group(2, |test| test.tab_stop(0, 2).tab_stop(1, 3))
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn test_nested_group() {
-        TabIndexMapTest::new()
+        TabStopMapTest::new()
             .tab_stop(0, 0)
             .tab_stop(1, 1)
             .tab_group(2, |t| {
@@ -570,7 +570,7 @@ mod tests {
 
     #[test]
     fn test_sibling_nested_groups() {
-        TabIndexMapTest::new()
+        TabStopMapTest::new()
             .tab_stop(0, 0)
             .tab_stop(1, 1)
             .tab_group(2, |builder| {
@@ -587,7 +587,7 @@ mod tests {
 
     #[test]
     fn test_sibling_nested_groups_out_of_order() {
-        TabIndexMapTest::new()
+        TabStopMapTest::new()
             .tab_stop(9, 9)
             .tab_stop(8, 8)
             .tab_group(7, |builder| {

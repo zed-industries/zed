@@ -1784,7 +1784,7 @@ impl Interactivity {
                 }
 
                 if let Some(focus_handle) = &self.tracked_focus_handle {
-                    window.next_frame.tab_handles.insert(focus_handle);
+                    window.next_frame.tab_stops.insert(focus_handle);
                 }
 
                 window.with_element_opacity(style.opacity, |window| {

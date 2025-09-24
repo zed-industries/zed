@@ -12,7 +12,7 @@ use crate::{
     PlatformInputHandler, PlatformWindow, Point, PolychromeSprite, PromptButton, PromptLevel, Quad,
     Render, RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
     SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubscriberSet, Subscription, TabIndexMap, TaffyLayoutEngine, Task,
+    StrikethroughStyle, Style, SubscriberSet, Subscription, TabStopMap, TaffyLayoutEngine, Task,
     TextStyle, TextStyleRefinement, TransformationMatrix, Underline, UnderlineStyle,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
     WindowOptions, WindowParams, WindowTextSystem, point, prelude::*, px, rems, size,
@@ -684,7 +684,7 @@ pub(crate) struct Frame {
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) inspector_hitboxes: FxHashMap<HitboxId, crate::InspectorElementId>,
-    pub(crate) tab_handles: TabIndexMap,
+    pub(crate) tab_stops: TabStopMap,
 }
 
 #[derive(Clone, Default)]
@@ -733,7 +733,7 @@ impl Frame {
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             inspector_hitboxes: FxHashMap::default(),
-            tab_handles: TabIndexMap::default(),
+            tab_stops: TabStopMap::default(),
         }
     }
 
@@ -749,7 +749,7 @@ impl Frame {
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
-        self.tab_handles.clear();
+        self.tab_stops.clear();
         self.focus = None;
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1341,7 +1341,7 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_handles.next(self.focus.as_ref()) {
+        if let Some(handle) = self.rendered_frame.tab_stops.next(self.focus.as_ref()) {
             self.focus(&handle)
         }
     }
@@ -1352,7 +1352,7 @@ impl Window {
             return;
         }
 
-        if let Some(handle) = self.rendered_frame.tab_handles.prev(self.focus.as_ref()) {
+        if let Some(handle) = self.rendered_frame.tab_stops.prev(self.focus.as_ref()) {
             self.focus(&handle)
         }
     }
@@ -2211,7 +2211,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
-            tab_handle_index: self.next_frame.tab_handles.paint_index(),
+            tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -2241,8 +2241,8 @@ impl Window {
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
-        self.next_frame.tab_handles.replay(
-            &self.rendered_frame.tab_handles.insertion_history
+        self.next_frame.tab_stops.replay(
+            &self.rendered_frame.tab_stops.insertion_history
                 [range.start.tab_handle_index..range.end.tab_handle_index],
         );
 
