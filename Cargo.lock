@@ -14528,6 +14528,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "command_palette_hooks",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "menu",
+ "paths",
+ "project",
+ "serde",
+ "settings",
+ "theme",
+ "ui",
+ "workspace",
+ "workspace-hack",
+ "zlog",
+]
+
+[[package]]
 name = "sha1"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -17679,6 +17704,7 @@ dependencies = [
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
+ "perf",
  "picker",
  "project",
  "project_panel",
@@ -20279,6 +20305,7 @@ dependencies = [
  "session",
  "settings",
  "settings_profile_selector",
+ "settings_ui",
  "shellexpand 2.1.2",
  "smol",
  "snippet_provider",
@@ -20613,6 +20640,7 @@ dependencies = [
  "edit_prediction_context",
  "futures 0.3.31",
  "gpui",
+ "indoc",
  "language",
  "language_model",
  "log",

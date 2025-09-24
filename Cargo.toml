@@ -151,6 +151,7 @@ members = [
     "crates/settings",
     "crates/settings_macros",
     "crates/settings_profile_selector",
+    "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",

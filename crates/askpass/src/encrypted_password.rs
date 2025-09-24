@@ -63,12 +63,14 @@ impl TryFrom<&str> for EncryptedPassword {
             if padded_length != len {
                 value.resize(padded_length as usize, 0);
             }
-            unsafe {
-                CryptProtectMemory(
-                    value.as_mut_ptr() as _,
-                    len,
-                    CRYPTPROTECTMEMORY_SAME_PROCESS,
-                )?;
+            if len != 0 {
+                unsafe {
+                    CryptProtectMemory(
+                        value.as_mut_ptr() as _,
+                        len,
+                        CRYPTPROTECTMEMORY_SAME_PROCESS,
+                    )?;
+                }
             }
             Ok(Self(value, len))
         }
@@ -91,19 +93,22 @@ pub(crate) fn decrypt(mut password: EncryptedPassword) -> Result<String> {
             password.0.len(),
             CRYPTPROTECTMEMORY_BLOCK_SIZE
         );
-        unsafe {
-            CryptUnprotectMemory(
-                password.0.as_mut_ptr() as _,
-                password.1,
-                CRYPTPROTECTMEMORY_SAME_PROCESS,
-            )
-            .context("while decrypting a SSH password")?
-        };
+        if password.1 != 0 {
+            unsafe {
+                CryptUnprotectMemory(
+                    password.0.as_mut_ptr() as _,
+                    password.1,
+                    CRYPTPROTECTMEMORY_SAME_PROCESS,
+                )
+                .context("while decrypting a SSH password")?
+            };
 
-        {
-            // Remove padding
-            _ = password.0.drain(password.1 as usize..);
+            {
+                // Remove padding
+                _ = password.0.drain(password.1 as usize..);
+            }
         }
+
         Ok(String::from_utf8(std::mem::take(&mut password.0))?)
     }
     #[cfg(not(windows))]

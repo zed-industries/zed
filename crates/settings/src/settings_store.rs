@@ -31,8 +31,7 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, SettingsJsonSchemaParams, SettingsUiEntry, ThemeName, VsCodeSettings,
-    WorktreeId,
+    LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
     merge_from::MergeFrom,
     parse_json_with_comments, replace_value_in_json_text,
     settings_content::{
@@ -138,7 +137,6 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
-/// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     default_settings: Rc<SettingsContent>,
@@ -318,12 +316,17 @@ impl SettingsStore {
             .set_global_value(Box::new(value))
     }
 
-    /// Get the user's settings as a raw JSON value.
+    /// Get the user's settings content.
     ///
     /// For user-facing functionality use the typed setting interface.
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> Option<&UserSettingsContent> {
         self.user_settings.as_ref()
+    }
+
+    /// Get the default settings content as a raw JSON value.
+    pub fn raw_default_settings(&self) -> &SettingsContent {
+        &self.default_settings
     }
 
     /// Get the configured settings profile names.
@@ -475,10 +478,6 @@ impl SettingsStore {
                 store.get_vscode_edits(old_text, &vscode_settings)
             })
         })
-    }
-
-    pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUiEntry> {
-        [].into_iter()
     }
 }
 

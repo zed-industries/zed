@@ -8,7 +8,7 @@ Learn how to get started using AI with Zed and all its capabilities.
 
 - [External Agents](./external-agents.md): Learn how to plug in your favorite agent into Zed.
 
-- [Subscription](./subscription.md): Learn about Zed's hosted model service and other billing-related information.
+- [Subscription](./subscription.md): Learn about Zed's hosted models and other billing-related information.
 
 - [Privacy and Security](./privacy-and-security.md): Understand how Zed handles privacy and security with AI features.
 
