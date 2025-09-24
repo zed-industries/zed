@@ -307,61 +307,6 @@ impl RemotePathBuf {
     }
 }
 
-// impl RemotePathBuf {
-//     pub fn new(path: PathBuf, style: PathStyle) -> Self {
-//         #[cfg(target_os = "windows")]
-//         let string = match style {
-//             PathStyle::Posix => path.to_string_lossy().replace('\\', "/"),
-//             PathStyle::Windows => path.to_string_lossy().into(),
-//         };
-//         #[cfg(not(target_os = "windows"))]
-//         let string = match style {
-//             PathStyle::Posix => path.to_string_lossy().to_string(),
-//             PathStyle::Windows => path.to_string_lossy().replace('/', "\\"),
-//         };
-//         Self {
-//             inner: path,
-//             style,
-//             string,
-//         }
-//     }
-
-//     pub fn from_str(path: &str, style: PathStyle) -> Self {
-//         let path_buf = PathBuf::from(path);
-//         Self::new(path_buf, style)
-//     }
-
-//     #[cfg(target_os = "windows")]
-//     pub fn to_proto(&self) -> String {
-//         match self.path_style() {
-//             PathStyle::Posix => self.to_string(),
-//             PathStyle::Windows => self.inner.to_string_lossy().replace('\\', "/"),
-//         }
-//     }
-
-//     #[cfg(not(target_os = "windows"))]
-//     pub fn to_proto(&self) -> String {
-//         match self.path_style() {
-//             PathStyle::Posix => self.inner.to_string_lossy().to_string(),
-//             PathStyle::Windows => self.to_string(),
-//         }
-//     }
-
-//     pub fn as_path(&self) -> &Path {
-//         &self.inner
-//     }
-
-//     pub fn path_style(&self) -> PathStyle {
-//         self.style
-//     }
-
-//     pub fn parent(&self) -> Option<RemotePathBuf> {
-//         self.inner
-//             .parent()
-//             .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
-//     }
-// }
-
 impl Display for RemotePathBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.string)
@@ -369,18 +314,16 @@ impl Display for RemotePathBuf {
 }
 
 pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
-    match path_style {
-        PathStyle::Windows => {
-            path_like
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic())
-                && path_like[1..]
-                    .strip_prefix(':')
-                    .is_some_and(|path| path.starts_with('/') || path.starts_with('\\'))
-        }
-        PathStyle::Posix => path_like.starts_with('/'),
-    }
+    path_like.starts_with('/')
+        || path_style == PathStyle::Windows
+            && (path_like.starts_with('\\')
+                || path_like
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+                    && path_like[1..]
+                        .strip_prefix(':')
+                        .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.

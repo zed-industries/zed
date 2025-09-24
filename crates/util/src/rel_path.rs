@@ -487,6 +487,7 @@ mod tests {
     #[test]
     fn test_rel_path_constructors_absolute_path() {
         assert!(RelPath::from_std_path(Path::new("/a/b"), PathStyle::Windows).is_err());
+        assert!(RelPath::from_std_path(Path::new("\\a\\b"), PathStyle::Windows).is_err());
         assert!(RelPath::from_std_path(Path::new("/a/b"), PathStyle::Posix).is_err());
         assert!(RelPath::from_std_path(Path::new("C:/a/b"), PathStyle::Windows).is_err());
         assert!(RelPath::from_std_path(Path::new("C:\\a\\b"), PathStyle::Windows).is_err());
