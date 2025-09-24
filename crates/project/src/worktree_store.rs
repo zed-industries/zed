@@ -470,7 +470,7 @@ impl WorktreeStore {
                     if upstream_client.is_via_collab() {
                         Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
                     } else {
-                        let abs_path = RemotePathBuf::new(abs_path.to_path_buf(), *path_style);
+                        let abs_path = RemotePathBuf::new(abs_path.to_string(), *path_style);
                         self.create_remote_worktree(upstream_client.clone(), abs_path, visible, cx)
                     }
                 }
@@ -517,7 +517,7 @@ impl WorktreeStore {
         cx.spawn(async move |this, cx| {
             let this = this.upgrade().context("Dropped worktree store")?;
 
-            let path = RemotePathBuf::new(abs_path.into(), path_style);
+            let path = RemotePathBuf::new(abs_path, path_style);
             let response = client
                 .request(proto::AddWorktree {
                     project_id: REMOTE_SERVER_PROJECT_ID,

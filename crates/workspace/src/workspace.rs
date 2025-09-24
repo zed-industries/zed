@@ -2687,7 +2687,7 @@ impl Workspace {
                 self.open_path(project_path, None, true, window, cx)
             }
             ResolvedPath::AbsPath { path, .. } => self.open_abs_path(
-                path,
+                PathBuf::from(path),
                 OpenOptions {
                     visible: Some(OpenVisible::None),
                     ..Default::default()

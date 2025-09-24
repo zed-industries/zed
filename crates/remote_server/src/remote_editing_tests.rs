@@ -863,10 +863,7 @@ async fn test_remote_resolve_path_in_buffer(
         .await
         .unwrap();
     assert!(path.is_file());
-    assert_eq!(
-        path.abs_path().unwrap().to_string_lossy(),
-        path!("/code/project2/README.md")
-    );
+    assert_eq!(path.abs_path().unwrap(), path!("/code/project2/README.md"));
 
     let path = project
         .update(cx, |project, cx| {
@@ -920,10 +917,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
         .unwrap();
 
     assert!(path.is_file());
-    assert_eq!(
-        path.abs_path().unwrap().to_string_lossy(),
-        path!("/code/project1/README.md")
-    );
+    assert_eq!(path.abs_path().unwrap(), path!("/code/project1/README.md"));
 
     let path = project
         .update(cx, |project, cx| {
@@ -933,10 +927,7 @@ async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut T
         .unwrap();
 
     assert!(path.is_dir());
-    assert_eq!(
-        path.abs_path().unwrap().to_string_lossy(),
-        path!("/code/project1/src")
-    );
+    assert_eq!(path.abs_path().unwrap(), path!("/code/project1/src"));
 
     let path = project
         .update(cx, |project, cx| {

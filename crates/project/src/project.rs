@@ -108,7 +108,7 @@ use std::{
     borrow::Cow,
     collections::BTreeMap,
     ops::Range,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     pin::pin,
     str,
     sync::Arc,
@@ -121,7 +121,7 @@ use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
-    paths::{PathStyle, RemotePathBuf, SanitizedPath, compare_paths},
+    paths::{PathStyle, SanitizedPath, compare_paths},
     rel_path::RelPath,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -4178,11 +4178,10 @@ impl Project {
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
-        let path_buf = PathBuf::from(path);
-        if path_buf.is_absolute() || path.starts_with("~") {
+        if util::paths::is_absolute(path, self.path_style(cx)) || path.starts_with("~") {
             self.resolve_abs_path(path, cx)
         } else {
-            self.resolve_path_in_worktrees(path_buf, buffer, cx)
+            self.resolve_path_in_worktrees(path, buffer, cx)
         }
     }
 
@@ -4203,29 +4202,26 @@ impl Project {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
             let fs = self.fs.clone();
             cx.background_spawn(async move {
-                let path = expanded.as_path();
-                let metadata = fs.metadata(path).await.ok().flatten();
+                let metadata = fs.metadata(&expanded).await.ok().flatten();
 
                 metadata.map(|metadata| ResolvedPath::AbsPath {
-                    path: expanded,
+                    path: expanded.to_string_lossy().to_string(),
                     is_dir: metadata.is_dir,
                 })
             })
         } else if let Some(ssh_client) = self.remote_client.as_ref() {
-            let path_style = ssh_client.read(cx).path_style();
-            let request_path = RemotePathBuf::from_str(path, path_style);
             let request = ssh_client
                 .read(cx)
                 .proto_client()
                 .request(proto::GetPathMetadata {
                     project_id: REMOTE_SERVER_PROJECT_ID,
-                    path: request_path.to_proto(),
+                    path: path.into(),
                 });
             cx.background_spawn(async move {
                 let response = request.await.log_err()?;
                 if response.exists {
                     Some(ResolvedPath::AbsPath {
-                        path: PathBuf::from(response.path),
+                        path: response.path,
                         is_dir: response.is_dir,
                     })
                 } else {
@@ -4239,17 +4235,26 @@ impl Project {
 
     fn resolve_path_in_worktrees(
         &self,
-        path: PathBuf,
+        path: &str,
         buffer: &Entity<Buffer>,
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
-        let mut candidates = vec![path.clone()];
+        let mut candidates = vec![];
+        if let Ok(path) = RelPath::from_std_path(Path::new(path), self.path_style(cx)) {
+            candidates.push(path);
+        }
 
         if let Some(file) = buffer.read(cx).file()
             && let Some(dir) = file.path().parent()
         {
-            let joined = dir.as_std_path().join(&path);
-            candidates.push(joined);
+            if let Some(joined) = self
+                .path_style(cx)
+                .join(&*dir.display(self.path_style(cx)), path)
+                && let Some(joined) =
+                    RelPath::from_std_path(Path::new(&joined), self.path_style(cx)).ok()
+            {
+                candidates.push(joined);
+            }
         }
 
         let buffer_worktree_id = buffer.read(cx).file().map(|file| file.worktree_id(cx));
@@ -4289,19 +4294,12 @@ impl Project {
 
     fn resolve_path_in_worktree(
         worktree: &Entity<Worktree>,
-        path: &PathBuf,
+        path: &RelPath,
         cx: &mut AsyncApp,
     ) -> Option<ResolvedPath> {
         worktree
             .read_with(cx, |worktree, _| {
-                let root_entry_path = &worktree.abs_path();
-                let resolved = resolve_path(root_entry_path, path);
-                let stripped = RelPath::from_std_path(
-                    resolved.strip_prefix(root_entry_path).unwrap_or(&resolved),
-                    worktree.path_style(),
-                )
-                .ok()?;
-                worktree.entry_for_path(&stripped).map(|entry| {
+                worktree.entry_for_path(path).map(|entry| {
                     let project_path = ProjectPath {
                         worktree_id: worktree.id(),
                         path: entry.path.clone(),
@@ -5412,20 +5410,6 @@ impl<P: Into<Arc<RelPath>>> From<(WorktreeId, P)> for ProjectPath {
     }
 }
 
-fn resolve_path(base: &Path, path: &Path) -> PathBuf {
-    let mut result = base.to_path_buf();
-    for component in path.components() {
-        match component {
-            Component::ParentDir => {
-                result.pop();
-            }
-            Component::CurDir => (),
-            _ => result.push(component),
-        }
-    }
-    result
-}
-
 /// ResolvedPath is a path that has been resolved to either a ProjectPath
 /// or an AbsPath and that *exists*.
 #[derive(Debug, Clone)]
@@ -5435,20 +5419,20 @@ pub enum ResolvedPath {
         is_dir: bool,
     },
     AbsPath {
-        path: PathBuf,
+        path: String,
         is_dir: bool,
     },
 }
 
 impl ResolvedPath {
-    pub fn abs_path(&self) -> Option<&Path> {
+    pub fn abs_path(&self) -> Option<&str> {
         match self {
-            Self::AbsPath { path, .. } => Some(path.as_path()),
+            Self::AbsPath { path, .. } => Some(path),
             _ => None,
         }
     }
 
-    pub fn into_abs_path(self) -> Option<PathBuf> {
+    pub fn into_abs_path(self) -> Option<String> {
         match self {
             Self::AbsPath { path, .. } => Some(path),
             _ => None,

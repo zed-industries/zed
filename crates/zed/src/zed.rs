@@ -3057,9 +3057,7 @@ mod tests {
                 .zip(paths_to_open.iter())
                 .map(|(i, path)| {
                     match i {
-                        Some(Ok(i)) => {
-                            Some(i.project_path(cx).map(|p| p.path.as_str().to_string()))
-                        }
+                        Some(Ok(i)) => Some(i.project_path(cx).map(|p| p.path)),
                         Some(Err(e)) => panic!("Excluded file {path:?} failed to open: {e:?}"),
                         None => None,
                     }
@@ -3072,8 +3070,8 @@ mod tests {
             opened_paths,
             vec![
                 None,
-                Some(path!(".git/HEAD").to_string()),
-                Some(path!("excluded_dir/file").to_string()),
+                Some(rel_path(".git/HEAD").into()),
+                Some(rel_path("excluded_dir/file").into()),
             ],
             "Excluded files should get opened, excluded dir should not get opened"
         );

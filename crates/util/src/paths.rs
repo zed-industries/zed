@@ -199,6 +199,7 @@ impl SanitizedPath {
         self.0.to_path_buf()
     }
 
+    // FIXME wrong
     pub fn to_glob_string(&self) -> String {
         #[cfg(target_os = "windows")]
         {
@@ -271,73 +272,126 @@ impl PathStyle {
     pub fn is_windows(&self) -> bool {
         *self == PathStyle::Windows
     }
+
+    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
+        let right = right.as_ref().to_str()?;
+        if is_absolute(right, self) {
+            return None;
+        }
+        let left = left.as_ref().to_str()?;
+        if left.is_empty() {
+            Some(right.into())
+        } else {
+            Some(format!(
+                "{left}{}{right}",
+                if left.ends_with(self.separator()) {
+                    ""
+                } else {
+                    self.separator()
+                }
+            ))
+        }
+    }
 }
 
+// FIXME rename this to remoteabspath or something
 #[derive(Debug, Clone)]
 pub struct RemotePathBuf {
-    inner: PathBuf,
     style: PathStyle,
-    string: String, // Cached string representation
+    string: String,
 }
 
 impl RemotePathBuf {
-    pub fn new(path: PathBuf, style: PathStyle) -> Self {
-        #[cfg(target_os = "windows")]
-        let string = match style {
-            PathStyle::Posix => path.to_string_lossy().replace('\\', "/"),
-            PathStyle::Windows => path.to_string_lossy().into(),
-        };
-        #[cfg(not(target_os = "windows"))]
-        let string = match style {
-            PathStyle::Posix => path.to_string_lossy().to_string(),
-            PathStyle::Windows => path.to_string_lossy().replace('/', "\\"),
-        };
-        Self {
-            inner: path,
-            style,
-            string,
-        }
+    pub fn new(string: String, style: PathStyle) -> Self {
+        Self { style, string }
     }
 
     pub fn from_str(path: &str, style: PathStyle) -> Self {
-        let path_buf = PathBuf::from(path);
-        Self::new(path_buf, style)
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn to_proto(&self) -> String {
-        match self.path_style() {
-            PathStyle::Posix => self.to_string(),
-            PathStyle::Windows => self.inner.to_string_lossy().replace('\\', "/"),
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    pub fn to_proto(&self) -> String {
-        match self.path_style() {
-            PathStyle::Posix => self.inner.to_string_lossy().to_string(),
-            PathStyle::Windows => self.to_string(),
-        }
-    }
-
-    pub fn as_path(&self) -> &Path {
-        &self.inner
+        Self::new(path.to_string(), style)
     }
 
     pub fn path_style(&self) -> PathStyle {
         self.style
     }
 
-    pub fn parent(&self) -> Option<RemotePathBuf> {
-        self.inner
-            .parent()
-            .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
+    pub fn to_proto(self) -> String {
+        self.string
     }
 }
+
+// impl RemotePathBuf {
+//     pub fn new(path: PathBuf, style: PathStyle) -> Self {
+//         #[cfg(target_os = "windows")]
+//         let string = match style {
+//             PathStyle::Posix => path.to_string_lossy().replace('\\', "/"),
+//             PathStyle::Windows => path.to_string_lossy().into(),
+//         };
+//         #[cfg(not(target_os = "windows"))]
+//         let string = match style {
+//             PathStyle::Posix => path.to_string_lossy().to_string(),
+//             PathStyle::Windows => path.to_string_lossy().replace('/', "\\"),
+//         };
+//         Self {
+//             inner: path,
+//             style,
+//             string,
+//         }
+//     }
+
+//     pub fn from_str(path: &str, style: PathStyle) -> Self {
+//         let path_buf = PathBuf::from(path);
+//         Self::new(path_buf, style)
+//     }
+
+//     #[cfg(target_os = "windows")]
+//     pub fn to_proto(&self) -> String {
+//         match self.path_style() {
+//             PathStyle::Posix => self.to_string(),
+//             PathStyle::Windows => self.inner.to_string_lossy().replace('\\', "/"),
+//         }
+//     }
+
+//     #[cfg(not(target_os = "windows"))]
+//     pub fn to_proto(&self) -> String {
+//         match self.path_style() {
+//             PathStyle::Posix => self.inner.to_string_lossy().to_string(),
+//             PathStyle::Windows => self.to_string(),
+//         }
+//     }
+
+//     pub fn as_path(&self) -> &Path {
+//         &self.inner
+//     }
+
+//     pub fn path_style(&self) -> PathStyle {
+//         self.style
+//     }
+
+//     pub fn parent(&self) -> Option<RemotePathBuf> {
+//         self.inner
+//             .parent()
+//             .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
+//     }
+// }
 
 impl Display for RemotePathBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.string)
+    }
+}
+
+pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
+    match path_style {
+        PathStyle::Windows => {
+            path_like
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+                && path_like[1..]
+                    .strip_prefix(':')
+                    .is_some_and(|path| path.starts_with('/') || path.starts_with('\\'))
+        }
+        PathStyle::Posix => path_like.starts_with('/'),
     }
 }
 

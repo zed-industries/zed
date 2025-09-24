@@ -13,6 +13,7 @@ use futures::{
 use gpui::{App, AppContext as _, AsyncApp, SemanticVersion, Task};
 use itertools::Itertools;
 use parking_lot::Mutex;
+use paths::remote_server_dir_relative;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::proto::Envelope;
 pub use settings::SshPortForwardOption;
@@ -27,12 +28,15 @@ use std::{
     time::Instant,
 };
 use tempfile::TempDir;
-use util::paths::{PathStyle, RemotePathBuf};
+use util::{
+    paths::{PathStyle, RemotePathBuf},
+    rel_path::RelPath,
+};
 
 pub(crate) struct SshRemoteConnection {
     socket: SshSocket,
     master_process: Mutex<Option<Child>>,
-    remote_binary_path: Option<RemotePathBuf>,
+    remote_binary_path: Option<Arc<RelPath>>,
     ssh_platform: RemotePlatform,
     ssh_path_style: PathStyle,
     ssh_shell: String,
@@ -204,7 +208,7 @@ impl RemoteConnection for SshRemoteConnection {
 
         let mut start_proxy_command = shell_script!(
             "exec {binary_path} proxy --identifier {identifier}",
-            binary_path = &remote_binary_path.to_string(),
+            binary_path = &remote_binary_path.display(self.path_style()),
             identifier = &unique_identifier,
         );
 
@@ -399,7 +403,7 @@ impl SshRemoteConnection {
         version: SemanticVersion,
         commit: Option<AppCommitSha>,
         cx: &mut AsyncApp,
-    ) -> Result<RemotePathBuf> {
+    ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
                 let commit = commit.map(|s| s.full()).unwrap_or_default();
@@ -413,23 +417,21 @@ impl SshRemoteConnection {
             release_channel.dev_name(),
             version_str
         );
-        let dst_path = RemotePathBuf::new(
-            paths::remote_server_dir_relative().join(binary_name),
-            self.ssh_path_style,
-        );
+        let dst_path =
+            paths::remote_server_dir_relative().join(RelPath::new(&binary_name).unwrap());
 
         #[cfg(debug_assertions)]
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&self.ssh_platform, delegate.as_ref(), cx)
                 .await?
         {
-            let tmp_path = RemotePathBuf::new(
-                paths::remote_server_dir_relative().join(format!(
+            let tmp_path = paths::remote_server_dir_relative().join(
+                RelPath::new(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
-                )),
-                self.ssh_path_style,
+                ))
+                .unwrap(),
             );
             self.upload_local_server_binary(&remote_server_path, &tmp_path, delegate, cx)
                 .await?;
@@ -440,7 +442,7 @@ impl SshRemoteConnection {
 
         if self
             .socket
-            .run_command(&dst_path.to_string(), &["version"])
+            .run_command(&dst_path.display(self.path_style()), &["version"])
             .await
             .is_ok()
         {
@@ -458,9 +460,13 @@ impl SshRemoteConnection {
             _ => Ok(Some(AppVersion::global(cx))),
         })??;
 
-        let tmp_path_gz = RemotePathBuf::new(
-            PathBuf::from(format!("{}-download-{}.gz", dst_path, std::process::id())),
-            self.ssh_path_style,
+        let tmp_path_gz = remote_server_dir_relative().join(
+            RelPath::new(&format!(
+                "{}-download-{}.gz",
+                binary_name,
+                std::process::id()
+            ))
+            .unwrap(),
         );
         if !self.socket.connection_options.upload_binary_over_ssh
             && let Some((url, body)) = delegate
@@ -499,7 +505,7 @@ impl SshRemoteConnection {
         &self,
         url: &str,
         body: &str,
-        tmp_path_gz: &RemotePathBuf,
+        tmp_path_gz: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -509,7 +515,10 @@ impl SshRemoteConnection {
                     "sh",
                     &[
                         "-c",
-                        &shell_script!("mkdir -p {parent}", parent = parent.to_string().as_ref()),
+                        &shell_script!(
+                            "mkdir -p {parent}",
+                            parent = parent.display(self.path_style()).as_ref()
+                        ),
                     ],
                 )
                 .await?;
@@ -532,7 +541,7 @@ impl SshRemoteConnection {
                     body,
                     url,
                     "-o",
-                    &tmp_path_gz.to_string(),
+                    &tmp_path_gz.display(self.path_style()),
                 ],
             )
             .await
@@ -554,7 +563,7 @@ impl SshRemoteConnection {
                             body,
                             url,
                             "-O",
-                            &tmp_path_gz.to_string(),
+                            &tmp_path_gz.display(self.path_style()),
                         ],
                     )
                     .await
@@ -577,7 +586,7 @@ impl SshRemoteConnection {
     async fn upload_local_server_binary(
         &self,
         src_path: &Path,
-        tmp_path_gz: &RemotePathBuf,
+        tmp_path_gz: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
@@ -587,7 +596,10 @@ impl SshRemoteConnection {
                     "sh",
                     &[
                         "-c",
-                        &shell_script!("mkdir -p {parent}", parent = parent.to_string().as_ref()),
+                        &shell_script!(
+                            "mkdir -p {parent}",
+                            parent = parent.display(self.path_style()).as_ref()
+                        ),
                     ],
                 )
                 .await?;
@@ -612,33 +624,33 @@ impl SshRemoteConnection {
 
     async fn extract_server_binary(
         &self,
-        dst_path: &RemotePathBuf,
-        tmp_path: &RemotePathBuf,
+        dst_path: &RelPath,
+        tmp_path: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
         let server_mode = 0o755;
 
-        let orig_tmp_path = tmp_path.to_string();
+        let orig_tmp_path = tmp_path.display(self.path_style());
         let script = if let Some(tmp_path) = orig_tmp_path.strip_suffix(".gz") {
             shell_script!(
                 "gunzip -f {orig_tmp_path} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path.to_string(),
+                dst_path = &dst_path.display(self.path_style()),
             )
         } else {
             shell_script!(
                 "chmod {server_mode} {orig_tmp_path} && mv {orig_tmp_path} {dst_path}",
                 server_mode = &format!("{:o}", server_mode),
-                dst_path = &dst_path.to_string()
+                dst_path = &dst_path.display(self.path_style())
             )
         };
         self.socket.run_command("sh", &["-c", &script]).await?;
         Ok(())
     }
 
-    async fn upload_file(&self, src_path: &Path, dest_path: &RemotePathBuf) -> Result<()> {
+    async fn upload_file(&self, src_path: &Path, dest_path: &RelPath) -> Result<()> {
         log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
         let mut command = util::command::new_smol_command("scp");
         let output = self
@@ -655,7 +667,7 @@ impl SshRemoteConnection {
             .arg(format!(
                 "{}:{}",
                 self.socket.connection_options.scp_url(),
-                dest_path
+                dest_path.display(self.path_style())
             ))
             .output()
             .await?;
@@ -664,7 +676,7 @@ impl SshRemoteConnection {
             output.status.success(),
             "failed to upload file {} -> {}: {}",
             src_path.display(),
-            dest_path.to_string(),
+            dest_path.display(self.path_style()),
             String::from_utf8_lossy(&output.stderr)
         );
         Ok(())

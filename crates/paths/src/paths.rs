@@ -30,13 +30,13 @@ static CURRENT_DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
 static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 /// Returns the relative path to the zed_server directory on the ssh host.
-pub fn remote_server_dir_relative() -> &'static Path {
-    Path::new(".zed_server")
+pub fn remote_server_dir_relative() -> &'static RelPath {
+    RelPath::new(".zed_server").unwrap()
 }
 
 /// Returns the relative path to the zed_wsl_server directory on the wsl host.
-pub fn remote_wsl_server_dir_relative() -> &'static Path {
-    Path::new(".zed_wsl_server")
+pub fn remote_wsl_server_dir_relative() -> &'static RelPath {
+    RelPath::new(".zed_wsl_server").unwrap()
 }
 
 /// Sets a custom directory for all user data, overriding the default data directory.

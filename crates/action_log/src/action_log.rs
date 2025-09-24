@@ -8,10 +8,7 @@ use language::{Anchor, Buffer, BufferEvent, DiskState, Point, ToPoint};
 use project::{Project, ProjectItem, lsp_store::OpenLspBufferHandle};
 use std::{cmp, ops::Range, sync::Arc};
 use text::{Edit, Patch, Rope};
-use util::{
-    RangeExt, ResultExt as _,
-    paths::{PathStyle, RemotePathBuf},
-};
+use util::{RangeExt, ResultExt as _};
 
 /// Tracks actions performed by tools in a thread
 pub struct ActionLog {
@@ -62,7 +59,13 @@ impl ActionLog {
                 let file_path = buffer
                     .read(cx)
                     .file()
-                    .map(|file| RemotePathBuf::new(file.full_path(cx), PathStyle::Posix).to_proto())
+                    .map(|file| {
+                        let mut path = file.full_path(cx).to_string_lossy().into_owned();
+                        if file.path_style(cx).is_windows() {
+                            path = path.replace('\\', "/");
+                        }
+                        path
+                    })
                     .unwrap_or_else(|| format!("buffer_{}", buffer.entity_id()));
 
                 let mut result = String::new();

@@ -1,4 +1,4 @@
-use crate::paths::PathStyle;
+use crate::paths::{PathStyle, is_absolute};
 use anyhow::{Context as _, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -41,27 +41,18 @@ impl RelPath {
         let path = path.to_str().context("non utf-8 path")?;
         let mut string = Cow::Borrowed(path);
 
+        if is_absolute(&string, path_style) {
+            return Err(anyhow!("absolute path not allowed: {path:?}"));
+        }
+
         if path_style == PathStyle::Windows {
-            if path.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
-                && let Some(path) = path[1..].strip_prefix(':')
-                && (path.starts_with('/') || path.starts_with('\\'))
-            {
-                return Err(anyhow!("absolute path not allowed: {path:?}"));
-            }
             string = Cow::Owned(string.as_ref().replace('\\', "/"))
         }
 
         let mut this = RelPathBuf::new();
-        for (i, component) in unsafe { Self::new_unchecked(string.as_ref()) }
-            .components()
-            .enumerate()
-        {
+        for component in unsafe { Self::new_unchecked(string.as_ref()) }.components() {
             match component {
-                "" => {
-                    if i == 0 {
-                        return Err(anyhow!("absolute path not allowed: {string:?}"));
-                    }
-                }
+                "" => {}
                 "." => {}
                 ".." => {
                     if !this.pop() {
