@@ -26,16 +26,16 @@ impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
 }
 
 #[derive(Clone)]
-pub struct Cursor<'a, T: Item, D> {
+pub struct Cursor<'a, 'b, T: Item, D> {
     tree: &'a SumTree<T>,
     stack: ArrayVec<StackEntry<'a, T, D>, 16>,
     position: D,
     did_seek: bool,
     at_end: bool,
-    cx: &'a <T::Summary as Summary>::Context,
+    cx: <T::Summary as Summary>::Context<'b>,
 }
 
-impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for Cursor<'_, T, D>
+impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for Cursor<'_, '_, T, D>
 where
     T::Summary: fmt::Debug,
 {
@@ -55,12 +55,12 @@ pub struct Iter<'a, T: Item> {
     stack: ArrayVec<StackEntry<'a, T, ()>, 16>,
 }
 
-impl<'a, T, D> Cursor<'a, T, D>
+impl<'a, 'b, T, D> Cursor<'a, 'b, T, D>
 where
     T: Item,
     D: Dimension<'a, T::Summary>,
 {
-    pub fn new(tree: &'a SumTree<T>, cx: &'a <T::Summary as Summary>::Context) -> Self {
+    pub fn new(tree: &'a SumTree<T>, cx: <T::Summary as Summary>::Context<'b>) -> Self {
         Self {
             tree,
             stack: ArrayVec::new(),
@@ -383,7 +383,7 @@ where
     }
 }
 
-impl<'a, T, D> Cursor<'a, T, D>
+impl<'a, 'b, T, D> Cursor<'a, 'b, T, D>
 where
     T: Item,
     D: Dimension<'a, T::Summary>,
@@ -612,7 +612,7 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
     }
 }
 
-impl<'a, T: Item, D> Iterator for Cursor<'a, T, D>
+impl<'a, 'b, T: Item, D> Iterator for Cursor<'a, 'b, T, D>
 where
     D: Dimension<'a, T::Summary>,
 {
@@ -632,12 +632,12 @@ where
     }
 }
 
-pub struct FilterCursor<'a, F, T: Item, D> {
-    cursor: Cursor<'a, T, D>,
+pub struct FilterCursor<'a, 'b, F, T: Item, D> {
+    cursor: Cursor<'a, 'b, T, D>,
     filter_node: F,
 }
 
-impl<'a, F, T: Item, D> FilterCursor<'a, F, T, D>
+impl<'a, 'b, F, T: Item, D> FilterCursor<'a, 'b, F, T, D>
 where
     F: FnMut(&T::Summary) -> bool,
     T: Item,
@@ -645,7 +645,7 @@ where
 {
     pub fn new(
         tree: &'a SumTree<T>,
-        cx: &'a <T::Summary as Summary>::Context,
+        cx: <T::Summary as Summary>::Context<'b>,
         filter_node: F,
     ) -> Self {
         let cursor = tree.cursor::<D>(cx);
@@ -680,7 +680,7 @@ where
     }
 }
 
-impl<'a, F, T: Item, U> Iterator for FilterCursor<'a, F, T, U>
+impl<'a, 'b, F, T: Item, U> Iterator for FilterCursor<'a, 'b, F, T, U>
 where
     F: FnMut(&T::Summary) -> bool,
     U: Dimension<'a, T::Summary>,
@@ -703,18 +703,18 @@ where
 
 trait SeekAggregate<'a, T: Item> {
     fn begin_leaf(&mut self);
-    fn end_leaf(&mut self, cx: &<T::Summary as Summary>::Context);
+    fn end_leaf(&mut self, cx: <T::Summary as Summary>::Context<'_>);
     fn push_item(
         &mut self,
         item: &'a T,
         summary: &'a T::Summary,
-        cx: &<T::Summary as Summary>::Context,
+        cx: <T::Summary as Summary>::Context<'_>,
     );
     fn push_tree(
         &mut self,
         tree: &'a SumTree<T>,
         summary: &'a T::Summary,
-        cx: &<T::Summary as Summary>::Context,
+        cx: <T::Summary as Summary>::Context<'_>,
     );
 }
 
@@ -729,14 +729,20 @@ struct SummarySeekAggregate<D>(D);
 
 impl<T: Item> SeekAggregate<'_, T> for () {
     fn begin_leaf(&mut self) {}
-    fn end_leaf(&mut self, _: &<T::Summary as Summary>::Context) {}
-    fn push_item(&mut self, _: &T, _: &T::Summary, _: &<T::Summary as Summary>::Context) {}
-    fn push_tree(&mut self, _: &SumTree<T>, _: &T::Summary, _: &<T::Summary as Summary>::Context) {}
+    fn end_leaf(&mut self, _: <T::Summary as Summary>::Context<'_>) {}
+    fn push_item(&mut self, _: &T, _: &T::Summary, _: <T::Summary as Summary>::Context<'_>) {}
+    fn push_tree(
+        &mut self,
+        _: &SumTree<T>,
+        _: &T::Summary,
+        _: <T::Summary as Summary>::Context<'_>,
+    ) {
+    }
 }
 
 impl<T: Item> SeekAggregate<'_, T> for SliceSeekAggregate<T> {
     fn begin_leaf(&mut self) {}
-    fn end_leaf(&mut self, cx: &<T::Summary as Summary>::Context) {
+    fn end_leaf(&mut self, cx: <T::Summary as Summary>::Context<'_>) {
         self.tree.append(
             SumTree(Arc::new(Node::Leaf {
                 summary: mem::replace(&mut self.leaf_summary, <T::Summary as Summary>::zero(cx)),
@@ -746,7 +752,12 @@ impl<T: Item> SeekAggregate<'_, T> for SliceSeekAggregate<T> {
             cx,
         );
     }
-    fn push_item(&mut self, item: &T, summary: &T::Summary, cx: &<T::Summary as Summary>::Context) {
+    fn push_item(
+        &mut self,
+        item: &T,
+        summary: &T::Summary,
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) {
         self.leaf_items.push(item.clone());
         self.leaf_item_summaries.push(summary.clone());
         Summary::add_summary(&mut self.leaf_summary, summary, cx);
@@ -755,7 +766,7 @@ impl<T: Item> SeekAggregate<'_, T> for SliceSeekAggregate<T> {
         &mut self,
         tree: &SumTree<T>,
         _: &T::Summary,
-        cx: &<T::Summary as Summary>::Context,
+        cx: <T::Summary as Summary>::Context<'_>,
     ) {
         self.tree.append(tree.clone(), cx);
     }
@@ -766,15 +777,20 @@ where
     D: Dimension<'a, T::Summary>,
 {
     fn begin_leaf(&mut self) {}
-    fn end_leaf(&mut self, _: &<T::Summary as Summary>::Context) {}
-    fn push_item(&mut self, _: &T, summary: &'a T::Summary, cx: &<T::Summary as Summary>::Context) {
+    fn end_leaf(&mut self, _: <T::Summary as Summary>::Context<'_>) {}
+    fn push_item(
+        &mut self,
+        _: &T,
+        summary: &'a T::Summary,
+        cx: <T::Summary as Summary>::Context<'_>,
+    ) {
         self.0.add_summary(summary, cx);
     }
     fn push_tree(
         &mut self,
         _: &SumTree<T>,
         summary: &'a T::Summary,
-        cx: &<T::Summary as Summary>::Context,
+        cx: <T::Summary as Summary>::Context<'_>,
     ) {
         self.0.add_summary(summary, cx);
     }
@@ -789,7 +805,7 @@ impl<D> End<D> {
 }
 
 impl<'a, S: Summary, D: Dimension<'a, S>> SeekTarget<'a, S, D> for End<D> {
-    fn cmp(&self, _: &D, _: &S::Context) -> Ordering {
+    fn cmp(&self, _: &D, _: S::Context<'_>) -> Ordering {
         Ordering::Greater
     }
 }
