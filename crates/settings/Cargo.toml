@@ -45,6 +45,7 @@ zlog.workspace = true
 [dev-dependencies]
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+
 indoc.workspace = true
 pretty_assertions.workspace = true
 unindent.workspace = true

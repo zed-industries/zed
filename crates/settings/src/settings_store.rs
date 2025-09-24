@@ -138,7 +138,6 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
-/// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     default_settings: Rc<SettingsContent>,
@@ -318,12 +317,17 @@ impl SettingsStore {
             .set_global_value(Box::new(value))
     }
 
-    /// Get the user's settings as a raw JSON value.
+    /// Get the user's settings content.
     ///
     /// For user-facing functionality use the typed setting interface.
     /// (e.g. ProjectSettings::get_global(cx))
     pub fn raw_user_settings(&self) -> Option<&UserSettingsContent> {
         self.user_settings.as_ref()
+    }
+
+    /// Get the default settings content as a raw JSON value.
+    pub fn raw_default_settings(&self) -> &SettingsContent {
+        &self.default_settings
     }
 
     /// Get the configured settings profile names.

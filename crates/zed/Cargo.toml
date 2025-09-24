@@ -19,11 +19,11 @@ name = "zed"
 path = "src/main.rs"
 
 [dependencies]
-activity_indicator.workspace = true
 acp_tools.workspace = true
+activity_indicator.workspace = true
 agent.workspace = true
-agent_ui.workspace = true
 agent_settings.workspace = true
+agent_ui.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 assets.workspace = true
@@ -60,13 +60,13 @@ extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
 file_finder.workspace = true
-system_specs.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 git_ui.workspace = true
 go_to_line.workspace = true
+system_specs.workspace = true
 gpui = { workspace = true, features = [
     "wayland",
     "x11",
@@ -75,12 +75,13 @@ gpui = { workspace = true, features = [
 ] }
 gpui_tokio.workspace = true
 
+edit_prediction_button.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
-edit_prediction_button.workspace = true
 inspector_ui.workspace = true
 install_cli.workspace = true
 journal.workspace = true
+keymap_editor.workspace = true
 language.workspace = true
 language_extension.workspace = true
 language_model.workspace = true
@@ -93,7 +94,6 @@ line_ending_selector.workspace = true
 log.workspace = true
 markdown.workspace = true
 markdown_preview.workspace = true
-svg_preview.workspace = true
 menu.workspace = true
 migrator.workspace = true
 mimalloc = { version = "0.1", optional = true }
@@ -107,7 +107,6 @@ outline_panel.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
-settings_profile_selector.workspace = true
 profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
@@ -126,12 +125,14 @@ serde.workspace = true
 serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
-keymap_editor.workspace = true
+settings_profile_selector.workspace = true
+settings_ui.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
 snippets_ui.workspace = true
 supermaven.workspace = true
+svg_preview.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
 task.workspace = true
