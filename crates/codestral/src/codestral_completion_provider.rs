@@ -3,15 +3,13 @@ use anyhow::{Context as _, Result};
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
 use futures::AsyncReadExt;
-use gpui::{App, Context, Entity, EntityId, Task};
+use gpui::{App, Context, Entity, Task};
 use http_client::HttpClient;
-use language::unified_diff;
 use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
 };
 use project::Project;
 use std::{
-    collections::{HashMap, VecDeque},
     ops::Range,
     sync::Arc,
     time::{Duration, Instant},
@@ -49,19 +47,11 @@ impl CurrentCompletion {
     }
 }
 
-#[derive(Clone)]
-struct RecentEdit {
-    path: String,
-    diff: String,
-}
-
 pub struct CodestralCompletionProvider {
     codestral: Entity<Codestral>,
     http_client: Arc<dyn HttpClient>,
     pending_request: Option<Task<Result<()>>>,
     current_completion: Option<CurrentCompletion>,
-    snapshot_cache: HashMap<EntityId, BufferSnapshot>,
-    recent_edits: VecDeque<RecentEdit>,
 }
 
 impl CodestralCompletionProvider {
@@ -71,102 +61,7 @@ impl CodestralCompletionProvider {
             http_client,
             pending_request: None,
             current_completion: None,
-            snapshot_cache: HashMap::new(),
-            recent_edits: VecDeque::new(),
         }
-    }
-
-    const MAX_RECENT_EDITS: usize = 5;
-    const MAX_DIFF_LINES: usize = 80;
-    const MAX_HEADER_CHARS: usize = 2_000;
-
-    fn record_buffer_change(&mut self, buffer: &Entity<Buffer>, snapshot: &BufferSnapshot) {
-        let buffer_id = buffer.entity_id();
-
-        let prev_snapshot = self.snapshot_cache.get(&buffer_id);
-        if let Some(prev_snapshot) = prev_snapshot {
-            if prev_snapshot.version == snapshot.version {
-                return;
-            }
-
-            let old_text = prev_snapshot.text();
-            let new_text = snapshot.text();
-
-            if old_text != new_text {
-                let diff = unified_diff(&old_text, &new_text);
-                if !diff.is_empty() {
-                    let trimmed: String = diff
-                        .lines()
-                        .take(Self::MAX_DIFF_LINES)
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if !trimmed.is_empty() {
-                        let path = snapshot
-                            .file()
-                            .map(|f| f.path().to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "untitled".to_string());
-
-                        self.recent_edits.push_front(RecentEdit {
-                            path: path.clone(),
-                            diff: trimmed,
-                        });
-                        while self.recent_edits.len() > Self::MAX_RECENT_EDITS {
-                            self.recent_edits.pop_back();
-                        }
-                        log::debug!(
-                            "Codestral: queued recent edit for {} ({} total)",
-                            path,
-                            self.recent_edits.len()
-                        );
-                    }
-                }
-            }
-        }
-
-        self.snapshot_cache.insert(buffer_id, snapshot.clone());
-    }
-
-    fn build_context_header(&self) -> Option<String> {
-        if self.recent_edits.is_empty() {
-            return None;
-        }
-
-        let mut header = String::from("/* RECENT EDITS:\n");
-        for edit in &self.recent_edits {
-            if header.len() >= Self::MAX_HEADER_CHARS {
-                break;
-            }
-
-            header.push_str("File: ");
-            header.push_str(&edit.path);
-            header.push('\n');
-            header.push_str("```diff\n");
-
-            let remaining = Self::MAX_HEADER_CHARS.saturating_sub(header.len());
-            if remaining == 0 {
-                break;
-            }
-
-            if edit.diff.len() > remaining {
-                header.push_str(&edit.diff[..remaining]);
-            } else {
-                header.push_str(&edit.diff);
-            }
-            header.push('\n');
-            header.push_str("```\n");
-
-            if header.len() >= Self::MAX_HEADER_CHARS {
-                break;
-            }
-        }
-
-        header.push_str("*/");
-        log::debug!(
-            "Codestral: built recent edits header with {} entries ({} chars)",
-            self.recent_edits.len(),
-            header.len()
-        );
-        Some(header)
     }
 
     /// Uses Codestral's Fill-in-the-Middle API for code completion.
@@ -222,7 +117,6 @@ impl CodestralCompletionProvider {
         if !status.is_success() {
             let mut body = String::new();
             response.body_mut().read_to_string(&mut body).await?;
-            log::error!("Codestral API error: {} - {}", status, body);
             return Err(anyhow::anyhow!(
                 "Codestral API error: {} - {}",
                 status,
@@ -303,8 +197,6 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         };
 
         let snapshot = buffer_handle.read(cx).snapshot();
-
-        self.record_buffer_change(&buffer_handle, &snapshot);
 
         // Check if current completion is still valid
         if let Some(current_completion) = self.current_completion.as_ref() {
@@ -420,12 +312,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         self.current_completion = None;
     }
 
-    /// Returns the current completion suggestion, adjusted for any typing the user has done.
-    ///
-    /// In the simplified implementation:
-    /// 1. Checks if we have a valid completion
-    /// 2. Interpolates the single edit based on user changes
-    /// 3. Returns the completion
+    /// Returns the completion suggestion, adjusted or invalidated based on user edits
     fn suggest(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -434,14 +321,10 @@ impl EditPredictionProvider for CodestralCompletionProvider {
     ) -> Option<EditPrediction> {
         let current_completion = self.current_completion.as_ref()?;
         let buffer = buffer.read(cx);
-
-        // Try to interpolate the completion based on user changes
         let edits = current_completion.interpolate(&buffer.snapshot())?;
-
         if edits.is_empty() {
             return None;
         }
-
         Some(EditPrediction {
             id: None,
             edits,
