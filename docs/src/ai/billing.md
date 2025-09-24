@@ -17,9 +17,10 @@ Zed is billed on a monthly basis based on the date you initially subscribe. You'
 Zed utilizes threshold billing to ensure timely collection of owed monies and prevent abuse. Every time your usage of Zed's hosted models crosses a $10 spend threshold, a new invoice is generated, and the threshold resets to $0.
 
 For example,
+
 - You subscribe on February 1. Your first invoice is $10.
-- You use $12 of incremental tokens in the month of February, with the first $10 spend on February 15. You'll receive an invoice for $10 on February 15
-- On March 1, you receive an invoice for $12: $10 (March Pro subscription) and $2 in leftover token spend, since your usage didn't cross the #10 threshold.
+- You use $12 of incremental tokens in the month of February, with the first $10 spent on February 15. You'll receive an invoice for $10 on February 15
+- On March 1, you receive an invoice for $12: $10 (March Pro subscription) and $2 in leftover token spend, since your usage didn't cross the $10 threshold.
 
 ## Payment Failures {#payment-failures}
 
