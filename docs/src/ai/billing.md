@@ -1,6 +1,6 @@
 # Billing
 
-We use Stripe as our payments provider, and Orb for invoicing and metering. All Pro plans require payment via credit card.
+We use Stripe as our payments provider, and Orb for invoicing and metering. All Pro plans require payment via credit card or other supported payment method.
 For invoice-based billing, a Business plan is required. Contact [sales@zed.dev](mailto:sales@zed.dev) for more information.
 
 ## Billing Information {#settings}
