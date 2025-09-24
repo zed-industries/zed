@@ -187,7 +187,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             let mut prefix =
                                 candidate_set.prefix().as_str().chars().collect::<Vec<_>>();
                             if !candidate_set.root_is_file() && !prefix.is_empty() {
-                                prefix.extend(candidate_set.path_style().separator().chars());
+                                prefix.push('/');
                             }
                             let lowercase_prefix = prefix
                                 .iter()

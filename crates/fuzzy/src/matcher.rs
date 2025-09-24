@@ -202,8 +202,6 @@ impl<'a> Matcher<'a> {
         cur_score: f64,
         extra_lowercase_chars: &BTreeMap<usize, usize>,
     ) -> f64 {
-        use std::path::MAIN_SEPARATOR;
-
         if query_idx == self.query.len() {
             return 1.0;
         }
@@ -245,17 +243,11 @@ impl<'a> Matcher<'a> {
                     None => continue,
                 }
             };
-            let is_path_sep = path_char == MAIN_SEPARATOR;
+            let is_path_sep = path_char == '/';
 
             if query_idx == 0 && is_path_sep {
                 last_slash = j_regular;
             }
-
-            #[cfg(not(target_os = "windows"))]
-            let need_to_score =
-                query_char == path_char || (is_path_sep && query_char == '_' || query_char == '\\');
-            // `query_char == '\\'` breaks `test_match_path_entries` on Windows, `\` is only used as a path separator on Windows.
-            #[cfg(target_os = "windows")]
             let need_to_score = query_char == path_char || (is_path_sep && query_char == '_');
             if need_to_score {
                 let curr = match prefix.get(j_regular) {
@@ -270,7 +262,7 @@ impl<'a> Matcher<'a> {
                         None => path[j_regular - 1 - prefix.len()],
                     };
 
-                    if last == MAIN_SEPARATOR {
+                    if last == '/' {
                         char_score = 0.9;
                     } else if (last == '-' || last == '_' || last == ' ' || last.is_numeric())
                         || (last.is_lowercase() && curr.is_uppercase())
@@ -291,7 +283,7 @@ impl<'a> Matcher<'a> {
                 // Apply a severe penalty if the case doesn't match.
                 // This will make the exact matches have higher score than the case-insensitive and the
                 // path insensitive matches.
-                if (self.smart_case || curr == MAIN_SEPARATOR) && self.query[query_idx] != curr {
+                if (self.smart_case || curr == '/') && self.query[query_idx] != curr {
                     char_score *= 0.001;
                 }
 
@@ -589,6 +581,7 @@ mod tests {
             },
         );
         results.sort_by(|a, b| b.cmp(a));
+        dbg!(&results);
 
         results
             .into_iter()

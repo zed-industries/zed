@@ -1346,7 +1346,10 @@ async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
                 .labels_for_match(&finder.delegate.matches.matches[0], window, cx);
         assert_eq!(file_label.text(), "first.rs");
         assert_eq!(file_label.highlight_indices(), &[0, 1, 2]);
-        assert_eq!(path_label.text(), "test/");
+        assert_eq!(
+            path_label.text(),
+            format!("test{}", PathStyle::local().separator())
+        );
         assert_eq!(path_label.highlight_indices(), &[] as &[usize]);
     });
 }
