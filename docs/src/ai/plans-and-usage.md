@@ -1,8 +1,5 @@
 # Plans and Usage
 
-To view your current usage, you can visit your account at [zed.dev/account](https://zed.dev/account).
-You’ll also find usage meters in-product when you’re nearing the limit for your plan or trial.
-
 ## Available Plans {#plans}
 
 For costs and more information on pricing, visit [Zed’s pricing page](https://zed.dev/pricing).
@@ -11,28 +8,18 @@ Please note that if you’re interested in just using Zed as the world’s faste
 
 ## Usage {#usage}
 
-- A `prompt` in Zed is an input from the user, initiated by pressing enter, composed of one or many `requests`. A `prompt` can be initiated from the Agent Panel, or via Inline Assist.
-- A `request` in Zed is a response to a `prompt`, plus any tool calls that are initiated as part of that response. There may be one `request` per `prompt`, or many.
+Usage of Zed's hosted models is measured on a token basis, converted to dollars at the rates lists on [the Models page](./models.md) (list price from the provider, +10%).
 
-Most models offered by Zed are metered per-prompt.
-Some models that use large context windows and unlimited tool calls ([“Burn Mode”](./models.md#burn-mode)) count each individual request within a prompt against your prompt limit, since the agentic work spawned by the prompt is expensive to support.
+Zed Pro comes with $5 of monthly dollar credit. A trial of Zed Pro includes $20 of credit, usable for 14 days. Monthly included credit resets on your monthly billing date.
 
-See [the Models page](./models.md) for a list of which subset of models are metered by request.
-
-Plans come with a set amount of prompts included, with the number varying depending on the plan you’ve selected.
+To view your current usage, you can visit your account at [zed.dev/account](https://zed.dev/account). Information from our metering and billing provider, Orb, is embedded on that page.
 
 ## Usage-Based Pricing {#ubp}
 
-You may opt in to usage-based pricing for prompts that exceed what is included in your paid plan from [your account page](https://zed.dev/account).
-
-Usage-based pricing is only available with a paid plan, and is exclusively opt-in.
-From the dashboard, you can toggle usage-based pricing for usage exceeding your paid plan.
-You can also configure a spend limit in USD.
+[can set a limit for maximum spend on tokens, not inclusive of the $5 pro comes with]
+[default is $10, for total monthly spend with Zed of $20. can also set to $0]
+[link to threshold billing]
 Once the spend limit is hit, we’ll stop any further usage until your prompt limit resets.
-
-We will bill for additional prompts when you’ve made prompts totaling $20, or when your billing date occurs, whichever comes first.
-
-Cost per request for each model can be found on [the models page](./models.md).
 
 ## Business Usage {#business-usage}
 
