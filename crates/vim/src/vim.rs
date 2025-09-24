@@ -245,7 +245,7 @@ actions!(
         /// Selects (count) previous menu item
         MenuSelectPrevious,
         /// Clears count or toggles project panel focus
-        ToggleProjectPanelFocus
+        ToggleProjectPanelFocus,
         /// Starts a match operation.
         PushHelixMatch,
     ]
