@@ -19,7 +19,6 @@ actions!(
 );
 
 pub fn init(client: Arc<Client>, cx: &mut App) {
-    log::info!("Codestral: Initializing...");
     let codestral = cx.new(|_| Codestral::Starting);
     Codestral::set_global(codestral.clone(), cx);
 
@@ -32,14 +31,14 @@ pub fn init(client: Arc<Client>, cx: &mut App) {
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_provider = all_language_settings(None, cx).edit_predictions.provider;
         if new_provider != provider {
-            provider = new_provider;
-            if provider == language::language_settings::EditPredictionProvider::Codestral {
+            if new_provider == language::language_settings::EditPredictionProvider::Codestral {
                 log::info!("Codestral: Provider selected, starting...");
                 codestral.update(cx, |codestral, cx| codestral.start(client.clone(), cx));
-            } else {
+            } else if provider == language::language_settings::EditPredictionProvider::Codestral {
                 log::info!("Codestral: Provider deselected, stopping...");
                 codestral.update(cx, |codestral, _cx| codestral.stop());
             }
+            provider = new_provider;
         }
     })
     .detach();
