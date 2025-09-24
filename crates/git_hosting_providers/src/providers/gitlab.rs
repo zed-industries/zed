@@ -28,6 +28,13 @@ impl Gitlab {
         Self::new("GitLab", Url::parse("https://gitlab.com").unwrap())
     }
 
+    /// Creates a GitLab instance from a configured host.
+    /// This is the recommended way to set up custom GitLab instances.
+    pub fn from_configured_host(name: impl Into<String>, host: &str) -> Result<Self> {
+        let base_url = Url::parse(&format!("https://{}", host))?;
+        Ok(Self::new(name, base_url))
+    }
+
     pub fn from_remote_url(remote_url: &str) -> Result<Self> {
         let host = get_host_from_git_remote_url(remote_url)?;
         if host == "gitlab.com" {
@@ -38,7 +45,19 @@ impl Gitlab {
         // is not very reliable. See https://github.com/zed-industries/zed/issues/26393 for more
         // information.
         if !host.contains("gitlab") {
-            bail!("not a GitLab URL");
+            bail!(
+                "Custom GitLab instance '{}' not recognized. To use custom GitLab instances, \
+                 configure them in your settings under 'git_hosting_providers':\n\n\
+                 \"git_hosting_providers\": [\n\
+                   {{\n\
+                     \"name\": \"My GitLab\",\n\
+                     \"provider\": \"gitlab\",\n\
+                     \"base_url\": \"https://{}\"\n\
+                   }}\n\
+                 ]\n\n\
+                 This ensures proper recognition and avoids security issues with auto-detection.",
+                host, host
+            );
         }
 
         Ok(Self::new(
@@ -138,6 +157,25 @@ mod tests {
     }
 
     #[test]
+    fn test_from_configured_host() {
+        let gitlab = Gitlab::from_configured_host("My GitLab", "git.tdd.io").unwrap();
+        assert_eq!(gitlab.name(), "My GitLab");
+        assert_eq!(gitlab.base_url().as_str(), "https://git.tdd.io/");
+    }
+
+    #[test]
+    fn test_custom_gitlab_error_message() {
+        let remote_url = "git@git.tdd.io:engine/engine-api.git";
+        let result = Gitlab::from_remote_url(remote_url);
+        
+        assert!(result.is_err());
+        let error_message = result.unwrap_err().to_string();
+        assert!(error_message.contains("git.tdd.io"));
+        assert!(error_message.contains("git_hosting_providers"));
+        assert!(error_message.contains("https://git.tdd.io"));
+    }
+
+    #[test]
     fn test_parse_remote_url_given_ssh_url() {
         let parsed_remote = Gitlab::public_instance()
             .parse_remote_url("git@gitlab.com:zed-industries/zed.git")
@@ -198,6 +236,21 @@ mod tests {
             ParsedGitRemote {
                 owner: "group/subgroup".into(),
                 repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_configured_host_parses_custom_remote() {
+        let gitlab = Gitlab::from_configured_host("Custom GitLab", "git.tdd.io").unwrap();
+        let remote_url = "git@git.tdd.io:engine/engine-api.git";
+        
+        let parsed_remote = gitlab.parse_remote_url(remote_url).unwrap();
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "engine".into(),
+                repo: "engine-api".into(),
             }
         );
     }
@@ -295,6 +348,25 @@ mod tests {
         );
 
         let expected_url = "https://gitlab-instance.big-co.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_custom_gitlab_permalink_via_configuration() {
+        let gitlab = Gitlab::from_configured_host("TDD GitLab", "git.tdd.io").unwrap();
+        let permalink = gitlab.build_permalink(
+            ParsedGitRemote {
+                owner: "engine".into(),
+                repo: "engine-api".into(),
+            },
+            BuildPermalinkParams {
+                sha: "abc123def456",
+                path: "src/main.rs",
+                selection: Some(10..15),
+            },
+        );
+
+        let expected_url = "https://git.tdd.io/engine/engine-api/-/blob/abc123def456/src/main.rs#L11-16";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }
