@@ -1,4 +1,4 @@
-use std::{io::Write, sync::Arc};
+use std::sync::Arc;
 
 use futures::StreamExt;
 use gpui::AppContext as _;
@@ -72,8 +72,8 @@ fn main() {
         let project = project::Project::local(
             client.clone(),
             node_runtime::NodeRuntime::unavailable(),
-            user_store.clone(),
-            languages.clone(),
+            user_store,
+            languages,
             fs.clone(),
             Some(Default::default()), // WARN: if None is passed here, prepare to be process bombed
             cx,
@@ -81,7 +81,7 @@ fn main() {
         let worktree_task = project.update(cx, |project, cx| {
             project.create_worktree(example_dir_abs_path, true, cx)
         });
-        cx.spawn(async move |cx| {
+        cx.spawn(async move |_| {
             let worktree = worktree_task.await.unwrap();
             std::mem::forget(worktree);
         })
