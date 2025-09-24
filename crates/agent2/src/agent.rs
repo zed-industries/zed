@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use util::ResultExt;
+use util::rel_path::RelPath;
 
 const RULES_FILE_NAMES: [&str; 9] = [
     ".rules",
@@ -434,7 +435,7 @@ impl NativeAgent {
         cx: &mut App,
     ) -> Task<(WorktreeContext, Option<RulesLoadingError>)> {
         let tree = worktree.read(cx);
-        let root_name = tree.root_name().into();
+        let root_name = tree.root_name_str().into();
         let abs_path = tree.abs_path();
 
         let mut context = WorktreeContext {
@@ -474,7 +475,7 @@ impl NativeAgent {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(name)
+                    .entry_for_path(RelPath::new(name).unwrap())
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })
@@ -558,7 +559,7 @@ impl NativeAgent {
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
-                        .any(|name| path.as_ref() == Path::new(name))
+                        .any(|name| path.as_ref() == RelPath::new(name).unwrap())
                 }) {
                     self.project_context_needs_refresh.send(()).ok();
                 }
@@ -1208,7 +1209,7 @@ mod tests {
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     #[gpui::test]
     async fn test_maintaining_project_context(cx: &mut TestAppContext) {
@@ -1258,14 +1259,17 @@ mod tests {
         fs.insert_file("/a/.rules", Vec::new()).await;
         cx.run_until_parked();
         agent.read_with(cx, |agent, cx| {
-            let rules_entry = worktree.read(cx).entry_for_path(".rules").unwrap();
+            let rules_entry = worktree
+                .read(cx)
+                .entry_for_path(rel_path(".rules"))
+                .unwrap();
             assert_eq!(
                 agent.project_context.read(cx).worktrees,
                 vec![WorktreeContext {
                     root_name: "a".into(),
                     abs_path: Path::new("/a").into(),
                     rules_file: Some(RulesFileContext {
-                        path_in_worktree: Path::new(".rules").into(),
+                        path_in_worktree: rel_path(".rules").into(),
                         text: "".into(),
                         project_entry_id: rules_entry.id.to_usize()
                     })

@@ -28,6 +28,7 @@ use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
+use util::rel_path::RelPathBuf;
 use util::some_or_debug_panic;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
@@ -342,20 +343,21 @@ impl Zeta {
                             new_snapshot,
                             ..
                         } => {
-                            let path = new_snapshot.file().map(|f| f.path().to_path_buf());
+                            let path = new_snapshot.file().map(|f| f.path().clone());
 
                             let old_path = old_snapshot.file().and_then(|f| {
-                                let old_path = f.path().as_ref();
-                                if Some(old_path) != path.as_deref() {
-                                    Some(old_path.to_path_buf())
+                                let old_path = f.path();
+                                if Some(old_path) != path.as_ref() {
+                                    Some(old_path.clone())
                                 } else {
                                     None
                                 }
                             });
 
                             predict_edits_v3::Event::BufferChange {
-                                old_path,
-                                path,
+                                old_path: old_path
+                                    .map(|old_path| old_path.as_std_path().to_path_buf()),
+                                path: path.map(|path| path.as_std_path().to_path_buf()),
                                 diff: language::unified_diff(
                                     &old_snapshot.text(),
                                     &new_snapshot.text(),
@@ -731,7 +733,7 @@ fn make_cloud_request(
         let project_entry_id = snippet.declaration.project_entry_id();
         let Some(path) = worktrees.iter().find_map(|worktree| {
             worktree.entry_for_id(project_entry_id).map(|entry| {
-                let mut full_path = PathBuf::new();
+                let mut full_path = RelPathBuf::new();
                 full_path.push(worktree.root_name());
                 full_path.push(&entry.path);
                 full_path
@@ -753,7 +755,7 @@ fn make_cloud_request(
 
         let (text, text_is_truncated) = snippet.declaration.item_text();
         referenced_declarations.push(predict_edits_v3::ReferencedDeclaration {
-            path,
+            path: path.as_std_path().to_path_buf(),
             text: text.into(),
             range: snippet.declaration.item_range(),
             text_is_truncated,

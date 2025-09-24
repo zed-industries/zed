@@ -892,6 +892,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
 ]
@@ -12094,7 +12095,6 @@ dependencies = [
  "markdown",
  "node_runtime",
  "parking_lot",
- "pathdiff",
  "paths",
  "postage",
  "prettier",
@@ -12147,7 +12147,6 @@ dependencies = [
  "git",
  "git_ui",
  "gpui",
- "indexmap 2.9.0",
  "language",
  "menu",
  "pretty_assertions",

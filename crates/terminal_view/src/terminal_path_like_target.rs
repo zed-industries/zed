@@ -4,9 +4,13 @@ use editor::Editor;
 use gpui::{App, AppContext, Context, Task, WeakEntity, Window};
 use itertools::Itertools;
 use project::{Entry, Metadata};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use terminal::PathLikeTarget;
-use util::{ResultExt, debug_panic, paths::PathWithPosition};
+use util::{
+    ResultExt, debug_panic,
+    paths::{PathStyle, PathWithPosition},
+    rel_path::RelPath,
+};
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 /// The way we found the open target. This is important to have for test assertions.
@@ -179,8 +183,9 @@ fn possible_open_target(
         let mut paths_to_check = Vec::with_capacity(potential_paths.len());
         let relative_cwd = cwd
             .and_then(|cwd| cwd.strip_prefix(&worktree_root).ok())
+            .and_then(|cwd| RelPath::from_std_path(cwd, PathStyle::local()).ok())
             .and_then(|cwd_stripped| {
-                (cwd_stripped != Path::new("")).then(|| {
+                (cwd_stripped.as_ref() != RelPath::empty()).then(|| {
                     is_cwd_in_worktree = true;
                     cwd_stripped
                 })
@@ -217,19 +222,21 @@ fn possible_open_target(
                 }
             };
 
-            if path_to_check.path.is_relative()
+            if let Ok(relative_path_to_check) =
+                RelPath::from_std_path(&path_to_check.path, PathStyle::local())
                 && !worktree.read(cx).is_single_file()
                 && let Some(entry) = relative_cwd
+                    .clone()
                     .and_then(|relative_cwd| {
                         worktree
                             .read(cx)
-                            .entry_for_path(&relative_cwd.join(&path_to_check.path))
+                            .entry_for_path(&relative_cwd.join(&relative_path_to_check))
                     })
-                    .or_else(|| worktree.read(cx).entry_for_path(&path_to_check.path))
+                    .or_else(|| worktree.read(cx).entry_for_path(&relative_path_to_check))
             {
                 open_target = Some(OpenTarget::Worktree(
                     PathWithPosition {
-                        path: worktree_root.join(&entry.path),
+                        path: worktree.read(cx).absolutize(&entry.path),
                         row: path_to_check.row,
                         column: path_to_check.column,
                     },
@@ -357,16 +364,18 @@ fn possible_open_target(
             for (worktree, worktree_paths_to_check) in worktree_paths_to_check {
                 let found_entry = worktree
                     .update(cx, |worktree, _| -> Option<OpenTarget> {
-                        let worktree_root = worktree.abs_path();
-                        let traversal = worktree.traverse_from_path(true, true, false, "".as_ref());
+                        let traversal =
+                            worktree.traverse_from_path(true, true, false, RelPath::empty());
                         for entry in traversal {
-                            if let Some(path_in_worktree) = worktree_paths_to_check
-                                .iter()
-                                .find(|path_to_check| entry.path.ends_with(&path_to_check.path))
+                            if let Some(path_in_worktree) =
+                                worktree_paths_to_check.iter().find(|path_to_check| {
+                                    RelPath::from_std_path(&path_to_check.path, PathStyle::local())
+                                        .is_ok_and(|path| entry.path.ends_with(&path))
+                                })
                             {
                                 return Some(OpenTarget::Worktree(
                                     PathWithPosition {
-                                        path: worktree_root.join(&entry.path),
+                                        path: worktree.absolutize(&entry.path),
                                         row: path_in_worktree.row,
                                         column: path_in_worktree.column,
                                     },
@@ -536,7 +545,7 @@ mod tests {
             fs.insert_tree(path, tree).await;
         }
 
-        let project = Project::test(
+        let project: gpui::Entity<Project> = Project::test(
             fs.clone(),
             worktree_roots.into_iter().map(Path::new),
             app_cx,
@@ -1005,30 +1014,32 @@ mod tests {
                     test_local!(
                         "foo/./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339"
+                        "/tmp/issue28339",
+                        WorktreeExact
                     );
                     test_local!(
                         "foo/../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                     test_local!(
                         "foo/..///foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                     test_local!(
                         "issue28339/../issue28339/foo/../foo/bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
                         "/tmp/issue28339",
-                        FileSystemBackground
+                        WorktreeExact
                     );
                     test_local!(
                         "./bar.txt",
                         "/tmp/issue28339/foo/bar.txt",
-                        "/tmp/issue28339/foo"
+                        "/tmp/issue28339/foo",
+                        WorktreeExact
                     );
                     test_local!(
                         "../foo/bar.txt",

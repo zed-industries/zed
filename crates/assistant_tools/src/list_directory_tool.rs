@@ -4,11 +4,11 @@ use anyhow::{Result, anyhow};
 use assistant_tool::{Tool, ToolResult};
 use gpui::{AnyWindowHandle, App, Entity, Task};
 use language_model::{LanguageModel, LanguageModelRequest, LanguageModelToolSchemaFormat};
-use project::{Project, WorktreeSettings};
+use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use std::{fmt::Write, path::Path, sync::Arc};
+use std::{fmt::Write, sync::Arc};
 use ui::IconName;
 use util::markdown::MarkdownInlineCode;
 
@@ -100,7 +100,7 @@ impl Tool for ListDirectoryTool {
                 .filter_map(|worktree| {
                     worktree.read(cx).root_entry().and_then(|entry| {
                         if entry.is_dir() {
-                            entry.path.to_str()
+                            Some(entry.path.as_str())
                         } else {
                             None
                         }
@@ -158,7 +158,6 @@ impl Tool for ListDirectoryTool {
         }
 
         let worktree_snapshot = worktree.read(cx).snapshot();
-        let worktree_root_name = worktree.read(cx).root_name().to_string();
 
         let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
             return Task::ready(Err(anyhow!("Path not found: {}", input.path))).into();
@@ -180,23 +179,22 @@ impl Tool for ListDirectoryTool {
                 continue;
             }
 
-            if project
-                .read(cx)
-                .find_project_path(&entry.path, cx)
-                .map(|project_path| {
-                    let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
+            let project_path = ProjectPath {
+                worktree_id: worktree_snapshot.id(),
+                path: entry.path.clone(),
+            };
+            let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
 
-                    worktree_settings.is_path_excluded(&project_path.path)
-                        || worktree_settings.is_path_private(&project_path.path)
-                })
-                .unwrap_or(false)
+            if worktree_settings.is_path_excluded(&project_path.path)
+                || worktree_settings.is_path_private(&project_path.path)
             {
                 continue;
             }
 
-            let full_path = Path::new(&worktree_root_name)
+            let full_path = worktree_snapshot
+                .root_name()
                 .join(&entry.path)
-                .display()
+                .display(worktree_snapshot.path_style())
                 .to_string();
             if entry.is_dir() {
                 folders.push(full_path);

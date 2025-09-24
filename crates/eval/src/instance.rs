@@ -250,7 +250,7 @@ impl ExampleInstance {
                     worktree
                         .files(false, 0)
                         .find_map(|e| {
-                            if e.path.clone().extension().and_then(|ext| ext.to_str())
+                            if e.path.clone().extension()
                                 == Some(&language_server.file_extension)
                             {
                                 Some(ProjectPath {

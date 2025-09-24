@@ -24,7 +24,7 @@ use ui::{
     Divider, HighlightedLabel, KeyBinding, List, ListItem, ListItemSpacing, Navigable,
     NavigableEntry, prelude::*,
 };
-use util::{ResultExt, maybe, paths::PathStyle};
+use util::{ResultExt, maybe, paths::PathStyle, rel_path::RelPath};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -48,7 +48,7 @@ pub struct ToolchainSelector {
     project: Entity<Project>,
     language_name: LanguageName,
     worktree_id: WorktreeId,
-    relative_path: Arc<Path>,
+    relative_path: Arc<RelPath>,
 }
 
 #[derive(Clone)]
@@ -132,7 +132,7 @@ impl AddToolchainState {
             tx,
             DirectoryLister::Project(project),
             false,
-            PathStyle::current(),
+            PathStyle::local(),
         )
         .show_hidden()
         .with_footer(Arc::new(move |_, cx| {
@@ -241,9 +241,7 @@ impl AddToolchainState {
 
                 // Suggest a default scope based on the applicability.
                 let scope = if let Some(project_path) = resolved_toolchain_path {
-                    if root_path.path.as_ref() != Path::new("")
-                        && project_path.starts_with(&root_path)
-                    {
+                    if !root_path.path.as_ref().is_empty() && project_path.starts_with(&root_path) {
                         ToolchainScope::Subproject(root_path.worktree_id, root_path.path)
                     } else {
                         ToolchainScope::Project
@@ -584,7 +582,7 @@ impl ToolchainSelector {
 
         let language_name = buffer.read(cx).language()?.name();
         let worktree_id = buffer.read(cx).file()?.worktree_id(cx);
-        let relative_path: Arc<Path> = Arc::from(buffer.read(cx).file()?.path().parent()?);
+        let relative_path: Arc<RelPath> = buffer.read(cx).file()?.path().parent()?.into();
         let worktree_root_path = project
             .read(cx)
             .worktree_for_id(worktree_id, cx)?
@@ -593,9 +591,13 @@ impl ToolchainSelector {
         let workspace_id = workspace.database_id()?;
         let weak = workspace.weak_handle();
         cx.spawn_in(window, async move |workspace, cx| {
-            let as_str = relative_path.to_string_lossy().into_owned();
             let active_toolchain = workspace::WORKSPACE_DB
-                .toolchain(workspace_id, worktree_id, as_str, language_name.clone())
+                .toolchain(
+                    workspace_id,
+                    worktree_id,
+                    relative_path.clone(),
+                    language_name.clone(),
+                )
                 .await
                 .ok()
                 .flatten();
@@ -628,7 +630,7 @@ impl ToolchainSelector {
         active_toolchain: Option<Toolchain>,
         worktree_id: WorktreeId,
         worktree_root: Arc<Path>,
-        relative_path: Arc<Path>,
+        relative_path: Arc<RelPath>,
         language_name: LanguageName,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -741,7 +743,7 @@ pub struct ToolchainSelectorDelegate {
     workspace: WeakEntity<Workspace>,
     worktree_id: WorktreeId,
     worktree_abs_path_root: Arc<Path>,
-    relative_path: Arc<Path>,
+    relative_path: Arc<RelPath>,
     placeholder_text: Arc<str>,
     add_toolchain_text: Arc<str>,
     project: Entity<Project>,
@@ -757,12 +759,13 @@ impl ToolchainSelectorDelegate {
         worktree_id: WorktreeId,
         worktree_abs_path_root: Arc<Path>,
         project: Entity<Project>,
-        relative_path: Arc<Path>,
+        relative_path: Arc<RelPath>,
         language_name: LanguageName,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Self {
         let _project = project.clone();
+        let path_style = project.read(cx).path_style(cx);
 
         let _fetch_candidates_task = cx.spawn_in(window, {
             async move |this, cx| {
@@ -802,11 +805,10 @@ impl ToolchainSelectorDelegate {
                     .ok()?
                     .await?;
                 let pretty_path = {
-                    let path = relative_path.to_string_lossy();
-                    if path.is_empty() {
+                    if relative_path.is_empty() {
                         Cow::Borrowed("worktree root")
                     } else {
-                        Cow::Owned(format!("`{}`", path))
+                        Cow::Owned(format!("`{}`", relative_path.display(path_style)))
                     }
                 };
                 let placeholder_text =
@@ -898,7 +900,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 let workspace = self.workspace.clone();
                 let worktree_id = self.worktree_id;
                 let path = self.relative_path.clone();
-                let relative_path = self.relative_path.to_string_lossy().into_owned();
+                let relative_path = self.relative_path.clone();
                 cx.spawn_in(window, async move |_, cx| {
                     workspace::WORKSPACE_DB
                         .set_toolchain(workspace_id, worktree_id, relative_path, toolchain.clone())

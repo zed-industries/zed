@@ -1,5 +1,5 @@
 mod native_kernel;
-use std::{fmt::Debug, future::Future, path::PathBuf, sync::Arc};
+use std::{fmt::Debug, future::Future, path::PathBuf};
 
 use futures::{
     channel::mpsc::{self, Receiver},
@@ -18,6 +18,7 @@ use anyhow::Result;
 use jupyter_protocol::JupyterKernelspec;
 use runtimelib::{ExecutionState, JupyterMessage, KernelInfoReply};
 use ui::{Icon, IconName, SharedString};
+use util::rel_path::RelPath;
 
 pub type JupyterMessageChannel = stream::SelectAll<Receiver<JupyterMessage>>;
 
@@ -84,7 +85,7 @@ pub fn python_env_kernel_specifications(
     let toolchains = project.read(cx).available_toolchains(
         ProjectPath {
             worktree_id,
-            path: Arc::from("".as_ref()),
+            path: RelPath::empty().into(),
         },
         python_language,
         cx,

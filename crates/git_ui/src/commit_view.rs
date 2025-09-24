@@ -14,13 +14,12 @@ use multi_buffer::PathKey;
 use project::{Project, WorktreeId, git_store::Repository};
 use std::{
     any::{Any, TypeId},
-    ffi::OsStr,
     fmt::Write as _,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 use ui::{Color, Icon, IconName, Label, LabelCommon as _, SharedString};
-use util::{ResultExt, truncate_and_trailoff};
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::{
     Item, ItemHandle as _, ItemNavHistory, ToolbarItemLocation, Workspace,
     item::{BreadcrumbText, ItemEvent, TabContentParams},
@@ -40,7 +39,7 @@ struct GitBlob {
 }
 
 struct CommitMetadataFile {
-    title: Arc<Path>,
+    title: Arc<RelPath>,
     worktree_id: WorktreeId,
 }
 
@@ -129,7 +128,9 @@ impl CommitView {
         let mut metadata_buffer_id = None;
         if let Some(worktree_id) = first_worktree_id {
             let file = Arc::new(CommitMetadataFile {
-                title: PathBuf::from(format!("commit {}", commit.sha)).into(),
+                title: RelPath::new(&format!("commit {}", commit.sha))
+                    .unwrap()
+                    .into(),
                 worktree_id,
             });
             let buffer = cx.new(|cx| {
@@ -144,7 +145,7 @@ impl CommitView {
             });
             multibuffer.update(cx, |multibuffer, cx| {
                 multibuffer.set_excerpts_for_path(
-                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.clone()),
+                    PathKey::namespaced(COMMIT_METADATA_NAMESPACE, file.title.as_str().into()),
                     buffer.clone(),
                     vec![Point::zero()..buffer.read(cx).max_point()],
                     0,
@@ -192,7 +193,7 @@ impl CommitView {
                             .collect::<Vec<_>>();
                         let path = snapshot.file().unwrap().path().clone();
                         let _is_newly_added = multibuffer.set_excerpts_for_path(
-                            PathKey::namespaced(FILE_NAMESPACE, path),
+                            PathKey::namespaced(FILE_NAMESPACE, path.as_str().into()),
                             buffer,
                             diff_hunk_ranges,
                             multibuffer_context_lines(cx),
@@ -227,15 +228,19 @@ impl language::File for GitBlob {
         }
     }
 
-    fn path(&self) -> &Arc<Path> {
+    fn path_style(&self, _: &App) -> PathStyle {
+        PathStyle::Posix
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
         &self.path.0
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
-        self.path.to_path_buf()
+        self.path.as_std_path().to_path_buf()
     }
 
-    fn file_name<'a>(&'a self, _: &'a App) -> &'a OsStr {
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
         self.path.file_name().unwrap()
     }
 
@@ -261,15 +266,19 @@ impl language::File for CommitMetadataFile {
         DiskState::New
     }
 
-    fn path(&self) -> &Arc<Path> {
+    fn path_style(&self, _: &App) -> PathStyle {
+        PathStyle::Posix
+    }
+
+    fn path(&self) -> &Arc<RelPath> {
         &self.title
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
-        self.title.as_ref().into()
+        PathBuf::from(self.title.as_str().to_owned())
     }
 
-    fn file_name<'a>(&'a self, _: &'a App) -> &'a OsStr {
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
         self.title.file_name().unwrap()
     }
 

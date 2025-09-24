@@ -2494,7 +2494,7 @@ impl Editor {
             if let Some(extension) = singleton_buffer
                 .read(cx)
                 .file()
-                .and_then(|file| file.path().extension()?.to_str())
+                .and_then(|file| file.path().extension())
             {
                 key_context.set("extension", extension.to_string());
             }
@@ -7603,7 +7603,7 @@ impl Editor {
         let extension = buffer
             .read(cx)
             .file()
-            .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
+            .and_then(|file| Some(file.path().extension()?.to_string()));
 
         let event_type = match accepted {
             true => "Edit Prediction Accepted",
@@ -19263,10 +19263,6 @@ impl Editor {
             {
                 return Some(dir.to_owned());
             }
-
-            if let Some(project_path) = buffer.read(cx).project_path(cx) {
-                return Some(project_path.path.to_path_buf());
-            }
         }
 
         None
@@ -19291,16 +19287,6 @@ impl Editor {
                     .file()
                     .and_then(|file| file.as_local().map(|file| file.abs_path(cx)))
             }
-        })
-    }
-
-    fn target_file_path(&self, cx: &mut Context<Self>) -> Option<PathBuf> {
-        self.active_excerpt(cx).and_then(|(_, buffer, _)| {
-            let project_path = buffer.read(cx).project_path(cx)?;
-            let project = self.project()?.read(cx);
-            let entry = project.entry_for_path(&project_path, cx)?;
-            let path = entry.path.to_path_buf();
-            Some(path)
         })
     }
 
@@ -19336,9 +19322,12 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(path) = self.target_file_path(cx)
-            && let Some(path) = path.to_str()
-        {
+        if let Some(path) = self.active_excerpt(cx).and_then(|(_, buffer, _)| {
+            let project = self.project()?.read(cx);
+            let path = buffer.read(cx).file()?.path();
+            let path = path.display(project.path_style(cx));
+            Some(path)
+        }) {
             cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
         } else {
             cx.propagate();
@@ -19414,16 +19403,14 @@ impl Editor {
     ) {
         if let Some(file) = self.target_file(cx)
             && let Some(file_stem) = file.path().file_stem()
-            && let Some(name) = file_stem.to_str()
         {
-            cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
+            cx.write_to_clipboard(ClipboardItem::new_string(file_stem.to_string()));
         }
     }
 
     pub fn copy_file_name(&mut self, _: &CopyFileName, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(file) = self.target_file(cx)
-            && let Some(file_name) = file.path().file_name()
-            && let Some(name) = file_name.to_str()
+            && let Some(name) = file.path().file_name()
         {
             cx.write_to_clipboard(ClipboardItem::new_string(name.to_string()));
         }
@@ -19691,9 +19678,8 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let selection = self.selections.newest::<Point>(cx).start.row + 1;
-        if let Some(file) = self.target_file(cx)
-            && let Some(path) = file.path().to_str()
-        {
+        if let Some(file) = self.target_file(cx) {
+            let path = file.path().display(file.path_style(cx));
             cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
         }
     }
