@@ -1,5 +1,4 @@
 mod codestral_completion_provider;
-mod input_excerpt;
 
 pub use codestral_completion_provider::*;
 

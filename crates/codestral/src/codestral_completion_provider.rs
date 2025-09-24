@@ -1,16 +1,13 @@
-//! Codestral completion provider using Fill-in-the-Middle API.
-
-use crate::input_excerpt::{excerpt_for_cursor_position, prompt_for_outline, CURSOR_MARKER};
 use crate::{Codestral, CodestralRequest, CodestralResponse};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
+use edit_prediction_context::{EditPredictionExcerpt, EditPredictionExcerptOptions};
 use futures::AsyncReadExt;
 use gpui::{App, Context, Entity, EntityId, Task};
 use http_client::HttpClient;
 use language::unified_diff;
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview,
-    ToOffset, ToPoint,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview, ToPoint,
 };
 use project::Project;
 use std::{
@@ -19,15 +16,16 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use text::ToOffset;
 
 pub const DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(150);
 const CODESTRAL_API_URL: &str = "https://codestral.mistral.ai/v1/fim/completions";
 
-// Token limits similar to Zeta
-/// Maximum tokens for additional context around the editable region
-const MAX_CONTEXT_TOKENS: usize = 150;
-/// Maximum tokens for the editable region itself
-const MAX_REWRITE_TOKENS: usize = 350;
+const EXCERPT_OPTIONS: EditPredictionExcerptOptions = EditPredictionExcerptOptions {
+    max_bytes: 1050,
+    min_bytes: 525,
+    target_before_cursor_over_total_bytes: 0.66,
+};
 
 /// Represents a completion that has been received and processed from Codestral.
 /// This struct maintains the state needed to interpolate the completion as the user types.
@@ -115,7 +113,7 @@ impl CodestralCompletionProvider {
                         while self.recent_edits.len() > Self::MAX_RECENT_EDITS {
                             self.recent_edits.pop_back();
                         }
-                        log::info!(
+                        log::debug!(
                             "Codestral: queued recent edit for {} ({} total)",
                             path,
                             self.recent_edits.len()
@@ -163,7 +161,7 @@ impl CodestralCompletionProvider {
         }
 
         header.push_str("*/");
-        log::info!(
+        log::debug!(
             "Codestral: built recent edits header with {} entries ({} chars)",
             self.recent_edits.len(),
             header.len()
@@ -172,21 +170,11 @@ impl CodestralCompletionProvider {
     }
 
     /// Uses Codestral's Fill-in-the-Middle API for code completion.
-    ///
-    /// This function extracts the cursor position from the input and creates a simple
-    /// prompt/suffix pair for Codestral's FIM API.
-    ///
-    /// # Arguments
-    /// * `input_excerpt` - Code context with cursor marker
-    /// * `_outline` - File structure outline (currently unused by Codestral)
-    ///
-    /// # Returns
-    /// The completion text to insert at the cursor position
     async fn fetch_completion(
         http_client: Arc<dyn HttpClient>,
         api_key: String,
-        input_excerpt: String,
-        _outline: String,
+        prompt: String,
+        suffix: String,
         model: String,
         max_tokens: Option<u32>,
     ) -> Result<String> {
@@ -197,19 +185,6 @@ impl CodestralCompletionProvider {
             model,
             max_tokens
         );
-
-        // For the simplified implementation, we just need to find the cursor position
-        // and split the text there for FIM
-        let (prompt, suffix) = if let Some(cursor_pos) = input_excerpt.find(CURSOR_MARKER) {
-            // Split at cursor marker
-            let before_cursor = &input_excerpt[..cursor_pos];
-            let after_cursor = &input_excerpt[cursor_pos + CURSOR_MARKER.len()..];
-
-            (before_cursor.to_string(), after_cursor.to_string())
-        } else {
-            // No cursor marker found, assume cursor is at the end
-            (input_excerpt, "".to_string())
-        };
 
         let request = CodestralRequest {
             model,
@@ -265,7 +240,7 @@ impl CodestralCompletionProvider {
         if let Some(choice) = codestral_response.choices.first() {
             let completion = &choice.message.content;
 
-            log::info!(
+            log::debug!(
                 "Codestral: Completion received ({} tokens, {:.2}s)",
                 codestral_response.usage.completion_tokens,
                 elapsed.as_secs_f64()
@@ -328,7 +303,6 @@ impl EditPredictionProvider for CodestralCompletionProvider {
         };
 
         let snapshot = buffer_handle.read(cx).snapshot();
-        let cursor_point = cursor_position.to_point(&snapshot);
 
         self.record_buffer_change(&buffer_handle, &snapshot);
 
@@ -339,14 +313,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             }
         }
 
-        // Get file path and extension
-        let path_str = snapshot
-            .file()
-            .map(|f| f.full_path(cx).to_string_lossy().into_owned())
-            .unwrap_or_else(|| "untitled".to_string());
-
         let http_client = self.http_client.clone();
-        let context_header = self.build_context_header();
 
         // Get settings
         let settings = all_language_settings(None, cx);
@@ -358,34 +325,34 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             .unwrap_or_else(|| "codestral-latest".to_string());
         let max_tokens = settings.edit_predictions.codestral.max_tokens;
 
-        // Get cursor offset for the simplified implementation
-        let cursor_offset = cursor_position.to_offset(&snapshot);
-
         self.pending_request = Some(cx.spawn(async move |this, cx| {
             if debounce {
                 log::debug!("Codestral: Debouncing for {:?}", DEBOUNCE_TIMEOUT);
                 smol::Timer::after(DEBOUNCE_TIMEOUT).await;
             }
 
-            // Generate input excerpt with cursor position
-            let mut input_excerpt = excerpt_for_cursor_position(
+            let cursor_offset = cursor_position.to_offset(&snapshot);
+            let cursor_point = cursor_offset.to_point(&snapshot);
+            let excerpt = EditPredictionExcerpt::select_from_buffer(
                 cursor_point,
-                &path_str,
                 &snapshot,
-                MAX_REWRITE_TOKENS,
-                MAX_CONTEXT_TOKENS,
-            );
-            if let Some(header) = context_header {
-                input_excerpt.prompt = format!("{header}\n{}", input_excerpt.prompt);
-            }
+                &EXCERPT_OPTIONS,
+                None,
+            )
+            .context("Line containing cursor doesn't fit in excerpt max bytes")?;
 
-            let outline = prompt_for_outline(&snapshot);
+            let excerpt_text = excerpt.text(&snapshot);
+            let cursor_within_excerpt = cursor_offset
+                .saturating_sub(excerpt.range.start)
+                .min(excerpt_text.body.len());
+            let prompt = excerpt_text.body[..cursor_within_excerpt].to_string();
+            let suffix = excerpt_text.body[cursor_within_excerpt..].to_string();
 
             let completion_text = match Self::fetch_completion(
                 http_client,
                 api_key,
-                input_excerpt.prompt,
-                outline,
+                prompt,
+                suffix,
                 model,
                 max_tokens,
             )
@@ -403,7 +370,7 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             };
 
             if completion_text.trim().is_empty() {
-                log::info!("Codestral: Completion was empty after trimming; ignoring");
+                log::debug!("Codestral: Completion was empty after trimming; ignoring");
                 this.update(cx, |this, cx| {
                     this.pending_request = None;
                     cx.notify();
@@ -411,7 +378,8 @@ impl EditPredictionProvider for CodestralCompletionProvider {
                 return Ok(());
             }
 
-            let edits = vec![(cursor_position..cursor_position, completion_text)].into();
+            let edits: Arc<[(Range<Anchor>, String)]> =
+                vec![(cursor_position..cursor_position, completion_text)].into();
             let edit_preview = buffer_handle
                 .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))?
                 .await;

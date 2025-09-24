@@ -1,4 +1,4 @@
-use std::{ops::Range, sync::Arc};
+use std::ops::Range;
 
 use client::EditPredictionUsage;
 use gpui::{App, Context, Entity, SharedString};
