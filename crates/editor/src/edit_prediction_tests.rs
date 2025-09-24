@@ -288,6 +288,17 @@ async fn test_edit_predictions_disabled_in_scope(cx: &mut gpui::TestAppContext) 
     let language = languages::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into());
     cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
 
+    // Test enabled outside of string
+    cx.set_state("const x = \"hello world\"; ˇ");
+    propose_edits(&provider, vec![(24..24, "// comment")], &mut cx);
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
+    cx.editor(|editor, _, _| {
+        assert!(
+            editor.active_edit_prediction.is_some(),
+            "Edit predictions should work outside of disabled scopes"
+        );
+    });
+
     // Test disabled inside of string
     cx.set_state("const x = \"hello ˇworld\";");
     propose_edits(&provider, vec![(17..17, "beautiful ")], &mut cx);
@@ -299,15 +310,76 @@ async fn test_edit_predictions_disabled_in_scope(cx: &mut gpui::TestAppContext) 
         );
     });
 
-    // Test enabled outside of string
-    cx.set_state("const x = \"hello world\"; ˇ");
-    propose_edits(&provider, vec![(24..24, "// comment")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
+    // Test even when disabled in scope, user requested prediction should show
+    cx.update_editor(|editor, window, cx| {
+        editor.show_edit_prediction(&crate::ShowEditPrediction, window, cx)
+    });
     cx.editor(|editor, _, _| {
         assert!(
             editor.active_edit_prediction.is_some(),
-            "Edit predictions should work outside of disabled scopes"
+            "User-requested ShowEditPrediction should display despite disabled scope"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_user_requested_predictions(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    update_test_language_settings(cx, |settings| {
+        settings.defaults.show_edit_predictions = Some(false);
+    });
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let provider = cx.new(|_| FakeEditPredictionProvider::default());
+    assign_editor_completion_provider(provider.clone(), &mut cx);
+
+    cx.set_state("let value = ˇ;");
+    propose_edits(&provider, vec![(12..12, "42")], &mut cx);
+
+    // Test with global setting disabled, non user requested update should not show
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
+    cx.editor(|editor, _, _| {
+        assert!(editor.active_edit_prediction.is_none());
+    });
+
+    // Test ShowEditPrediction shows prediction even `show_edit_predictions` as `false`
+    cx.update_editor(|editor, window, cx| {
+        editor.show_edit_prediction(&crate::ShowEditPrediction, window, cx)
+    });
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_str(), "42");
+    });
+
+    // clear
+    cx.update_editor(|editor, _, cx| editor.take_active_edit_prediction(cx));
+    cx.editor(|editor, _, _| {
+        assert!(editor.active_edit_prediction.is_none());
+    });
+
+    // Test PreviousEditPrediction shows prediction even `show_edit_predictions` as `false`
+    cx.update_editor(|editor, window, cx| {
+        editor.previous_edit_prediction(&crate::PreviousEditPrediction, window, cx)
+    });
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_str(), "42");
+    });
+
+    // clear
+    cx.update_editor(|editor, _, cx| editor.take_active_edit_prediction(cx));
+    cx.editor(|editor, _, _| {
+        assert!(editor.active_edit_prediction.is_none());
+    });
+
+    // Test NextEditPrediction shows prediction even `show_edit_predictions` as `false`
+    cx.update_editor(|editor, window, cx| {
+        editor.next_edit_prediction(&crate::NextEditPrediction, window, cx)
+    });
+    assert_editor_active_edit_completion(&mut cx, |_, edits| {
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].1.as_str(), "42");
     });
 }
 
