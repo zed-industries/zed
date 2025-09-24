@@ -2818,7 +2818,7 @@ impl Editor {
         self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionProvider {
             _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
                 if this.focus_handle.is_focused(window) {
-                    this.update_visible_edit_prediction(window, cx);
+                    this.update_visible_edit_prediction(false, window, cx);
                 }
             }),
             provider: Arc::new(provider),
@@ -2921,7 +2921,7 @@ impl Editor {
         if hidden != self.edit_predictions_hidden_for_vim_mode {
             self.edit_predictions_hidden_for_vim_mode = hidden;
             if hidden {
-                self.update_visible_edit_prediction(window, cx);
+                self.update_visible_edit_prediction(false, window, cx);
             } else {
                 self.refresh_edit_prediction(true, false, window, cx);
             }
@@ -3157,7 +3157,7 @@ impl Editor {
             self.refresh_document_highlights(cx);
             self.refresh_selected_text_highlights(false, window, cx);
             refresh_matching_bracket_highlights(self, window, cx);
-            self.update_visible_edit_prediction(window, cx);
+            self.update_visible_edit_prediction(false, window, cx);
             self.edit_prediction_requires_modifier_in_indent_conflict = true;
             linked_editing_ranges::refresh_linked_ranges(self, window, cx);
             self.inline_blame_popover.take();
@@ -5813,7 +5813,7 @@ impl Editor {
 
                         crate::hover_popover::hide_hover(editor, cx);
                         if editor.show_edit_predictions_in_menu() {
-                            editor.update_visible_edit_prediction(window, cx);
+                            editor.update_visible_edit_prediction(false, window, cx);
                         } else {
                             editor.discard_edit_prediction(false, cx);
                         }
@@ -5828,7 +5828,7 @@ impl Editor {
                         // If it was already hidden and we don't show edit predictions in the menu,
                         // we should also show the edit prediction when available.
                         if was_hidden && editor.show_edit_predictions_in_menu() {
-                            editor.update_visible_edit_prediction(window, cx);
+                            editor.update_visible_edit_prediction(false, window, cx);
                         }
                     }
                 })
@@ -7161,7 +7161,7 @@ impl Editor {
             return None;
         }
 
-        self.update_visible_edit_prediction(window, cx);
+        self.update_visible_edit_prediction(user_requested, window, cx);
         provider.refresh(
             self.project.clone(),
             buffer,
@@ -7319,7 +7319,7 @@ impl Editor {
         }
 
         provider.cycle(buffer, cursor_buffer_position, direction, cx);
-        self.update_visible_edit_prediction(window, cx);
+        self.update_visible_edit_prediction(true, window, cx);
 
         Some(())
     }
@@ -7335,7 +7335,7 @@ impl Editor {
             return;
         }
 
-        self.update_visible_edit_prediction(window, cx);
+        self.update_visible_edit_prediction(true, window, cx);
     }
 
     pub fn display_cursor_names(
@@ -7484,7 +7484,7 @@ impl Editor {
                     }
                 }
 
-                self.update_visible_edit_prediction(window, cx);
+                self.update_visible_edit_prediction(false, window, cx);
                 if self.active_edit_prediction.is_none() {
                     self.refresh_edit_prediction(true, true, window, cx);
                 }
@@ -7774,7 +7774,7 @@ impl Editor {
                     since: Instant::now(),
                 };
 
-                self.update_visible_edit_prediction(window, cx);
+                self.update_visible_edit_prediction(false, window, cx);
                 cx.notify();
             }
         } else if let EditPredictionPreview::Active {
@@ -7797,13 +7797,14 @@ impl Editor {
                 released_too_fast: since.elapsed() < Duration::from_millis(200),
             };
             self.clear_row_highlights::<EditPredictionPreview>();
-            self.update_visible_edit_prediction(window, cx);
+            self.update_visible_edit_prediction(false, window, cx);
             cx.notify();
         }
     }
 
     fn update_visible_edit_prediction(
         &mut self,
+        user_requested: bool,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<()> {
@@ -7854,10 +7855,16 @@ impl Editor {
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
 
-        if let EditPredictionSettings::Disabled = self.edit_prediction_settings {
+        // if user explicitly requested edit prediction, we should show despite disabled setting
+        if !user_requested
+            && matches!(
+                self.edit_prediction_settings,
+                EditPredictionSettings::Disabled
+            )
+        {
             self.discard_edit_prediction(false, cx);
             return None;
-        };
+        }
 
         self.edit_prediction_indent_conflict = multibuffer.is_line_whitespace_upto(cursor);
 
@@ -9575,7 +9582,7 @@ impl Editor {
         self.completion_tasks.clear();
         let context_menu = self.context_menu.borrow_mut().take();
         self.stale_edit_prediction_in_menu.take();
-        self.update_visible_edit_prediction(window, cx);
+        self.update_visible_edit_prediction(false, window, cx);
         if let Some(CodeContextMenu::Completions(_)) = &context_menu
             && let Some(completion_provider) = &self.completion_provider
         {
@@ -20569,7 +20576,7 @@ impl Editor {
                 self.refresh_single_line_folds(window, cx);
                 refresh_matching_bracket_highlights(self, window, cx);
                 if self.has_active_edit_prediction() {
-                    self.update_visible_edit_prediction(window, cx);
+                    self.update_visible_edit_prediction(false, window, cx);
                 }
                 if let Some(project) = self.project.as_ref()
                     && let Some(edited_buffer) = edited_buffer

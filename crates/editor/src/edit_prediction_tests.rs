@@ -22,7 +22,7 @@ async fn test_edit_prediction_insert(cx: &mut gpui::TestAppContext) {
     cx.set_state("let absolute_zero_celsius = ˇ;");
 
     propose_edits(&provider, vec![(28..28, "-273.15")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
@@ -44,7 +44,7 @@ async fn test_edit_prediction_modification(cx: &mut gpui::TestAppContext) {
     cx.set_state("let pi = ˇ\"foo\";");
 
     propose_edits(&provider, vec![(9..14, "3.14159")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);
@@ -79,7 +79,7 @@ async fn test_edit_prediction_jump_button(cx: &mut gpui::TestAppContext) {
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
     assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
         assert_eq!(move_target.to_point(&snapshot), Point::new(4, 3));
     });
@@ -109,7 +109,7 @@ async fn test_edit_prediction_jump_button(cx: &mut gpui::TestAppContext) {
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
     assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
         assert_eq!(move_target.to_point(&snapshot), Point::new(1, 3));
     });
@@ -150,7 +150,7 @@ async fn test_edit_prediction_invalidation_range(cx: &mut gpui::TestAppContext) 
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
     assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
         assert_eq!(move_target.to_point(&snapshot), edit_location);
     });
@@ -198,7 +198,7 @@ async fn test_edit_prediction_invalidation_range(cx: &mut gpui::TestAppContext) 
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
     assert_editor_active_move_completion(&mut cx, |snapshot, move_target| {
         assert_eq!(move_target.to_point(&snapshot), edit_location);
     });
@@ -253,7 +253,7 @@ async fn test_edit_prediction_jump_disabled_for_non_zed_providers(cx: &mut gpui:
         &mut cx,
     );
 
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
 
     // For non-Zed providers, there should be no move completion (jump functionality disabled)
     cx.editor(|editor, _, _| {
@@ -291,7 +291,7 @@ async fn test_edit_predictions_disabled_in_scope(cx: &mut gpui::TestAppContext) 
     // Test disabled inside of string
     cx.set_state("const x = \"hello ˇworld\";");
     propose_edits(&provider, vec![(17..17, "beautiful ")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
     cx.editor(|editor, _, _| {
         assert!(
             editor.active_edit_prediction.is_none(),
@@ -302,7 +302,7 @@ async fn test_edit_predictions_disabled_in_scope(cx: &mut gpui::TestAppContext) 
     // Test enabled outside of string
     cx.set_state("const x = \"hello world\"; ˇ");
     propose_edits(&provider, vec![(24..24, "// comment")], &mut cx);
-    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(window, cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_edit_prediction(false, window, cx));
     cx.editor(|editor, _, _| {
         assert!(
             editor.active_edit_prediction.is_some(),
