@@ -2290,9 +2290,14 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                     state.second_touch_location = Some(position);
                 }
 
-                if state.is_scrolling && state.active_touch_id.is_some() && state.second_touch_id.is_some() {
+                if state.is_scrolling
+                    && state.active_touch_id.is_some()
+                    && state.second_touch_id.is_some()
+                {
                     // Two-finger gesture mode
-                    if let (Some(first_pos), Some(second_pos)) = (state.touch_location, state.second_touch_location) {
+                    if let (Some(first_pos), Some(second_pos)) =
+                        (state.touch_location, state.second_touch_location)
+                    {
                         let current_center = point(
                             px((first_pos.x.0 + second_pos.x.0) / 2.0),
                             px((first_pos.y.0 + second_pos.y.0) / 2.0),
@@ -2305,20 +2310,26 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
                         let current_distance = (dx * dx + dy * dy).sqrt();
 
                         // Check for pinch gesture (distance change vs center movement)
-                        if let (Some(start_distance), Some(last_distance)) = (state.pinch_start_distance, state.last_pinch_distance) {
+                        if let (Some(start_distance), Some(last_distance)) =
+                            (state.pinch_start_distance, state.last_pinch_distance)
+                        {
                             let distance_change = current_distance - start_distance;
-                            let center_movement = if let Some(scroll_start) = state.scroll_start_position {
-                                let dx = current_center.x.0 - scroll_start.x.0;
-                                let dy = current_center.y.0 - scroll_start.y.0;
-                                (dx * dx + dy * dy).sqrt()
-                            } else {
-                                0.0
-                            };
+                            let center_movement =
+                                if let Some(scroll_start) = state.scroll_start_position {
+                                    let dx = current_center.x.0 - scroll_start.x.0;
+                                    let dy = current_center.y.0 - scroll_start.y.0;
+                                    (dx * dx + dy * dy).sqrt()
+                                } else {
+                                    0.0
+                                };
 
                             // Determine if this is primarily a pinch (distance change > center movement)
-                            if distance_change.abs() > 20.0 && distance_change.abs() > center_movement {
+                            if distance_change.abs() > 20.0
+                                && distance_change.abs() > center_movement
+                            {
                                 // This is a pinch gesture - handle zoom
-                                let distance_delta = (current_distance - last_distance) * PINCH_ZOOM_SENSITIVITY;
+                                let distance_delta =
+                                    (current_distance - last_distance) * PINCH_ZOOM_SENSITIVITY;
                                 state.pinch_zoom_threshold += distance_delta;
                                 state.last_pinch_distance = Some(current_distance);
 
@@ -2362,19 +2373,26 @@ impl Dispatch<wl_touch::WlTouch, ()> for WaylandClientStatePtr {
 
                                 if let Some(scroll_start) = state.scroll_start_position {
                                     let scroll_delta = point(
-                                        px((current_center.x.0 - scroll_start.x.0) * TOUCH_SCROLL_SENSITIVITY),
-                                        px((current_center.y.0 - scroll_start.y.0) * TOUCH_SCROLL_SENSITIVITY),
+                                        px((current_center.x.0 - scroll_start.x.0)
+                                            * TOUCH_SCROLL_SENSITIVITY),
+                                        px((current_center.y.0 - scroll_start.y.0)
+                                            * TOUCH_SCROLL_SENSITIVITY),
                                     );
 
                                     // Only send scroll events if there's meaningful movement
-                                    if scroll_delta.x.0.abs() > 1.0 || scroll_delta.y.0.abs() > 1.0 {
+                                    if scroll_delta.x.0.abs() > 1.0 || scroll_delta.y.0.abs() > 1.0
+                                    {
                                         if let Some(window) = state.mouse_focused_window.clone() {
-                                            let input = PlatformInput::ScrollWheel(ScrollWheelEvent {
-                                                position: current_center,
-                                                delta: ScrollDelta::Pixels(point(px(-scroll_delta.x.0), px(-scroll_delta.y.0))),
-                                                modifiers: state.modifiers,
-                                                touch_phase: TouchPhase::Moved,
-                                            });
+                                            let input =
+                                                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                                                    position: current_center,
+                                                    delta: ScrollDelta::Pixels(point(
+                                                        px(-scroll_delta.x.0),
+                                                        px(-scroll_delta.y.0),
+                                                    )),
+                                                    modifiers: state.modifiers,
+                                                    touch_phase: TouchPhase::Moved,
+                                                });
                                             drop(state);
                                             window.handle_input(input);
                                         }
