@@ -194,7 +194,6 @@ async fn build_remote_server_from_source(
         )
         .await?;
     } else if build_remote_server.contains("cross") {
-        #[cfg(target_os = "windows")]
         use util::paths::SanitizedPath;
 
         delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
