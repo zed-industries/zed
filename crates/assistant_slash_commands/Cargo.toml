@@ -14,7 +14,6 @@ path = "src/assistant_slash_commands.rs"
 [dependencies]
 anyhow.workspace = true
 assistant_slash_command.workspace = true
-cargo_toml.workspace = true
 chrono.workspace = true
 collections.workspace = true
 context_server.workspace = true
@@ -35,7 +34,6 @@ serde.workspace = true
 serde_json.workspace = true
 smol.workspace = true
 text.workspace = true
-toml.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

@@ -15,8 +15,7 @@ use language_model::{
     RateLimiter, Role, StopReason, TokenUsage,
 };
 use mistral::{MISTRAL_API_URL, StreamResponse};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+pub use settings::MistralAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore};
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -40,18 +39,6 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub struct MistralSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-pub struct AvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
-    pub supports_tools: Option<bool>,
-    pub supports_images: Option<bool>,
-    pub supports_thinking: Option<bool>,
 }
 
 pub struct MistralLanguageModelProvider {

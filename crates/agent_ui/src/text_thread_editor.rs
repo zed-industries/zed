@@ -3,7 +3,7 @@ use crate::{
     language_model_selector::{LanguageModelSelector, language_model_selector},
     ui::BurnModeTooltip,
 };
-use agent_settings::{AgentSettings, CompletionMode};
+use agent_settings::CompletionMode;
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{DefaultSlashCommand, FileSlashCommand, selections_creases};
@@ -41,7 +41,10 @@ use project::{Project, Worktree};
 use project::{ProjectPath, lsp_store::LocalLspAdapterDelegate};
 use rope::Point;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, update_settings_file};
+use settings::{
+    LanguageModelProviderSetting, LanguageModelSelection, Settings, SettingsStore,
+    update_settings_file,
+};
 use std::{
     any::TypeId,
     cmp,
@@ -294,11 +297,16 @@ impl TextThreadEditor {
                 language_model_selector(
                     |cx| LanguageModelRegistry::read_global(cx).default_model(),
                     move |model, cx| {
-                        update_settings_file::<AgentSettings>(
-                            fs.clone(),
-                            cx,
-                            move |settings, _| settings.set_model(model.clone()),
-                        );
+                        update_settings_file(fs.clone(), cx, move |settings, _| {
+                            let provider = model.provider_id().0.to_string();
+                            let model = model.id().0.to_string();
+                            settings.agent.get_or_insert_default().set_model(
+                                LanguageModelSelection {
+                                    provider: LanguageModelProviderSetting(provider),
+                                    model,
+                                },
+                            )
+                        });
                     },
                     window,
                     cx,
@@ -477,7 +485,7 @@ impl TextThreadEditor {
             return;
         }
 
-        let selections = self.editor.read(cx).selections.disjoint_anchors();
+        let selections = self.editor.read(cx).selections.disjoint_anchors_arc();
         let mut commands_by_range = HashMap::default();
         let workspace = self.workspace.clone();
         self.context.update(cx, |context, cx| {
@@ -1823,7 +1831,7 @@ impl TextThreadEditor {
 
     fn split(&mut self, _: &Split, _window: &mut Window, cx: &mut Context<Self>) {
         self.context.update(cx, |context, cx| {
-            let selections = self.editor.read(cx).selections.disjoint_anchors();
+            let selections = self.editor.read(cx).selections.disjoint_anchors_arc();
             for selection in selections.as_ref() {
                 let buffer = self.editor.read(cx).buffer().read(cx).snapshot(cx);
                 let range = selection

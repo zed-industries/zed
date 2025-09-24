@@ -11,7 +11,6 @@ use gpui::{
     App, Pixels, PlatformDisplay, Size, WindowBackgroundAppearance, WindowBounds,
     WindowDecorations, WindowKind, WindowOptions, point,
 };
-use panel_settings::MessageEditorSettings;
 pub use panel_settings::{CollaborationPanelSettings, NotificationPanelSettings};
 use release_channel::ReleaseChannel;
 use settings::Settings;
@@ -21,7 +20,6 @@ use workspace::AppState;
 pub fn init(app_state: &Arc<AppState>, cx: &mut App) {
     CollaborationPanelSettings::register(cx);
     NotificationPanelSettings::register(cx);
-    MessageEditorSettings::register(cx);
 
     channel_view::init(cx);
     collab_panel::init(cx);

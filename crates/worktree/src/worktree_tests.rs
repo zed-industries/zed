@@ -770,9 +770,9 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     }));
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec![]);
-                project_settings.file_scan_inclusions = Some(vec![
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_inclusions = Some(vec![
                     "node_modules/**/package.json".to_string(),
                     "**/.DS_Store".to_string(),
                 ]);
@@ -836,9 +836,11 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec!["**/.DS_Store".to_string()]);
-                project_settings.file_scan_inclusions = Some(vec!["**/.DS_Store".to_string()]);
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(vec!["**/.DS_Store".to_string()]);
+                settings.project.worktree.file_scan_inclusions =
+                    Some(vec!["**/.DS_Store".to_string()]);
             });
         });
     });
@@ -894,9 +896,10 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec![]);
-                project_settings.file_scan_inclusions = Some(vec!["node_modules/**".to_string()]);
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_inclusions =
+                    Some(vec!["node_modules/**".to_string()]);
             });
         });
     });
@@ -926,9 +929,9 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec![]);
-                project_settings.file_scan_inclusions = Some(vec![]);
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_inclusions = Some(vec![]);
             });
         });
     });
@@ -978,8 +981,8 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     }));
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
                     Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
             });
         });
@@ -1015,8 +1018,8 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
                     Some(vec!["**/node_modules/**".to_string()]);
             });
         });
@@ -1080,8 +1083,8 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     }));
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec![
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![
                     "**/.git".to_string(),
                     "node_modules/".to_string(),
                     "build_output".to_string(),
@@ -1258,8 +1261,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
             move |update| {
                 snapshot
                     .lock()
-                    .apply_remote_update(update, &settings.file_scan_inclusions)
-                    .unwrap();
+                    .apply_remote_update(update, &settings.file_scan_inclusions);
                 async { true }
             }
         });
@@ -1489,8 +1491,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         for update in updates.lock().iter() {
             if update.scan_id >= updated_snapshot.scan_id() as u64 {
                 updated_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                    .unwrap();
+                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
@@ -1625,9 +1626,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     for (i, mut prev_snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
             if update.scan_id >= prev_snapshot.scan_id() as u64 {
-                prev_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                    .unwrap();
+                prev_snapshot.apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
