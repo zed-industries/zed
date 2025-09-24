@@ -860,7 +860,9 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                let path = project.find_project_path("/root/foo.md", cx).unwrap();
+                let path = project
+                    .find_project_path(path!("/root/foo.md"), cx)
+                    .unwrap();
                 project.open_buffer(path, cx)
             })
             .await
@@ -873,14 +875,17 @@ mod tests {
         });
 
         let (request, respond_tx) = req_rx.next().await.unwrap();
-        assert_eq!(request.excerpt_path.as_path(), Path::new("root/foo.md"));
+        assert_eq!(
+            request.excerpt_path.as_path(),
+            Path::new(path!("root/foo.md"))
+        );
         assert_eq!(request.cursor_offset, 10);
 
         respond_tx
             .send(predict_edits_v3::PredictEditsResponse {
                 request_id: Uuid::new_v4(),
                 edits: vec![predict_edits_v3::Edit {
-                    path: PathBuf::from("/root/foo.md"),
+                    path: PathBuf::from(path!("/root/foo.md")),
                     range: 0..snapshot.len(),
                     content: "Hello!\nHow are you?\nBye".into(),
                 }],
@@ -913,7 +918,9 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                let path = project.find_project_path("/root/foo.md", cx).unwrap();
+                let path = project
+                    .find_project_path(path!("/root/foo.md"), cx)
+                    .unwrap();
                 project.open_buffer(path, cx)
             })
             .await
@@ -940,7 +947,7 @@ mod tests {
         assert_eq!(
             request.events[0],
             predict_edits_v3::Event::BufferChange {
-                path: Some(PathBuf::from("root/foo.md")),
+                path: Some(PathBuf::from(path!("root/foo.md"))),
                 old_path: None,
                 diff: indoc! {"
                         @@ -1,3 +1,3 @@
@@ -958,7 +965,7 @@ mod tests {
             .send(predict_edits_v3::PredictEditsResponse {
                 request_id: Uuid::new_v4(),
                 edits: vec![predict_edits_v3::Edit {
-                    path: PathBuf::from("/root/foo.md"),
+                    path: PathBuf::from(path!("/root/foo.md")),
                     range: 0..snapshot.len(),
                     content: "Hello!\nHow are you?\nBye".into(),
                 }],
@@ -1019,7 +1026,9 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                let path = project.find_project_path("/root/foo.md", cx).unwrap();
+                let path = project
+                    .find_project_path(path!("/root/foo.md"), cx)
+                    .unwrap();
                 project.open_buffer(path, cx)
             })
             .await
