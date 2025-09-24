@@ -2492,6 +2492,7 @@ mod test {
         });
 
         cx.simulate_keystrokes(": w space other.rs");
+        cx.run_until_parked();
         cx.simulate_keystrokes("enter");
 
         cx.workspace(|workspace, _, cx| {
@@ -2499,6 +2500,7 @@ mod test {
         });
 
         cx.simulate_keystrokes(": w space dir/file.rs");
+        cx.run_until_parked();
         cx.simulate_keystrokes("enter");
 
         cx.simulate_prompt_answer("Replace");
@@ -2509,6 +2511,7 @@ mod test {
         });
 
         cx.simulate_keystrokes(": w ! space other.rs");
+        cx.run_until_parked();
         cx.simulate_keystrokes("enter");
 
         cx.workspace(|workspace, _, cx| {
