@@ -108,7 +108,13 @@ impl Render for PlatformTitleBar {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .justify_between()
+                    .map(|this| {
+                        if self.platform_style == PlatformStyle::Linux {
+                            this.justify_start()
+                        } else {
+                            this.justify_between()
+                        }
+                    })
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
                     .when(self.platform_style == PlatformStyle::Mac, |this| {
