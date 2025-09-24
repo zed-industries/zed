@@ -39,13 +39,7 @@ use workspace::{
 use zed_actions::OpenBrowser;
 use zeta::RateCompletions;
 
-actions!(
-    edit_prediction,
-    [
-        /// Toggles the edit prediction menu.
-        ToggleMenu
-    ]
-);
+actions!(edit_prediction, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 const PRIVACY_DOCS: &str = "https://zed.dev/docs/ai/privacy-and-security";
@@ -74,7 +68,6 @@ enum SupermavenButtonStatus {
 
 impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Return empty div if AI is disabled
         if DisableAiSettings::get_global(cx).disable_ai {
             return div();
         }
@@ -858,12 +851,6 @@ impl EditPredictionButton {
         })
     }
 
-    /// Builds a simplified context menu for Ollama with essential features:
-    /// - API URL configuration that opens settings at the correct location
-    /// - Model selection from available models
-    /// - Common language settings (buffer/language/global toggles, privacy settings)
-    ///
-    /// The menu focuses on core functionality without connection status or external links.
     fn build_ollama_context_menu(
         &self,
         window: &mut Window,
@@ -871,7 +858,6 @@ impl EditPredictionButton {
     ) -> Entity<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(window, cx, |menu, window, cx| {
-            // Automatically refresh models when menu is opened
             if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
                 provider.update(cx, |provider, cx| {
                     provider.refresh_models(cx);
@@ -880,14 +866,11 @@ impl EditPredictionButton {
             let settings = AllLanguageModelSettings::get_global(cx);
             let ollama_settings = &settings.ollama;
 
-            // Get models from both settings and global service discovery
             let mut available_models = ollama_settings.available_models.clone();
 
-            // Add discovered models from the global Ollama service
             if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
                 let discovered_models = provider.read(cx).available_models_for_completion(cx);
                 for model in discovered_models {
-                    // Convert from ollama::Model to language_models AvailableModel
                     let available_model = language_models::provider::ollama::AvailableModel {
                         name: model.name.clone(),
                         display_name: model.display_name.clone(),
@@ -898,18 +881,15 @@ impl EditPredictionButton {
                         supports_thinking: model.supports_thinking,
                     };
 
-                    // Add if not already in settings (settings take precedence)
                     if !available_models.iter().any(|m| m.name == model.name) {
                         available_models.push(available_model);
                     }
                 }
             }
 
-            // Model selection section
             let menu = if !available_models.is_empty() {
                 let menu = menu.separator().header("Available Models");
 
-                // Add each available model as a menu entry
                 let menu = available_models.iter().fold(menu, |menu, model| {
                     let model_name = model.display_name.as_ref().unwrap_or(&model.name);
                     let is_current = ollama_settings
@@ -945,7 +925,6 @@ impl EditPredictionButton {
                     })
             };
 
-            // Use the common language settings menu
             self.build_language_settings_menu(menu, window, cx)
         })
     }
@@ -980,11 +959,9 @@ impl EditPredictionButton {
                             if let Some(captures) = regex.captures(&text) {
                                 let full_match = captures.get(0).unwrap();
 
-                                // Position cursor after the opening bracket of available_models array
                                 let bracket_pos = full_match.as_str().rfind('[').unwrap();
                                 let cursor_pos = full_match.start() + bracket_pos + 1;
 
-                                // Place cursor inside the available_models array
                                 item.change_selections(
                                     SelectionEffects::scroll(Autoscroll::newest()),
                                     window,
@@ -1007,14 +984,12 @@ impl EditPredictionButton {
 
     fn switch_ollama_model(fs: Arc<dyn Fs>, model_name: String, cx: &mut App) {
         update_settings_file(fs, cx, move |settings, cx| {
-            // Ensure language_models settings exist
             if settings.language_models.is_none() {
                 settings.language_models = Some(AllLanguageModelSettingsContent::default());
             }
 
             let language_models = settings.language_models.as_mut().unwrap();
 
-            // Ensure ollama settings exist
             if language_models.ollama.is_none() {
                 language_models.ollama = Some(OllamaSettingsContent {
                     api_url: None,
@@ -1024,26 +999,21 @@ impl EditPredictionButton {
 
             let ollama_settings = language_models.ollama.as_mut().unwrap();
 
-            // Ensure available_models exists
             if ollama_settings.available_models.is_none() {
                 ollama_settings.available_models = Some(Vec::new());
             }
 
             let models = ollama_settings.available_models.as_mut().unwrap();
 
-            // Check if model is already in settings
             if let Some(index) = models.iter().position(|m| m.name == model_name) {
-                // Move existing model to the front
                 let selected_model = models.remove(index);
                 models.insert(0, selected_model);
             } else {
-                // Model not in settings - check if it's a discovered model and add it
                 if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
                     let discovered_models = provider.read(cx).available_models_for_completion(cx);
                     if let Some(discovered_model) =
                         discovered_models.iter().find(|m| m.name == model_name)
                     {
-                        // Convert from ollama::Model to language_models AvailableModel
                         let available_model = language_models::provider::ollama::AvailableModel {
                             name: discovered_model.name.clone(),
                             display_name: discovered_model.display_name.clone(),
@@ -1054,7 +1024,6 @@ impl EditPredictionButton {
                             supports_thinking: discovered_model.supports_thinking,
                         };
 
-                        // Add the discovered model to the front of the list
                         models.insert(0, available_model);
                     }
                 }
@@ -1158,7 +1127,6 @@ async fn open_disabled_globs_setting_in_editor(
 
             let settings = cx.global::<SettingsStore>();
 
-            // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
             let edits = settings.edits_for_update(&text, |file| {
                 file.project
                     .all_languages
@@ -1177,7 +1145,6 @@ async fn open_disabled_globs_setting_in_editor(
             static DISABLED_GLOBS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
                 Regex::new(r#""disabled_globs":\s*\[\s*(?P<content>(?:.|\n)*?)\s*\]"#).unwrap()
             });
-            // Only capture [...]
             let range = DISABLED_GLOBS_REGEX.captures(&text).and_then(|captures| {
                 captures
                     .name("content")

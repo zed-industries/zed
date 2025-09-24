@@ -12,25 +12,16 @@ pub const OLLAMA_API_URL: &str = "http://localhost:11434";
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Model {
     pub name: String,
-    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
-    /// The Context Length parameter to the model (aka num_ctx or n_ctx)
     pub max_tokens: u64,
-    /// The number of seconds to keep the connection open after the last request
     pub keep_alive: Option<KeepAlive>,
-    /// Whether the model supports tools
     pub supports_tools: Option<bool>,
-    /// Whether the model supports images
     pub supports_images: Option<bool>,
-    /// Whether to enable think mode
     pub supports_thinking: Option<bool>,
 }
 
 fn get_max_tokens(name: &str) -> u64 {
-    /// Default context length for unknown models.
     const DEFAULT_TOKENS: u64 = 4096;
-    /// Magic number. Lets many Ollama models work with ~16GB of ram.
-    /// Models that support context beyond 16k such as codestral (32k) or devstral (128k) will be clamped down to 16k
     const MAXIMUM_TOKENS: u64 = 16384;
 
     match name.split(':').next().unwrap() {
@@ -334,7 +325,6 @@ pub async fn get_models(
     Ok(response.models)
 }
 
-/// Fetch details of a model, used to determine model capabilities
 pub async fn show_model(
     client: &dyn HttpClient,
     api_url: &str,
