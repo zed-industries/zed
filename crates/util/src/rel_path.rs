@@ -52,9 +52,16 @@ impl RelPath {
         }
 
         let mut this = RelPathBuf::new();
-        for component in unsafe { Self::new_unchecked(string.as_ref()) }.components() {
+        for (i, component) in unsafe { Self::new_unchecked(string.as_ref()) }
+            .components()
+            .enumerate()
+        {
             match component {
-                "" => {}
+                "" => {
+                    if i == 0 {
+                        return Err(anyhow!("absolute path not allowed: {string:?}"));
+                    }
+                }
                 "." => {}
                 ".." => {
                     if !this.pop() {

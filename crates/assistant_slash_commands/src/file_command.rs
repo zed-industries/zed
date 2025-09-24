@@ -250,7 +250,6 @@ fn collect_files(
             let worktree_id = snapshot.id();
             let mut directory_stack: Vec<Arc<RelPath>> = Vec::new();
             let mut folded_directory_names: Arc<RelPath> = RelPath::empty().into();
-            // let mut folded_directory_names_stack = Vec::new();
             let mut is_top_level_directory = true;
 
             for entry in snapshot.entries(false, 0) {

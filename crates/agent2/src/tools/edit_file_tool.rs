@@ -565,7 +565,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::{path, paths::PathStyle};
+    use util::path;
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -690,12 +690,10 @@ mod tests {
         cx.update(|cx| resolve_path(&input, project, cx))
     }
 
+    #[track_caller]
     fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
-        let actual = path
-            .expect("Should return valid path")
-            .path
-            .display(PathStyle::local())
-            .into_owned();
+        let actual = path.expect("Should return valid path").path;
+        let actual = actual.as_str();
         assert_eq!(actual, expected);
     }
 

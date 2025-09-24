@@ -1593,7 +1593,7 @@ mod tests {
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::{path, rel_path::rel_path, uri};
+    use util::{path, paths::PathStyle, rel_path::rel_path, uri};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -2113,6 +2113,8 @@ mod tests {
             rel_path("b/eight.txt"),
         ];
 
+        let slash = PathStyle::local().separator();
+
         let mut opened_editors = Vec::new();
         for path in paths {
             let buffer = workspace
@@ -2181,10 +2183,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
+                    format!("eight.txt dir{slash}b{slash}"),
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
                 ]
             );
             editor.set_text("", window, cx);
@@ -2212,14 +2214,14 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Threads",
-                    "Fetch"
+                    format!("eight.txt dir{slash}b{slash}"),
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into(),
+                    "Threads".into(),
+                    "Fetch".into()
                 ]
             );
         });
@@ -2246,7 +2248,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt dir{slash}a{slash}")]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2503,7 +2508,7 @@ mod tests {
                 format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+            assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2542,7 +2547,7 @@ mod tests {
                         format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
                     );
                     assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+                    assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
                 });
 
         editor.update_in(&mut cx, |editor, window, cx| {

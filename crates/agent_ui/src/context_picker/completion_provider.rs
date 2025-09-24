@@ -1237,6 +1237,8 @@ mod tests {
             rel_path("b/eight.txt"),
         ];
 
+        let slash = PathStyle::local().separator();
+
         let mut opened_editors = Vec::new();
         for path in paths {
             let buffer = workspace
@@ -1320,13 +1322,13 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
-                    "four.txt dir/a/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Fetch"
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
+                    format!("four.txt dir{slash}a{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into(),
+                    "Fetch".into()
                 ]
             );
         });
@@ -1353,7 +1355,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt dir{slash}a{slash}")]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -1362,7 +1367,10 @@ mod tests {
         });
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt) ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt) ")
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1373,7 +1381,10 @@ mod tests {
         cx.simulate_input(" ");
 
         editor.update(&mut cx, |editor, cx| {
-            assert_eq!(editor.text(cx), "Lorem [@one.txt](@file:dir/a/one.txt)  ");
+            assert_eq!(
+                editor.text(cx),
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  ")
+            );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
                 fold_ranges(editor, cx),
@@ -1386,7 +1397,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum ",
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum "),
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -1400,7 +1411,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum @file ",
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum @file "),
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -1418,7 +1429,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) "
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
@@ -1435,7 +1446,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n@"
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n@")
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
@@ -1456,7 +1467,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                "Lorem [@one.txt](@file:dir/a/one.txt)  Ipsum [@seven.txt](@file:dir/b/seven.txt) \n[@six.txt](@file:dir/b/six.txt) "
+                format!("Lorem [@one.txt](@file:dir{slash}a{slash}one.txt)  Ipsum [@seven.txt](@file:dir{slash}b{slash}seven.txt) \n[@six.txt](@file:dir{slash}b{slash}six.txt) ")
             );
             assert!(!editor.has_visible_completions_menu());
             assert_eq!(
