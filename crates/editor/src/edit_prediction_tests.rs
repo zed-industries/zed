@@ -7,9 +7,7 @@ use std::ops::Range;
 use text::{Point, ToOffset};
 
 use crate::{
-    EditPrediction,
-    editor_tests::{init_test, update_test_language_settings},
-    test::editor_test_context::EditorTestContext,
+    EditPrediction, editor_tests::init_test, test::editor_test_context::EditorTestContext,
 };
 
 #[gpui::test]
