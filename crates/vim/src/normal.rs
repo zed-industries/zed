@@ -863,7 +863,7 @@ impl Vim {
                         file.full_path(cx).to_string_lossy().to_string()
                     }
                 } else {
-                    file.path().to_string_lossy().to_string()
+                    file.path().display(file.path_style(cx)).into_owned()
                 }
             } else {
                 "[No Name]".into()

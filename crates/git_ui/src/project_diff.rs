@@ -243,7 +243,7 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.0);
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.as_str().into());
 
         self.move_to_path(path_key, window, cx)
     }
@@ -397,7 +397,7 @@ impl ProjectDiff {
                 } else {
                     TRACKED_NAMESPACE
                 };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.0.clone());
+                let path_key = PathKey::namespaced(namespace, entry.repo_path.as_str().into());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self
@@ -535,7 +535,7 @@ impl ProjectDiff {
         self.multibuffer
             .read(cx)
             .excerpt_paths()
-            .map(|key| key.path().to_string_lossy().to_string())
+            .map(|key| key.path().to_string())
             .collect()
     }
 }
@@ -1406,12 +1406,12 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo.txt".into(), "foo\n".into())],
+            &[("foo.txt", "foo\n".into())],
             "deadbeef",
         );
         fs.set_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo.txt".into(), "foo\n".into())],
+            &[("foo.txt", "foo\n".into())],
         );
         cx.run_until_parked();
 
@@ -1461,16 +1461,13 @@ mod tests {
 
         fs.set_head_and_index_for_repo(
             path!("/project/.git").as_ref(),
-            &[
-                ("bar".into(), "bar\n".into()),
-                ("foo".into(), "foo\n".into()),
-            ],
+            &[("bar", "bar\n".into()), ("foo", "foo\n".into())],
         );
         cx.run_until_parked();
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("foo").into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, "foo".into()),
                 window,
                 cx,
             );
@@ -1491,7 +1488,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::namespaced(TRACKED_NAMESPACE, Path::new("bar").into()),
+                PathKey::namespaced(TRACKED_NAMESPACE, "bar".into()),
                 window,
                 cx,
             );
@@ -1543,7 +1540,7 @@ mod tests {
 
         fs.set_head_for_repo(
             path!("/project/.git").as_ref(),
-            &[("foo".into(), "original\n".into())],
+            &[("foo", "original\n".into())],
             "deadbeef",
         );
         cx.run_until_parked();
@@ -1646,12 +1643,12 @@ mod tests {
         )
         .await;
 
-        fs.set_git_content_for_repo(
+        fs.set_head_and_index_for_repo(
             Path::new("/a/.git"),
             &[
-                ("b.txt".into(), "before\n".to_string(), None),
-                ("c.txt".into(), "unchanged\n".to_string(), None),
-                ("d.txt".into(), "deleted\n".to_string(), None),
+                ("b.txt", "before\n".to_string()),
+                ("c.txt", "unchanged\n".to_string()),
+                ("d.txt", "deleted\n".to_string()),
             ],
         );
 
@@ -1764,9 +1761,9 @@ mod tests {
         )
         .await;
 
-        fs.set_git_content_for_repo(
+        fs.set_head_and_index_for_repo(
             Path::new("/a/.git"),
-            &[("main.rs".into(), git_contents.to_owned(), None)],
+            &[("main.rs", git_contents.to_owned())],
         );
 
         let project = Project::test(fs, [Path::new("/a")], cx).await;
@@ -1816,7 +1813,7 @@ mod tests {
         fs.set_status_for_repo(
             Path::new(path!("/project/.git")),
             &[(
-                Path::new("foo"),
+                "foo",
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

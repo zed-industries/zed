@@ -3779,13 +3779,15 @@ impl EditorElement {
             .as_ref()
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or_default();
-        let can_open_excerpts = Editor::can_open_excerpts_in_file(for_excerpt.buffer.file());
+        let file = for_excerpt.buffer.file();
+        let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
+        let path_style = file.map(|file| file.path_style(cx));
         let relative_path = for_excerpt.buffer.resolve_file_path(cx, include_root);
         let filename = relative_path
             .as_ref()
             .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
         let parent_path = relative_path.as_ref().and_then(|path| {
-            Some(path.parent()?.to_string_lossy().to_string() + std::path::MAIN_SEPARATOR_STR)
+            Some(path.parent()?.to_string_lossy().to_string() + path_style?.separator())
         });
         let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();
@@ -3990,12 +3992,13 @@ impl EditorElement {
                         && let Some(worktree) =
                             project.read(cx).worktree_for_id(file.worktree_id(cx), cx)
                     {
+                        let path_style = file.path_style(cx);
                         let worktree = worktree.read(cx);
                         let relative_path = file.path();
                         let entry_for_path = worktree.entry_for_path(relative_path);
                         let abs_path = entry_for_path.map(|e| {
                             e.canonical_path.as_deref().map_or_else(
-                                || worktree.abs_path().join(relative_path),
+                                || worktree.absolutize(relative_path),
                                 Path::to_path_buf,
                             )
                         });
@@ -4031,7 +4034,7 @@ impl EditorElement {
                                     Some(Box::new(zed_actions::workspace::CopyRelativePath)),
                                     window.handler_for(&editor, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
-                                            relative_path.to_string_lossy().to_string(),
+                                            relative_path.display(path_style).to_string(),
                                         ));
                                     }),
                                 )
@@ -9324,7 +9327,7 @@ impl Element for EditorElement {
                         .language_settings(cx)
                         .whitespace_map;
 
-                    let tab_char = whitespace_map.tab();
+                    let tab_char = whitespace_map.tab.clone();
                     let tab_len = tab_char.len();
                     let tab_invisible = window.text_system().shape_line(
                         tab_char,
@@ -9340,7 +9343,7 @@ impl Element for EditorElement {
                         None,
                     );
 
-                    let space_char = whitespace_map.space();
+                    let space_char = whitespace_map.space.clone();
                     let space_len = space_char.len();
                     let space_invisible = window.text_system().shape_line(
                         space_char,

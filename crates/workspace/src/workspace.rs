@@ -104,7 +104,12 @@ use theme::{ActiveTheme, SystemAppearance, ThemeSettings};
 pub use toolbar::{Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 pub use ui;
 use ui::{Window, prelude::*};
-use util::{ResultExt, TryFutureExt, paths::SanitizedPath, serde::default_true};
+use util::{
+    ResultExt, TryFutureExt,
+    paths::{PathStyle, SanitizedPath},
+    rel_path::RelPath,
+    serde::default_true,
+};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, BottomDockLayout, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -625,7 +630,7 @@ impl ProjectItemRegistry {
                     match project_item.await.with_context(|| {
                         format!(
                             "opening project path {:?}",
-                            entry_abs_path.as_deref().unwrap_or(&project_path.path)
+                            entry_abs_path.as_deref().unwrap_or(&project_path.path.as_std_path())
                         )
                     }) {
                         Ok(project_item) => {
@@ -1754,6 +1759,10 @@ impl Workspace {
         &self.project
     }
 
+    pub fn path_style(&self, cx: &App) -> PathStyle {
+        self.project.read(cx).path_style(cx)
+    }
+
     pub fn recently_activated_items(&self, cx: &App) -> HashMap<EntityId, usize> {
         let mut history: HashMap<EntityId, usize> = HashMap::default();
 
@@ -2622,7 +2631,12 @@ impl Workspace {
                                     .strip_prefix(worktree_abs_path.as_ref())
                                     .ok()
                                     .and_then(|relative_path| {
-                                        worktree.entry_for_path(relative_path)
+                                        let relative_path = RelPath::from_std_path(
+                                            relative_path,
+                                            PathStyle::local(),
+                                        )
+                                        .log_err()?;
+                                        worktree.entry_for_path(&relative_path)
                                     })
                             }
                             .map(|entry| entry.id);
@@ -2668,7 +2682,7 @@ impl Workspace {
                 self.open_path(project_path, None, true, window, cx)
             }
             ResolvedPath::AbsPath { path, .. } => self.open_abs_path(
-                path,
+                PathBuf::from(path),
                 OpenOptions {
                     visible: Some(OpenVisible::None),
                     ..Default::default()
@@ -2757,7 +2771,7 @@ impl Workspace {
                 worktree,
                 ProjectPath {
                     worktree_id,
-                    path: path.into(),
+                    path: path,
                 },
             ))
         })
@@ -4399,17 +4413,17 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        for (i, worktree) in project.worktrees(cx).enumerate() {
+        for (i, worktree) in project.visible_worktrees(cx).enumerate() {
             let name = {
                 let settings_location = SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
-                    path: Path::new(""),
+                    path: RelPath::empty(),
                 };
 
                 let settings = WorktreeSettings::get(Some(settings_location), cx);
                 match &settings.project_name {
                     Some(name) => name.as_str(),
-                    None => worktree.read(cx).root_name(),
+                    None => worktree.read(cx).root_name_str(),
                 }
             };
             if i > 0 {
@@ -4423,18 +4437,14 @@ impl Workspace {
         }
 
         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
-            let filename = path
-                .path
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .or_else(|| {
-                    Some(Cow::Borrowed(
-                        project
-                            .worktree_for_id(path.worktree_id, cx)?
-                            .read(cx)
-                            .root_name(),
-                    ))
-                });
+            let filename = path.path.file_name().or_else(|| {
+                Some(
+                    project
+                        .worktree_for_id(path.worktree_id, cx)?
+                        .read(cx)
+                        .root_name_str(),
+                )
+            });
 
             if let Some(filename) = filename {
                 title.push_str(" — ");
@@ -8174,6 +8184,7 @@ mod tests {
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::rel_path::rel_path;
 
     #[gpui::test]
     async fn test_tab_disambiguation(cx: &mut TestAppContext) {
@@ -8268,7 +8279,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("one.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -8283,7 +8294,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "two.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("two.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -8299,7 +8310,7 @@ mod tests {
             assert_eq!(
                 project.active_entry(),
                 project
-                    .entry_for_path(&(worktree_id, "one.txt").into(), cx)
+                    .entry_for_path(&(worktree_id, rel_path("one.txt")).into(), cx)
                     .map(|e| e.id)
             );
         });
@@ -10665,7 +10676,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "one.png");
+                    let project_path = (worktree_id, rel_path("one.png"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10679,7 +10690,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "two.ipynb");
+                    let project_path = (worktree_id, rel_path("two.ipynb"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10692,7 +10703,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "three.txt");
+                    let project_path = (worktree_id, rel_path("three.txt"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
@@ -10727,7 +10738,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "one.png");
+                    let project_path = (worktree_id, rel_path("one.png"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await
@@ -10741,7 +10752,7 @@ mod tests {
 
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project_path = (worktree_id, "three.txt");
+                    let project_path = (worktree_id, rel_path("three.txt"));
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
@@ -10755,7 +10766,7 @@ mod tests {
             .flat_map(|item| {
                 item.project_paths(cx)
                     .into_iter()
-                    .map(|path| path.path.to_string_lossy().to_string())
+                    .map(|path| path.path.as_str().to_string())
             })
             .collect()
     }

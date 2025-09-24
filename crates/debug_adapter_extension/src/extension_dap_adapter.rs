@@ -15,6 +15,7 @@ use dap::{
 use extension::{Extension, WorktreeDelegate};
 use gpui::AsyncApp;
 use task::{DebugScenario, ZedDebugConfig};
+use util::rel_path::RelPath;
 
 pub(crate) struct ExtensionDapAdapter {
     extension: Arc<dyn Extension>,
@@ -57,7 +58,7 @@ impl WorktreeDelegate for WorktreeDelegateAdapter {
         self.0.worktree_root_path().to_string_lossy().to_string()
     }
 
-    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+    async fn read_text_file(&self, path: &RelPath) -> Result<String> {
         self.0.read_text_file(path).await
     }
 

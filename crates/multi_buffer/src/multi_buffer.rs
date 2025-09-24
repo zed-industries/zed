@@ -37,7 +37,6 @@ use std::{
     iter::{self, FromIterator},
     mem,
     ops::{Range, RangeBounds, Sub},
-    path::{Path, PathBuf},
     rc::Rc,
     str,
     sync::Arc,
@@ -169,23 +168,23 @@ impl MultiBufferDiffHunk {
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Hash, Debug)]
 pub struct PathKey {
     namespace: u32,
-    path: Arc<Path>,
+    path: Arc<str>,
 }
 
 impl PathKey {
-    pub fn namespaced(namespace: u32, path: Arc<Path>) -> Self {
+    pub fn namespaced(namespace: u32, path: Arc<str>) -> Self {
         Self { namespace, path }
     }
 
     pub fn for_buffer(buffer: &Entity<Buffer>, cx: &App) -> Self {
         if let Some(file) = buffer.read(cx).file() {
-            Self::namespaced(1, Arc::from(file.full_path(cx)))
+            Self::namespaced(1, file.full_path(cx).to_string_lossy().to_string().into())
         } else {
-            Self::namespaced(0, Arc::from(PathBuf::from(buffer.entity_id().to_string())))
+            Self::namespaced(0, buffer.entity_id().to_string().into())
         }
     }
 
-    pub fn path(&self) -> &Arc<Path> {
+    pub fn path(&self) -> &Arc<str> {
         &self.path
     }
 }
@@ -2603,7 +2602,7 @@ impl MultiBuffer {
             let buffer = buffer.read(cx);
 
             if let Some(file) = buffer.file() {
-                return file.file_name(cx).to_string_lossy();
+                return file.file_name(cx).into();
             }
 
             if let Some(title) = self.buffer_content_title(buffer) {

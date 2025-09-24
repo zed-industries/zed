@@ -31,17 +31,9 @@ pub fn home_dir() -> &'static PathBuf {
     })
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub fn set_home_dir(path: PathBuf) {
-    HOME_DIR
-        .set(path)
-        .expect("set_home_dir called after home_dir was already accessed");
-}
-
 pub trait PathExt {
     fn compact(&self) -> PathBuf;
     fn extension_or_hidden_file_name(&self) -> Option<&str>;
-    fn to_sanitized_string(&self) -> String;
     fn try_from_bytes<'a>(bytes: &'a [u8]) -> anyhow::Result<Self>
     where
         Self: From<&'a Path>,
@@ -104,20 +96,6 @@ impl<T: AsRef<Path>> PathExt for T {
         path.extension()
             .and_then(|e| e.to_str())
             .or_else(|| path.file_stem()?.to_str())
-    }
-
-    /// Returns a sanitized string representation of the path.
-    /// Note, on Windows, this assumes that the path is a valid UTF-8 string and
-    /// is not a UNC path.
-    fn to_sanitized_string(&self) -> String {
-        #[cfg(target_os = "windows")]
-        {
-            self.as_ref().to_string_lossy().replace("/", "\\")
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            self.as_ref().to_string_lossy().to_string()
-        }
     }
 
     /// Converts a local path to one that can be used inside of WSL.
@@ -220,17 +198,6 @@ impl SanitizedPath {
     pub fn to_path_buf(&self) -> PathBuf {
         self.0.to_path_buf()
     }
-
-    pub fn to_glob_string(&self) -> String {
-        #[cfg(target_os = "windows")]
-        {
-            self.0.to_string_lossy().replace("/", "\\")
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            self.0.to_string_lossy().to_string()
-        }
-    }
 }
 
 impl std::fmt::Debug for SanitizedPath {
@@ -265,7 +232,7 @@ impl AsRef<Path> for SanitizedPath {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PathStyle {
     Posix,
     Windows,
@@ -273,83 +240,69 @@ pub enum PathStyle {
 
 impl PathStyle {
     #[cfg(target_os = "windows")]
-    pub const fn current() -> Self {
+    pub const fn local() -> Self {
         PathStyle::Windows
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub const fn current() -> Self {
+    pub const fn local() -> Self {
         PathStyle::Posix
     }
 
     #[inline]
-    pub fn separator(&self) -> &str {
+    pub fn separator(&self) -> &'static str {
         match self {
             PathStyle::Posix => "/",
             PathStyle::Windows => "\\",
+        }
+    }
+
+    pub fn is_windows(&self) -> bool {
+        *self == PathStyle::Windows
+    }
+
+    pub fn join(self, left: impl AsRef<Path>, right: impl AsRef<Path>) -> Option<String> {
+        let right = right.as_ref().to_str()?;
+        if is_absolute(right, self) {
+            return None;
+        }
+        let left = left.as_ref().to_str()?;
+        if left.is_empty() {
+            Some(right.into())
+        } else {
+            Some(format!(
+                "{left}{}{right}",
+                if left.ends_with(self.separator()) {
+                    ""
+                } else {
+                    self.separator()
+                }
+            ))
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct RemotePathBuf {
-    inner: PathBuf,
     style: PathStyle,
-    string: String, // Cached string representation
+    string: String,
 }
 
 impl RemotePathBuf {
-    pub fn new(path: PathBuf, style: PathStyle) -> Self {
-        #[cfg(target_os = "windows")]
-        let string = match style {
-            PathStyle::Posix => path.to_string_lossy().replace('\\', "/"),
-            PathStyle::Windows => path.to_string_lossy().into(),
-        };
-        #[cfg(not(target_os = "windows"))]
-        let string = match style {
-            PathStyle::Posix => path.to_string_lossy().to_string(),
-            PathStyle::Windows => path.to_string_lossy().replace('/', "\\"),
-        };
-        Self {
-            inner: path,
-            style,
-            string,
-        }
+    pub fn new(string: String, style: PathStyle) -> Self {
+        Self { style, string }
     }
 
     pub fn from_str(path: &str, style: PathStyle) -> Self {
-        let path_buf = PathBuf::from(path);
-        Self::new(path_buf, style)
-    }
-
-    #[cfg(target_os = "windows")]
-    pub fn to_proto(&self) -> String {
-        match self.path_style() {
-            PathStyle::Posix => self.to_string(),
-            PathStyle::Windows => self.inner.to_string_lossy().replace('\\', "/"),
-        }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    pub fn to_proto(&self) -> String {
-        match self.path_style() {
-            PathStyle::Posix => self.inner.to_string_lossy().to_string(),
-            PathStyle::Windows => self.to_string(),
-        }
-    }
-
-    pub fn as_path(&self) -> &Path {
-        &self.inner
+        Self::new(path.to_string(), style)
     }
 
     pub fn path_style(&self) -> PathStyle {
         self.style
     }
 
-    pub fn parent(&self) -> Option<RemotePathBuf> {
-        self.inner
-            .parent()
-            .map(|p| RemotePathBuf::new(p.to_path_buf(), self.style))
+    pub fn to_proto(self) -> String {
+        self.string
     }
 }
 
@@ -357,6 +310,19 @@ impl Display for RemotePathBuf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.string)
     }
+}
+
+pub fn is_absolute(path_like: &str, path_style: PathStyle) -> bool {
+    path_like.starts_with('/')
+        || path_style == PathStyle::Windows
+            && (path_like.starts_with('\\')
+                || path_like
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+                    && path_like[1..]
+                        .strip_prefix(':')
+                        .is_some_and(|path| path.starts_with('/') || path.starts_with('\\')))
 }
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
@@ -589,10 +555,11 @@ impl PathWithPosition {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PathMatcher {
     sources: Vec<String>,
     glob: GlobSet,
+    path_style: PathStyle,
 }
 
 // impl std::fmt::Display for PathMatcher {
@@ -610,7 +577,10 @@ impl PartialEq for PathMatcher {
 impl Eq for PathMatcher {}
 
 impl PathMatcher {
-    pub fn new(globs: impl IntoIterator<Item = impl AsRef<str>>) -> Result<Self, globset::Error> {
+    pub fn new(
+        globs: impl IntoIterator<Item = impl AsRef<str>>,
+        path_style: PathStyle,
+    ) -> Result<Self, globset::Error> {
         let globs = globs
             .into_iter()
             .map(|as_str| Glob::new(as_str.as_ref()))
@@ -621,7 +591,11 @@ impl PathMatcher {
             glob_builder.add(single_glob);
         }
         let glob = glob_builder.build()?;
-        Ok(PathMatcher { glob, sources })
+        Ok(PathMatcher {
+            glob,
+            sources,
+            path_style,
+        })
     }
 
     pub fn sources(&self) -> &[String] {
@@ -639,11 +613,21 @@ impl PathMatcher {
 
     fn check_with_end_separator(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        let separator = std::path::MAIN_SEPARATOR_STR;
+        let separator = self.path_style.separator();
         if path_str.ends_with(separator) {
             false
         } else {
             self.glob.is_match(path_str.to_string() + separator)
+        }
+    }
+}
+
+impl Default for PathMatcher {
+    fn default() -> Self {
+        Self {
+            path_style: PathStyle::local(),
+            glob: GlobSet::empty(),
+            sources: vec![],
         }
     }
 }
@@ -1275,7 +1259,8 @@ mod tests {
     #[test]
     fn edge_of_glob() {
         let path = Path::new("/work/node_modules");
-        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
+        let path_matcher =
+            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"
@@ -1285,7 +1270,8 @@ mod tests {
     #[test]
     fn project_search() {
         let path = Path::new("/Users/someonetoignore/work/zed/zed.dev/node_modules");
-        let path_matcher = PathMatcher::new(&["**/node_modules/**".to_owned()]).unwrap();
+        let path_matcher =
+            PathMatcher::new(&["**/node_modules/**".to_owned()], PathStyle::Posix).unwrap();
         assert!(
             path_matcher.is_match(path),
             "Path matcher should match {path:?}"

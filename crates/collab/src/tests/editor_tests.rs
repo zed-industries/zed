@@ -16,6 +16,7 @@ use editor::{
 };
 use fs::Fs;
 use futures::{SinkExt, StreamExt, channel::mpsc, lock::Mutex};
+use git::repository::repo_path;
 use gpui::{App, Rgba, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
 use language::FakeLspAdapter;
@@ -38,7 +39,7 @@ use std::{
     },
 };
 use text::Point;
-use util::{path, uri};
+use util::{path, rel_path::rel_path, uri};
 use workspace::{CloseIntent, Workspace};
 
 #[gpui::test(iterations = 10)]
@@ -97,7 +98,7 @@ async fn test_host_disconnect(
 
     let editor_b = workspace_b
         .update(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "b.txt"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("b.txt")), None, true, window, cx)
         })
         .unwrap()
         .await
@@ -205,7 +206,9 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
 
     // Open a buffer as client A
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
@@ -222,7 +225,9 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
     let cx_b = cx_b.add_empty_window();
     // Open a buffer as client B
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
     let editor_b = cx_b
@@ -334,7 +339,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
@@ -408,7 +415,9 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
 
     // Open the buffer on the host.
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     cx_a.executor().run_until_parked();
@@ -599,7 +608,7 @@ async fn test_collaborating_with_code_actions(
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -825,7 +834,7 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "one.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -1072,7 +1081,7 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "one.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -1412,7 +1421,10 @@ async fn test_share_project(
     project_b
         .update(cx_b, |project, cx| {
             let worktree = project.worktrees(cx).next().unwrap();
-            let entry = worktree.read(cx).entry_for_path("ignored-dir").unwrap();
+            let entry = worktree
+                .read(cx)
+                .entry_for_path(rel_path("ignored-dir"))
+                .unwrap();
             project.expand_entry(worktree_id, entry.id, cx).unwrap()
         })
         .await
@@ -1435,17 +1447,21 @@ async fn test_share_project(
 
     // Open the same file as client B and client A.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("b.txt")), cx)
+        })
         .await
         .unwrap();
 
     buffer_b.read_with(cx_b, |buf, _| assert_eq!(buf.text(), "b-contents"));
 
     project_a.read_with(cx_a, |project, cx| {
-        assert!(project.has_open_buffer((worktree_id, "b.txt"), cx))
+        assert!(project.has_open_buffer((worktree_id, rel_path("b.txt")), cx))
     });
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "b.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("b.txt")), cx)
+        })
         .await
         .unwrap();
 
@@ -1553,7 +1569,9 @@ async fn test_on_input_format_from_host_to_guest(
 
     // Open a file in an editor as the host.
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
@@ -1586,7 +1604,9 @@ async fn test_on_input_format_from_host_to_guest(
 
     // Open the buffer on the guest and see that the formatting worked
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
 
@@ -1686,7 +1706,9 @@ async fn test_on_input_format_from_guest_to_host(
 
     // Open a file in an editor as the guest.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
@@ -1732,7 +1754,9 @@ async fn test_on_input_format_from_guest_to_host(
 
     // Open the buffer on the host and see that the formatting worked
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("main.rs")), cx)
+        })
         .await
         .unwrap();
     executor.run_until_parked();
@@ -1881,7 +1905,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap();
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -1931,7 +1955,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2126,7 +2150,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2135,7 +2159,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2313,7 +2337,7 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
         .unwrap();
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2373,7 +2397,7 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2594,7 +2618,7 @@ async fn test_lsp_pull_diagnostics(
         .unwrap();
     let editor_a_main = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -2953,7 +2977,7 @@ async fn test_lsp_pull_diagnostics(
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b_main = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -3001,7 +3025,7 @@ async fn test_lsp_pull_diagnostics(
 
     let editor_b_lib = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "lib.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("lib.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -3355,7 +3379,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     };
     client_a.fs().set_blame_for_repo(
         Path::new(path!("/my-repo/.git")),
-        vec![("file.txt".into(), blame)],
+        vec![(repo_path("file.txt"), blame)],
     );
 
     let (project_a, worktree_id) = client_a.build_local_project(path!("/my-repo"), cx_a).await;
@@ -3368,7 +3392,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "file.txt"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("file.txt")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -3380,7 +3404,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "file.txt"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("file.txt")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -3558,13 +3582,13 @@ async fn test_collaborating_with_editorconfig(
         .unwrap();
     let main_buffer_a = project_a
         .update(cx_a, |p, cx| {
-            p.open_buffer((worktree_id, "src/main.rs"), cx)
+            p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
         })
         .await
         .unwrap();
     let other_buffer_a = project_a
         .update(cx_a, |p, cx| {
-            p.open_buffer((worktree_id, "src/other_mod/other.rs"), cx)
+            p.open_buffer((worktree_id, rel_path("src/other_mod/other.rs")), cx)
         })
         .await
         .unwrap();
@@ -3592,13 +3616,13 @@ async fn test_collaborating_with_editorconfig(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let main_buffer_b = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer((worktree_id, "src/main.rs"), cx)
+            p.open_buffer((worktree_id, rel_path("src/main.rs")), cx)
         })
         .await
         .unwrap();
     let other_buffer_b = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer((worktree_id, "src/other_mod/other.rs"), cx)
+            p.open_buffer((worktree_id, rel_path("src/other_mod/other.rs")), cx)
         })
         .await
         .unwrap();
@@ -3717,7 +3741,7 @@ fn main() { let foo = other::foo(); }"};
 
     let editorconfig_buffer_b = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer((worktree_id, "src/other_mod/.editorconfig"), cx)
+            p.open_buffer((worktree_id, rel_path("src/other_mod/.editorconfig")), cx)
         })
         .await
         .unwrap();
@@ -3794,7 +3818,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
     let (project_a, worktree_id) = client_a.build_local_project("/a", cx_a).await;
     let project_path = ProjectPath {
         worktree_id,
-        path: Arc::from(Path::new(&"test.txt")),
+        path: rel_path(&"test.txt").into(),
     };
     let abs_path = project_a.read_with(cx_a, |project, cx| {
         project
@@ -4017,7 +4041,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     let editor_a = workspace_a
         .update_in(cx_a, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()
@@ -4026,7 +4050,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
 
     let editor_b = workspace_b
         .update_in(cx_b, |workspace, window, cx| {
-            workspace.open_path((worktree_id, "main.rs"), None, true, window, cx)
+            workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
         })
         .await
         .unwrap()

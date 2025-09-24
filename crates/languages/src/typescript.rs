@@ -22,8 +22,8 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, VariableName};
-use util::merge_json_value_into;
 use util::{ResultExt, fs::remove_matching, maybe};
+use util::{merge_json_value_into, rel_path::RelPath};
 
 use crate::{PackageJson, PackageJsonData, github_download::download_server_binary};
 
@@ -264,7 +264,7 @@ impl TypeScriptContextProvider {
         &self,
         fs: Arc<dyn Fs>,
         worktree_root: &Path,
-        file_relative_path: &Path,
+        file_relative_path: &RelPath,
         cx: &App,
     ) -> Task<anyhow::Result<PackageJsonData>> {
         let new_json_data = file_relative_path
@@ -533,7 +533,7 @@ impl TypeScriptLspAdapter {
     }
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
+            .read_text_file(RelPath::new(".yarn/sdks/typescript/lib/typescript.js").unwrap())
             .await
             .is_ok();
 
@@ -1014,7 +1014,7 @@ mod tests {
     use serde_json::json;
     use task::TaskTemplates;
     use unindent::Unindent;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     use crate::typescript::{
         PackageJsonData, TypeScriptContextProvider, replace_test_name_parameters,
@@ -1164,7 +1164,7 @@ mod tests {
                 provider.combined_package_json_data(
                     fs.clone(),
                     path!("/root").as_ref(),
-                    "sub/file1.js".as_ref(),
+                    rel_path("sub/file1.js"),
                     cx,
                 )
             })

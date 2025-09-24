@@ -698,6 +698,7 @@ async fn parse_commit_messages(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git::repository::repo_path;
     use gpui::Context;
     use language::{Point, Rope};
     use project::FakeFs;
@@ -850,7 +851,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new("/my-repo/.git"),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: vec![
                         blame_entry("1b1b1b", 0..1),
@@ -967,7 +968,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new(path!("/my-repo/.git")),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: vec![blame_entry("1b1b1b", 0..4)],
                     ..Default::default()
@@ -1135,7 +1136,7 @@ mod tests {
         fs.set_blame_for_repo(
             Path::new(path!("/my-repo/.git")),
             vec![(
-                "file.txt".into(),
+                repo_path("file.txt"),
                 Blame {
                     entries: blame_entries,
                     ..Default::default()
@@ -1178,7 +1179,7 @@ mod tests {
                     fs.set_blame_for_repo(
                         Path::new(path!("/my-repo/.git")),
                         vec![(
-                            "file.txt".into(),
+                            repo_path("file.txt"),
                             Blame {
                                 entries: blame_entries,
                                 ..Default::default()
