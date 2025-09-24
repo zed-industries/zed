@@ -42,7 +42,7 @@ use wasmtime::{
     CacheStore, Engine, Store,
     component::{Component, ResourceTable},
 };
-use wasmtime_wasi::{self as wasi, WasiView};
+use wasmtime_wasi::{self as wasi, IoView};
 use wit::Extension;
 
 pub struct WasmHost {
@@ -838,11 +838,13 @@ impl WasmState {
     }
 }
 
-impl wasi::WasiView for WasmState {
+impl wasi::IoView for WasmState {
     fn table(&mut self) -> &mut ResourceTable {
         &mut self.table
     }
+}
 
+impl wasi::WasiView for WasmState {
     fn ctx(&mut self) -> &mut wasi::WasiCtx {
         &mut self.ctx
     }
