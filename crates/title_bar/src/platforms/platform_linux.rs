@@ -1,5 +1,7 @@
 use gpui::{Action, Hsla, MouseButton, prelude::*, svg};
 use ui::prelude::*;
+use settings::{Settings, WindowControlsPosition};
+use crate::title_bar_settings::TitleBarSettings;
 
 #[derive(IntoElement)]
 pub struct LinuxWindowControls {
@@ -16,31 +18,71 @@ impl LinuxWindowControls {
 
 impl RenderOnce for LinuxWindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        h_flex()
+        let title_bar_settings = TitleBarSettings::get(None, cx);
+        let controls = match title_bar_settings.window_controls_position {
+            WindowControlsPosition::Left => {
+                // Lado esquerdo: Close, Minimize, Maximize (left to right)
+                vec![
+                    WindowControl::new_close(
+                        "close",
+                        WindowControlType::Close,
+                        self.close_window_action,
+                        cx,
+                    ),
+                    WindowControl::new(
+                        "minimize",
+                        WindowControlType::Minimize,
+                        cx,
+                    ),
+                    WindowControl::new(
+                        "maximize-or-restore",
+                        if window.is_maximized() {
+                            WindowControlType::Restore
+                        } else {
+                            WindowControlType::Maximize
+                        },
+                        cx,
+                    ),
+                ]
+            }
+            WindowControlsPosition::Right => {
+                // Lado direito: Minimize, Maximize, Close (left to right)
+                vec![
+                    WindowControl::new(
+                        "minimize",
+                        WindowControlType::Minimize,
+                        cx,
+                    ),
+                    WindowControl::new(
+                        "maximize-or-restore",
+                        if window.is_maximized() {
+                            WindowControlType::Restore
+                        } else {
+                            WindowControlType::Maximize
+                        },
+                        cx,
+                    ),
+                    WindowControl::new_close(
+                        "close",
+                        WindowControlType::Close,
+                        self.close_window_action,
+                        cx,
+                    ),
+                ]
+            }
+        };
+
+        let mut flex = h_flex()
             .id("generic-window-controls")
             .px_3()
             .gap_3()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(WindowControl::new_close(
-                "close",
-                WindowControlType::Close,
-                self.close_window_action,
-                cx,
-            ))
-            .child(WindowControl::new(
-                "maximize-or-restore",
-                if window.is_maximized() {
-                    WindowControlType::Restore
-                } else {
-                    WindowControlType::Maximize
-                },
-                cx,
-            ))
-            .child(WindowControl::new(
-                "minimize",
-                WindowControlType::Minimize,
-                cx,
-            ))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+        for control in controls {
+            flex = flex.child(control);
+        }
+
+        flex
     }
 }
 
@@ -80,7 +122,7 @@ impl WindowControlStyle {
         let colors = cx.theme().colors();
 
         Self {
-            background: colors.ghost_element_background,
+            background: colors.title_bar_background,
             background_hover: colors.ghost_element_hover,
             icon: colors.icon,
             icon_hover: colors.icon_muted,
@@ -185,6 +227,7 @@ impl RenderOnce for WindowControl {
             .rounded_2xl()
             .w_5()
             .h_5()
+            .bg(self.style.background)
             .hover(|this| this.bg(self.style.background_hover))
             .active(|this| this.bg(self.style.background_hover))
             .child(icon)
