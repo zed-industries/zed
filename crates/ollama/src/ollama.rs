@@ -37,6 +37,7 @@ fn get_max_tokens(name: &str) -> u64 {
         "cogito" | "command-r" | "deepseek-coder-v2" | "deepseek-r1" | "deepseek-v3"
         | "devstral" | "gemma3" | "gpt-oss" | "granite3.3" | "llama3.1" | "llama3.2"
         | "llama3.3" | "mistral-nemo" | "phi3" | "phi3.5" | "phi4" | "qwen3" | "yi-coder" => 128000,
+        "qwen3-coder" => 256000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
