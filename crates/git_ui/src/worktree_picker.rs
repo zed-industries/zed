@@ -575,42 +575,34 @@ impl PickerDelegate for WorktreeListDelegate {
             h_flex()
                 .w_full()
                 .p_1p5()
-                .justify_between()
+                .gap_0p5()
+                .justify_end()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
-                    h_flex()
-                        .gap_0p5()
-                        .child(
-                            Button::new("open-in-new-window", "Open in new window")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::Confirm,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::Confirm.boxed_clone(), cx)
-                                }),
+                    Button::new("open-in-new-window", "Open in new window")
+                        .key_binding(
+                            KeyBinding::for_action_in(&menu::Confirm, &focus_handle, window, cx)
+                                .map(|kb| kb.size(rems_from_px(12.))),
                         )
-                        .child(
-                            Button::new("open-in-window", "Open")
-                                .key_binding(
-                                    KeyBinding::for_action_in(
-                                        &menu::SecondaryConfirm,
-                                        &focus_handle,
-                                        window,
-                                        cx,
-                                    )
-                                    .map(|kb| kb.size(rems_from_px(12.))),
-                                )
-                                .on_click(|_, window, cx| {
-                                    window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
-                                }),
-                        ),
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::Confirm.boxed_clone(), cx)
+                        }),
+                )
+                .child(
+                    Button::new("open-in-window", "Open")
+                        .key_binding(
+                            KeyBinding::for_action_in(
+                                &menu::SecondaryConfirm,
+                                &focus_handle,
+                                window,
+                                cx,
+                            )
+                            .map(|kb| kb.size(rems_from_px(12.))),
+                        )
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(menu::SecondaryConfirm.boxed_clone(), cx)
+                        }),
                 )
                 .into_any(),
         )
