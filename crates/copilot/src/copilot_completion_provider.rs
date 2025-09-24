@@ -211,8 +211,6 @@ impl EditPredictionProvider for CopilotCompletionProvider {
                 copilot.discard_completions(&self.completions, cx)
             })
             .detach_and_log_err(cx);
-
-        self.completions.clear();
     }
 
     fn suggest(
