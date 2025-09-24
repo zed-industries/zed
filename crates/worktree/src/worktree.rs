@@ -391,12 +391,12 @@ struct LocalRepositoryEntry {
 }
 
 impl sum_tree::Item for LocalRepositoryEntry {
-    type Summary = PathSummary<&'static ()>;
+    type Summary = PathSummary<sum_tree::NoSummary>;
 
     fn summary(&self, _: <Self::Summary as Summary>::Context<'_>) -> Self::Summary {
         PathSummary {
             max_path: self.work_directory.path_key().0,
-            item_summary: &(),
+            item_summary: sum_tree::NoSummary,
         }
     }
 }
@@ -5583,7 +5583,9 @@ impl<'a> SeekTarget<'a, EntrySummary, TraversalProgress<'a>> for TraversalTarget
     }
 }
 
-impl<'a> SeekTarget<'a, PathSummary<&'static ()>, TraversalProgress<'a>> for TraversalTarget<'_> {
+impl<'a> SeekTarget<'a, PathSummary<sum_tree::NoSummary>, TraversalProgress<'a>>
+    for TraversalTarget<'_>
+{
     fn cmp(&self, cursor_location: &TraversalProgress<'a>, _: ()) -> Ordering {
         self.cmp_progress(cursor_location)
     }

@@ -57,12 +57,15 @@ impl<T: ContextLessSummary> Summary for T {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NoSummary;
+
 /// Catch-all implementation for when you need something that implements [`Summary`] without a specific type.
-/// We implement it on a &'static, as that avoids blanket impl collisions with `impl<T: Summary> Dimension for T`
+/// We implement it on a `NoSummary` instead of re-using `()`, as that avoids blanket impl collisions with `impl<T: Summary> Dimension for T`
 /// (as we also need unit type to be a fill-in dimension)
-impl ContextLessSummary for &'static () {
+impl ContextLessSummary for NoSummary {
     fn zero() -> Self {
-        &()
+        NoSummary
     }
 
     fn add_summary(&mut self, _: &Self) {}
