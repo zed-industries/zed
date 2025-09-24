@@ -45,6 +45,7 @@ members = [
     "crates/component",
     "crates/context_server",
     "crates/copilot",
+    "crates/convex-rs",
     "crates/crashes",
     "crates/credentials_provider",
     "crates/dap",
@@ -279,6 +280,7 @@ command_palette = { path = "crates/command_palette" }
 command_palette_hooks = { path = "crates/command_palette_hooks" }
 component = { path = "crates/component" }
 context_server = { path = "crates/context_server" }
+convex = {path = "crates/convex-rs"}
 copilot = { path = "crates/copilot" }
 crashes = { path = "crates/crashes" }
 credentials_provider = { path = "crates/credentials_provider" }

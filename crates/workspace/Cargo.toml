@@ -27,6 +27,7 @@ test-support = [
 
 [dependencies]
 gpui_tokio.workspace = true
+convex.workspace = true
 maplit.workspace = true
 repo_name.workspace = true
 any_vec.workspace = true
