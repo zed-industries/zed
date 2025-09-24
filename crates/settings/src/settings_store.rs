@@ -156,6 +156,16 @@ pub struct SettingsStore {
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
 }
 
+#[derive(Clone, PartialEq)]
+pub enum SettingsFile {
+    User,
+    Global,
+    Extension,
+    Server,
+    Default,
+    Local((WorktreeId, Arc<Path>)),
+}
+
 #[derive(Clone)]
 pub struct Editorconfig {
     pub is_root: bool,
@@ -478,6 +488,47 @@ impl SettingsStore {
                 store.get_vscode_edits(old_text, &vscode_settings)
             })
         })
+    }
+
+    fn get_all_files(&self) -> Vec<SettingsFile> {
+        // - _Default_: The ones we ship with Zed, this file will **always** have a default value for every setting.
+        // - _Global_: An additional settings file that is loaded before user settings, located in the user's config directory.
+        // - _Extensions_: Extensions can provide their own default values for certain language settings (e.g. `tab_size`)
+        // - _User_: The user's own settings file, which is located in the user's config directory
+        // - _Release Channel_: Any setting can be customized to your current release channel (This is located inside the user settings file)
+        // - _Operating System_: Any setting can be customized to your current operating system. (This is located inside the user settings file)
+        // - _Profile_: Any setting can be customized to your current profile. (Both the current profile and the customizations for that profile are inside the user settings file)
+        // - _Server_ or _Remote_: This is placed second-to-last in the list, but this (and default / global settings) is the only settings file that is loaded on the remote server when connecting over SSH. User settings and the sources derived from them don't have an effect on the remote server's behavior.
+        // - _Project_: Any folder in a project can have it's own `.zed/settings.json` file, that applies those settings to the directories under it. Some of these settings can even come from external sources, like `.editorconfig` files.
+        //   - Despite having the highest precedence, these are only respected if the code that accesses the setting uses the `Settings::get` API and passes it a workspace location.
+
+        let mut files = Vec::from_iter(
+            self.local_settings
+                .keys()
+                // rev because these are sorted by path, so highest precedence is last
+                .rev()
+                .cloned()
+                .map(SettingsFile::Local),
+        );
+
+        if self.server_settings.is_some() {
+            files.push(SettingsFile::Server);
+        }
+        // ignoring profiles
+        // ignoring os profiles
+        // ignoring release channel profiles
+
+        if self.user_settings.is_some() {
+            files.push(SettingsFile::User);
+        }
+        if self.extension_settings.is_some() {
+            files.push(SettingsFile::Extension);
+        }
+        if self.global_settings.is_some() {
+            files.push(SettingsFile::Global);
+        }
+        files.push(SettingsFile::Default);
+        files
     }
 }
 
