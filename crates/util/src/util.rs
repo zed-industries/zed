@@ -31,6 +31,7 @@ use std::{
 use unicase::UniCase;
 
 pub use take_until::*;
+pub use util_macros::FieldAccessByEnum;
 #[cfg(any(test, feature = "test-support"))]
 pub use util_macros::{line_endings, path, uri};
 
@@ -1102,6 +1103,53 @@ pub fn some_or_debug_panic<T>(option: Option<T>) -> Option<T> {
         panic!("Unexpected None");
     }
     option
+}
+
+/// Trait that provides field access specified by enum.
+///
+/// The derive macro only supports structs with named fields that all have the same type.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(FieldAccessByEnum)]
+/// #[field_access_by_enum(
+///     enum_name = "ColorField",
+///     enum_attrs = [
+///         derive(Debug, Clone, Copy, EnumIter, AsRefStr),
+///         strum(serialize_all = "snake_case")
+///     ],
+/// )]
+/// struct Theme {
+///     background: Hsla,
+///     foreground: Hsla,
+///     border_color: Hsla,
+/// }
+/// ```
+///
+/// This generates:
+/// ```ignore
+/// #[derive(Debug, Clone, Copy, EnumIter, AsRefStr)]
+/// #[strum(serialize_all = "snake_case")]
+/// enum ColorField {
+///     Background,
+///     Foreground,
+///     BorderColor,
+/// }
+///
+/// impl FieldAccessByEnum<Hsla> for Theme {
+///     type Field = ColorField;
+///     // ... get and set methods
+/// }
+/// ```
+pub trait FieldAccessByEnum<V> {
+    /// The enum type representing the available fields
+    type Field;
+
+    /// Get a reference to the value of the specified field
+    fn get_field_by_enum(&self, field: Self::Field) -> &V;
+    /// Set the value of the specified field
+    fn set_field_by_enum(&mut self, field: Self::Field, value: V);
 }
 
 #[cfg(test)]

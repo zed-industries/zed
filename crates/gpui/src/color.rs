@@ -697,6 +697,16 @@ pub struct Background {
     pad: u32,
 }
 
+impl Background {
+    /// Convert this background to a solid color, if it is one.
+    pub fn as_solid(&self) -> Option<Hsla> {
+        match self.tag {
+            BackgroundTag::Solid => Some(self.solid),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Debug for Background {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self.tag {

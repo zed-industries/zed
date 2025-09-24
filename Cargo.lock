@@ -8077,6 +8077,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "command_palette_hooks",
+ "convert_case 0.8.0",
  "editor",
  "fuzzy",
  "gpui",
@@ -8084,6 +8085,8 @@ dependencies = [
  "project",
  "serde_json",
  "serde_json_lenient",
+ "strum 0.27.1",
+ "text",
  "theme",
  "ui",
  "util",
@@ -17544,7 +17547,9 @@ dependencies = [
 name = "util_macros"
 version = "0.1.0"
 dependencies = [
+ "convert_case 0.8.0",
  "perf",
+ "proc-macro2",
  "quote",
  "syn 2.0.101",
  "workspace-hack",

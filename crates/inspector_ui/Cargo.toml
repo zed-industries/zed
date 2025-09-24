@@ -14,6 +14,7 @@ path = "src/inspector_ui.rs"
 [dependencies]
 anyhow.workspace = true
 command_palette_hooks.workspace = true
+convert_case.workspace = true
 editor.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -21,6 +22,8 @@ language.workspace = true
 project.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
+strum.workspace = true
+text.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true

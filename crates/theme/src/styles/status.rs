@@ -2,11 +2,20 @@
 
 use gpui::Hsla;
 use refineable::Refineable;
+use strum::{AsRefStr, EnumIter};
+use util::FieldAccessByEnum;
 
 use crate::{blue, grass, neutral, red, yellow};
 
-#[derive(Refineable, Clone, Debug, PartialEq)]
+#[derive(Refineable, FieldAccessByEnum, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
+#[field_access_by_enum(
+    enum_name = "StatusColorField",
+    enum_attrs = [
+        derive(Debug, Clone, Copy, EnumIter, AsRefStr),
+        strum(serialize_all = "snake_case")
+    ]
+)]
 pub struct StatusColors {
     /// Indicates some kind of conflict, like a file changed on disk while it was open, or
     /// merge conflicts in a Git repository.
