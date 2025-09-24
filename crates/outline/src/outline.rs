@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::ops::Range;
 use std::{
     cmp::{self, Reverse},
@@ -216,6 +217,7 @@ impl PickerDelegate for OutlineViewDelegate {
         _: &mut Window,
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) {
+        println!("Selected index: {}", ix);
         self.set_selected_index(ix, true, cx);
     }
 
@@ -226,6 +228,11 @@ impl PickerDelegate for OutlineViewDelegate {
         cx: &mut Context<Picker<OutlineViewDelegate>>,
     ) -> Task<()> {
         let selected_index;
+        let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let cursor_offset = editor.selections.newest::<usize>(cx).head();
+            (buffer, cursor_offset)
+        });
         if query.is_empty() {
             self.restore_active_editor(window, cx);
             self.matches = self
@@ -241,11 +248,6 @@ impl PickerDelegate for OutlineViewDelegate {
                 })
                 .collect();
 
-            let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
-                let buffer = editor.buffer().read(cx).snapshot(cx);
-                let cursor_offset = editor.selections.newest::<usize>(cx).head();
-                (buffer, cursor_offset)
-            });
             selected_index = self
                 .outline
                 .items
@@ -253,15 +255,9 @@ impl PickerDelegate for OutlineViewDelegate {
                 .enumerate()
                 .map(|(ix, item)| {
                     let range = item.range.to_offset(&buffer);
-                    let distance_to_closest_endpoint = cmp::min(
-                        (range.start as isize - cursor_offset as isize).abs(),
-                        (range.end as isize - cursor_offset as isize).abs(),
-                    );
-                    let depth = if range.contains(&cursor_offset) {
-                        Some(item.depth)
-                    } else {
-                        None
-                    };
+                    let distance_to_closest_endpoint =
+                        get_distance_to_closest_endpoint(&range, &cursor_offset);
+                    let depth = get_outline_item_depth(item, &range, &cursor_offset);
                     (ix, depth, distance_to_closest_endpoint)
                 })
                 .max_by_key(|(_, depth, distance)| (*depth, Reverse(*distance)))
@@ -276,7 +272,31 @@ impl PickerDelegate for OutlineViewDelegate {
                 .matches
                 .iter()
                 .enumerate()
-                .max_by_key(|(_, m)| OrderedFloat(m.score))
+                .max_by(|(_, match_1), (_, match_2)| {
+                    let ordering = OrderedFloat(match_1.score).cmp(&OrderedFloat(match_2.score));
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+
+                    let outline_item_1 = &self.outline.items[match_1.candidate_id];
+                    let range_1 = outline_item_1.range.to_offset(&buffer);
+                    let depth_1 = get_outline_item_depth(outline_item_1, &range_1, &cursor_offset);
+                    let outline_item_2 = &self.outline.items[match_2.candidate_id];
+                    let range_2 = outline_item_2.range.to_offset(&buffer);
+                    let depth_2 = get_outline_item_depth(outline_item_2, &range_2, &cursor_offset);
+                    let ordering = depth_1.cmp(&depth_2);
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+
+                    let distance_to_closest_endpoint_1 =
+                        get_distance_to_closest_endpoint(&range_1, &cursor_offset);
+                    let distance_to_closest_endpoint_2 =
+                        get_distance_to_closest_endpoint(&range_2, &cursor_offset);
+                    distance_to_closest_endpoint_1
+                        .cmp(&distance_to_closest_endpoint_2)
+                        .reverse()
+                })
                 .map(|(ix, _)| ix)
                 .unwrap_or(0);
         }
@@ -343,6 +363,25 @@ impl PickerDelegate for OutlineViewDelegate {
                 ),
         )
     }
+}
+
+fn get_outline_item_depth(
+    item: &OutlineItem<Anchor>,
+    range: &Range<usize>,
+    cursor_offset: &usize,
+) -> Option<usize> {
+    if range.contains(cursor_offset) {
+        Some(item.depth)
+    } else {
+        None
+    }
+}
+
+fn get_distance_to_closest_endpoint(range: &Range<usize>, cursor_offset: &usize) -> isize {
+    cmp::min(
+        (range.start as isize - *cursor_offset as isize).abs(),
+        (range.end as isize - *cursor_offset as isize).abs(),
+    )
 }
 
 pub fn render_item<T>(
