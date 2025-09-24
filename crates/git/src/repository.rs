@@ -242,8 +242,20 @@ pub struct GitExcludeOverride {
 }
 
 impl GitExcludeOverride {
+    const START_BLOCK_MARKER: &str = "\n\n#  ====== Auto-added by Zed: =======\n";
+    const END_BLOCK_MARKER: &str = "\n#  ====== End of auto-added by Zed =======\n";
+
     pub async fn new(git_exclude_path: PathBuf) -> Result<Self> {
-        let original_excludes = smol::fs::read_to_string(&git_exclude_path).await.ok();
+        let original_excludes =
+            smol::fs::read_to_string(&git_exclude_path)
+                .await
+                .ok()
+                .map(|content| {
+                    // Auto-generated lines are normally cleaned up in
+                    // `restore_original()` or `drop()`, but may stuck in rare cases.
+                    // Make sure to remove them.
+                    Self::remove_auto_generated_block(&content)
+                });
 
         Ok(GitExcludeOverride {
             git_exclude_path,
@@ -260,9 +272,10 @@ impl GitExcludeOverride {
         });
 
         let mut content = self.original_excludes.clone().unwrap_or_default();
-        content.push_str("\n\n#  ====== Auto-added by Zed: =======\n");
+
+        content.push_str(Self::START_BLOCK_MARKER);
         content.push_str(self.added_excludes.as_ref().unwrap());
-        content.push('\n');
+        content.push_str(Self::END_BLOCK_MARKER);
 
         smol::fs::write(&self.git_exclude_path, content).await?;
         Ok(())
@@ -278,6 +291,33 @@ impl GitExcludeOverride {
         self.added_excludes = None;
 
         Ok(())
+    }
+
+    fn remove_auto_generated_block(content: &str) -> String {
+        let start_marker = Self::START_BLOCK_MARKER;
+        let end_marker = Self::END_BLOCK_MARKER;
+        let mut content = content.to_string();
+
+        let start_index = content.find(start_marker);
+        let end_index = content.rfind(end_marker);
+
+        if let (Some(start), Some(end)) = (start_index, end_index) {
+            if end > start {
+                content.replace_range(start..end + end_marker.len(), "");
+            }
+        }
+
+        // Older versions of Zed didn't have end-of-block markers,
+        // so it's impossible to determine auto-generated lines.
+        // Conservatively remove the standard list of excludes
+        let standard_excludes = format!(
+            "{}{}",
+            Self::START_BLOCK_MARKER,
+            include_str!("./checkpoint.gitignore")
+        );
+        content = content.replace(&standard_excludes, "");
+
+        content
     }
 }
 
@@ -346,6 +386,7 @@ pub trait GitRepository: Send + Sync {
 
     fn change_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
     fn create_branch(&self, name: String) -> BoxFuture<'_, Result<()>>;
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>>;
 
     fn reset(
         &self,
@@ -1095,11 +1136,11 @@ impl GitRepository for RealGitRepository {
                 let (_, branch_name) = name.split_once("/").context("Unexpected branch format")?;
                 let revision = revision.get();
                 let branch_commit = revision.peel_to_commit()?;
-                let mut branch = repo.branch(branch_name, &branch_commit, false)?;
+                let mut branch = repo.branch(&branch_name, &branch_commit, false)?;
                 branch.set_upstream(Some(&name))?;
                 branch
             } else {
-                anyhow::bail!("Branch not found");
+                anyhow::bail!("Branch '{}' not found", name);
             };
 
             Ok(branch
@@ -1115,7 +1156,6 @@ impl GitRepository for RealGitRepository {
                 GitBinary::new(git_binary_path, working_directory?, executor)
                     .run(&["checkout", &branch])
                     .await?;
-
                 anyhow::Ok(())
             })
             .boxed()
@@ -1129,6 +1169,21 @@ impl GitRepository for RealGitRepository {
                 let current_commit = repo.head()?.peel_to_commit()?;
                 repo.branch(&name, &current_commit, false)?;
                 Ok(())
+            })
+            .boxed()
+    }
+
+    fn rename_branch(&self, branch: String, new_name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary_path = self.git_binary_path.clone();
+        let working_directory = self.working_directory();
+        let executor = self.executor.clone();
+
+        self.executor
+            .spawn(async move {
+                GitBinary::new(git_binary_path, working_directory?, executor)
+                    .run(&["branch", "-m", &branch, &new_name])
+                    .await?;
+                anyhow::Ok(())
             })
             .boxed()
     }

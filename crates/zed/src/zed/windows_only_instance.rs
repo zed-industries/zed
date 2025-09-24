@@ -42,14 +42,17 @@ pub fn handle_single_instance(opener: OpenListener, args: &Args) -> bool {
     let is_first_instance = is_first_instance();
     if is_first_instance {
         // We are the first instance, listen for messages sent from other instances
-        std::thread::spawn(move || {
-            with_pipe(|url| {
-                opener.open(RawOpenRequest {
-                    urls: vec![url],
-                    ..Default::default()
+        std::thread::Builder::new()
+            .name("EnsureSingleton".to_owned())
+            .spawn(move || {
+                with_pipe(|url| {
+                    opener.open(RawOpenRequest {
+                        urls: vec![url],
+                        ..Default::default()
+                    })
                 })
             })
-        });
+            .unwrap();
     } else if !args.foreground {
         // We are not the first instance, send args to the first instance
         send_args_to_instance(args).log_err();
@@ -161,28 +164,31 @@ fn send_args_to_instance(args: &Args) -> anyhow::Result<()> {
     };
 
     let exit_status = Arc::new(Mutex::new(None));
-    let sender: JoinHandle<anyhow::Result<()>> = std::thread::spawn({
-        let exit_status = exit_status.clone();
-        move || {
-            let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
-            let (tx, rx) = (handshake.requests, handshake.responses);
+    let sender: JoinHandle<anyhow::Result<()>> = std::thread::Builder::new()
+        .name("CliReceiver".to_owned())
+        .spawn({
+            let exit_status = exit_status.clone();
+            move || {
+                let (_, handshake) = server.accept().context("Handshake after Zed spawn")?;
+                let (tx, rx) = (handshake.requests, handshake.responses);
 
-            tx.send(request)?;
+                tx.send(request)?;
 
-            while let Ok(response) = rx.recv() {
-                match response {
-                    CliResponse::Ping => {}
-                    CliResponse::Stdout { message } => log::info!("{message}"),
-                    CliResponse::Stderr { message } => log::error!("{message}"),
-                    CliResponse::Exit { status } => {
-                        exit_status.lock().replace(status);
-                        return Ok(());
+                while let Ok(response) = rx.recv() {
+                    match response {
+                        CliResponse::Ping => {}
+                        CliResponse::Stdout { message } => log::info!("{message}"),
+                        CliResponse::Stderr { message } => log::error!("{message}"),
+                        CliResponse::Exit { status } => {
+                            exit_status.lock().replace(status);
+                            return Ok(());
+                        }
                     }
                 }
+                Ok(())
             }
-            Ok(())
-        }
-    });
+        })
+        .unwrap();
 
     write_message_to_instance_pipe(url.as_bytes())?;
     sender.join().unwrap()?;

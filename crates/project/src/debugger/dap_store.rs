@@ -5,8 +5,10 @@ use super::{
     session::{self, Session, SessionStateEvent},
 };
 use crate::{
-    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState, debugger::session::SessionQuirks,
-    project_settings::ProjectSettings, worktree_store::WorktreeStore,
+    InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
+    debugger::session::SessionQuirks,
+    project_settings::{DapBinary, ProjectSettings},
+    worktree_store::WorktreeStore,
 };
 use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
@@ -28,8 +30,9 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
+use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
+use settings::InlayHintKind;
 
 use remote::RemoteClient;
 use rpc::{
@@ -208,8 +211,10 @@ impl DapStore {
                 let dap_settings = ProjectSettings::get(Some(settings_location), cx)
                     .dap
                     .get(&adapter.name());
-                let user_installed_path =
-                    dap_settings.and_then(|s| s.binary.as_ref().map(PathBuf::from));
+                let user_installed_path = dap_settings.and_then(|s| match &s.binary {
+                    DapBinary::Default => None,
+                    DapBinary::Custom(binary) => Some(PathBuf::from(binary)),
+                });
                 let user_args = dap_settings.map(|s| s.args.clone());
 
                 let delegate = self.delegate(worktree, console, cx);

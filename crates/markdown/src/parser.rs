@@ -4,7 +4,9 @@ pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
     Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
-use std::{collections::HashSet, ops::Range, path::Path, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
+
+use collections::HashSet;
 
 use crate::path_range::PathWithRange;
 
@@ -26,8 +28,8 @@ pub fn parse_markdown(
     HashSet<Arc<Path>>,
 ) {
     let mut events = Vec::new();
-    let mut language_names = HashSet::new();
-    let mut language_paths = HashSet::new();
+    let mut language_names = HashSet::default();
+    let mut language_paths = HashSet::default();
     let mut within_link = false;
     let mut within_metadata = false;
     let mut parser = Parser::new_ext(text, PARSE_OPTIONS)
@@ -67,7 +69,7 @@ pub fn parse_markdown(
                         MarkdownTag::CodeBlock {
                             kind: CodeBlockKind::Indented,
                             metadata: CodeBlockMetadata {
-                                content_range: range.start + 1..range.end + 1,
+                                content_range: range.clone(),
                                 line_count: 1,
                             },
                         }
@@ -579,8 +581,8 @@ mod tests {
                     (30..37, Text),
                     (30..37, End(MarkdownTagEnd::Paragraph))
                 ],
-                HashSet::new(),
-                HashSet::new()
+                HashSet::default(),
+                HashSet::default()
             )
         )
     }
@@ -613,8 +615,8 @@ mod tests {
                     (46..51, Text),
                     (0..51, End(MarkdownTagEnd::Paragraph))
                 ],
-                HashSet::new(),
-                HashSet::new()
+                HashSet::default(),
+                HashSet::default()
             )
         );
     }
@@ -670,8 +672,8 @@ mod tests {
                     (43..53, SubstitutedText("–––––".into())),
                     (0..53, End(MarkdownTagEnd::Paragraph))
                 ],
-                HashSet::new(),
-                HashSet::new()
+                HashSet::default(),
+                HashSet::default()
             )
         )
     }
@@ -695,10 +697,35 @@ mod tests {
                     (8..34, Text),
                     (0..37, End(MarkdownTagEnd::CodeBlock)),
                 ],
-                HashSet::from(["rust".into()]),
-                HashSet::new()
+                {
+                    let mut h = HashSet::default();
+                    h.insert("rust".into());
+                    h
+                },
+                HashSet::default()
             )
-        )
+        );
+        assert_eq!(
+            parse_markdown("    fn main() {}"),
+            (
+                vec![
+                    (
+                        4..16,
+                        Start(CodeBlock {
+                            kind: CodeBlockKind::Indented,
+                            metadata: CodeBlockMetadata {
+                                content_range: 4..16,
+                                line_count: 1
+                            }
+                        })
+                    ),
+                    (4..16, Text),
+                    (4..16, End(MarkdownTagEnd::CodeBlock))
+                ],
+                HashSet::default(),
+                HashSet::default()
+            )
+        );
     }
 
     #[test]
