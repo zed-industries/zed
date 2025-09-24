@@ -20,7 +20,6 @@ use gpui::{
 use language::BufferSnapshot;
 use language::{Buffer, DiagnosticSet, LanguageServerId, ToOffset as _, ToPoint};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
-use pretty_assertions::assert_eq;
 use project::Project;
 use release_channel::AppVersion;
 use std::collections::{HashMap, VecDeque, hash_map};
