@@ -17110,6 +17110,7 @@ dependencies = [
  "gpui",
  "itertools 0.14.0",
  "libc",
+ "log",
  "rand 0.9.1",
  "regex",
  "release_channel",
