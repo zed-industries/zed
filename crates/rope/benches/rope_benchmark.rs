@@ -144,7 +144,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let rope = generate_random_rope(rng.clone(), *size);
 
-            b.iter_with_large_drop(|| {
+            b.iter(|| {
                 let chars = rope.chars().count();
                 assert!(chars > 0);
             });
@@ -183,6 +183,34 @@ fn rope_benchmarks(c: &mut Criterion) {
                 |offsets| {
                     for offset in offsets.iter() {
                         black_box(rope.point_to_offset(*offset));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+
+    let mut group = c.benchmark_group("cursor");
+    for size in sizes.iter() {
+        group.throughput(Throughput::Bytes(*size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let rope = generate_random_rope(rng.clone(), *size);
+
+            b.iter_batched(
+                || {
+                    let mut rng = rng.clone();
+                    let num_points = rope.len() / 10;
+
+                    let mut points = Vec::new();
+                    for _ in 0..num_points {
+                        points.push(rng.random_range(0..rope.len()));
+                    }
+                    points
+                },
+                |offsets| {
+                    for offset in offsets.iter() {
+                        black_box(rope.cursor(*offset));
                     }
                 },
                 BatchSize::SmallInput,
