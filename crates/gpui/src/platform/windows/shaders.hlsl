@@ -655,6 +655,10 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
                 // perimeter. This way each line starts and ends with a dash.
                 bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
                 float border_width = is_horizontal ? border.x : border.y;
+                float2 dashed_border = float2(
+                    max(quad.border_widths.bottom, quad.border_widths.top),
+                    max(quad.border_widths.right, quad.border_widths.left)
+                );
                 dash_velocity = dv_numerator / border_width;
                 t = is_horizontal ? the_point.x : the_point.y;
                 t *= dash_velocity;

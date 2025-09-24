@@ -649,14 +649,14 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 // The way we chose border widths above sometimes comes with a 0 width value.
                 // So we choose again to avoid division by zero.
                 let dashed_border = vec2<f32>(
-                        select(
+                        max(
                             quad.border_widths.bottom,
                             quad.border_widths.top,
-                            quad.border_widths.bottom < quad.border_widths.top),
-                        select(
+                        ),
+                        max(
                             quad.border_widths.right,
                             quad.border_widths.left,
-                            quad.border_widths.right < quad.border_widths.left )
+                        )
                    );
 
                 let border_width = select(dashed_border.y, dashed_border.x, is_horizontal);
