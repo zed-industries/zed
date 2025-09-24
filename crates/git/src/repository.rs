@@ -87,10 +87,6 @@ impl Worktree {
             .or_else(|| self.ref_name.as_ref().strip_prefix("refs/remotes/"))
             .unwrap_or(self.ref_name.as_ref())
     }
-
-    pub fn is_remote(&self) -> bool {
-        self.ref_name.starts_with("refs/remotes/")
-    }
 }
 
 pub fn parse_worktrees_from_str<T: AsRef<str>>(raw_worktrees: T) -> Vec<Worktree> {
