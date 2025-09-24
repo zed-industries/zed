@@ -898,6 +898,7 @@ fn surrounding_filename(
             } else {
                 // Otherwise, we skip the quote
                 inside_quotes = true;
+                token_end += ch.len_utf8();
                 continue;
             }
         }
@@ -1545,6 +1546,10 @@ mod tests {
             ("'fˇile.txt'", Some("file.txt")),
             ("ˇ'file.txt'", Some("file.txt")),
             ("ˇ'fi\\ le.txt'", Some("fi le.txt")),
+            // Quoted multibyte characters
+            (" ˇ\"常\"", Some("常")),
+            (" \"ˇ常\"", Some("常")),
+            ("ˇ\"常\"", Some("常")),
         ];
 
         for (input, expected) in test_cases {
