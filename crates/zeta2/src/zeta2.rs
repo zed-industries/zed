@@ -24,7 +24,6 @@ use project::Project;
 use release_channel::AppVersion;
 use std::collections::{HashMap, VecDeque, hash_map};
 use std::path::Path;
-use std::path::PathBuf;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -761,8 +760,7 @@ fn make_cloud_request(
 
         let (text, text_is_truncated) = snippet.declaration.item_text();
         referenced_declarations.push(predict_edits_v3::ReferencedDeclaration {
-            path: path.into(),
-            // todo! path: path.as_std_path().to_path_buf(),
+            path: path.as_std_path().into(),
             text: text.into(),
             range: snippet.declaration.item_range(),
             text_is_truncated,

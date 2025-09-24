@@ -164,7 +164,7 @@ pub enum SettingsFile {
     Extension,
     Server,
     Default,
-    Local((WorktreeId, Arc<Path>)),
+    Local((WorktreeId, Arc<RelPath>)),
 }
 
 #[derive(Clone)]
