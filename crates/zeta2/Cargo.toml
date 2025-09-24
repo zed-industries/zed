@@ -37,4 +37,8 @@ workspace.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]
+clock = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+project = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+language_model = { workspace = true, features = ["test-support"] }

@@ -815,3 +815,140 @@ fn add_signature(
     declaration_to_signature_index.insert(declaration_id, signature_index);
     Some(signature_index)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+
+    use client::UserStore;
+    use clock::FakeSystemClock;
+    use cloud_llm_client::predict_edits_v3;
+    use futures::AsyncReadExt;
+    use gpui::{
+        Entity, TestAppContext,
+        http_client::{FakeHttpClient, Response},
+        prelude::*,
+    };
+    use language::OffsetRangeExt as _;
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use uuid::Uuid;
+
+    use crate::Zeta;
+
+    #[gpui::test]
+    async fn test_simple_request(cx: &mut TestAppContext) {
+        let src = "Hello!\nHow\nBye";
+
+        let zeta = init_test(
+            |req| {
+                assert_eq!(req.excerpt_path.as_path(), Path::new("root/foo.md"));
+                assert_eq!(req.cursor_offset, 10);
+
+                predict_edits_v3::PredictEditsResponse {
+                    request_id: Uuid::new_v4(),
+                    edits: vec![predict_edits_v3::Edit {
+                        path: PathBuf::from("/root/foo.md"),
+                        range: 0..src.len(),
+                        content: "Hello!\nHow are you?\nBye".into(),
+                    }],
+                    debug_info: None,
+                }
+            },
+            cx,
+        );
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md": src
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec!["/root".as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path("/root/foo.md", cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+        let prediction = zeta
+            .update(cx, |zeta, cx| {
+                zeta.request_prediction(&project, &buffer, position, cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(prediction.edits.len(), 1);
+        assert_eq!(
+            prediction.edits[0].0.to_point(&snapshot).start,
+            language::Point::new(1, 3)
+        );
+        assert_eq!(prediction.edits[0].1, " are you?");
+    }
+
+    fn init_test(
+        request_callback: impl Fn(
+            predict_edits_v3::PredictEditsRequest,
+        ) -> predict_edits_v3::PredictEditsResponse
+        + Send
+        + Sync
+        + 'static,
+        cx: &mut TestAppContext,
+    ) -> Entity<Zeta> {
+        cx.update(move |cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+
+            let http_client = FakeHttpClient::create({
+                let request_callback = Arc::new(request_callback);
+                move |req| {
+                    let uri = req.uri().path().to_string();
+                    let mut body = req.into_body();
+                    let request_callback = request_callback.clone();
+                    async move {
+                        let resp = match uri.as_str() {
+                            "/client/llm_tokens" => serde_json::to_string(&json!({
+                                "token": "test"
+                            }))
+                            .unwrap(),
+                            "/predict_edits/v3" => {
+                                let mut buf = Vec::new();
+                                body.read_to_end(&mut buf).await.ok();
+                                let req = serde_json::from_slice(&buf).unwrap();
+                                let resp = request_callback(req);
+
+                                serde_json::to_string(&resp).unwrap()
+                            }
+                            _ => {
+                                panic!("Unexpected path: {}", uri)
+                            }
+                        };
+
+                        Ok(Response::builder().body(resp.into()).unwrap())
+                    }
+                }
+            });
+
+            let client = client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx);
+            client.cloud_client().set_credentials(1, "test".into());
+
+            language_model::init(client.clone(), cx);
+
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            Zeta::global(&client, &user_store, cx)
+        })
+    }
+}
