@@ -156,6 +156,16 @@ pub struct SettingsStore {
         mpsc::UnboundedSender<Box<dyn FnOnce(AsyncApp) -> LocalBoxFuture<'static, Result<()>>>>,
 }
 
+#[derive(Clone, PartialEq)]
+pub enum SettingsFile {
+    User,
+    Global,
+    Extension,
+    Server,
+    Default,
+    Local((WorktreeId, Arc<Path>)),
+}
+
 #[derive(Clone)]
 pub struct Editorconfig {
     pub is_root: bool,
@@ -478,6 +488,36 @@ impl SettingsStore {
                 store.get_vscode_edits(old_text, &vscode_settings)
             })
         })
+    }
+
+    pub fn get_all_files(&self) -> Vec<SettingsFile> {
+        let mut files = Vec::from_iter(
+            self.local_settings
+                .keys()
+                // rev because these are sorted by path, so highest precedence is last
+                .rev()
+                .cloned()
+                .map(SettingsFile::Local),
+        );
+
+        if self.server_settings.is_some() {
+            files.push(SettingsFile::Server);
+        }
+        // ignoring profiles
+        // ignoring os profiles
+        // ignoring release channel profiles
+
+        if self.user_settings.is_some() {
+            files.push(SettingsFile::User);
+        }
+        if self.extension_settings.is_some() {
+            files.push(SettingsFile::Extension);
+        }
+        if self.global_settings.is_some() {
+            files.push(SettingsFile::Global);
+        }
+        files.push(SettingsFile::Default);
+        files
     }
 }
 
