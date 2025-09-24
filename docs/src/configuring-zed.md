@@ -3536,7 +3536,7 @@ List of `integer` column numbers
     "button": true,
     "shell": "system",
     "toolbar": {
-      "breadcrumbs": true
+      "breadcrumbs": false
     },
     "working_directory": "current_project_directory",
     "scrollbar": {
@@ -3957,7 +3957,7 @@ Disable with:
 {
   "terminal": {
     "toolbar": {
-      "breadcrumbs": true
+      "breadcrumbs": false
     }
   }
 }
