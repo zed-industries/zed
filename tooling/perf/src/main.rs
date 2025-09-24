@@ -214,7 +214,6 @@ fn parse_mdata(t_bin: &str, mdata_fn: &str) -> Result<TestMdata, FailKind> {
 fn compare_profiles(args: &[String]) {
     let ident_new = args.first().expect("FATAL: missing identifier for new run");
     let ident_old = args.get(1).expect("FATAL: missing identifier for old run");
-    // TODO: move this to a constant also tbh
     let wspace_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let runs_dir = PathBuf::from(&wspace_dir).join(consts::RUNS_DIR);
 
@@ -321,6 +320,24 @@ fn get_tests(t_bin: &str) -> impl ExactSizeIterator<Item = (String, String)> {
     out.into_iter()
 }
 
+/// Runs the specified test `count` times, returning the time taken if the test
+/// succeeded.
+#[inline]
+fn spawn_and_iterate(t_bin: &str, t_name: &str, count: NonZero<usize>) -> Option<Duration> {
+    let mut cmd = Command::new(t_bin);
+    cmd.args([t_name, "--exact"]);
+    cmd.env(consts::ITER_ENV_VAR, format!("{count}"));
+    // Don't let the child muck up our stdin/out/err.
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    let pre = Instant::now();
+    // Discard the output beyond ensuring success.
+    let out = cmd.spawn().unwrap().wait();
+    let post = Instant::now();
+    out.iter().find_map(|s| s.success().then_some(post - pre))
+}
+
 /// Triage a test to determine the correct number of iterations that it should run.
 /// Specifically, repeatedly runs the given test until its execution time exceeds
 /// `thresh`, calling `step(iterations)` after every failed run to determine the new
@@ -328,7 +345,8 @@ fn get_tests(t_bin: &str) -> impl ExactSizeIterator<Item = (String, String)> {
 /// else `Some(iterations)`.
 ///
 /// # Panics
-/// This will panic if `step(usize)` is not monotonically increasing.
+/// This will panic if `step(usize)` is not monotonically increasing, or if the test
+/// binary is invalid.
 fn triage_test(
     t_bin: &str,
     t_name: &str,
@@ -336,22 +354,12 @@ fn triage_test(
     mut step: impl FnMut(NonZero<usize>) -> Option<NonZero<usize>>,
 ) -> Option<NonZero<usize>> {
     let mut iter_count = DEFAULT_ITER_COUNT;
+    // It's possible that the first loop of a test might be an outlier (e.g. it's
+    // doing some caching), in which case we want to skip it.
+    let duration_once = spawn_and_iterate(t_bin, t_name, NonZero::new(1).unwrap())?;
     loop {
-        let mut cmd = Command::new(t_bin);
-        cmd.args([t_name, "--exact"]);
-        cmd.env(consts::ITER_ENV_VAR, format!("{iter_count}"));
-        // Don't let the child muck up our stdin/out/err.
-        cmd.stdin(Stdio::null());
-        cmd.stdout(Stdio::null());
-        cmd.stderr(Stdio::null());
-        let pre = Instant::now();
-        // Discard the output beyond ensuring success.
-        let out = cmd.spawn().unwrap().wait();
-        let post = Instant::now();
-        if !out.unwrap().success() {
-            break None;
-        }
-        if post - pre > thresh {
+        let duration = spawn_and_iterate(t_bin, t_name, iter_count)?;
+        if duration.saturating_sub(duration_once) > thresh {
             break Some(iter_count);
         }
         let new = step(iter_count)?;
@@ -375,7 +383,10 @@ fn hyp_profile(t_bin: &str, t_name: &str, iterations: NonZero<usize>) -> Option<
         "1",
         "--export-markdown",
         "-",
-        &format!("{t_bin} {t_name}"),
+        // Parse json instead...
+        "--time-unit",
+        "millisecond",
+        &format!("{t_bin} --exact {t_name}"),
     ]);
     perf_cmd.env(consts::ITER_ENV_VAR, format!("{iterations}"));
     let p_out = perf_cmd.output().unwrap();
@@ -390,7 +401,7 @@ fn hyp_profile(t_bin: &str, t_name: &str, iterations: NonZero<usize>) -> Option<
     // TODO: Parse json instead.
     let mut res_iter = results_line.split_whitespace();
     // Durations are given in milliseconds, so account for that.
-    let mean = Duration::from_secs_f64(res_iter.nth(4).unwrap().parse::<f64>().unwrap() / 1000.);
+    let mean = Duration::from_secs_f64(res_iter.nth(5).unwrap().parse::<f64>().unwrap() / 1000.);
     let stddev = Duration::from_secs_f64(res_iter.nth(1).unwrap().parse::<f64>().unwrap() / 1000.);
 
     Some(Timings { mean, stddev })

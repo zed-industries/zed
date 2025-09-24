@@ -4,7 +4,7 @@ mod onboarding_banner;
 pub mod platform_title_bar;
 mod platforms;
 mod system_window_tabs;
-pub mod title_bar_settings;
+mod title_bar_settings;
 
 #[cfg(feature = "stories")]
 mod stories;
@@ -35,7 +35,7 @@ use remote::RemoteConnectionOptions;
 use settings::{Settings, SettingsLocation};
 use std::{path::Path, sync::Arc};
 use theme::ActiveTheme;
-use title_bar_settings::{TitleBarSettings, TitleBarVisibility};
+use title_bar_settings::TitleBarSettings;
 use ui::{
     Avatar, Button, ButtonLike, ButtonStyle, Chip, ContextMenu, Icon, IconName, IconSize,
     IconWithIndicator, Indicator, PopoverMenu, PopoverMenuHandle, Tooltip, h_flex, prelude::*,
@@ -73,49 +73,8 @@ pub fn init(cx: &mut App) {
         let Some(window) = window else {
             return;
         };
-        let should_show = match TitleBarSettings::get_global(cx).show {
-            TitleBarVisibility::Always => true,
-            TitleBarVisibility::Never => false,
-            TitleBarVisibility::HideInFullScreen => !window.is_fullscreen(),
-        };
-        if should_show {
-            let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-            workspace.set_titlebar_item(item.into(), window, cx);
-        }
-
-        cx.observe_global_in::<settings::SettingsStore>(window, |workspace, window, cx| {
-            let should_show = match TitleBarSettings::get_global(cx).show {
-                TitleBarVisibility::Always => true,
-                TitleBarVisibility::Never => false,
-                TitleBarVisibility::HideInFullScreen => !window.is_fullscreen(),
-            };
-            if should_show {
-                if workspace.titlebar_item().is_none() {
-                    let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-                    workspace.set_titlebar_item(item.into(), window, cx);
-                }
-            } else {
-                workspace.clear_titlebar_item(window, cx);
-            }
-        })
-        .detach();
-
-        cx.observe_window_bounds(window, |workspace, window, cx| {
-            let should_show = match TitleBarSettings::get_global(cx).show {
-                TitleBarVisibility::Always => true,
-                TitleBarVisibility::Never => false,
-                TitleBarVisibility::HideInFullScreen => !window.is_fullscreen(),
-            };
-            if should_show {
-                if workspace.titlebar_item().is_none() {
-                    let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
-                    workspace.set_titlebar_item(item.into(), window, cx);
-                }
-            } else {
-                workspace.clear_titlebar_item(window, cx);
-            }
-        })
-        .detach();
+        let item = cx.new(|cx| TitleBar::new("title-bar", workspace, window, cx));
+        workspace.set_titlebar_item(item.into(), window, cx);
 
         #[cfg(not(target_os = "macos"))]
         workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
