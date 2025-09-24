@@ -1,4 +1,4 @@
-use settings::{Settings, SettingsContent};
+use settings::{Settings, SettingsContent, WindowControlsPosition};
 use ui::App;
 
 #[derive(Copy, Clone, Debug)]
@@ -10,6 +10,7 @@ pub struct TitleBarSettings {
     pub show_project_items: bool,
     pub show_sign_in: bool,
     pub show_menus: bool,
+    pub window_controls_position: WindowControlsPosition,
 }
 
 impl Settings for TitleBarSettings {
@@ -23,6 +24,7 @@ impl Settings for TitleBarSettings {
             show_project_items: content.show_project_items.unwrap(),
             show_sign_in: content.show_sign_in.unwrap(),
             show_menus: content.show_menus.unwrap(),
+            window_controls_position: content.window_controls_position.unwrap_or_default(),
         }
     }
 }

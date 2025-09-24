@@ -234,6 +234,17 @@ pub enum BaseKeymapContent {
     None,
 }
 
+/// Position of window control buttons on Linux.
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowControlsPosition {
+    /// Window controls on the left side (macOS style)
+    #[default]
+    Left,
+    /// Window controls on the right side (Windows style)
+    Right,
+}
+
 #[skip_serializing_none]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct TitleBarSettingsContent {
@@ -265,6 +276,10 @@ pub struct TitleBarSettingsContent {
     ///
     /// Default: false
     pub show_menus: Option<bool>,
+    /// Position of window control buttons (minimize, maximize, close) on Linux.
+    ///
+    /// Default: left
+    pub window_controls_position: Option<WindowControlsPosition>,
 }
 
 /// Configuration of audio in Zed.
