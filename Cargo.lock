@@ -20592,6 +20592,8 @@ dependencies = [
  "language",
  "language_model",
  "log",
+ "lsp",
+ "pretty_assertions",
  "project",
  "release_channel",
  "serde_json",

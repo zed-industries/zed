@@ -20,6 +20,7 @@ use gpui::{
 use language::BufferSnapshot;
 use language::{Buffer, DiagnosticSet, LanguageServerId, ToOffset as _, ToPoint};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
+use pretty_assertions::assert_eq;
 use project::Project;
 use release_channel::AppVersion;
 use std::collections::{HashMap, VecDeque, hash_map};
@@ -836,10 +837,11 @@ mod tests {
         prelude::*,
     };
     use indoc::indoc;
-    use language::OffsetRangeExt as _;
+    use language::{LanguageServerId, OffsetRangeExt as _};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
+    use util::path;
     use uuid::Uuid;
 
     use crate::Zeta;
@@ -898,7 +900,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_request_includes_events(cx: &mut TestAppContext) {
+    async fn test_request_events(cx: &mut TestAppContext) {
         let (zeta, mut req_rx) = init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
@@ -973,6 +975,97 @@ mod tests {
             language::Point::new(1, 3)
         );
         assert_eq!(prediction.edits[0].1, " are you?");
+    }
+
+    #[gpui::test]
+    async fn test_request_diagnostics(cx: &mut TestAppContext) {
+        let (zeta, mut req_rx) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md": "Hello!\nBye"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec!["/root".as_ref()], cx).await;
+
+        let path_to_buffer_uri = lsp::Uri::from_file_path(path!("/root/foo.md")).unwrap();
+        let diagnostic = lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: "\"Hello\" deprecated. Use \"Hi\" instead".to_string(),
+            ..Default::default()
+        };
+
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                // Create some diagnostics
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: path_to_buffer_uri.clone(),
+                            diagnostics: vec![diagnostic],
+                            version: None,
+                        },
+                        None,
+                        language::DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path("/root/foo.md", cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(0, 0));
+
+        let _prediction_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_prediction(&project, &buffer, position, cx)
+        });
+
+        let (request, _respond_tx) = req_rx.next().await.unwrap();
+
+        assert_eq!(request.diagnostic_groups.len(), 1);
+        let value = serde_json::from_str::<serde_json::Value>(request.diagnostic_groups[0].0.get())
+            .unwrap();
+        // We probably don't need all of this. TODO define a specific diagnostic type in predict_edits_v3
+        assert_eq!(
+            value,
+            json!({
+                "entries": [{
+                    "range": {
+                        "start": 8,
+                        "end": 10
+                    },
+                    "diagnostic": {
+                        "source": null,
+                        "code": null,
+                        "code_description": null,
+                        "severity": 1,
+                        "message": "\"Hello\" deprecated. Use \"Hi\" instead",
+                        "markdown": null,
+                        "group_id": 0,
+                        "is_primary": true,
+                        "is_disk_based": false,
+                        "is_unnecessary": false,
+                        "source_kind": "Pushed",
+                        "data": null,
+                        "underline": true
+                    }
+                }],
+                "primary_ix": 0
+            })
+        );
     }
 
     fn init_test(
