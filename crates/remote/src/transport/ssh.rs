@@ -1052,7 +1052,7 @@ fn build_command(
 
     let mut exec = String::from("exec env -C ");
     if let Some(working_dir) = working_dir {
-        let working_dir = RemotePathBuf::new(working_dir.into(), ssh_path_style).to_string();
+        let working_dir = RemotePathBuf::new(working_dir, ssh_path_style).to_string();
 
         // shlex will wrap the command in single quotes (''), disabling ~ expansion,
         // replace with with something that works

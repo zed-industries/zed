@@ -384,7 +384,7 @@ impl RemoteConnection for WslRemoteConnection {
         }
 
         let working_dir = working_dir
-            .map(|working_dir| RemotePathBuf::new(working_dir.into(), PathStyle::Posix).to_string())
+            .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
             .unwrap_or("~".to_string());
 
         let mut script = String::new();

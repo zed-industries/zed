@@ -581,7 +581,6 @@ mod tests {
             },
         );
         results.sort_by(|a, b| b.cmp(a));
-        dbg!(&results);
 
         results
             .into_iter()
