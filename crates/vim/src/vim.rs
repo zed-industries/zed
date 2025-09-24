@@ -21,9 +21,7 @@ mod visual;
 
 use collections::HashMap;
 use editor::{
-    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
-    ToPoint,
-    movement::{self, FindRange},
+    items, movement::{self, FindRange}, Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects, ToPoint
 };
 use gpui::{
     Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
@@ -795,6 +793,10 @@ impl Vim {
                     window,
                     cx,
                 );
+            });
+
+            Vim::action(editor, cx, |vim, _: &editor::actions::Cancel, _window, cx| {
+                vim.cancel_search_highlights(cx);
             });
 
             normal::register(editor, cx);
@@ -1791,6 +1793,19 @@ impl Vim {
             editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
         });
         cx.notify()
+    }
+
+    fn cancel_search_highlights(&mut self,cx: &mut Context<Self>) {
+        let has_vim_search_highlights = self.search.vim_search_active 
+        && self.update_editor(cx, |_, editor, _| {
+            editor.has_background_highlights::<items::BufferSearchHighlights>()
+        }).unwrap_or(false);
+        
+        if has_vim_search_highlights {
+            return;
+        }
+        
+        cx.propagate();
     }
 }
 

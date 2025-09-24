@@ -988,6 +988,8 @@ pub struct SearchState {
     pub prior_selections: Vec<Range<Anchor>>,
     pub prior_operator: Option<Operator>,
     pub prior_mode: Mode,
+
+    pub vim_search_active: bool,
 }
 
 impl Operator {
