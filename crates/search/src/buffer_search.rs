@@ -28,7 +28,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
-use zed_actions::outline::ToggleOutline;
+use zed_actions::{outline::ToggleOutline, workspace::CopyPath, workspace::CopyRelativePath};
 
 use ui::{
     BASE_REM_SIZE_IN_PX, IconButton, IconButtonShape, IconName, Tooltip, h_flex, prelude::*,
@@ -38,7 +38,9 @@ use util::ResultExt;
 use workspace::{
     ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     item::ItemHandle,
-    searchable::{Direction, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle},
+    searchable::{
+        Direction, FilteredSearchRange, SearchEvent, SearchableItemHandle, WeakSearchableItemHandle,
+    },
 };
 
 pub use registrar::DivRegistrar;
@@ -117,7 +119,7 @@ pub struct BufferSearchBar {
     search_history: SearchHistory,
     search_history_cursor: SearchHistoryCursor,
     replace_enabled: bool,
-    selection_search_enabled: bool,
+    selection_search_enabled: Option<FilteredSearchRange>,
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
@@ -255,13 +257,13 @@ impl Render for BufferSearchBar {
                     )
                     .style(ButtonStyle::Subtle)
                     .shape(IconButtonShape::Square)
-                    .when(self.selection_search_enabled, |button| {
+                    .when(self.selection_search_enabled.is_some(), |button| {
                         button.style(ButtonStyle::Filled)
                     })
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.toggle_selection(&ToggleSelection, window, cx);
                     }))
-                    .toggle_state(self.selection_search_enabled)
+                    .toggle_state(self.selection_search_enabled.is_some())
                     .tooltip({
                         let focus_handle = focus_handle.clone();
                         move |window, cx| {
@@ -423,6 +425,16 @@ impl Render for BufferSearchBar {
             .on_action(cx.listener(|this, _: &ToggleOutline, window, cx| {
                 if let Some(active_searchable_item) = &mut this.active_searchable_item {
                     active_searchable_item.relay_action(Box::new(ToggleOutline), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CopyPath, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(CopyPath), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &CopyRelativePath, window, cx| {
+                if let Some(active_searchable_item) = &mut this.active_searchable_item {
+                    active_searchable_item.relay_action(Box::new(CopyRelativePath), window, cx);
                 }
             }))
             .when(replacement, |this| {
@@ -663,7 +675,7 @@ impl BufferSearchBar {
             search_history_cursor: Default::default(),
             active_search: None,
             replace_enabled: false,
-            selection_search_enabled: false,
+            selection_search_enabled: None,
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
@@ -686,10 +698,10 @@ impl BufferSearchBar {
             }
         }
         if let Some(active_editor) = self.active_searchable_item.as_mut() {
-            self.selection_search_enabled = false;
+            self.selection_search_enabled = None;
             self.replace_enabled = false;
             active_editor.search_bar_visibility_changed(false, window, cx);
-            active_editor.toggle_filtered_search_ranges(false, window, cx);
+            active_editor.toggle_filtered_search_ranges(None, window, cx);
             let handle = active_editor.item_focus_handle(cx);
             self.focus(&handle, window);
         }
@@ -701,18 +713,23 @@ impl BufferSearchBar {
     }
 
     pub fn deploy(&mut self, deploy: &Deploy, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let filtered_search_range = if deploy.selection_search_enabled {
+            Some(FilteredSearchRange::Default)
+        } else {
+            None
+        };
         if self.show(window, cx) {
             if let Some(active_item) = self.active_searchable_item.as_mut() {
-                active_item.toggle_filtered_search_ranges(
-                    deploy.selection_search_enabled,
-                    window,
-                    cx,
-                );
+                active_item.toggle_filtered_search_ranges(filtered_search_range, window, cx);
             }
             self.search_suggested(window, cx);
             self.smartcase(window, cx);
             self.replace_enabled = deploy.replace_enabled;
-            self.selection_search_enabled = deploy.selection_search_enabled;
+            self.selection_search_enabled = if deploy.selection_search_enabled {
+                Some(FilteredSearchRange::Default)
+            } else {
+                None
+            };
             if deploy.focus {
                 let mut handle = self.query_editor.focus_handle(cx);
                 let mut select_query = true;
@@ -784,10 +801,13 @@ impl BufferSearchBar {
 
         if let Some(search) = search {
             cx.spawn_in(window, async move |this, cx| {
-                search.await?;
-                this.update_in(cx, |this, window, cx| {
-                    this.activate_current_match(window, cx)
-                })
+                if search.await.is_ok() {
+                    this.update_in(cx, |this, window, cx| {
+                        this.activate_current_match(window, cx)
+                    })
+                } else {
+                    Ok(())
+                }
             })
             .detach_and_log_err(cx);
         }
@@ -910,6 +930,19 @@ impl BufferSearchBar {
         }
     }
 
+    pub fn set_search_within_selection(
+        &mut self,
+        search_within_selection: Option<FilteredSearchRange>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<oneshot::Receiver<()>> {
+        let active_item = self.active_searchable_item.as_mut()?;
+        self.selection_search_enabled = search_within_selection;
+        active_item.toggle_filtered_search_ranges(self.selection_search_enabled, window, cx);
+        cx.notify();
+        Some(self.update_matches(false, false, window, cx))
+    }
+
     pub fn set_search_options(&mut self, search_options: SearchOptions, cx: &mut Context<Self>) {
         self.search_options = search_options;
         self.adjust_query_regex_language(cx);
@@ -944,7 +977,7 @@ impl BufferSearchBar {
         self.select_match(Direction::Prev, 1, window, cx);
     }
 
-    fn select_all_matches(
+    pub fn select_all_matches(
         &mut self,
         _: &SelectAllMatches,
         window: &mut Window,
@@ -1047,10 +1080,13 @@ impl BufferSearchBar {
                 cx.notify();
 
                 cx.spawn_in(window, async move |this, cx| {
-                    search.await?;
-                    this.update_in(cx, |this, window, cx| {
-                        this.activate_current_match(window, cx)
-                    })
+                    if search.await.is_ok() {
+                        this.update_in(cx, |this, window, cx| {
+                            this.activate_current_match(window, cx)
+                        })
+                    } else {
+                        Ok(())
+                    }
                 })
                 .detach_and_log_err(cx);
             }
@@ -1109,12 +1145,15 @@ impl BufferSearchBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(active_item) = self.active_searchable_item.as_mut() {
-            self.selection_search_enabled = !self.selection_search_enabled;
-            active_item.toggle_filtered_search_ranges(self.selection_search_enabled, window, cx);
-            drop(self.update_matches(false, false, window, cx));
-            cx.notify();
-        }
+        self.set_search_within_selection(
+            if let Some(_) = self.selection_search_enabled {
+                None
+            } else {
+                Some(FilteredSearchRange::Default)
+            },
+            window,
+            cx,
+        );
     }
 
     fn toggle_regex(&mut self, _: &ToggleRegex, window: &mut Window, cx: &mut Context<Self>) {
@@ -1480,7 +1519,7 @@ mod tests {
     use gpui::{Hsla, TestAppContext, UpdateGlobal, VisualTestContext};
     use language::{Buffer, Point};
     use project::Project;
-    use settings::SettingsStore;
+    use settings::{SearchSettingsContent, SettingsStore};
     use smol::stream::StreamExt as _;
     use unindent::Unindent as _;
 
@@ -2866,8 +2905,14 @@ mod tests {
     fn update_search_settings(search_settings: SearchSettings, cx: &mut TestAppContext) {
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<EditorSettings>(cx, |settings| {
-                    settings.search = Some(search_settings);
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.search = Some(SearchSettingsContent {
+                        button: Some(search_settings.button),
+                        whole_word: Some(search_settings.whole_word),
+                        case_sensitive: Some(search_settings.case_sensitive),
+                        include_ignored: Some(search_settings.include_ignored),
+                        regex: Some(search_settings.regex),
+                    });
                 });
             });
         });

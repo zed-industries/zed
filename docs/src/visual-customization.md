@@ -108,7 +108,6 @@ To disable this behavior use:
 ```json
   // Control which items are shown/hidden in the title bar
   "title_bar": {
-    "show": "always",               // When to show: always | never | hide_in_full_screen
     "show_branch_icon": false,      // Show/hide branch icon beside branch switcher
     "show_branch_name": true,       // Show/hide branch name
     "show_project_items": true,     // Show/hide project host and name
@@ -227,7 +226,7 @@ TBD: Centered layout related settings
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
-      "delay": 0,                  // Show after delay (ms)
+      "delay_ms": 0,                  // Show after delay (ms)
       "min_column": 0,             // Minimum column to inline display blame
       "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary

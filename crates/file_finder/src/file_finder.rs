@@ -347,16 +347,16 @@ impl FileFinder {
         })
     }
 
-    pub fn modal_max_width(width_setting: Option<FileFinderWidth>, window: &mut Window) -> Pixels {
+    pub fn modal_max_width(width_setting: FileFinderWidth, window: &mut Window) -> Pixels {
         let window_width = window.viewport_size().width;
         let small_width = rems(34.).to_pixels(window.rem_size());
 
         match width_setting {
-            None | Some(FileFinderWidth::Small) => small_width,
-            Some(FileFinderWidth::Full) => window_width,
-            Some(FileFinderWidth::XLarge) => (window_width - Pixels(512.)).max(small_width),
-            Some(FileFinderWidth::Large) => (window_width - Pixels(768.)).max(small_width),
-            Some(FileFinderWidth::Medium) => (window_width - Pixels(1024.)).max(small_width),
+            FileFinderWidth::Small => small_width,
+            FileFinderWidth::Full => window_width,
+            FileFinderWidth::XLarge => (window_width - Pixels(512.)).max(small_width),
+            FileFinderWidth::Large => (window_width - Pixels(768.)).max(small_width),
+            FileFinderWidth::Medium => (window_width - Pixels(1024.)).max(small_width),
         }
     }
 }
@@ -886,14 +886,14 @@ impl FileFinderDelegate {
             .collect::<Vec<_>>();
 
         let search_id = util::post_inc(&mut self.search_count);
-        self.cancel_flag.store(true, atomic::Ordering::Relaxed);
+        self.cancel_flag.store(true, atomic::Ordering::Release);
         self.cancel_flag = Arc::new(AtomicBool::new(false));
         let cancel_flag = self.cancel_flag.clone();
         cx.spawn_in(window, async move |picker, cx| {
             let matches = fuzzy::match_path_sets(
                 candidate_sets.as_slice(),
                 query.path_query(),
-                relative_to,
+                &relative_to,
                 false,
                 100,
                 &cancel_flag,
@@ -902,7 +902,7 @@ impl FileFinderDelegate {
             .await
             .into_iter()
             .map(ProjectPanelOrdMatch);
-            let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
+            let did_cancel = cancel_flag.load(atomic::Ordering::Acquire);
             picker
                 .update(cx, |picker, cx| {
                     picker

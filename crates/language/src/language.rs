@@ -22,8 +22,8 @@ mod toolchain;
 #[cfg(test)]
 pub mod buffer_tests;
 
-pub use crate::language_settings::EditPredictionsMode;
 use crate::language_settings::SoftWrap;
+pub use crate::language_settings::{EditPredictionsMode, IndentGuideSettings};
 use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet, IndexSet};
@@ -55,7 +55,7 @@ use std::{
     str,
     sync::{
         Arc, LazyLock,
-        atomic::{AtomicU64, AtomicUsize, Ordering::SeqCst},
+        atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
@@ -168,7 +168,6 @@ pub struct CachedLspAdapter {
     pub disk_based_diagnostics_progress_token: Option<String>,
     language_ids: HashMap<LanguageName, String>,
     pub adapter: Arc<dyn LspAdapter>,
-    pub reinstall_attempt_count: AtomicU64,
     cached_binary: ServerBinaryCache,
 }
 
@@ -185,7 +184,6 @@ impl Debug for CachedLspAdapter {
                 &self.disk_based_diagnostics_progress_token,
             )
             .field("language_ids", &self.language_ids)
-            .field("reinstall_attempt_count", &self.reinstall_attempt_count)
             .finish_non_exhaustive()
     }
 }
@@ -204,7 +202,6 @@ impl CachedLspAdapter {
             language_ids,
             adapter,
             cached_binary: Default::default(),
-            reinstall_attempt_count: AtomicU64::new(0),
         })
     }
 
@@ -783,6 +780,9 @@ pub struct LanguageConfig {
     /// A list of characters that Zed should treat as word characters for completion queries.
     #[serde(default)]
     pub completion_query_characters: HashSet<char>,
+    /// A list of characters that Zed should treat as word characters for linked edit operations.
+    #[serde(default)]
+    pub linked_edit_characters: HashSet<char>,
     /// A list of preferred debuggers for this language.
     #[serde(default)]
     pub debuggers: IndexSet<SharedString>,
@@ -919,6 +919,8 @@ pub struct LanguageConfigOverride {
     #[serde(default)]
     pub completion_query_characters: Override<HashSet<char>>,
     #[serde(default)]
+    pub linked_edit_characters: Override<HashSet<char>>,
+    #[serde(default)]
     pub opt_into_language_servers: Vec<LanguageServerName>,
     #[serde(default)]
     pub prefer_label_for_snippet: Option<bool>,
@@ -977,6 +979,7 @@ impl Default for LanguageConfig {
             hidden: false,
             jsx_tag_auto_close: None,
             completion_query_characters: Default::default(),
+            linked_edit_characters: Default::default(),
             debuggers: Default::default(),
         }
     }
@@ -2011,6 +2014,15 @@ impl LanguageScope {
             self.config_override()
                 .map(|o| &o.completion_query_characters),
             Some(&self.language.config.completion_query_characters),
+        )
+    }
+
+    /// Returns a list of language-specific characters that are considered part of
+    /// identifiers during linked editing operations.
+    pub fn linked_edit_characters(&self) -> Option<&HashSet<char>> {
+        Override::as_option(
+            self.config_override().map(|o| &o.linked_edit_characters),
+            Some(&self.language.config.linked_edit_characters),
         )
     }
 

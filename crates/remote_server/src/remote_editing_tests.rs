@@ -1797,8 +1797,8 @@ async fn test_remote_external_agent_server(
     pretty_assertions::assert_eq!(names, ["gemini", "claude"]);
     server_cx.update_global::<SettingsStore, _>(|settings_store, cx| {
         settings_store
-            .set_raw_server_settings(
-                Some(json!({
+            .set_server_settings(
+                &json!({
                     "agent_servers": {
                         "foo": {
                             "command": "foo-cli",
@@ -1808,7 +1808,8 @@ async fn test_remote_external_agent_server(
                             }
                         }
                     }
-                })),
+                })
+                .to_string(),
                 cx,
             )
             .unwrap();

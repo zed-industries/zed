@@ -88,15 +88,8 @@ impl Project {
 
         let local_path = if is_via_remote { None } else { path.clone() };
         let task_state = Some(TaskState {
-            id: spawn_task.id,
-            full_label: spawn_task.full_label,
-            label: spawn_task.label,
-            command_label: spawn_task.command_label,
-            hide: spawn_task.hide,
+            spawned_task: spawn_task.clone(),
             status: TaskStatus::Running,
-            show_summary: spawn_task.show_summary,
-            show_command: spawn_task.show_command,
-            show_rerun: spawn_task.show_rerun,
             completion_rx,
         });
         let remote_client = self.remote_client.clone();

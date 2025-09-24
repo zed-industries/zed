@@ -180,9 +180,9 @@ pub enum DocumentationEdge {
 
 #[derive(Clone)]
 pub struct DocumentationAside {
-    side: DocumentationSide,
-    edge: DocumentationEdge,
-    render: Rc<dyn Fn(&mut App) -> AnyElement>,
+    pub side: DocumentationSide,
+    pub edge: DocumentationEdge,
+    pub render: Rc<dyn Fn(&mut App) -> AnyElement>,
 }
 
 impl DocumentationAside {

@@ -9,8 +9,12 @@ use crate::reference::Reference;
 // That implementation could actually be more efficient - no need to track words in the window that
 // are not in the query.
 
+// TODO: Consider a flat sorted Vec<(String, usize)> representation. Intersection can just walk the
+// two in parallel.
+
 static IDENTIFIER_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\w+\b").unwrap());
 
+// TODO: use &str or Cow<str> keys?
 #[derive(Debug)]
 pub struct IdentifierOccurrences {
     identifier_to_count: HashMap<String, usize>,

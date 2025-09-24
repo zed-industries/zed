@@ -35,7 +35,7 @@ use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 7, 0);
 
 wasmtime::component::bindgen!({
     async: true,
@@ -52,6 +52,7 @@ wasmtime::component::bindgen!({
 pub use self::zed::extension::*;
 
 mod settings {
+    #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/since_v0.6.0/settings.rs"));
 }
 

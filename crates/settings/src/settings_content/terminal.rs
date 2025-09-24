@@ -1,0 +1,321 @@
+use std::path::PathBuf;
+
+use collections::HashMap;
+use gpui::{AbsoluteLength, FontFeatures, SharedString, px};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use serde_with::skip_serializing_none;
+use settings_macros::MergeFrom;
+
+use crate::FontFamilyName;
+
+#[skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct TerminalSettingsContent {
+    /// What shell to use when opening a terminal.
+    ///
+    /// Default: system
+    pub shell: Option<Shell>,
+    /// What working directory to use when launching the terminal
+    ///
+    /// Default: current_project_directory
+    pub working_directory: Option<WorkingDirectory>,
+    /// Sets the terminal's font size.
+    ///
+    /// If this option is not included,
+    /// the terminal will default to matching the buffer's font size.
+    pub font_size: Option<f32>,
+    /// Sets the terminal's font family.
+    ///
+    /// If this option is not included,
+    /// the terminal will default to matching the buffer's font family.
+    pub font_family: Option<FontFamilyName>,
+
+    /// Sets the terminal's font fallbacks.
+    ///
+    /// If this option is not included,
+    /// the terminal will default to matching the buffer's font fallbacks.
+    #[schemars(extend("uniqueItems" = true))]
+    pub font_fallbacks: Option<Vec<FontFamilyName>>,
+
+    /// Sets the terminal's line height.
+    ///
+    /// Default: comfortable
+    pub line_height: Option<TerminalLineHeight>,
+    pub font_features: Option<FontFeatures>,
+    /// Sets the terminal's font weight in CSS weight units 0-900.
+    pub font_weight: Option<f32>,
+    /// Any key-value pairs added to this list will be added to the terminal's
+    /// environment. Use `:` to separate multiple values.
+    ///
+    /// Default: {}
+    pub env: Option<HashMap<String, String>>,
+    /// Default cursor shape for the terminal.
+    /// Can be "bar", "block", "underline", or "hollow".
+    ///
+    /// Default: None
+    pub cursor_shape: Option<CursorShapeContent>,
+    /// Sets the cursor blinking behavior in the terminal.
+    ///
+    /// Default: terminal_controlled
+    pub blinking: Option<TerminalBlink>,
+    /// Sets whether Alternate Scroll mode (code: ?1007) is active by default.
+    /// Alternate Scroll mode converts mouse scroll events into up / down key
+    /// presses when in the alternate screen (e.g. when running applications
+    /// like vim or  less). The terminal can still set and unset this mode.
+    ///
+    /// Default: on
+    pub alternate_scroll: Option<AlternateScroll>,
+    /// Sets whether the option key behaves as the meta key.
+    ///
+    /// Default: false
+    pub option_as_meta: Option<bool>,
+    /// Whether or not selecting text in the terminal will automatically
+    /// copy to the system clipboard.
+    ///
+    /// Default: false
+    pub copy_on_select: Option<bool>,
+    /// Whether to keep the text selection after copying it to the clipboard.
+    ///
+    /// Default: false
+    pub keep_selection_on_copy: Option<bool>,
+    /// Whether to show the terminal button in the status bar.
+    ///
+    /// Default: true
+    pub button: Option<bool>,
+    pub dock: Option<TerminalDockPosition>,
+    /// Default width when the terminal is docked to the left or right.
+    ///
+    /// Default: 640
+    pub default_width: Option<f32>,
+    /// Default height when the terminal is docked to the bottom.
+    ///
+    /// Default: 320
+    pub default_height: Option<f32>,
+    /// Activates the python virtual environment, if one is found, in the
+    /// terminal's working directory (as resolved by the working_directory
+    /// setting). Set this to "off" to disable this behavior.
+    ///
+    /// Default: on
+    pub detect_venv: Option<VenvSettings>,
+    /// The maximum number of lines to keep in the scrollback history.
+    /// Maximum allowed value is 100_000, all values above that will be treated as 100_000.
+    /// 0 disables the scrolling.
+    /// Existing terminals will not pick up this change until they are recreated.
+    /// See <a href="https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213">Alacritty documentation</a> for more information.
+    ///
+    /// Default: 10_000
+    pub max_scroll_history_lines: Option<usize>,
+    /// Toolbar related settings
+    pub toolbar: Option<TerminalToolbarContent>,
+    /// Scrollbar-related settings
+    pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// The minimum APCA perceptual contrast between foreground and background colors.
+    ///
+    /// APCA (Accessible Perceptual Contrast Algorithm) is more accurate than WCAG 2.x,
+    /// especially for dark mode. Values range from 0 to 106.
+    ///
+    /// Based on APCA Readability Criterion (ARC) Bronze Simple Mode:
+    /// https://readtech.org/ARC/tests/bronze-simple-mode/
+    /// - 0: No contrast adjustment
+    /// - 45: Minimum for large fluent text (36px+)
+    /// - 60: Minimum for other content text
+    /// - 75: Minimum for body text
+    /// - 90: Preferred for body text
+    ///
+    /// Default: 45
+    pub minimum_contrast: Option<f32>,
+}
+
+/// Shell configuration to open the terminal with.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum Shell {
+    /// Use the system's default terminal configuration in /etc/passwd
+    #[default]
+    System,
+    /// Use a specific program with no arguments.
+    Program(String),
+    /// Use a specific program with arguments.
+    WithArguments {
+        /// The program to run.
+        program: String,
+        /// The arguments to pass to the program.
+        args: Vec<String>,
+        /// An optional string to override the title of the terminal tab
+        title_override: Option<SharedString>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkingDirectory {
+    /// Use the current file's project directory.  Will Fallback to the
+    /// first project directory strategy if unsuccessful.
+    CurrentProjectDirectory,
+    /// Use the first project in this workspace's directory.
+    FirstProjectDirectory,
+    /// Always use this platform's home directory (if it can be found).
+    AlwaysHome,
+    /// Always use a specific directory. This value will be shell expanded.
+    /// If this path is not a valid directory the terminal will default to
+    /// this platform's home directory  (if it can be found).
+    Always { directory: String },
+}
+
+#[skip_serializing_none]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct ScrollbarSettingsContent {
+    /// When to show the scrollbar in the terminal.
+    ///
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<ShowScrollbar>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalLineHeight {
+    /// Use a line height that's comfortable for reading, 1.618
+    #[default]
+    Comfortable,
+    /// Use a standard line height, 1.3. This option is useful for TUIs,
+    /// particularly if they use box characters
+    Standard,
+    /// Use a custom line height.
+    Custom(f32),
+}
+
+impl TerminalLineHeight {
+    pub fn value(&self) -> AbsoluteLength {
+        let value = match self {
+            TerminalLineHeight::Comfortable => 1.618,
+            TerminalLineHeight::Standard => 1.3,
+            TerminalLineHeight::Custom(line_height) => f32::max(*line_height, 1.),
+        };
+        px(value).into()
+    }
+}
+
+/// When to show the scrollbar.
+///
+/// Default: auto
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowScrollbar {
+    /// Show the scrollbar if there's important information or
+    /// follow the system's configured behavior.
+    Auto,
+    /// Match the system's configured behavior.
+    System,
+    /// Always show the scrollbar.
+    Always,
+    /// Never show the scrollbar.
+    Never,
+}
+
+#[derive(
+    Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorShapeContent {
+    /// Cursor is a block like `█`.
+    #[default]
+    Block,
+    /// Cursor is an underscore like `_`.
+    Underline,
+    /// Cursor is a vertical bar like `⎸`.
+    Bar,
+    /// Cursor is a hollow box like `▯`.
+    Hollow,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalBlink {
+    /// Never blink the cursor, ignoring the terminal mode.
+    Off,
+    /// Default the cursor blink to off, but allow the terminal to
+    /// set blinking.
+    TerminalControlled,
+    /// Always blink the cursor, ignoring the terminal mode.
+    On,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum AlternateScroll {
+    On,
+    Off,
+}
+
+// Toolbar related settings
+#[skip_serializing_none]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+pub struct TerminalToolbarContent {
+    /// Whether to display the terminal title in breadcrumbs inside the terminal pane.
+    /// Only shown if the terminal title is not empty.
+    ///
+    /// The shell running in the terminal needs to be configured to emit the title.
+    /// Example: `echo -e "\e]2;New Title\007";`
+    ///
+    /// Default: true
+    pub breadcrumbs: Option<bool>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum VenvSettings {
+    #[default]
+    Off,
+    On {
+        /// Default directories to search for virtual environments, relative
+        /// to the current working directory. We recommend overriding this
+        /// in your project's settings, rather than globally.
+        activate_script: Option<ActivateScript>,
+        venv_name: Option<String>,
+        directories: Option<Vec<PathBuf>>,
+    },
+}
+#[skip_serializing_none]
+pub struct VenvSettingsContent<'a> {
+    pub activate_script: ActivateScript,
+    pub venv_name: &'a str,
+    pub directories: &'a [PathBuf],
+}
+
+impl VenvSettings {
+    pub fn as_option(&self) -> Option<VenvSettingsContent<'_>> {
+        match self {
+            VenvSettings::Off => None,
+            VenvSettings::On {
+                activate_script,
+                venv_name,
+                directories,
+            } => Some(VenvSettingsContent {
+                activate_script: activate_script.unwrap_or(ActivateScript::Default),
+                venv_name: venv_name.as_deref().unwrap_or(""),
+                directories: directories.as_deref().unwrap_or(&[]),
+            }),
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalDockPosition {
+    Left,
+    Bottom,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivateScript {
+    #[default]
+    Default,
+    Csh,
+    Fish,
+    Nushell,
+    PowerShell,
+    Pyenv,
+}

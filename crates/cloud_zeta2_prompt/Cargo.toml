@@ -1,5 +1,5 @@
 [package]
-name = "jj"
+name = "cloud_zeta2_prompt"
 version = "0.1.0"
 publish.workspace = true
 edition.workspace = true
@@ -9,10 +9,13 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/jj.rs"
+path = "src/cloud_zeta2_prompt.rs"
 
 [dependencies]
 anyhow.workspace = true
-gpui.workspace = true
-jj-lib.workspace = true
+cloud_llm_client.workspace = true
+indoc.workspace = true
+ordered-float.workspace = true
+rustc-hash.workspace = true
+strum.workspace = true
 workspace-hack.workspace = true

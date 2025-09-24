@@ -139,7 +139,8 @@ impl BlameRenderer for GitBlameRenderer {
         let author = blame_entry.author.as_deref().unwrap_or_default();
         let summary_enabled = ProjectSettings::get_global(cx)
             .git
-            .show_inline_commit_summary();
+            .inline_blame
+            .show_commit_summary;
 
         let text = match blame_entry.summary.as_ref() {
             Some(summary) if summary_enabled => {

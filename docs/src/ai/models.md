@@ -1,6 +1,6 @@
 # Models
 
-Zed’s plans offer hosted versions of major LLM’s, generally with higher rate limits than using your API keys.
+Zed’s plans offer hosted versions of major LLMs, generally with higher rate limits than using your API keys.
 We’re working hard to expand the models supported by Zed’s subscription offerings, so please check back often.
 
 | Model             | Provider  | Token Type          | Provider Price per 1M tokens | Zed Price per 1M tokens |

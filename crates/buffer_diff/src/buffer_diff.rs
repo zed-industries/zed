@@ -111,13 +111,13 @@ impl sum_tree::Item for PendingHunk {
 }
 
 impl sum_tree::Summary for DiffHunkSummary {
-    type Context = text::BufferSnapshot;
+    type Context<'a> = &'a text::BufferSnapshot;
 
-    fn zero(_cx: &Self::Context) -> Self {
+    fn zero(_cx: Self::Context<'_>) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
+    fn add_summary(&mut self, other: &Self, buffer: Self::Context<'_>) {
         self.buffer_range.start = self
             .buffer_range
             .start

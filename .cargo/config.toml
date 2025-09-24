@@ -4,6 +4,8 @@ rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
 
 [alias]
 xtask = "run --package xtask --"
+perf-test = ["test", "--profile", "release-fast", "--lib", "--bins", "--tests", "--config", "target.'cfg(true)'.runner='cargo run -p perf --release'", "--config", "target.'cfg(true)'.rustflags=[\"--cfg\", \"perf_enabled\"]"]
+perf-compare = ["run", "--release", "-p", "perf", "--", "compare"]
 
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"

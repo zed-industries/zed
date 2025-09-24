@@ -44,6 +44,7 @@ pub struct AcpConnection {
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
     suppress_abort_err: bool,
+    models: Option<Rc<RefCell<acp::SessionModelState>>>,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
 }
 
@@ -264,6 +265,7 @@ impl AgentConnection for AcpConnection {
                 })?;
 
             let modes = response.modes.map(|modes| Rc::new(RefCell::new(modes)));
+            let models = response.models.map(|models| Rc::new(RefCell::new(models)));
 
             if let Some(default_mode) = default_mode {
                 if let Some(modes) = modes.as_ref() {
@@ -326,10 +328,12 @@ impl AgentConnection for AcpConnection {
                 )
             })?;
 
+
             let session = AcpSession {
                 thread: thread.downgrade(),
                 suppress_abort_err: false,
-                session_modes: modes
+                session_modes: modes,
+                models,
             };
             sessions.borrow_mut().insert(session_id, session);
 
@@ -450,6 +454,27 @@ impl AgentConnection for AcpConnection {
         }
     }
 
+    fn model_selector(
+        &self,
+        session_id: &acp::SessionId,
+    ) -> Option<Rc<dyn acp_thread::AgentModelSelector>> {
+        let sessions = self.sessions.clone();
+        let sessions_ref = sessions.borrow();
+        let Some(session) = sessions_ref.get(session_id) else {
+            return None;
+        };
+
+        if let Some(models) = session.models.as_ref() {
+            Some(Rc::new(AcpModelSelector::new(
+                session_id.clone(),
+                self.connection.clone(),
+                models.clone(),
+            )) as _)
+        } else {
+            None
+        }
+    }
+
     fn into_any(self: Rc<Self>) -> Rc<dyn Any> {
         self
     }
@@ -497,6 +522,82 @@ impl acp_thread::AgentSessionModes for AcpSessionModes {
 
             Ok(())
         })
+    }
+}
+
+struct AcpModelSelector {
+    session_id: acp::SessionId,
+    connection: Rc<acp::ClientSideConnection>,
+    state: Rc<RefCell<acp::SessionModelState>>,
+}
+
+impl AcpModelSelector {
+    fn new(
+        session_id: acp::SessionId,
+        connection: Rc<acp::ClientSideConnection>,
+        state: Rc<RefCell<acp::SessionModelState>>,
+    ) -> Self {
+        Self {
+            session_id,
+            connection,
+            state,
+        }
+    }
+}
+
+impl acp_thread::AgentModelSelector for AcpModelSelector {
+    fn list_models(&self, _cx: &mut App) -> Task<Result<acp_thread::AgentModelList>> {
+        Task::ready(Ok(acp_thread::AgentModelList::Flat(
+            self.state
+                .borrow()
+                .available_models
+                .clone()
+                .into_iter()
+                .map(acp_thread::AgentModelInfo::from)
+                .collect(),
+        )))
+    }
+
+    fn select_model(&self, model_id: acp::ModelId, cx: &mut App) -> Task<Result<()>> {
+        let connection = self.connection.clone();
+        let session_id = self.session_id.clone();
+        let old_model_id;
+        {
+            let mut state = self.state.borrow_mut();
+            old_model_id = state.current_model_id.clone();
+            state.current_model_id = model_id.clone();
+        };
+        let state = self.state.clone();
+        cx.foreground_executor().spawn(async move {
+            let result = connection
+                .set_session_model(acp::SetSessionModelRequest {
+                    session_id,
+                    model_id,
+                    meta: None,
+                })
+                .await;
+
+            if result.is_err() {
+                state.borrow_mut().current_model_id = old_model_id;
+            }
+
+            result?;
+
+            Ok(())
+        })
+    }
+
+    fn selected_model(&self, _cx: &mut App) -> Task<Result<acp_thread::AgentModelInfo>> {
+        let state = self.state.borrow();
+        Task::ready(
+            state
+                .available_models
+                .iter()
+                .find(|m| m.model_id == state.current_model_id)
+                .cloned()
+                .map(acp_thread::AgentModelInfo::from)
+                .ok_or_else(|| anyhow::anyhow!("Model not found")),
+        )
     }
 }
 

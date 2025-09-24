@@ -44,6 +44,10 @@ pub use crate::scale::*;
 pub use crate::schema::*;
 pub use crate::settings::*;
 pub use crate::styles::*;
+pub use ::settings::{
+    FontStyleContent, HighlightStyleContent, StatusColorsContent, ThemeColorsContent,
+    ThemeStyleContent,
+};
 
 /// Defines window border radius for platforms that use client side decorations.
 pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
@@ -178,7 +182,7 @@ impl ThemeFamily {
             AppearanceContent::Light => StatusColors::light(),
             AppearanceContent::Dark => StatusColors::dark(),
         };
-        let mut status_colors_refinement = theme.style.status_colors_refinement();
+        let mut status_colors_refinement = status_colors_refinement(&theme.style.status);
         apply_status_color_defaults(&mut status_colors_refinement);
         refined_status_colors.refine(&status_colors_refinement);
 
@@ -192,7 +196,8 @@ impl ThemeFamily {
             AppearanceContent::Light => ThemeColors::light(),
             AppearanceContent::Dark => ThemeColors::dark(),
         };
-        let mut theme_colors_refinement = theme.style.theme_colors_refinement();
+        let mut theme_colors_refinement =
+            theme_colors_refinement(&theme.style.colors, &status_colors_refinement);
         apply_theme_color_defaults(&mut theme_colors_refinement, &refined_player_colors);
         refined_theme_colors.refine(&theme_colors_refinement);
 
