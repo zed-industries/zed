@@ -1165,4 +1165,59 @@ mod test {
                  "
         });
     }
+
+    #[gpui::test]
+    async fn test_vim_search_highlights_persist_after_escape(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state("ˇhello hello hello hello", Mode::Normal);
+
+        cx.simulate_keystroke("*");
+        cx.run_until_parked();
+
+        cx.assert_state("hello ˇhello hello hello", Mode::Normal);
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert!(!highlights.is_empty());
+            assert_eq!(highlights.len(), 4);
+        });
+
+        cx.simulate_keystroke("escape");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert!(!highlights.is_empty());
+            assert_eq!(highlights.len(), 4);
+        });
+
+        cx.assert_state("hello ˇhello hello hello", Mode::Normal);
+    }
+
+    #[gpui::test]
+    async fn test_regular_search_highlights_cleared_after_escape(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, false).await;
+
+        cx.cx.set_state("ˇhello hello hello hello");
+        cx.run_until_parked();
+        
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+    
+        cx.simulate_keystrokes("hello");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let highlights = editor.all_text_background_highlights(window, cx);
+            assert!(!highlights.is_empty());
+        });
+
+        cx.simulate_keystroke("escape");
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, window, cx| {
+            let _highlights = editor.all_text_background_highlights(window, cx);
+        });
+    }
 }
