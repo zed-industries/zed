@@ -3791,11 +3791,11 @@ See Buffer Font Features
 
 - Description: Set the terminal's line height.
 - Setting: `line_height`
-- Default: `comfortable`
+- Default: `standard`
 
 **Options**
 
-1. Use a line height that's `comfortable` for reading, 1.618. (default)
+1. Use a line height that's `comfortable` for reading, 1.618.
 
 ```json
 {
@@ -3805,7 +3805,7 @@ See Buffer Font Features
 }
 ```
 
-2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters
+2. Use a `standard` line height, 1.3. This option is useful for TUIs, particularly if they use box characters. (default)
 
 ```json
 {
