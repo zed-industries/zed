@@ -21,7 +21,7 @@ if [ "$(whoami)" = root ]; then SUDO=; else SUDO="$(command -v sudo || command -
 ARCH="$(uname -m)"
 WILD_REPO="${WILD_REPO:-https://github.com/davidlattimore/wild}"
 WILD_PACKAGE="wild-linker-${ARCH}-unknown-linux-gnu"
-WILD_URL="${WILD_URL:-$WILD_REPO}/releases/download/$WILD_VERSION/${WILD_PACKAGE}.tar.xz"
+WILD_URL="${WILD_URL:-$WILD_REPO}/releases/download/$WILD_VERSION/${WILD_PACKAGE}.tar.gz"
 
 echo "Downloading from $WILD_URL"
 curl -fsSL --output - "$WILD_URL" \
