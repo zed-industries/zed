@@ -5298,7 +5298,8 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#.to_string();
+        search: param_names_for_lifetime_elision_hints: self"#
+            .to_string();
 
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
@@ -5528,7 +5529,8 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#.to_string();
+        search: param_names_for_lifetime_elision_hints: self"#
+            .to_string();
 
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5666,7 +5668,8 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#.to_string();
+        search: param_names_for_lifetime_elision_hints: self"#
+            .to_string();
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
