@@ -64,6 +64,7 @@ pub(crate) fn play_remote_audio_track(
         });
 
     info!("sample_rate: {:?}", stream.sample_rate());
+    info!("channel_count: {:?}", stream.channels());
     audio::Audio::play_voip_stream(stream, speaker.name, speaker.is_staff, cx)
         .context("Could not play audio")?;
 
@@ -99,8 +100,8 @@ impl AudioStack {
         let next_ssrc = self.next_ssrc.fetch_add(1, Ordering::Relaxed);
         let source = AudioMixerSource {
             ssrc: next_ssrc,
-            sample_rate: SAMPLE_RATE.get(),
-            num_channels: CHANNEL_COUNT.get() as u32,
+            sample_rate: LEGACY_SAMPLE_RATE.get(),
+            num_channels: LEGACY_CHANNEL_COUNT.get() as u32,
             buffer: Arc::default(),
         };
         self.mixer.lock().add_source(source.clone());
