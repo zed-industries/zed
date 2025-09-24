@@ -5,8 +5,15 @@ use std::{cmp::Ordering, mem, sync::Arc};
 #[derive(Clone)]
 struct StackEntry<'a, T: Item, D> {
     tree: &'a SumTree<T>,
-    index: usize,
+    index: u32,
     position: D,
+}
+
+impl<'a, T: Item, D> StackEntry<'a, T, D> {
+    #[inline]
+    fn index(&self) -> usize {
+        self.index as usize
+    }
 }
 
 impl<T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'_, T, D> {
@@ -93,10 +100,10 @@ where
         if let Some(entry) = self.stack.last() {
             match *entry.tree.0 {
                 Node::Leaf { ref items, .. } => {
-                    if entry.index == items.len() {
+                    if entry.index() == items.len() {
                         None
                     } else {
-                        Some(&items[entry.index])
+                        Some(&items[entry.index()])
                     }
                 }
                 _ => unreachable!(),
@@ -114,10 +121,10 @@ where
                 Node::Leaf {
                     ref item_summaries, ..
                 } => {
-                    if entry.index == item_summaries.len() {
+                    if entry.index() == item_summaries.len() {
                         None
                     } else {
-                        Some(&item_summaries[entry.index])
+                        Some(&item_summaries[entry.index()])
                     }
                 }
                 _ => unreachable!(),
@@ -131,7 +138,7 @@ where
     pub fn next_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
-            if entry.index == entry.tree.0.items().len() - 1 {
+            if entry.index() == entry.tree.0.items().len() - 1 {
                 if let Some(next_leaf) = self.next_leaf() {
                     Some(next_leaf.0.items().first().unwrap())
                 } else {
@@ -139,7 +146,7 @@ where
                 }
             } else {
                 match *entry.tree.0 {
-                    Node::Leaf { ref items, .. } => Some(&items[entry.index + 1]),
+                    Node::Leaf { ref items, .. } => Some(&items[entry.index() + 1]),
                     _ => unreachable!(),
                 }
             }
@@ -153,11 +160,11 @@ where
     #[track_caller]
     fn next_leaf(&self) -> Option<&'a SumTree<T>> {
         for entry in self.stack.iter().rev().skip(1) {
-            if entry.index < entry.tree.0.child_trees().len() - 1 {
+            if entry.index() < entry.tree.0.child_trees().len() - 1 {
                 match *entry.tree.0 {
                     Node::Internal {
                         ref child_trees, ..
-                    } => return Some(child_trees[entry.index + 1].leftmost_leaf()),
+                    } => return Some(child_trees[entry.index() + 1].leftmost_leaf()),
                     Node::Leaf { .. } => unreachable!(),
                 };
             }
@@ -169,7 +176,7 @@ where
     pub fn prev_item(&self) -> Option<&'a T> {
         self.assert_did_seek();
         if let Some(entry) = self.stack.last() {
-            if entry.index == 0 {
+            if entry.index() == 0 {
                 if let Some(prev_leaf) = self.prev_leaf() {
                     Some(prev_leaf.0.items().last().unwrap())
                 } else {
@@ -177,7 +184,7 @@ where
                 }
             } else {
                 match *entry.tree.0 {
-                    Node::Leaf { ref items, .. } => Some(&items[entry.index - 1]),
+                    Node::Leaf { ref items, .. } => Some(&items[entry.index() - 1]),
                     _ => unreachable!(),
                 }
             }
@@ -191,11 +198,11 @@ where
     #[track_caller]
     fn prev_leaf(&self) -> Option<&'a SumTree<T>> {
         for entry in self.stack.iter().rev().skip(1) {
-            if entry.index != 0 {
+            if entry.index() != 0 {
                 match *entry.tree.0 {
                     Node::Internal {
                         ref child_trees, ..
-                    } => return Some(child_trees[entry.index - 1].rightmost_leaf()),
+                    } => return Some(child_trees[entry.index() - 1].rightmost_leaf()),
                     Node::Leaf { .. } => unreachable!(),
                 };
             }
@@ -224,7 +231,7 @@ where
             if !self.tree.is_empty() {
                 self.stack.push(StackEntry {
                     tree: self.tree,
-                    index: self.tree.0.child_summaries().len(),
+                    index: self.tree.0.child_summaries().len() as u32,
                     position: D::from_summary(self.tree.summary(), self.cx),
                 });
             }
@@ -240,7 +247,7 @@ where
 
             let entry = self.stack.last_mut().unwrap();
             if !descending {
-                if entry.index == 0 {
+                if entry.index() == 0 {
                     self.stack.pop();
                     continue;
                 } else {
@@ -248,20 +255,20 @@ where
                 }
             }
 
-            for summary in &entry.tree.0.child_summaries()[..entry.index] {
+            for summary in &entry.tree.0.child_summaries()[..entry.index()] {
                 self.position.add_summary(summary, self.cx);
             }
             entry.position = self.position.clone();
 
-            descending = filter_node(&entry.tree.0.child_summaries()[entry.index]);
+            descending = filter_node(&entry.tree.0.child_summaries()[entry.index()]);
             match entry.tree.0.as_ref() {
                 Node::Internal { child_trees, .. } => {
                     if descending {
-                        let tree = &child_trees[entry.index];
+                        let tree = &child_trees[entry.index()];
                         self.stack.push(StackEntry {
                             position: D::zero(self.cx),
                             tree,
-                            index: tree.0.child_summaries().len() - 1,
+                            index: tree.0.child_summaries().len() as u32 - 1,
                         })
                     }
                 }
@@ -312,8 +319,8 @@ where
                             entry.position = self.position.clone();
                         }
 
-                        while entry.index < child_summaries.len() {
-                            let next_summary = &child_summaries[entry.index];
+                        while entry.index() < child_summaries.len() {
+                            let next_summary = &child_summaries[entry.index()];
                             if filter_node(next_summary) {
                                 break;
                             } else {
@@ -323,18 +330,18 @@ where
                             }
                         }
 
-                        child_trees.get(entry.index)
+                        child_trees.get(entry.index())
                     }
                     Node::Leaf { item_summaries, .. } => {
                         if !descend {
-                            let item_summary = &item_summaries[entry.index];
+                            let item_summary = &item_summaries[entry.index()];
                             entry.index += 1;
                             entry.position.add_summary(item_summary, self.cx);
                             self.position.add_summary(item_summary, self.cx);
                         }
 
                         loop {
-                            if let Some(next_item_summary) = item_summaries.get(entry.index) {
+                            if let Some(next_item_summary) = item_summaries.get(entry.index()) {
                                 if filter_node(next_item_summary) {
                                     return;
                                 } else {
@@ -465,9 +472,9 @@ where
                         entry.position = self.position.clone();
                     }
 
-                    for (child_tree, child_summary) in child_trees[entry.index..]
+                    for (child_tree, child_summary) in child_trees[entry.index()..]
                         .iter()
-                        .zip(&child_summaries[entry.index..])
+                        .zip(&child_summaries[entry.index()..])
                     {
                         let mut child_end = self.position.clone();
                         child_end.add_summary(child_summary, self.cx);
@@ -498,9 +505,9 @@ where
                 } => {
                     aggregate.begin_leaf();
 
-                    for (item, item_summary) in items[entry.index..]
+                    for (item, item_summary) in items[entry.index()..]
                         .iter()
-                        .zip(&item_summaries[entry.index..])
+                        .zip(&item_summaries[entry.index()..])
                     {
                         let mut child_end = self.position.clone();
                         child_end.add_summary(item_summary, self.cx);
@@ -572,14 +579,14 @@ impl<'a, T: Item> Iterator for Iter<'a, T> {
                         if !descend {
                             entry.index += 1;
                         }
-                        child_trees.get(entry.index)
+                        child_trees.get(entry.index())
                     }
                     Node::Leaf { items, .. } => {
                         if !descend {
                             entry.index += 1;
                         }
 
-                        if let Some(next_item) = items.get(entry.index) {
+                        if let Some(next_item) = items.get(entry.index()) {
                             return Some(next_item);
                         } else {
                             None
