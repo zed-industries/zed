@@ -313,13 +313,12 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
         .parent()
         .context("Failed to determine parent directory of zed executable path.")?;
 
-    #[cfg(target_os = "macos")]
-    let zed_cli_path = {
-        enum MacosAppBundle {
-            App,
-            LocalPath,
-        }
+    enum MacosAppBundle {
+        App,
+        LocalPath,
+    }
 
+    let zed_cli_path = if cfg!(target_os = "macos") {
         fn locate_bundle(zed_path: &std::path::Path) -> Result<std::path::PathBuf> {
             let mut app_path = zed_path.canonicalize()?;
             while app_path.extension() != Some(std::ffi::OsStr::new("app")) {
@@ -347,10 +346,7 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
         };
 
         zed_cli_path.to_string_lossy().to_string()
-    };
-
-    #[cfg(target_os = "windows")]
-    let zed_cli_path = {
+    } else if cfg!(target_os = "windows") {
         // bin/zed.exe is for installed builds, ./cli.exe is for development builds.
         let possible_locations = ["bin/zed.exe", "./cli.exe"];
         possible_locations
@@ -368,10 +364,7 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
             ))?
             .to_string_lossy()
             .to_string()
-    };
-
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    let zed_cli_path = {
+    } else if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {
         // bin is the standard, ./cli is for the target directory in development builds.
         let possible_locations = ["../bin/zed", "./cli"];
         possible_locations
@@ -386,6 +379,8 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
             .with_context(|| format!("could not find any of: {}", possible_locations.join(", ")))?
             .to_string_lossy()
             .to_string()
+    } else {
+        anyhow::bail!("unsupported platform for determining zed-cli path");
     };
 
     #[cfg(target_os = "windows")]
