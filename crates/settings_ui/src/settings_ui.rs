@@ -15,7 +15,7 @@ use ui::{
     LabelSize, ParentElement, SharedString, StatefulInteractiveElement as _, Styled, Switch,
     v_flex,
 };
-use util::rel_path::RelPath;
+use util::{paths::PathStyle, rel_path::RelPath};
 
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
