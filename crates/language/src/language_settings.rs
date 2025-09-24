@@ -7,7 +7,7 @@ use ec4rs::{
     property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
 };
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{App, Modifiers};
+use gpui::{App, Modifiers, SharedString};
 use itertools::{Either, Itertools};
 
 pub use settings::{
@@ -57,6 +57,12 @@ pub struct AllLanguageSettings {
     pub defaults: LanguageSettings,
     languages: HashMap<LanguageName, LanguageSettings>,
     pub(crate) file_types: FxHashMap<Arc<str>, GlobSet>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WhitespaceMap {
+    pub space: SharedString,
+    pub tab: SharedString,
 }
 
 /// The settings for a particular language.
@@ -118,7 +124,7 @@ pub struct LanguageSettings {
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: settings::ShowWhitespaceSetting,
     /// Visible characters used to render whitespace when show_whitespaces is enabled.
-    pub whitespace_map: settings::WhitespaceMap,
+    pub whitespace_map: WhitespaceMap,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
     pub extend_comment_on_newline: bool,
     /// Inlay hint related settings.
@@ -503,6 +509,8 @@ impl settings::Settings for AllLanguageSettings {
             let prettier = settings.prettier.unwrap();
             let indent_guides = settings.indent_guides.unwrap();
             let tasks = settings.tasks.unwrap();
+            let whitespace_map = settings.whitespace_map.unwrap();
+
             LanguageSettings {
                 tab_size: settings.tab_size.unwrap(),
                 hard_tabs: settings.hard_tabs.unwrap(),
@@ -536,7 +544,10 @@ impl settings::Settings for AllLanguageSettings {
                 show_edit_predictions: settings.show_edit_predictions.unwrap(),
                 edit_predictions_disabled_in: settings.edit_predictions_disabled_in.unwrap(),
                 show_whitespaces: settings.show_whitespaces.unwrap(),
-                whitespace_map: settings.whitespace_map.unwrap(),
+                whitespace_map: WhitespaceMap {
+                    space: SharedString::new(whitespace_map.space.to_string()),
+                    tab: SharedString::new(whitespace_map.tab.to_string()),
+                },
                 extend_comment_on_newline: settings.extend_comment_on_newline.unwrap(),
                 inlay_hints: InlayHintSettings {
                     enabled: inlay_hints.enabled.unwrap(),
