@@ -1973,7 +1973,10 @@
   //     // "port": 22, "username": "test", "args": ["-i", "/home/user/.ssh/id_rsa"]
   //     "projects": [
   //       {
-  //         "paths": ["/home/user/code/zed"]
+  //         "paths": [
+  //           "/home/user/code/zed",
+  //           "~/code/zed"
+  //         ]
   //       }
   //     ]
   //   }
