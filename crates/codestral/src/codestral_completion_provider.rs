@@ -1,21 +1,4 @@
 //! Codestral completion provider using Fill-in-the-Middle API.
-//!
-//! This module implements a code completion provider for Codestral that uses its
-//! Fill-in-the-Middle (FIM) API to provide intelligent completions at the cursor position.
-//!
-//! # Key Features
-//!
-//! - **Smart Context Selection**: Uses tree-sitter to find logical code blocks around cursor
-//! - **Interpolation**: Adjusts predictions as the user types
-//! - **Simple Cursor Insertion**: Provides completions exactly where the user is typing
-//!
-//! # Architecture
-//!
-//! The provider consists of several cooperating components:
-//!
-//! 1. **Context Selection** (`excerpt_for_cursor_position`): Provides context around cursor
-//! 2. **API Integration** (`fetch_completion`): Calls Codestral's FIM API
-//! 3. **Interpolation** (`interpolate`): Keeps predictions valid as user types
 
 use crate::input_excerpt::{excerpt_for_cursor_position, prompt_for_outline, CURSOR_MARKER};
 use crate::{Codestral, CodestralRequest, CodestralResponse};
