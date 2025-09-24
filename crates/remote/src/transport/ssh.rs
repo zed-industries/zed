@@ -548,7 +548,7 @@ impl SshRemoteConnection {
                     .run_command(
                         "wget",
                         &[
-                            "--method=GET",
+                            // "--method=GET", // BusyBox's version of wget does NOT have support for this option
                             "--header=Content-Type: application/json",
                             "--body-data",
                             body,
