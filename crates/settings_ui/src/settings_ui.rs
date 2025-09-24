@@ -9,13 +9,13 @@ use gpui::{
 };
 use project::WorktreeId;
 use settings::{SettingsContent, SettingsStore};
-use std::path::Path;
 use ui::{
     ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color,
     FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label, LabelCommon as _,
     LabelSize, ParentElement, SharedString, StatefulInteractiveElement as _, Styled, Switch,
     v_flex,
 };
+use util::rel_path::RelPath;
 
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
@@ -84,7 +84,7 @@ fn project_settings_data() -> Vec<SettingsPage> {
                         "project_name",
                         SettingsFile::Local((
                             WorktreeId::from_usize(0),
-                            Arc::from(Path::new("TODO: actually pass through file")),
+                            Arc::from(RelPath::new("TODO: actually pass through file").unwrap()),
                         )),
                         window,
                         cx,
@@ -202,9 +202,9 @@ struct SettingItem {
 #[allow(unused)]
 #[derive(Clone, PartialEq)]
 enum SettingsFile {
-    User,                           // Uses all settings.
-    Local((WorktreeId, Arc<Path>)), // Has a special name, and special set of settings
-    Server(&'static str),           // Uses a special name, and the user settings
+    User,                              // Uses all settings.
+    Local((WorktreeId, Arc<RelPath>)), // Has a special name, and special set of settings
+    Server(&'static str),              // Uses a special name, and the user settings
 }
 
 impl SettingsFile {
@@ -219,7 +219,10 @@ impl SettingsFile {
     fn name(&self) -> SharedString {
         match self {
             SettingsFile::User => SharedString::new_static("User"),
-            SettingsFile::Local((_, path)) => format!("Local ({})", path.display()).into(),
+            // TODO is PathStyle::local() ever not appropriate?
+            SettingsFile::Local((_, path)) => {
+                format!("Local ({})", path.display(PathStyle::local())).into()
+            }
             SettingsFile::Server(file) => format!("Server ({})", file).into(),
         }
     }

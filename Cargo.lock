@@ -14524,6 +14524,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
  "workspace-hack",
  "zlog",
