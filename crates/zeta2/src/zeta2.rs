@@ -108,6 +108,10 @@ pub enum Event {
 }
 
 impl Zeta {
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<ZetaGlobal>().map(|global| global.0.clone())
+    }
+
     pub fn global(
         client: &Arc<Client>,
         user_store: &Entity<UserStore>,
@@ -160,6 +164,12 @@ impl Zeta {
 
     pub fn set_options(&mut self, options: ZetaOptions) {
         self.options = options;
+    }
+
+    pub fn clear_history(&mut self) {
+        for zeta_project in self.projects.values_mut() {
+            zeta_project.events.clear();
+        }
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {

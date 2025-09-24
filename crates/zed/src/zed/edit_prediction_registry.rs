@@ -97,6 +97,8 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut App) {
     if let Some(zeta) = zeta::Zeta::global(cx) {
         zeta.update(cx, |zeta, _| zeta.clear_history());
+    } else if let Some(zeta) = zeta2::Zeta::try_global(cx) {
+        zeta.update(cx, |zeta, _| zeta.clear_history());
     }
 }
 
