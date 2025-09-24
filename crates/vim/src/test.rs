@@ -35,6 +35,7 @@ async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("hjklˇ");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_neovim(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -233,6 +234,7 @@ async fn test_indent_outdent(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("        a\nbˇ\nccc\n");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_escape_command_palette(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -348,6 +350,7 @@ async fn test_kebab_case(cx: &mut gpui::TestAppContext) {
     )
 }
 
+#[perf]
 #[gpui::test]
 async fn test_join_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -434,6 +437,7 @@ async fn test_join_lines(cx: &mut gpui::TestAppContext) {
 }
 
 #[cfg(target_os = "macos")]
+#[perf]
 #[gpui::test]
 async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -585,6 +589,7 @@ async fn test_wrapped_lines(cx: &mut gpui::TestAppContext) {
     "});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_folds(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -650,6 +655,7 @@ async fn test_folds(cx: &mut gpui::TestAppContext) {
     "});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_folds_panic(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -685,6 +691,7 @@ async fn test_folds_panic(cx: &mut gpui::TestAppContext) {
         ˇ"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_clear_counts(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -702,6 +709,7 @@ async fn test_clear_counts(cx: &mut gpui::TestAppContext) {
         the lazy dog"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_zero(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -725,6 +733,7 @@ async fn test_zero(cx: &mut gpui::TestAppContext) {
         the lazy dog"});
 }
 
+#[perf]
 #[gpui::test]
 async fn test_selection_goal(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -741,6 +750,7 @@ async fn test_selection_goal(cx: &mut gpui::TestAppContext) {
 }
 
 #[cfg(target_os = "macos")]
+#[perf]
 #[gpui::test]
 async fn test_wrapped_motions(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -794,6 +804,7 @@ async fn test_wrapped_motions(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[perf]
 #[gpui::test]
 async fn test_wrapped_delete_end_document(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -812,6 +823,7 @@ async fn test_wrapped_delete_end_document(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[perf]
 #[gpui::test]
 async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -859,6 +871,7 @@ async fn test_select_all_issue_2170(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[perf]
 #[gpui::test]
 async fn test_jk(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -921,6 +934,7 @@ async fn test_jk_multi(cx: &mut gpui::TestAppContext) {
     cx.assert_state("jkˇoone jkˇoone jkˇoone", Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -960,6 +974,7 @@ async fn test_jk_delay(cx: &mut gpui::TestAppContext) {
     cx.assert_state("jˇkhello", Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_comma_w(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1106,7 +1121,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     cx.assert_state("const afterˇ = 2; console.log(after)", Mode::Normal)
 }
 
-#[perf(iterations = 1)]
+#[perf]
 #[gpui::test]
 async fn test_remap(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1184,6 +1199,7 @@ async fn test_remap(cx: &mut gpui::TestAppContext) {
     cx.assert_state("12ˇ 34", Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_undo(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1246,6 +1262,7 @@ async fn test_mouse_selection(cx: &mut TestAppContext) {
     cx.assert_state("one «ˇtwo» three", Mode::Visual)
 }
 
+#[perf]
 #[gpui::test]
 async fn test_lowercase_marks(cx: &mut TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1266,6 +1283,7 @@ async fn test_lowercase_marks(cx: &mut TestAppContext) {
         .assert_eq("line one\nˇtwo\nline three");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_lt_gt_marks(cx: &mut TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1342,6 +1360,7 @@ async fn test_lt_gt_marks(cx: &mut TestAppContext) {
     });
 }
 
+#[perf]
 #[gpui::test]
 async fn test_caret_mark(cx: &mut TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1392,6 +1411,7 @@ async fn test_caret_mark(cx: &mut TestAppContext) {
 }
 
 #[cfg(target_os = "macos")]
+#[perf]
 #[gpui::test]
 async fn test_dw_eol(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1484,6 +1504,7 @@ async fn test_toggle_comments(cx: &mut gpui::TestAppContext) {
     );
 }
 
+#[perf]
 #[gpui::test]
 async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1560,6 +1581,7 @@ async fn test_sneak(cx: &mut gpui::TestAppContext) {
     cx.assert_state(r#"11ˇ 12 13 14"#, Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_plus_minus(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1579,6 +1601,7 @@ async fn test_plus_minus(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_matches();
 }
 
+#[perf]
 #[gpui::test]
 async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
@@ -1595,6 +1618,7 @@ async fn test_command_alias(cx: &mut gpui::TestAppContext) {
     cx.set_state("ˇHello world", Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_remap_adjacent_dog_cat(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1628,6 +1652,7 @@ async fn test_remap_adjacent_dog_cat(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("do🐱ˇ");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1671,6 +1696,7 @@ async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("🍍ˇ");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_remap_recursion(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1697,6 +1723,7 @@ async fn test_remap_recursion(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("ˇlo");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_escape_while_waiting(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1705,6 +1732,7 @@ async fn test_escape_while_waiting(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("ˇi");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_ctrl_w_override(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1728,6 +1756,7 @@ async fn test_visual_indent_count(cx: &mut gpui::TestAppContext) {
     cx.assert_state("    ˇhi", Mode::Normal);
 }
 
+#[perf]
 #[gpui::test]
 async fn test_record_replay_recursion(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1740,6 +1769,7 @@ async fn test_record_replay_recursion(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("ˇhello world");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_blackhole_register(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1750,6 +1780,7 @@ async fn test_blackhole_register(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("hellˇo");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_sentence_backwards(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1825,6 +1856,7 @@ async fn test_sentence_backwards(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[perf]
 #[gpui::test]
 async fn test_sentence_forwards(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1840,6 +1872,7 @@ async fn test_sentence_forwards(cx: &mut gpui::TestAppContext) {
     cx.set_shared_state("helˇlo.\n\n\nworld.").await;
 }
 
+#[perf]
 #[gpui::test]
 async fn test_ctrl_o_visual(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1851,6 +1884,7 @@ async fn test_ctrl_o_visual(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq("ˇorld.");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_ctrl_o_position(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -1862,6 +1896,7 @@ async fn test_ctrl_o_position(cx: &mut gpui::TestAppContext) {
     cx.shared_state().await.assert_eq(" helloˇworld.");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_ctrl_o_dot(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -2066,6 +2101,7 @@ async fn test_folded_multibuffer_excerpts(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[perf]
 #[gpui::test]
 async fn test_delete_paragraph_motion(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -2096,6 +2132,7 @@ async fn test_delete_paragraph_motion(cx: &mut gpui::TestAppContext) {
     cx.shared_clipboard().await.assert_eq("lo world.");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
@@ -2134,6 +2171,7 @@ async fn test_delete_unmatched_brace(cx: &mut gpui::TestAppContext) {
         .assert_eq("  oth(wow)\n  oth(wow)\n");
 }
 
+#[perf]
 #[gpui::test]
 async fn test_paragraph_multi_delete(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
