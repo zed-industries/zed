@@ -965,26 +965,31 @@ impl Worktree {
     /// For visible worktrees, returns the path with the worktree name as the first component.
     /// Otherwise, returns an absolute path.
     pub fn full_path(&self, worktree_relative_path: &RelPath) -> PathBuf {
-        let mut full_path = PathBuf::new();
-
         if self.is_visible() {
-            full_path.push(self.root_name());
+            self.root_name()
+                .join(worktree_relative_path)
+                .display(self.path_style)
+                .to_string()
+                .into()
         } else {
-            let path = self.abs_path();
-
-            if self.is_local() && path.starts_with(home_dir().as_path()) {
-                full_path.push("~");
-                full_path.push(path.strip_prefix(home_dir().as_path()).unwrap());
+            let full_path = self.abs_path();
+            let mut full_path_string = if self.is_local()
+                && let Ok(stripped) = full_path.strip_prefix(home_dir())
+            {
+                self.path_style
+                    .join("~", &*stripped.to_string_lossy())
+                    .unwrap()
             } else {
-                full_path.push(path)
+                full_path.to_string_lossy().to_string()
+            };
+
+            if worktree_relative_path.components().next().is_some() {
+                full_path_string.push_str(self.path_style.separator());
+                full_path_string.push_str(&worktree_relative_path.display(self.path_style));
             }
-        }
 
-        if worktree_relative_path.components().next().is_some() {
-            full_path.push(&worktree_relative_path.as_std_path());
+            full_path_string.into()
         }
-
-        full_path
     }
 }
 

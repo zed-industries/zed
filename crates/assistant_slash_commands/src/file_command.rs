@@ -248,6 +248,7 @@ fn collect_files(
     cx.spawn(async move |cx| {
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
+            let path_style = snapshot.path_style();
             let mut directory_stack: Vec<Arc<RelPath>> = Vec::new();
             let mut folded_directory_names: Arc<RelPath> = RelPath::empty().into();
             let mut is_top_level_directory = true;
@@ -281,7 +282,6 @@ fn collect_files(
                 if entry.is_dir() {
                     // Auto-fold directories that contain no files
                     let mut child_entries = snapshot.child_entries(&entry.path);
-                    let path_style = snapshot.path_style();
                     if let Some(child) = child_entries.next() {
                         if child_entries.next().is_none() && child.kind.is_dir() {
                             if is_top_level_directory {
@@ -355,7 +355,9 @@ fn collect_files(
                         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                         append_buffer_to_output(
                             &snapshot,
-                            Some(path_including_worktree_name.as_std_path()),
+                            Some(Path::new(
+                                path_including_worktree_name.display(path_style).as_ref(),
+                            )),
                             &mut output,
                         )
                         .log_err();
@@ -450,9 +452,8 @@ pub fn build_entry_output_section(
 /// This contains a small fork of the util::paths::PathMatcher, that is stricter about the prefix
 /// check. Only subpaths pass the prefix check, rather than any prefix.
 mod custom_path_matcher {
-    use std::{fmt::Debug as _, path::Path};
-
     use globset::{Glob, GlobSet, GlobSetBuilder};
+    use std::fmt::Debug as _;
     use util::{paths::SanitizedPath, rel_path::RelPath};
 
     #[derive(Clone, Debug, Default)]
@@ -480,12 +481,12 @@ mod custom_path_matcher {
         pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
             let globs = globs
                 .iter()
-                .map(|glob| Glob::new(&SanitizedPath::new(glob).to_glob_string()))
+                .map(|glob| Glob::new(&SanitizedPath::new(glob).to_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
             let sources_with_trailing_slash = globs
                 .iter()
-                .map(|glob| glob.glob().to_string() + std::path::MAIN_SEPARATOR_STR)
+                .map(|glob| glob.glob().to_string() + "/")
                 .collect();
             let mut glob_builder = GlobSetBuilder::new();
             for single_glob in globs {
@@ -500,15 +501,12 @@ mod custom_path_matcher {
         }
 
         pub fn is_match(&self, other: &RelPath) -> bool {
-            let other_path = other.as_ref();
             self.sources
                 .iter()
                 .zip(self.sources_with_trailing_slash.iter())
                 .any(|(source, with_slash)| {
-                    let as_bytes = other_path.as_os_str().as_encoded_bytes();
-                    // todo(windows)
-                    // Potential bug: this assumes that the path separator is always `\` on Windows
-                    let with_slash = if source.ends_with(std::path::MAIN_SEPARATOR_STR) {
+                    let as_bytes = other.as_str().as_bytes();
+                    let with_slash = if source.ends_with('/') {
                         source.as_bytes()
                     } else {
                         with_slash.as_bytes()
@@ -516,13 +514,13 @@ mod custom_path_matcher {
 
                     as_bytes.starts_with(with_slash) || as_bytes.ends_with(source.as_bytes())
                 })
-                || self.glob.is_match(other_path)
-                || self.check_with_end_separator(other_path)
+                || self.glob.is_match(other)
+                || self.check_with_end_separator(other)
         }
 
-        fn check_with_end_separator(&self, path: &Path) -> bool {
-            let path_str = path.to_string_lossy();
-            let separator = std::path::MAIN_SEPARATOR_STR;
+        fn check_with_end_separator(&self, path: &RelPath) -> bool {
+            let path_str = path.as_str();
+            let separator = "/";
             if path_str.ends_with(separator) {
                 false
             } else {

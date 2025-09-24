@@ -198,18 +198,6 @@ impl SanitizedPath {
     pub fn to_path_buf(&self) -> PathBuf {
         self.0.to_path_buf()
     }
-
-    // FIXME wrong
-    pub fn to_glob_string(&self) -> String {
-        #[cfg(target_os = "windows")]
-        {
-            self.0.to_string_lossy().replace("/", "\\")
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            self.0.to_string_lossy().to_string()
-        }
-    }
 }
 
 impl std::fmt::Debug for SanitizedPath {
