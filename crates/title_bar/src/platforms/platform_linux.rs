@@ -21,9 +21,10 @@ impl RenderOnce for LinuxWindowControls {
             .px_3()
             .gap_3()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .child(WindowControl::new(
-                "minimize",
-                WindowControlType::Minimize,
+            .child(WindowControl::new_close(
+                "close",
+                WindowControlType::Close,
+                self.close_window_action,
                 cx,
             ))
             .child(WindowControl::new(
@@ -35,10 +36,9 @@ impl RenderOnce for LinuxWindowControls {
                 },
                 cx,
             ))
-            .child(WindowControl::new_close(
-                "close",
-                WindowControlType::Close,
-                self.close_window_action,
+            .child(WindowControl::new(
+                "minimize",
+                WindowControlType::Minimize,
                 cx,
             ))
     }
