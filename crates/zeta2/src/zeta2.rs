@@ -459,7 +459,6 @@ impl Zeta {
                         .ok();
                     }
 
-                    // todo! move to prediction.rs?
                     // TODO telemetry: duration, etc
                     let Some((edits, snapshot, edit_preview_task)) =
                         buffer.read_with(cx, |buffer, cx| {
