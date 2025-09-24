@@ -64,7 +64,7 @@ impl CurrentCompletion {
     /// Attempts to adjust the edits based on changes made to the buffer since the completion was generated.
     /// Returns None if the user's edits conflict with the predicted edits.
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
-        interpolate(&self.snapshot, new_snapshot, self.edits.clone())
+        edit_prediction::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
     }
 }
 
@@ -541,58 +541,4 @@ impl EditPredictionProvider for CodestralCompletionProvider {
             edit_preview: Some(current_completion.edit_preview.clone()),
         })
     }
-}
-
-/// Adjusts predicted completion based on changes the user has made since the prediction was generated.
-///
-/// For the simplified single-cursor insertion model:
-/// - If the user hasn't typed anything, the completion remains valid
-/// - If the user typed something that matches the beginning of the completion, adjust to insert only the remaining part
-/// - If the user typed something different, invalidate the completion
-///
-/// # Returns
-/// - Some(edits) with adjusted edits if the prediction is still valid
-/// - None if user changes conflict with the prediction
-fn interpolate(
-    old_snapshot: &BufferSnapshot,
-    new_snapshot: &BufferSnapshot,
-    current_edits: Arc<[(Range<Anchor>, String)]>,
-) -> Option<Vec<(Range<Anchor>, String)>> {
-    // We should only have one edit (cursor insertion) in the simplified model
-    if current_edits.len() != 1 {
-        return None;
-    }
-
-    let (edit_range, completion_text) = &current_edits[0];
-    let cursor_offset = edit_range.start.to_offset(old_snapshot);
-
-    // Check what the user has typed since the prediction
-    for user_edit in new_snapshot.edits_since::<usize>(&old_snapshot.version) {
-        // If the user edit is at our cursor position
-        if user_edit.old.start == cursor_offset && user_edit.old.end == cursor_offset {
-            let user_typed = new_snapshot
-                .text_for_range(user_edit.new.clone())
-                .collect::<String>();
-
-            // Check if what the user typed matches the beginning of our completion
-            if let Some(remaining) = completion_text.strip_prefix(&user_typed) {
-                if remaining.is_empty() {
-                    // User typed the entire completion
-                    return None;
-                }
-                // Adjust to insert only the remaining part
-                let new_cursor = new_snapshot.anchor_after(user_edit.new.end);
-                return Some(vec![(new_cursor..new_cursor, remaining.to_string())]);
-            } else if !user_typed.is_empty() {
-                // User typed something different
-                return None;
-            }
-        } else if user_edit.old.contains(&cursor_offset) || cursor_offset > user_edit.old.end {
-            // User made an edit that affects our insertion point
-            return None;
-        }
-    }
-
-    // No conflicting edits, return original completion
-    Some(vec![(edit_range.clone(), completion_text.clone())])
 }
