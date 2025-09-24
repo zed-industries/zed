@@ -26,7 +26,7 @@ use sum_tree::{Bias, Dimensions, SumTree, Summary, TreeMap};
 use text::{BufferId, Edit};
 use ui::ElementId;
 
-const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
+const NEWLINES: &[u8] = &[b'\n'; u128::BITS as usize];
 const BULLETS: &str = "********************************************************************************************************************************";
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
@@ -1726,12 +1726,13 @@ impl<'a> Iterator for BlockChunks<'a> {
 
             let start_in_block = self.output_row - block_start;
             let end_in_block = cmp::min(self.max_output_row, block_end) - block_start;
-            let line_count = end_in_block - start_in_block;
+            // todo: We need to split the chunk here?
+            let line_count = cmp::min(end_in_block - start_in_block, u128::BITS);
             self.output_row += line_count;
 
             return Some(Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count as usize]) },
-                chars: (1 << line_count) - 1,
+                chars: 1u128.unbounded_shl(line_count) - 1,
                 ..Default::default()
             });
         }
@@ -1746,6 +1747,7 @@ impl<'a> Iterator for BlockChunks<'a> {
                     if self.transforms.item().is_some() {
                         return Some(Chunk {
                             text: "\n",
+                            chars: 1,
                             ..Default::default()
                         });
                     }
@@ -1773,7 +1775,7 @@ impl<'a> Iterator for BlockChunks<'a> {
             let chars_count = prefix.chars().count();
             let bullet_len = chars_count;
             prefix = &BULLETS[..bullet_len];
-            chars = (1 << bullet_len) - 1;
+            chars = 1u128.unbounded_shl(bullet_len as u32) - 1;
             tabs = 0;
         }
 
