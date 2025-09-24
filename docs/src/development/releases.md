@@ -51,9 +51,13 @@ Credentials for various services used in this process can be found in 1Password.
    - We sometimes correct things here and there that didn't translate from GitHub's renderer to Kit's.
 
 1. Build social media posts based on the popular items in stable.
+
    - You can use the [prior week's post chain](https://zed.dev/channel/tweets-23331) as your outline.
    - Stage the copy and assets using [Buffer](https://buffer.com), for both X and BlueSky.
    - Publish both, one at a time, ensuring both are posted to each respective platform.
+
+1.  Store any assets made in the `Feature Media` directory in our Google Drive.
+    Other members on the team may want to reference or use these later on.
 
 ## Patch release process
 
