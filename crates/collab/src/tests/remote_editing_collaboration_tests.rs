@@ -194,8 +194,8 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.run_until_parked();
     cx_b.update(|cx| {
         assert_eq!(
-            buffer_b.read(cx).file().unwrap().path().as_str(),
-            path!("src/renamed.rs").to_string()
+            buffer_b.read(cx).file().unwrap().path().as_ref(),
+            rel_path("src/renamed.rs")
         );
     });
 }

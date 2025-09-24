@@ -1686,20 +1686,15 @@ async fn test_project_reconnect(
         assert!(project.is_shared());
         assert!(worktree_a1.read(cx).has_update_observer());
         assert_eq!(
-            worktree_a1
-                .read(cx)
-                .snapshot()
-                .paths()
-                .map(|p| p.as_str())
-                .collect::<Vec<_>>(),
+            worktree_a1.read(cx).snapshot().paths().collect::<Vec<_>>(),
             vec![
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("subdir2"),
-                path!("subdir2/f.txt"),
-                path!("subdir2/g.txt"),
-                path!("subdir2/h.txt"),
-                path!("subdir2/i.txt")
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("subdir2"),
+                rel_path("subdir2/f.txt"),
+                rel_path("subdir2/g.txt"),
+                rel_path("subdir2/h.txt"),
+                rel_path("subdir2/i.txt")
             ]
         );
         assert!(worktree_a3.read(cx).has_update_observer());
@@ -1723,16 +1718,15 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("subdir2"),
-                path!("subdir2/f.txt"),
-                path!("subdir2/g.txt"),
-                path!("subdir2/h.txt"),
-                path!("subdir2/i.txt")
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("subdir2"),
+                rel_path("subdir2/f.txt"),
+                rel_path("subdir2/g.txt"),
+                rel_path("subdir2/h.txt"),
+                rel_path("subdir2/i.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1820,16 +1814,15 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("subdir2"),
-                path!("subdir2/f.txt"),
-                path!("subdir2/g.txt"),
-                path!("subdir2/h.txt"),
-                path!("subdir2/j.txt")
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("subdir2"),
+                rel_path("subdir2/f.txt"),
+                rel_path("subdir2/g.txt"),
+                rel_path("subdir2/h.txt"),
+                rel_path("subdir2/j.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -3311,30 +3304,30 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                path!("DIR"),
-                path!("DIR/SUBDIR"),
-                path!("DIR/SUBDIR/f.txt"),
-                path!("DIR/e.txt"),
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("d.txt")
+                rel_path("DIR"),
+                rel_path("DIR/SUBDIR"),
+                rel_path("DIR/SUBDIR/f.txt"),
+                rel_path("DIR/e.txt"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("d.txt")
             ]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                path!("DIR"),
-                path!("DIR/SUBDIR"),
-                path!("DIR/SUBDIR/f.txt"),
-                path!("DIR/e.txt"),
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("d.txt")
+                rel_path("DIR"),
+                rel_path("DIR/SUBDIR"),
+                rel_path("DIR/SUBDIR/f.txt"),
+                rel_path("DIR/e.txt"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("d.txt")
             ]
         );
     });
@@ -3353,32 +3346,32 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                path!("DIR"),
-                path!("DIR/SUBDIR"),
-                path!("DIR/SUBDIR/f.txt"),
-                path!("DIR/e.txt"),
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("d.txt"),
-                path!("f.txt")
+                rel_path("DIR"),
+                rel_path("DIR/SUBDIR"),
+                rel_path("DIR/SUBDIR/f.txt"),
+                rel_path("DIR/e.txt"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("d.txt"),
+                rel_path("f.txt")
             ]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                path!("DIR"),
-                path!("DIR/SUBDIR"),
-                path!("DIR/SUBDIR/f.txt"),
-                path!("DIR/e.txt"),
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("d.txt"),
-                path!("f.txt")
+                rel_path("DIR"),
+                rel_path("DIR/SUBDIR"),
+                rel_path("DIR/SUBDIR/f.txt"),
+                rel_path("DIR/e.txt"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("d.txt"),
+                rel_path("f.txt")
             ]
         );
     });
