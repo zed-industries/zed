@@ -575,7 +575,8 @@ impl PickerDelegate for WorktreeListDelegate {
             h_flex()
                 .w_full()
                 .p_1p5()
-                .justify_between()
+                .gap_0p5()
+                .justify_end()
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child(
