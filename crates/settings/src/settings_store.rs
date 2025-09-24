@@ -31,8 +31,7 @@ pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
-    LanguageToSettingsMap, SettingsJsonSchemaParams, SettingsUiEntry, ThemeName, VsCodeSettings,
-    WorktreeId,
+    LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
     merge_from::MergeFrom,
     parse_json_with_comments, replace_value_in_json_text,
     settings_content::{
@@ -479,10 +478,6 @@ impl SettingsStore {
                 store.get_vscode_edits(old_text, &vscode_settings)
             })
         })
-    }
-
-    pub fn settings_ui_items(&self) -> impl IntoIterator<Item = SettingsUiEntry> {
-        [].into_iter()
     }
 }
 
