@@ -391,8 +391,6 @@
   "use_system_window_tabs": false,
   // Titlebar related settings
   "title_bar": {
-    // When to show the title bar: "always" | "never" | "hide_in_full_screen".
-    "show": "always",
     // Whether to show the branch icon beside branch switcher in the titlebar.
     "show_branch_icon": false,
     // Whether to show the branch name button in the titlebar.

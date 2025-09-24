@@ -1022,7 +1022,7 @@ mod tests {
     use std::num::NonZeroU32;
 
     use crate::{
-        TitleBarSettingsContent, TitleBarVisibility, VsCodeSettingsSource, default_settings,
+        ClosePosition, ItemSettingsContent, VsCodeSettingsSource, default_settings,
         settings_content::LanguageSettingsContent, test_settings,
     };
 
@@ -1043,30 +1043,30 @@ mod tests {
     }
 
     #[derive(Debug, PartialEq)]
-    struct TitleBarSettings {
-        show: TitleBarVisibility,
-        show_branch_name: bool,
+    struct ItemSettings {
+        close_position: ClosePosition,
+        git_status: bool,
     }
 
-    impl Settings for TitleBarSettings {
+    impl Settings for ItemSettings {
         fn from_settings(content: &SettingsContent, _: &mut App) -> Self {
-            let content = content.title_bar.clone().unwrap();
-            TitleBarSettings {
-                show: content.show.unwrap(),
-                show_branch_name: content.show_branch_name.unwrap(),
+            let content = content.tabs.clone().unwrap();
+            ItemSettings {
+                close_position: content.close_position.unwrap(),
+                git_status: content.git_status.unwrap(),
             }
         }
 
         fn import_from_vscode(vscode: &VsCodeSettings, content: &mut SettingsContent) {
             let mut show = None;
 
-            vscode.enum_setting("window.titleBarStyle", &mut show, |value| match value {
-                "never" => Some(TitleBarVisibility::Never),
-                "always" => Some(TitleBarVisibility::Always),
-                _ => None,
-            });
+            vscode.bool_setting("workbench.editor.decorations.colors", &mut show);
             if let Some(show) = show {
-                content.title_bar.get_or_insert_default().show.replace(show);
+                content
+                    .tabs
+                    .get_or_insert_default()
+                    .git_status
+                    .replace(show);
             }
         }
     }
@@ -1103,7 +1103,7 @@ mod tests {
     fn test_settings_store_basic(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &default_settings());
         store.register_setting::<AutoUpdateSetting>(cx);
-        store.register_setting::<TitleBarSettings>(cx);
+        store.register_setting::<ItemSettings>(cx);
         store.register_setting::<DefaultLanguageSettings>(cx);
 
         assert_eq!(
@@ -1111,16 +1111,16 @@ mod tests {
             &AutoUpdateSetting { auto_update: true }
         );
         assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Always
+            store.get::<ItemSettings>(None).close_position,
+            ClosePosition::Right
         );
 
         store
             .set_user_settings(
                 r#"{
                     "auto_update": false,
-                    "title_bar": {
-                      "show": "never"
+                    "tabs": {
+                      "close_position": "left"
                     }
                 }"#,
                 cx,
@@ -1132,8 +1132,8 @@ mod tests {
             &AutoUpdateSetting { auto_update: false }
         );
         assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Never
+            store.get::<ItemSettings>(None).close_position,
+            ClosePosition::Left
         );
 
         store
@@ -1160,7 +1160,7 @@ mod tests {
                 WorktreeId::from_usize(1),
                 Path::new("/root2").into(),
                 LocalSettingsKind::Settings,
-                Some(r#"{ "tab_size": 9, "title_bar": { "show_branch_name": false } }"#),
+                Some(r#"{ "tab_size": 9, "auto_update": true}"#),
                 cx,
             )
             .unwrap();
@@ -1196,14 +1196,11 @@ mod tests {
             }
         );
         assert_eq!(
-            store.get::<TitleBarSettings>(Some(SettingsLocation {
+            store.get::<AutoUpdateSetting>(Some(SettingsLocation {
                 worktree_id: WorktreeId::from_usize(1),
                 path: Path::new("/root2/something")
             })),
-            &TitleBarSettings {
-                show: TitleBarVisibility::Never,
-                show_branch_name: true,
-            }
+            &AutoUpdateSetting { auto_update: false }
         );
     }
 
@@ -1214,15 +1211,10 @@ mod tests {
             .set_user_settings(r#"{ "auto_update": false }"#, cx)
             .unwrap();
         store.register_setting::<AutoUpdateSetting>(cx);
-        store.register_setting::<TitleBarSettings>(cx);
 
         assert_eq!(
             store.get::<AutoUpdateSetting>(None),
             &AutoUpdateSetting { auto_update: false }
-        );
-        assert_eq!(
-            store.get::<TitleBarSettings>(None).show,
-            TitleBarVisibility::Always,
         );
     }
 
@@ -1346,14 +1338,14 @@ mod tests {
         check_settings_update(
             &mut store,
             r#"{
-                "title_bar":   { "show": "always", "name": "Max"  }
+                "tabs":   { "close_position": "left", "name": "Max"  }
                 }"#
             .unindent(),
             |settings| {
-                settings.title_bar.as_mut().unwrap().show = Some(TitleBarVisibility::Never);
+                settings.tabs.as_mut().unwrap().close_position = Some(ClosePosition::Left);
             },
             r#"{
-                "title_bar":   { "show": "never", "name": "Max"  }
+                "tabs":   { "close_position": "left", "name": "Max"  }
                 }"#
             .unindent(),
             cx,
@@ -1372,13 +1364,13 @@ mod tests {
         check_settings_update(
             &mut store,
             r#"{
-                "title_bar": {}
+                "tabs": {}
             }"#
             .unindent(),
-            |settings| settings.title_bar.as_mut().unwrap().show_menus = Some(true),
+            |settings| settings.tabs.as_mut().unwrap().close_position = Some(ClosePosition::Left),
             r#"{
-                "title_bar": {
-                    "show_menus": true
+                "tabs": {
+                    "close_position": "left"
                 }
             }"#
             .unindent(),
@@ -1390,14 +1382,14 @@ mod tests {
             &mut store,
             r#""#.unindent(),
             |settings| {
-                settings.title_bar = Some(TitleBarSettingsContent {
-                    show_branch_name: Some(true),
+                settings.tabs = Some(ItemSettingsContent {
+                    git_status: Some(true),
                     ..Default::default()
                 })
             },
             r#"{
-                "title_bar": {
-                    "show_branch_name": true
+                "tabs": {
+                    "git_status": true
                 }
             }
             "#
@@ -1427,7 +1419,7 @@ mod tests {
     fn test_vscode_import(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
         store.register_setting::<DefaultLanguageSettings>(cx);
-        store.register_setting::<TitleBarSettings>(cx);
+        store.register_setting::<ItemSettings>(cx);
         store.register_setting::<AutoUpdateSetting>(cx);
 
         // create settings that werent present
@@ -1487,16 +1479,13 @@ mod tests {
         check_vscode_import(
             &mut store,
             r#"{
-                "title_bar": {
-                "show": "always"
-                }
             }
             "#
             .unindent(),
-            r#"{ "window.titleBarStyle": "never" }"#.to_owned(),
+            r#"{ "workbench.editor.decorations.colors": true }"#.to_owned(),
             r#"{
-                "title_bar": {
-                "show": "never"
+                "tabs": {
+                    "git_status": true
                 }
             }
             "#
@@ -1550,14 +1539,15 @@ mod tests {
     #[gpui::test]
     fn test_global_settings(cx: &mut App) {
         let mut store = SettingsStore::new(cx, &test_settings());
-        store.register_setting::<TitleBarSettings>(cx);
+        store.register_setting::<ItemSettings>(cx);
 
         // Set global settings - these should override defaults but not user settings
         store
             .set_global_settings(
                 r#"{
-                    "title_bar": {
-                        "show": "never",
+                    "tabs": {
+                        "close_position": "right",
+                        "git_status": true,
                     }
                 }"#,
                 cx,
@@ -1566,10 +1556,10 @@ mod tests {
 
         // Before user settings, global settings should apply
         assert_eq!(
-            store.get::<TitleBarSettings>(None),
-            &TitleBarSettings {
-                show: TitleBarVisibility::Never,
-                show_branch_name: true,
+            store.get::<ItemSettings>(None),
+            &ItemSettings {
+                close_position: ClosePosition::Right,
+                git_status: true,
             }
         );
 
@@ -1577,8 +1567,8 @@ mod tests {
         store
             .set_user_settings(
                 r#"{
-                    "title_bar": {
-                        "show": "always"
+                    "tabs": {
+                        "close_position": "left"
                     }
                 }"#,
                 cx,
@@ -1587,10 +1577,10 @@ mod tests {
 
         // User settings should override global settings
         assert_eq!(
-            store.get::<TitleBarSettings>(None),
-            &TitleBarSettings {
-                show: TitleBarVisibility::Always,
-                show_branch_name: true, // Staff from global settings
+            store.get::<ItemSettings>(None),
+            &ItemSettings {
+                close_position: ClosePosition::Left,
+                git_status: true, // Staff from global settings
             }
         );
     }
