@@ -37,6 +37,7 @@ pub enum Object {
     SquareBrackets,
     CurlyBrackets,
     AngleBrackets,
+    SyntaxNode,
     Argument,
     IndentObj { include_below: bool },
     Tag,
@@ -276,7 +277,10 @@ actions!(
         Method,
         Class,
         Comment,
-        EntireFile
+        /// Selects the entire file.
+        EntireFile,
+        /// Selects a syntax node.
+        SyntaxNode,
     ]
 );
 
@@ -368,6 +372,9 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             vim.object(Object::IndentObj { include_below }, window, cx)
         },
     );
+    Vim::action(editor, cx, |vim, _: &SyntaxNode, window, cx| {
+        vim.object(Object::SyntaxNode, window, cx);
+    });
 }
 
 impl Vim {
@@ -409,7 +416,8 @@ impl Object {
             | Object::Class
             | Object::EntireFile
             | Object::Comment
-            | Object::IndentObj { .. } => true,
+            | Object::IndentObj { .. }
+            | Object::SyntaxNode => true,
         }
     }
 
@@ -437,7 +445,8 @@ impl Object {
             | Object::Comment
             | Object::EntireFile
             | Object::CurlyBrackets
-            | Object::AngleBrackets => true,
+            | Object::AngleBrackets
+            | Object::SyntaxNode => true,
         }
     }
 
@@ -467,7 +476,8 @@ impl Object {
             | Object::Tag
             | Object::Comment
             | Object::Argument
-            | Object::IndentObj { .. } => Mode::Visual,
+            | Object::IndentObj { .. }
+            | Object::SyntaxNode => Mode::Visual,
             Object::Method | Object::Class => {
                 if around {
                     Mode::VisualLine
@@ -683,6 +693,13 @@ impl Object {
             Object::Argument => argument(map, relative_to, around),
             Object::IndentObj { include_below } => indent(map, relative_to, around, include_below),
             Object::EntireFile => entire_file(map),
+            Object::SyntaxNode => {
+                if around {
+                    larger_syntax_node(map, selection, times.unwrap_or(1))
+                } else {
+                    smaller_syntax_node(map, selection, times.unwrap_or(1))
+                }
+            }
         }
     }
 
@@ -1652,6 +1669,61 @@ fn surrounding_markers(
         map.clip_point(result.start.to_display_point(map), Bias::Left)
             ..map.clip_point(result.end.to_display_point(map), Bias::Right),
     )
+}
+
+fn smaller_syntax_node(
+    map: &DisplaySnapshot,
+    selection: Selection<DisplayPoint>,
+    unwrap_or: usize,
+) -> Option<Range<DisplayPoint>> {
+    todo!("take in editor and use ")
+}
+
+fn larger_syntax_node(
+    map: &DisplaySnapshot,
+    selection: Selection<DisplayPoint>,
+    count: usize,
+) -> Option<Range<DisplayPoint>> {
+    let selection = selection.map(|p| {
+        map.display_point_to_anchor(p, Bias::Left)
+            .to_offset(&map.buffer_snapshot)
+    });
+    let old_range = selection.start..selection.end;
+    let buffer = &map.buffer_snapshot;
+
+    if let Some((node, _)) = buffer.syntax_ancestor(old_range.clone()) {
+        // manually select word at selection
+        if ["string_content", "inline"].contains(&node.kind()) {
+            let (word_range, _) = buffer.surrounding_word(old_range.start, None);
+            // ignore if word is already selected
+            if !word_range.is_empty() && old_range != word_range {
+                let (last_word_range, _) = buffer.surrounding_word(old_range.end, None);
+                // only select word if start and end point belongs to same word
+                if word_range == last_word_range {
+                    return Some(
+                        word_range.start.to_display_point(map)
+                            ..word_range.end.to_display_point(map),
+                    );
+                }
+            }
+        }
+    }
+
+    let mut new_range = old_range.clone();
+    while let Some((node, containing_range)) = buffer.syntax_ancestor(new_range.clone()) {
+        new_range = match containing_range {
+            multi_buffer::MultiOrSingleBufferOffsetRange::Single(_) => break,
+            multi_buffer::MultiOrSingleBufferOffsetRange::Multi(range) => range,
+        };
+        if !node.is_named() {
+            continue;
+        }
+        if !map.intersects_fold(new_range.start) && !map.intersects_fold(new_range.end) {
+            break;
+        }
+    }
+
+    return Some(new_range.start.to_display_point(map)..new_range.end.to_display_point(map));
 }
 
 #[cfg(test)]
