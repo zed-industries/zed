@@ -82,6 +82,7 @@ sum_tree.workspace = true
 task.workspace = true
 tempfile.workspace = true
 terminal.workspace = true
+repo_name.workspace = true
 text.workspace = true
 toml.workspace = true
 url.workspace = true

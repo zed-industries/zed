@@ -18,6 +18,7 @@
 .swiftpm/config/registries.json
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .venv
+.env.local
 .vscode
 .wrangler
 .perf-runs

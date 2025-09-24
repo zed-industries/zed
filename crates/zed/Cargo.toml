@@ -19,6 +19,8 @@ name = "zed"
 path = "src/main.rs"
 
 [dependencies]
+dotevy = "*"
+repo_name.workspace=true
 activity_indicator.workspace = true
 acp_tools.workspace = true
 agent.workspace = true

@@ -1,6 +1,10 @@
 mod reliability;
 mod zed;
 
+use dotenvy;
+use repo_name;
+
+
 use agent_ui::AgentPanel;
 use anyhow::{Context as _, Error, Result};
 use clap::{Parser, command};
@@ -169,6 +173,9 @@ pub fn main() {
     util::prevent_root_execution();
 
     let args = Args::parse();
+
+    dotenvy::from_filename(".env.local").ok();
+    dotenvy::dotenv().ok();
 
     // `zed --crash-handler` Makes zed operate in minidump crash handler mode
     if let Some(socket) = &args.crash_handler {
@@ -375,6 +382,7 @@ pub fn main() {
     app.run(move |cx| {
         menu::init();
         zed_actions::init();
+        repo_name::init();
 
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);

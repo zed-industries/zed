@@ -1,0 +1,10 @@
+[package]
+name = "repo_name"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "src/repo_name.rs"
+
+[dependencies]
+gpui.workspace = true

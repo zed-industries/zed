@@ -1,0 +1,52 @@
+[package]
+name = "convex_sync_types"
+description = "Sync types for the Convex Websocket protocol (convex.dev)"
+version = "0.9.0"
+authors = [ "Convex, Inc. <no-reply@convex.dev>" ]
+edition = "2021"
+rust-version = "1.80.1"
+resolver = "2"
+license = "Apache-2.0"
+repository = "https://github.com/get-convex/convex-rs"
+homepage = "https://www.convex.dev/"
+
+[features]
+testing = [ "proptest", "proptest-derive", "pretty_assertions" ]
+
+[dependencies]
+anyhow = { version = "1" }
+base64 = { version = "0.13" }
+derive_more = { version = "2", features = [ "full" ] }
+headers = { version = "0.4" }
+pretty_assertions = { optional = true, version = "1" }
+proptest = { optional = true, version = "1" }
+proptest-derive = { optional = true, version = "0.5.0" }
+rand = { version = "0.9" }
+serde = { features = [ "derive" ], version = "1" }
+serde_json = { features = [ "float_roundtrip", "preserve_order" ], version = "1" }
+uuid = { features = [ "serde", "v4" ], version = "1.6" }
+
+[dev-dependencies]
+pretty_assertions = { version = "1" }
+proptest = { version = "1" }
+proptest-derive = { version = "0.5.0" }
+
+[lints.rust]
+unused_extern_crates = "warn"
+
+[lints.clippy]
+await_holding_lock = "warn"
+await_holding_refcell_ref = "warn"
+large_enum_variant = "allow"
+manual_is_multiple_of = "allow"
+manual_map = "allow"
+new_without_default = "allow"
+op_ref = "allow"
+ptr_arg = "allow"
+result_large_err = "allow"
+single_match = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+upper_case_acronyms = "allow"
+useless_format = "allow"
+useless_vec = "allow"

@@ -1,0 +1,71 @@
+[package]
+name = "convex"
+description = "Client library for Convex (convex.dev)"
+authors = [ "Convex, Inc. <no-reply@convex.dev>" ]
+version = "0.9.0"
+edition = "2021"
+rust-version = "1.80.1"
+resolver = "2"
+license = "Apache-2.0"
+repository = "https://github.com/get-convex/convex-rs"
+homepage = "https://www.convex.dev/"
+
+[features]
+default = [ "native-tls-vendored" ]
+native-tls = [ "tokio-tungstenite/native-tls" ]
+native-tls-vendored = [ "tokio-tungstenite/native-tls-vendored" ]
+rustls-tls-native-roots = [ "tokio-tungstenite/rustls-tls-native-roots" ]
+rustls-tls-webpki-roots = [ "tokio-tungstenite/rustls-tls-webpki-roots" ]
+testing = [ "convex_sync_types/testing", "proptest", "proptest-derive", "parking_lot" ]
+
+[dependencies]
+anyhow = { version = "1" }
+async-trait = { version = "0.1" }
+base64 = { version = "0.13" }
+bytes = { version = "1.6.0" }
+convex_sync_types = { path = "./sync_types", version = "=0.9.0" }
+futures = { version = "0.3" }
+imbl = { version = "5.0.0" }
+parking_lot = { optional = true, version = "0.12", features = [ "hardware-lock-elision" ] }
+proptest = { optional = true, version = "1" }
+proptest-derive = { optional = true, version = "0.5.0" }
+rand = { version = "0.9" }
+serde_json = { features = [ "float_roundtrip", "preserve_order" ], version = "1" }
+thiserror = { version = "2" }
+tokio = { features = [ "full" ], version = "1" }
+tokio-stream = { features = [ "io-util", "sync" ], version = "0.1" }
+tokio-tungstenite = { features = [ "url" ], version = "0.26.2" }
+tracing = { version = "0.1" }
+url = { version = "2.5.4" }
+uuid = { features = [ "serde", "v4" ], version = "1.6" }
+
+[dev-dependencies]
+colored = { version = "3" }
+convex_sync_types = { path = "./sync_types", version = "=0.9.0", features = [ "testing" ] }
+dotenvy = { version = "0.15.7" }
+maplit = { version = "1" }
+parking_lot = { version = "0.12", features = [ "hardware-lock-elision" ] }
+pretty_assertions = { version = "1" }
+proptest = { version = "1" }
+proptest-derive = { version = "0.5.0" }
+tracing-subscriber = { features = [ "env-filter" ], version = "0.3.17" }
+
+[lints.rust]
+unused_extern_crates = "warn"
+
+[lints.clippy]
+await_holding_lock = "warn"
+await_holding_refcell_ref = "warn"
+large_enum_variant = "allow"
+manual_is_multiple_of = "allow"
+manual_map = "allow"
+new_without_default = "allow"
+op_ref = "allow"
+ptr_arg = "allow"
+result_large_err = "allow"
+single_match = "allow"
+too_many_arguments = "allow"
+type_complexity = "allow"
+upper_case_acronyms = "allow"
+useless_format = "allow"
+useless_vec = "allow"

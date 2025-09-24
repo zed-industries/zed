@@ -1,3 +1,7 @@
+use convex::Client;
+use gupi_tokio::Tokio;
+use repo_name::RepoName;
+use std:env;
 use crate::ItemHandle;
 use gpui::{
     AnyView, App, Context, Entity, EntityId, EventEmitter, ParentElement as _, Render, Styled,
@@ -211,6 +215,36 @@ impl Toolbar {
             .as_ref()
             .map(|item| !item.show_toolbar(cx))
             .unwrap_or(false);
+
+        let Some(active_item) = self.active_item.as_ref() else {
+            return;
+        };
+        let Some(segments) = active_item.as_ref().breadcrumbs(cx.theme(), cx) else {
+            return;
+        };
+        let absolute_file_name = String::from(active_item.suggested_filename(cx));
+        let repo_name = cx.global::<RepoName>().0.clone();
+
+        let mut class_name = String::new();
+        let mut function_name = String::new();
+        if segments.len() == 2 {
+            function_name = String::from(segments[1].text.clone());
+        }
+        if segments.len() == 3 {
+            function_name = String::from(segments[2].text.clone());
+            class_name = String::from(segments[1].text.clone());
+        }
+
+        Tokio::spawn(cx, async move {
+            let _ = Toolbar::update_current_file(
+                absolute_file_name,
+                function_name,
+                class_name,
+                repo_name,
+            )
+            .await;
+        })
+        .detach();
 
         for (toolbar_item, current_location) in self.items.iter_mut() {
             let new_location = toolbar_item.set_active_pane_item(item, window, cx);

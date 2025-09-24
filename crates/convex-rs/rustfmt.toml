@@ -1,0 +1,15 @@
+use_field_init_shorthand = true
+use_try_shorthand = true
+match_block_trailing_comma = true
+
+# Nightly only options:
+unstable_features = true
+condense_wildcard_suffixes = true
+format_strings = true
+imports_granularity = "Crate"
+reorder_impl_items = true
+imports_layout = "Vertical"
+group_imports = "StdExternalCrate"
+wrap_comments = true
+normalize_comments = false
+error_on_line_overflow = true
