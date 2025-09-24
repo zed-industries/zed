@@ -121,7 +121,7 @@ use text::{Anchor, BufferId, OffsetRangeExt, Point, Rope};
 use toolchain_store::EmptyToolchainStore;
 use util::{
     ResultExt as _, maybe,
-    paths::{PathStyle, SanitizedPath, compare_paths},
+    paths::{PathStyle, SanitizedPath, compare_paths, is_absolute},
     rel_path::RelPath,
 };
 use worktree::{CreatedEntry, Snapshot, Traversal};
@@ -4465,7 +4465,7 @@ impl Project {
         let path = path.as_ref();
         let worktree_store = self.worktree_store.read(cx);
 
-        if path.is_absolute() {
+        if is_absolute(&*path.to_string_lossy(), path_style) {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_abs_path = worktree.read(cx).abs_path();
 
