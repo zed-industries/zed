@@ -898,6 +898,7 @@ fn surrounding_filename(
             } else {
                 // Otherwise, we skip the quote
                 inside_quotes = true;
+                token_end += ch.len_utf8();
                 continue;
             }
         }
