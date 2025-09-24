@@ -8298,10 +8298,6 @@ dependencies = [
  "portable-atomic",
  "portable-atomic-util",
  "serde",
-<<<<<<< HEAD
-=======
- "windows-sys 0.52.0",
->>>>>>> 1962d54e97 (update rodio to get the fix for broken mic input configs)
 ]
 
 [[package]]
