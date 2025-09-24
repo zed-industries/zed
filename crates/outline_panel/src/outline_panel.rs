@@ -5279,16 +5279,15 @@ mod tests {
                 });
         });
 
-        let all_matches = format!(
-            r#"rust-analyzer/
+        let all_matches = r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {{
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
-          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5299,8 +5298,7 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#
-        );
+        search: param_names_for_lifetime_elision_hints: self"#.to_string();
 
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
@@ -5511,16 +5509,15 @@ mod tests {
                     );
                 });
         });
-        let all_matches = format!(
-            r#"rust-analyzer/
+        let all_matches = r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {{
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
-          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5531,8 +5528,7 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#
-        );
+        search: param_names_for_lifetime_elision_hints: self"#.to_string();
 
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5651,16 +5647,15 @@ mod tests {
                     );
                 });
         });
-        let all_matches = format!(
-            r#"rust-analyzer/
+        let all_matches = r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {{
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
-          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5671,8 +5666,7 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#
-        );
+        search: param_names_for_lifetime_elision_hints: self"#.to_string();
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
