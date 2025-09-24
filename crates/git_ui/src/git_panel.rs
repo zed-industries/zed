@@ -12,7 +12,7 @@ use agent_settings::AgentSettings;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
-use editor::{Editor, EditorElement, EditorMode, MultiBuffer};
+use editor::{Editor, EditorElement, EditorMode, MultiBuffer, RewrapOptions};
 use futures::StreamExt as _;
 use git::blame::ParsedCommitMessage;
 use git::repository::{
@@ -1493,7 +1493,13 @@ impl GitPanel {
         let editor = cx.new(|cx| Editor::for_buffer(buffer, None, window, cx));
         let wrapped_message = editor.update(cx, |editor, cx| {
             editor.select_all(&Default::default(), window, cx);
-            editor.rewrap(&Default::default(), window, cx);
+            editor.rewrap_impl(
+                RewrapOptions {
+                    preserve_existing_whitespace: true,
+                    ..Default::default()
+                },
+                cx,
+            );
             editor.text(cx)
         });
         if wrapped_message.trim().is_empty() {
