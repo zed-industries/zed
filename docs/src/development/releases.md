@@ -56,8 +56,8 @@ Credentials for various services used in this process can be found in 1Password.
    - Stage the copy and assets using [Buffer](https://buffer.com), for both X and BlueSky.
    - Publish both, one at a time, ensuring both are posted to each respective platform.
 
-1.  Store any assets made in the `Feature Media` directory in our Google Drive.
-    Other members on the team may want to reference or use these later on.
+1. Store any media created in the `Feature Media` directory in our Google Drive.
+   Other team members may want to reference or use these later on.
 
 ## Patch release process
 
