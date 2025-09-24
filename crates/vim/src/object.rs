@@ -397,11 +397,11 @@ impl Vim {
         let count = Self::take_count(cx);
 
         match self.mode {
-            Mode::Normal => self.normal_object(object, count, window, cx),
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
+            Mode::Normal | Mode::HelixNormal => self.normal_object(object, count, window, cx),
+            Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::HelixSelect => {
                 self.visual_object(object, count, window, cx)
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal => {
+            Mode::Insert | Mode::Replace => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }
         }
@@ -1039,7 +1039,7 @@ fn text_object(
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
-    matches.sort_by_key(|r| (r.end - r.start));
+    matches.sort_by_key(|r| r.end - r.start);
     if let Some(buffer_range) = matches.first() {
         let range = excerpt.map_range_from_buffer(buffer_range.clone());
         return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
@@ -1050,7 +1050,7 @@ fn text_object(
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == around { Some(r) } else { None })
         .collect();
-    matches.sort_by_key(|r| (r.end - r.start));
+    matches.sort_by_key(|r| r.end - r.start);
     let around_range = matches.first()?;
 
     let mut matches: Vec<Range<usize>> = buffer
@@ -1364,7 +1364,7 @@ fn is_sentence_end(map: &DisplaySnapshot, offset: usize) -> bool {
 
 /// Expands the passed range to include whitespace on one side or the other in a line. Attempts to add the
 /// whitespace to the end first and falls back to the start if there was none.
-fn expand_to_include_whitespace(
+pub fn expand_to_include_whitespace(
     map: &DisplaySnapshot,
     range: Range<DisplayPoint>,
     stop_at_newline: bool,
@@ -1510,7 +1510,7 @@ pub fn end_of_paragraph(map: &DisplaySnapshot, display_point: DisplayPoint) -> D
     map.max_point()
 }
 
-fn surrounding_markers(
+pub fn surrounding_markers(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
     around: bool,

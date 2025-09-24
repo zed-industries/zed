@@ -59,7 +59,13 @@ pub struct NeovimConnection {
 }
 
 impl NeovimConnection {
-    pub async fn new(test_case_id: String) -> Self {
+    pub async fn new(mut test_case_id: String) -> Self {
+        // When running under perf, don't create duplicate files.
+        if cfg!(perf_enabled) {
+            if test_case_id.ends_with(perf::consts::SUF_NORMAL) {
+                test_case_id.truncate(test_case_id.len() - perf::consts::SUF_NORMAL.len());
+            }
+        }
         #[cfg(feature = "neovim")]
         let handler = NvimHandler {};
         #[cfg(feature = "neovim")]
@@ -443,7 +449,7 @@ impl NeovimConnection {
             }
             Mode::Insert | Mode::Normal | Mode::Replace => selections
                 .push(Point::new(selection_row, selection_col)..Point::new(cursor_row, cursor_col)),
-            Mode::HelixNormal => unreachable!(),
+            Mode::HelixNormal | Mode::HelixSelect => unreachable!(),
         }
 
         let ranges = encode_ranges(&text, &selections);

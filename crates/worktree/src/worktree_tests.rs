@@ -770,9 +770,9 @@ async fn test_file_scan_inclusions(cx: &mut TestAppContext) {
     }));
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec![]);
-                project_settings.file_scan_inclusions = Some(vec![
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_inclusions = Some(vec![
                     "node_modules/**/package.json".to_string(),
                     "**/.DS_Store".to_string(),
                 ]);
@@ -836,9 +836,11 @@ async fn test_file_scan_exclusions_overrules_inclusions(cx: &mut TestAppContext)
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec!["**/.DS_Store".to_string()]);
-                project_settings.file_scan_inclusions = Some(vec!["**/.DS_Store".to_string()]);
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
+                    Some(vec!["**/.DS_Store".to_string()]);
+                settings.project.worktree.file_scan_inclusions =
+                    Some(vec!["**/.DS_Store".to_string()]);
             });
         });
     });
@@ -894,9 +896,10 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec![]);
-                project_settings.file_scan_inclusions = Some(vec!["node_modules/**".to_string()]);
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_inclusions =
+                    Some(vec!["node_modules/**".to_string()]);
             });
         });
     });
@@ -926,9 +929,9 @@ async fn test_file_scan_inclusions_reindexes_on_setting_change(cx: &mut TestAppC
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec![]);
-                project_settings.file_scan_inclusions = Some(vec![]);
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![]);
+                settings.project.worktree.file_scan_inclusions = Some(vec![]);
             });
         });
     });
@@ -978,8 +981,8 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
     }));
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
                     Some(vec!["**/foo/**".to_string(), "**/.DS_Store".to_string()]);
             });
         });
@@ -1015,8 +1018,8 @@ async fn test_file_scan_exclusions(cx: &mut TestAppContext) {
 
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions =
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions =
                     Some(vec!["**/node_modules/**".to_string()]);
             });
         });
@@ -1080,8 +1083,8 @@ async fn test_fs_events_in_exclusions(cx: &mut TestAppContext) {
     }));
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(vec![
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec![
                     "**/.git".to_string(),
                     "node_modules/".to_string(),
                     "build_output".to_string(),
@@ -1258,8 +1261,7 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
             move |update| {
                 snapshot
                     .lock()
-                    .apply_remote_update(update, &settings.file_scan_inclusions)
-                    .unwrap();
+                    .apply_remote_update(update, &settings.file_scan_inclusions);
                 async { true }
             }
         });
@@ -1464,7 +1466,7 @@ async fn test_random_worktree_operations_during_initial_scan(
             tree.as_local().unwrap().snapshot().check_invariants(true)
         });
 
-        if rng.gen_bool(0.6) {
+        if rng.random_bool(0.6) {
             snapshots.push(worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot()));
         }
     }
@@ -1489,8 +1491,7 @@ async fn test_random_worktree_operations_during_initial_scan(
         for update in updates.lock().iter() {
             if update.scan_id >= updated_snapshot.scan_id() as u64 {
                 updated_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                    .unwrap();
+                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
@@ -1551,7 +1552,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     let mut snapshots = Vec::new();
     let mut mutations_len = operations;
     while mutations_len > 1 {
-        if rng.gen_bool(0.2) {
+        if rng.random_bool(0.2) {
             worktree
                 .update(cx, |worktree, cx| {
                     randomly_mutate_worktree(worktree, &mut rng, cx)
@@ -1563,8 +1564,8 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         }
 
         let buffered_event_count = fs.as_fake().buffered_event_count();
-        if buffered_event_count > 0 && rng.gen_bool(0.3) {
-            let len = rng.gen_range(0..=buffered_event_count);
+        if buffered_event_count > 0 && rng.random_bool(0.3) {
+            let len = rng.random_range(0..=buffered_event_count);
             log::info!("flushing {} events", len);
             fs.as_fake().flush_events(len);
         } else {
@@ -1573,7 +1574,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
         }
 
         cx.executor().run_until_parked();
-        if rng.gen_bool(0.2) {
+        if rng.random_bool(0.2) {
             log::info!("storing snapshot {}", snapshots.len());
             let snapshot = worktree.read_with(cx, |tree, _| tree.as_local().unwrap().snapshot());
             snapshots.push(snapshot);
@@ -1625,9 +1626,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     for (i, mut prev_snapshot) in snapshots.into_iter().enumerate().rev() {
         for update in updates.lock().iter() {
             if update.scan_id >= prev_snapshot.scan_id() as u64 {
-                prev_snapshot
-                    .apply_remote_update(update.clone(), &settings.file_scan_inclusions)
-                    .unwrap();
+                prev_snapshot.apply_remote_update(update.clone(), &settings.file_scan_inclusions);
             }
         }
 
@@ -1701,7 +1700,7 @@ fn randomly_mutate_worktree(
     let snapshot = worktree.snapshot();
     let entry = snapshot.entries(false, 0).choose(rng).unwrap();
 
-    match rng.gen_range(0_u32..100) {
+    match rng.random_range(0_u32..100) {
         0..=33 if entry.path.as_ref() != Path::new("") => {
             log::info!("deleting entry {:?} ({})", entry.path, entry.id.0);
             worktree.delete_entry(entry.id, false, cx).unwrap()
@@ -1733,7 +1732,7 @@ fn randomly_mutate_worktree(
         _ => {
             if entry.is_dir() {
                 let child_path = entry.path.join(random_filename(rng));
-                let is_dir = rng.gen_bool(0.3);
+                let is_dir = rng.random_bool(0.3);
                 log::info!(
                     "creating {} at {:?}",
                     if is_dir { "dir" } else { "file" },
@@ -1776,11 +1775,11 @@ async fn randomly_mutate_fs(
         }
     }
 
-    if (files.is_empty() && dirs.len() == 1) || rng.gen_bool(insertion_probability) {
+    if (files.is_empty() && dirs.len() == 1) || rng.random_bool(insertion_probability) {
         let path = dirs.choose(rng).unwrap();
         let new_path = path.join(random_filename(rng));
 
-        if rng.r#gen() {
+        if rng.random() {
             log::info!(
                 "creating dir {:?}",
                 new_path.strip_prefix(root_path).unwrap()
@@ -1793,7 +1792,7 @@ async fn randomly_mutate_fs(
             );
             fs.create_file(&new_path, Default::default()).await.unwrap();
         }
-    } else if rng.gen_bool(0.05) {
+    } else if rng.random_bool(0.05) {
         let ignore_dir_path = dirs.choose(rng).unwrap();
         let ignore_path = ignore_dir_path.join(*GITIGNORE);
 
@@ -1808,11 +1807,11 @@ async fn randomly_mutate_fs(
             .cloned()
             .collect::<Vec<_>>();
         let files_to_ignore = {
-            let len = rng.gen_range(0..=subfiles.len());
+            let len = rng.random_range(0..=subfiles.len());
             subfiles.choose_multiple(rng, len)
         };
         let dirs_to_ignore = {
-            let len = rng.gen_range(0..subdirs.len());
+            let len = rng.random_range(0..subdirs.len());
             subdirs.choose_multiple(rng, len)
         };
 
@@ -1848,7 +1847,7 @@ async fn randomly_mutate_fs(
             file_path.into_iter().chain(dir_path).choose(rng).unwrap()
         };
 
-        let is_rename = rng.r#gen();
+        let is_rename = rng.random();
         if is_rename {
             let new_path_parent = dirs
                 .iter()
@@ -1857,7 +1856,7 @@ async fn randomly_mutate_fs(
                 .unwrap();
 
             let overwrite_existing_dir =
-                !old_path.starts_with(new_path_parent) && rng.gen_bool(0.3);
+                !old_path.starts_with(new_path_parent) && rng.random_bool(0.3);
             let new_path = if overwrite_existing_dir {
                 fs.remove_dir(
                     new_path_parent,
@@ -1919,9 +1918,104 @@ async fn randomly_mutate_fs(
 
 fn random_filename(rng: &mut impl Rng) -> String {
     (0..6)
-        .map(|_| rng.sample(rand::distributions::Alphanumeric))
+        .map(|_| rng.sample(rand::distr::Alphanumeric))
         .map(char::from)
         .collect()
+}
+
+#[gpui::test]
+async fn test_rename_file_to_new_directory(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    let expected_contents = "content";
+    fs.as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "test.txt": expected_contents
+            }),
+        )
+        .await;
+    let worktree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Arc::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    cx.read(|cx| worktree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    let entry_id = worktree.read_with(cx, |worktree, _| {
+        worktree.entry_for_path("test.txt").unwrap().id
+    });
+    let _result = worktree
+        .update(cx, |worktree, cx| {
+            worktree.rename_entry(entry_id, Path::new("dir1/dir2/dir3/test.txt"), cx)
+        })
+        .await
+        .unwrap();
+    worktree.read_with(cx, |worktree, _| {
+        assert!(
+            worktree.entry_for_path("test.txt").is_none(),
+            "Old file should have been removed"
+        );
+        assert!(
+            worktree.entry_for_path("dir1/dir2/dir3/test.txt").is_some(),
+            "Whole directory hierarchy and the new file should have been created"
+        );
+    });
+    assert_eq!(
+        worktree
+            .update(cx, |worktree, cx| {
+                worktree.load_file("dir1/dir2/dir3/test.txt".as_ref(), cx)
+            })
+            .await
+            .unwrap()
+            .text,
+        expected_contents,
+        "Moved file's contents should be preserved"
+    );
+
+    let entry_id = worktree.read_with(cx, |worktree, _| {
+        worktree
+            .entry_for_path("dir1/dir2/dir3/test.txt")
+            .unwrap()
+            .id
+    });
+    let _result = worktree
+        .update(cx, |worktree, cx| {
+            worktree.rename_entry(entry_id, Path::new("dir1/dir2/test.txt"), cx)
+        })
+        .await
+        .unwrap();
+    worktree.read_with(cx, |worktree, _| {
+        assert!(
+            worktree.entry_for_path("test.txt").is_none(),
+            "First file should not reappear"
+        );
+        assert!(
+            worktree.entry_for_path("dir1/dir2/dir3/test.txt").is_none(),
+            "Old file should have been removed"
+        );
+        assert!(
+            worktree.entry_for_path("dir1/dir2/test.txt").is_some(),
+            "No error should have occurred after moving into existing directory"
+        );
+    });
+    assert_eq!(
+        worktree
+            .update(cx, |worktree, cx| {
+                worktree.load_file("dir1/dir2/test.txt".as_ref(), cx)
+            })
+            .await
+            .unwrap()
+            .text,
+        expected_contents,
+        "Moved file's contents should be preserved"
+    );
 }
 
 #[gpui::test]
@@ -2025,7 +2119,6 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
 
-    eprintln!(">>>>>>>>>> touch");
     fs.touch_path(path!("/root/subproject")).await;
     worktree
         .update(cx, |worktree, _| {
@@ -2044,6 +2137,117 @@ async fn test_repository_above_root(executor: BackgroundExecutor, cx: &mut TestA
             .collect::<Vec<_>>()
     });
     pretty_assertions::assert_eq!(repos, [Path::new(path!("/root")).into()]);
+}
+
+#[gpui::test]
+async fn test_global_gitignore(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let home = paths::home_dir();
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        home,
+        json!({
+            ".config": {
+                "git": {
+                    "ignore": "foo\n/bar\nbaz\n"
+                }
+            },
+            "project": {
+                ".git": {},
+                ".gitignore": "!baz",
+                "foo": "",
+                "bar": "",
+                "sub": {
+                    "bar": "",
+                },
+                "subrepo": {
+                    ".git": {},
+                    "bar": ""
+                },
+                "baz": ""
+            }
+        }),
+    )
+    .await;
+    let worktree = Worktree::local(
+        home.join("project"),
+        true,
+        fs.clone(),
+        Arc::default(),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    // .gitignore overrides excludesFile, and anchored paths in excludesFile are resolved
+    // relative to the nearest containing repository
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["foo", "bar", "subrepo/bar"],
+            &["sub/bar", "baz"],
+            &[],
+        );
+    });
+
+    // Ignore statuses are updated when excludesFile changes
+    fs.write(
+        &home.join(".config").join("git").join("ignore"),
+        "/bar\nbaz\n".as_bytes(),
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["bar", "subrepo/bar"],
+            &["foo", "sub/bar", "baz"],
+            &[],
+        );
+    });
+
+    // Statuses are updated when .git added/removed
+    fs.remove_dir(
+        &home.join("project").join("subrepo").join(".git"),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    worktree
+        .update(cx, |worktree, _| {
+            worktree.as_local().unwrap().scan_complete()
+        })
+        .await;
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _cx| {
+        check_worktree_entries(
+            worktree,
+            &[],
+            &["bar"],
+            &["foo", "sub/bar", "baz", "subrepo/bar"],
+            &[],
+        );
+    });
 }
 
 #[track_caller]

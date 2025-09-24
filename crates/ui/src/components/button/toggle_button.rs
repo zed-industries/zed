@@ -425,7 +425,7 @@ pub struct ToggleButtonGroup<T, const COLS: usize = 3, const ROWS: usize = 1>
 where
     T: ButtonBuilder,
 {
-    group_name: &'static str,
+    group_name: SharedString,
     rows: [[T; COLS]; ROWS],
     style: ToggleButtonGroupStyle,
     size: ToggleButtonGroupSize,
@@ -435,9 +435,9 @@ where
 }
 
 impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
-    pub fn single_row(group_name: &'static str, buttons: [T; COLS]) -> Self {
+    pub fn single_row(group_name: impl Into<SharedString>, buttons: [T; COLS]) -> Self {
         Self {
-            group_name,
+            group_name: group_name.into(),
             rows: [buttons],
             style: ToggleButtonGroupStyle::Transparent,
             size: ToggleButtonGroupSize::Default,
@@ -449,9 +449,13 @@ impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS> {
 }
 
 impl<T: ButtonBuilder, const COLS: usize> ToggleButtonGroup<T, COLS, 2> {
-    pub fn two_rows(group_name: &'static str, first_row: [T; COLS], second_row: [T; COLS]) -> Self {
+    pub fn two_rows(
+        group_name: impl Into<SharedString>,
+        first_row: [T; COLS],
+        second_row: [T; COLS],
+    ) -> Self {
         Self {
-            group_name,
+            group_name: group_name.into(),
             rows: [first_row, second_row],
             style: ToggleButtonGroupStyle::Transparent,
             size: ToggleButtonGroupSize::Default,
@@ -512,6 +516,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let entries =
             self.rows.into_iter().enumerate().map(|(row_index, row)| {
+                let group_name = self.group_name.clone();
                 row.into_iter().enumerate().map(move |(col_index, button)| {
                     let ButtonConfiguration {
                         label,
@@ -523,7 +528,7 @@ impl<T: ButtonBuilder, const COLS: usize, const ROWS: usize> RenderOnce
 
                     let entry_index = row_index * COLS + col_index;
 
-                    ButtonLike::new((self.group_name, entry_index))
+                    ButtonLike::new((group_name.clone(), entry_index))
                         .full_width()
                         .rounding(None)
                         .when_some(self.tab_index, |this, tab_index| {

@@ -3,6 +3,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt::{Display, Formatter};
+use std::mem;
 use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
 use std::{
@@ -11,10 +12,30 @@ use std::{
     sync::LazyLock,
 };
 
+static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
+
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
-    static HOME_DIR: OnceLock<PathBuf> = OnceLock::new();
-    HOME_DIR.get_or_init(|| dirs::home_dir().expect("failed to determine home directory"))
+    HOME_DIR.get_or_init(|| {
+        if cfg!(any(test, feature = "test-support")) {
+            if cfg!(target_os = "macos") {
+                PathBuf::from("/Users/zed")
+            } else if cfg!(target_os = "windows") {
+                PathBuf::from("C:\\Users\\zed")
+            } else {
+                PathBuf::from("/home/zed")
+            }
+        } else {
+            dirs::home_dir().expect("failed to determine home directory")
+        }
+    })
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn set_home_dir(path: PathBuf) {
+    HOME_DIR
+        .set(path)
+        .expect("set_home_dir called after home_dir was already accessed");
 }
 
 pub trait PathExt {
@@ -44,6 +65,7 @@ pub trait PathExt {
                 .with_context(|| format!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+    fn local_to_wsl(&self) -> Option<PathBuf>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -97,21 +119,106 @@ impl<T: AsRef<Path>> PathExt for T {
             self.as_ref().to_string_lossy().to_string()
         }
     }
+
+    /// Converts a local path to one that can be used inside of WSL.
+    /// Returns `None` if the path cannot be converted into a WSL one (network share).
+    fn local_to_wsl(&self) -> Option<PathBuf> {
+        let mut new_path = PathBuf::new();
+        for component in self.as_ref().components() {
+            match component {
+                std::path::Component::Prefix(prefix) => {
+                    let drive_letter = prefix.as_os_str().to_string_lossy().to_lowercase();
+                    let drive_letter = drive_letter.strip_suffix(':')?;
+
+                    new_path.push(format!("/mnt/{}", drive_letter));
+                }
+                std::path::Component::RootDir => {}
+                _ => new_path.push(component),
+            }
+        }
+
+        Some(new_path)
+    }
 }
 
-/// Due to the issue of UNC paths on Windows, which can cause bugs in various parts of Zed, introducing this `SanitizedPath`
-/// leverages Rust's type system to ensure that all paths entering Zed are always "sanitized" by removing the `\\\\?\\` prefix.
-/// On non-Windows operating systems, this struct is effectively a no-op.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SanitizedPath(pub Arc<Path>);
+/// In memory, this is identical to `Path`. On non-Windows conversions to this type are no-ops. On
+/// windows, these conversions sanitize UNC paths by removing the `\\\\?\\` prefix.
+#[derive(Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[repr(transparent)]
+pub struct SanitizedPath(Path);
 
 impl SanitizedPath {
-    pub fn starts_with(&self, prefix: &SanitizedPath) -> bool {
+    pub fn new<T: AsRef<Path> + ?Sized>(path: &T) -> &Self {
+        #[cfg(not(target_os = "windows"))]
+        return Self::unchecked_new(path.as_ref());
+
+        #[cfg(target_os = "windows")]
+        return Self::unchecked_new(dunce::simplified(path.as_ref()));
+    }
+
+    pub fn unchecked_new<T: AsRef<Path> + ?Sized>(path: &T) -> &Self {
+        // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
+        unsafe { mem::transmute::<&Path, &Self>(path.as_ref()) }
+    }
+
+    pub fn from_arc(path: Arc<Path>) -> Arc<Self> {
+        // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
+        #[cfg(not(target_os = "windows"))]
+        return unsafe { mem::transmute::<Arc<Path>, Arc<Self>>(path) };
+
+        // TODO: could avoid allocating here if dunce::simplified results in the same path
+        #[cfg(target_os = "windows")]
+        return Self::new(&path).into();
+    }
+
+    pub fn new_arc<T: AsRef<Path> + ?Sized>(path: &T) -> Arc<Self> {
+        Self::new(path).into()
+    }
+
+    pub fn cast_arc(path: Arc<Self>) -> Arc<Path> {
+        // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
+        unsafe { mem::transmute::<Arc<Self>, Arc<Path>>(path) }
+    }
+
+    pub fn cast_arc_ref(path: &Arc<Self>) -> &Arc<Path> {
+        // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
+        unsafe { mem::transmute::<&Arc<Self>, &Arc<Path>>(path) }
+    }
+
+    pub fn starts_with(&self, prefix: &Self) -> bool {
         self.0.starts_with(&prefix.0)
     }
 
-    pub fn as_path(&self) -> &Arc<Path> {
+    pub fn as_path(&self) -> &Path {
         &self.0
+    }
+
+    pub fn file_name(&self) -> Option<&std::ffi::OsStr> {
+        self.0.file_name()
+    }
+
+    pub fn extension(&self) -> Option<&std::ffi::OsStr> {
+        self.0.extension()
+    }
+
+    pub fn join<P: AsRef<Path>>(&self, path: P) -> PathBuf {
+        self.0.join(path)
+    }
+
+    pub fn parent(&self) -> Option<&Self> {
+        self.0.parent().map(Self::unchecked_new)
+    }
+
+    pub fn strip_prefix(&self, base: &Self) -> Result<&Path, StripPrefixError> {
+        self.0.strip_prefix(base.as_path())
+    }
+
+    pub fn to_str(&self) -> Option<&str> {
+        self.0.to_str()
+    }
+
+    pub fn to_path_buf(&self) -> PathBuf {
+        self.0.to_path_buf()
     }
 
     pub fn to_glob_string(&self) -> String {
@@ -124,13 +231,11 @@ impl SanitizedPath {
             self.0.to_string_lossy().to_string()
         }
     }
+}
 
-    pub fn join(&self, path: &Self) -> Self {
-        self.0.join(&path.0).into()
-    }
-
-    pub fn strip_prefix(&self, base: &Self) -> Result<&Path, StripPrefixError> {
-        self.0.strip_prefix(base.as_path())
+impl std::fmt::Debug for SanitizedPath {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(&self.0, formatter)
     }
 }
 
@@ -140,29 +245,23 @@ impl Display for SanitizedPath {
     }
 }
 
-impl From<SanitizedPath> for Arc<Path> {
-    fn from(sanitized_path: SanitizedPath) -> Self {
-        sanitized_path.0
+impl From<&SanitizedPath> for Arc<SanitizedPath> {
+    fn from(sanitized_path: &SanitizedPath) -> Self {
+        let path: Arc<Path> = sanitized_path.0.into();
+        // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
+        unsafe { mem::transmute(path) }
     }
 }
 
-impl From<SanitizedPath> for PathBuf {
-    fn from(sanitized_path: SanitizedPath) -> Self {
-        sanitized_path.0.as_ref().into()
+impl From<&SanitizedPath> for PathBuf {
+    fn from(sanitized_path: &SanitizedPath) -> Self {
+        sanitized_path.as_path().into()
     }
 }
 
-impl<T: AsRef<Path>> From<T> for SanitizedPath {
-    #[cfg(not(target_os = "windows"))]
-    fn from(path: T) -> Self {
-        let path = path.as_ref();
-        SanitizedPath(path.into())
-    }
-
-    #[cfg(target_os = "windows")]
-    fn from(path: T) -> Self {
-        let path = path.as_ref();
-        SanitizedPath(dunce::simplified(path).into())
+impl AsRef<Path> for SanitizedPath {
+    fn as_ref(&self) -> &Path {
+        &self.0
     }
 }
 
@@ -280,6 +379,8 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?xs)
         \:+(\d+)\:(\d+)\:*$  # filename:row:column
         |
         \:+(\d+)\:*()$       # filename:row
+        |
+        \:+()()$
     )";
 
 /// A representation of a path-like string with optional row and column numbers.
@@ -356,8 +457,8 @@ impl PathWithPosition {
     ///     row: None,
     ///     column: None,
     /// });
-    /// assert_eq!(PathWithPosition::parse_str("test_file.rs::"), PathWithPosition {
-    ///     path: PathBuf::from("test_file.rs::"),
+    /// assert_eq!(PathWithPosition::parse_str("test_file.rs"), PathWithPosition {
+    ///     path: PathBuf::from("test_file.rs"),
     ///     row: None,
     ///     column: None,
     /// });
@@ -899,7 +1000,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file.rs:"),
             PathWithPosition {
-                path: PathBuf::from("test_file.rs:"),
+                path: PathBuf::from("test_file.rs"),
                 row: None,
                 column: None
             }
@@ -1195,14 +1296,14 @@ mod tests {
     #[cfg(target_os = "windows")]
     fn test_sanitized_path() {
         let path = Path::new("C:\\Users\\someone\\test_file.rs");
-        let sanitized_path = SanitizedPath::from(path);
+        let sanitized_path = SanitizedPath::new(path);
         assert_eq!(
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
         );
 
         let path = Path::new("\\\\?\\C:\\Users\\someone\\test_file.rs");
-        let sanitized_path = SanitizedPath::from(path);
+        let sanitized_path = SanitizedPath::new(path);
         assert_eq!(
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"

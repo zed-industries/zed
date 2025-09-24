@@ -8,7 +8,7 @@ See [Configuring Zed](./configuring-zed.md) for additional information and other
 
 Use may install zed extensions providing [Themes](./themes.md) and [Icon Themes](./icon-themes.md) via {#action zed::Extensions} from the command palette or menu.
 
-You can preview/choose amongsts your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
+You can preview/choose amongst your installed themes and icon themes with {#action theme_selector::Toggle} ({#kb theme_selector::Toggle}) and ({#action icon_theme_selector::Toggle}) which will modify the following settings:
 
 ```json
 {
@@ -58,7 +58,7 @@ If you would like to use distinct themes for light mode/dark mode that can be se
     "font_family": "",
     "font_size": 15,
     // Terminal line height: comfortable (1.618), standard(1.3) or `{ "custom": 2 }`
-    "line_height": "comfortable",
+    "line_height": "standard",
   },
 
   // Agent Panel Font Settings
@@ -94,7 +94,6 @@ To disable this behavior use:
   // "project_panel": {"button": false },
   // "outline_panel": {"button": false },
   // "collaboration_panel": {"button": false },
-  // "chat_panel": {"button": "never" },
   // "git_panel": {"button": false },
   // "notification_panel": {"button": false },
   // "agent": {"button": false },
@@ -185,6 +184,10 @@ TBD: Centered layout related settings
 
   // Visually show tabs and spaces  (none, all, selection, boundary, trailing)
   "show_whitespaces": "selection",
+  "whitespace_map": { // Which characters to show when `show_whitespaces` enabled
+    "space": "•",
+    "tab": "→"
+  },
 
   "unnecessary_code_fade": 0.3, // How much to fade out unused code.
 
@@ -223,7 +226,7 @@ TBD: Centered layout related settings
   "git": {
     "inline_blame": {
       "enabled": true,             // Show/hide inline blame
-      "delay": 0,                  // Show after delay (ms)
+      "delay_ms": 0,                  // Show after delay (ms)
       "min_column": 0,             // Minimum column to inline display blame
       "padding": 7,                // Padding between code and inline blame (em)
       "show_commit_summary": false // Show/hide commit summary
@@ -334,7 +337,9 @@ TBD: Centered layout related settings
 ```json
 {
   // The default number of lines to expand excerpts in the multibuffer by.
-  "expand_excerpt_lines": 5
+  "expand_excerpt_lines": 5,
+  // The default number of lines of context provided for excerpts in the multibuffer by.
+  "excerpt_context_lines": 2
 }
 ```
 
@@ -455,7 +460,7 @@ Project panel can be shown/hidden with {#action project_panel::ToggleFocus} ({#k
     "button": true,         // Show/hide the icon in the status bar
     "dock": "right",        // Where to dock: left, right, bottom
     "default_width": 640,   // Default width (left/right docked)
-    "default_height": 320,  // Default height (bottom dockeed)
+    "default_height": 320,  // Default height (bottom docked)
   },
   "agent_font_size": 16
 ```
@@ -470,7 +475,7 @@ See [Zed AI Documentation](./ai/overview.md) for additional non-visual AI settin
     "dock": "bottom",                   // Where to dock: left, right, bottom
     "button": true,                     // Show/hide status bar icon
     "default_width": 640,               // Default width (left/right docked)
-    "default_height": 320,              // Default height (bottom dockeed)
+    "default_height": 320,              // Default height (bottom docked)
 
     // Set the cursor blinking behavior in the terminal (on, off, terminal_controlled)
     "blinking": "terminal_controlled",
@@ -551,13 +556,6 @@ See [Terminal settings](./configuring-zed.md#terminal) for additional non-visual
     "default_width": 240          // Default width of the collaboration panel.
   },
   "show_call_status_icon": true,  // Shown call status in the OS status bar.
-
-  // Chat Panel
-  "chat_panel": {
-    "button": "when_in_call",     // status bar icon (true, false, when_in_call)
-    "dock": "right",              // Where to dock: left, right
-    "default_width": 240          // Default width of the chat panel
-  },
 
   // Notification Panel
   "notification_panel": {

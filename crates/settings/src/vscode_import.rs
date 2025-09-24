@@ -2,7 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use fs::Fs;
 use paths::{cursor_settings_file_paths, vscode_settings_file_paths};
 use serde_json::{Map, Value};
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{path::Path, sync::Arc};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum VsCodeSettingsSource {
@@ -21,7 +21,7 @@ impl std::fmt::Display for VsCodeSettingsSource {
 
 pub struct VsCodeSettings {
     pub source: VsCodeSettingsSource,
-    pub path: Rc<Path>,
+    pub path: Arc<Path>,
     content: Map<String, Value>,
 }
 
@@ -78,12 +78,7 @@ impl VsCodeSettings {
     }
 
     pub fn read_value(&self, setting: &str) -> Option<&Value> {
-        if let Some(value) = self.content.get(setting) {
-            return Some(value);
-        }
-        // TODO: maybe check if it's in [platform] settings for current platform as a fallback
-        // TODO: deal with language specific settings
-        None
+        self.content.get(setting)
     }
 
     pub fn read_string(&self, setting: &str) -> Option<&str> {
@@ -139,5 +134,9 @@ impl VsCodeSettings {
         if let Some(s) = self.content.get(key).and_then(Value::as_str).and_then(f) {
             *setting = Some(s)
         }
+    }
+
+    pub fn read_enum<T>(&self, key: &str, f: impl FnOnce(&str) -> Option<T>) -> Option<T> {
+        self.content.get(key).and_then(Value::as_str).and_then(f)
     }
 }

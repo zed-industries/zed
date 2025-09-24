@@ -268,30 +268,13 @@ pub struct FunctionDefinition {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct CompletionRequest {
-    pub model: String,
-    pub prompt: String,
-    pub max_tokens: u32,
-    pub temperature: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub prediction: Option<Prediction>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rewrite_speculation: Option<bool>,
-}
-
-#[derive(Clone, Deserialize, Serialize, Debug)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Prediction {
-    Content { content: String },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "lowercase")]
 pub enum ToolChoice {
     Auto,
     Required,
     None,
     Any,
+    #[serde(untagged)]
     Function(ToolDefinition),
 }
 
@@ -397,32 +380,10 @@ pub struct FunctionContent {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct CompletionChoice {
-    pub text: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Response {
-    pub id: String,
-    pub object: String,
-    pub created: u64,
-    pub model: String,
-    pub choices: Vec<Choice>,
-    pub usage: Usage,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
 pub struct Usage {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Choice {
-    pub index: u32,
-    pub message: RequestMessage,
-    pub finish_reason: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -482,7 +443,7 @@ pub async fn stream_completion(
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key));
+        .header("Authorization", format!("Bearer {}", api_key.trim()));
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;

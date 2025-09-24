@@ -27,6 +27,7 @@ sqlez.workspace = true
 sqlez_macros.workspace = true
 util.workspace = true
 workspace-hack.workspace = true
+zed_env_vars.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

@@ -65,7 +65,7 @@ impl Default for TabStopMap {
             current_path: TabStopPath::default(),
             insertion_history: Vec::new(),
             by_id: FxHashMap::default(),
-            order: SumTree::new(&()),
+            order: SumTree::new(()),
         }
     }
 }
@@ -82,7 +82,7 @@ impl TabStopMap {
             path,
         };
         self.by_id.insert(focus_handle.id, order.clone());
-        self.order.insert_or_replace(order, &());
+        self.order.insert_or_replace(order, ());
     }
 
     pub fn begin_group(&mut self, tab_index: isize) {
@@ -101,7 +101,7 @@ impl TabStopMap {
         self.current_path.0.clear();
         self.insertion_history.clear();
         self.by_id.clear();
-        self.order = SumTree::new(&());
+        self.order = SumTree::new(());
     }
 
     pub fn next(&self, focused_id: Option<&FocusId>) -> Option<FocusHandle> {
@@ -127,7 +127,7 @@ impl TabStopMap {
     }
 
     fn next_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {
-        let mut cursor = self.order.cursor::<TabStopNode>(&());
+        let mut cursor = self.order.cursor::<TabStopNode>(());
         cursor.seek(&node, Bias::Left);
         cursor.next();
         while let Some(item) = cursor.item()
@@ -162,7 +162,7 @@ impl TabStopMap {
     }
 
     fn prev_inner(&self, node: &TabStopNode) -> Option<&TabStopNode> {
-        let mut cursor = self.order.cursor::<TabStopNode>(&());
+        let mut cursor = self.order.cursor::<TabStopNode>(());
         cursor.seek(&node, Bias::Left);
         cursor.prev();
         while let Some(item) = cursor.item()
@@ -219,10 +219,8 @@ mod sum_tree_impl {
 
     pub type TabStopCount = usize;
 
-    impl sum_tree::Summary for TabStopOrderNodeSummary {
-        type Context = ();
-
-        fn zero(_cx: &Self::Context) -> Self {
+    impl sum_tree::ContextLessSummary for TabStopOrderNodeSummary {
+        fn zero() -> Self {
             TabStopOrderNodeSummary {
                 max_index: 0,
                 max_path: TabStopPath::default(),
@@ -230,7 +228,7 @@ mod sum_tree_impl {
             }
         }
 
-        fn add_summary(&mut self, summary: &Self, _cx: &Self::Context) {
+        fn add_summary(&mut self, summary: &Self) {
             self.max_index = summary.max_index;
             self.max_path = summary.max_path.clone();
             self.tab_stops += summary.tab_stops;
@@ -248,7 +246,7 @@ mod sum_tree_impl {
     impl sum_tree::Item for TabStopNode {
         type Summary = TabStopOrderNodeSummary;
 
-        fn summary(&self, _cx: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
+        fn summary(&self, _cx: <Self::Summary as sum_tree::Summary>::Context<'_>) -> Self::Summary {
             TabStopOrderNodeSummary {
                 max_index: self.node_insertion_index,
                 max_path: self.path.clone(),
@@ -258,28 +256,28 @@ mod sum_tree_impl {
     }
 
     impl<'a> sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopCount {
-        fn zero(_: &<TabStopOrderNodeSummary as sum_tree::Summary>::Context) -> Self {
+        fn zero(_: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>) -> Self {
             0
         }
 
         fn add_summary(
             &mut self,
             summary: &'a TabStopOrderNodeSummary,
-            _: &<TabStopOrderNodeSummary as sum_tree::Summary>::Context,
+            _: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>,
         ) {
             *self += summary.tab_stops;
         }
     }
 
     impl<'a> sum_tree::Dimension<'a, TabStopOrderNodeSummary> for TabStopNode {
-        fn zero(_: &<TabStopOrderNodeSummary as sum_tree::Summary>::Context) -> Self {
+        fn zero(_: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>) -> Self {
             TabStopNode::default()
         }
 
         fn add_summary(
             &mut self,
             summary: &'a TabStopOrderNodeSummary,
-            _: &<TabStopOrderNodeSummary as sum_tree::Summary>::Context,
+            _: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>,
         ) {
             self.node_insertion_index = summary.max_index;
             self.path = summary.max_path.clone();
@@ -287,7 +285,11 @@ mod sum_tree_impl {
     }
 
     impl<'a, 'b> SeekTarget<'a, TabStopOrderNodeSummary, TabStopNode> for &'b TabStopNode {
-        fn cmp(&self, cursor_location: &TabStopNode, _: &()) -> std::cmp::Ordering {
+        fn cmp(
+            &self,
+            cursor_location: &TabStopNode,
+            _: <TabStopOrderNodeSummary as sum_tree::Summary>::Context<'_>,
+        ) -> std::cmp::Ordering {
             Iterator::cmp(self.path.0.iter(), cursor_location.path.0.iter()).then(
                 <usize as Ord>::cmp(
                     &self.node_insertion_index,

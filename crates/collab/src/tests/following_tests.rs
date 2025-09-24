@@ -12,7 +12,6 @@ use gpui::{
     VisualContext, VisualTestContext, point,
 };
 use language::Capability;
-use project::WorktreeSettings;
 use rpc::proto::PeerId;
 use serde_json::json;
 use settings::SettingsStore;
@@ -1710,8 +1709,9 @@ async fn test_following_into_excluded_file(
     for cx in [&mut cx_a, &mut cx_b] {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings::<WorktreeSettings>(cx, |settings| {
-                    settings.file_scan_exclusions = Some(vec!["**/.git".to_string()]);
+                store.update_user_settings(cx, |settings| {
+                    settings.project.worktree.file_scan_exclusions =
+                        Some(vec!["**/.git".to_string()]);
                 });
             });
         });
@@ -2098,7 +2098,7 @@ async fn test_following_after_replacement(cx_a: &mut TestAppContext, cx_b: &mut 
     share_workspace(&workspace, cx_a).await.unwrap();
     let buffer = workspace.update(cx_a, |workspace, cx| {
         workspace.project().update(cx, |project, cx| {
-            project.create_local_buffer(&sample_text(26, 5, 'a'), None, cx)
+            project.create_local_buffer(&sample_text(26, 5, 'a'), None, false, cx)
         })
     });
     let multibuffer = cx_a.new(|cx| {

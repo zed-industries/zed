@@ -198,7 +198,7 @@ impl CommitModal {
             && commit_message.is_empty()
         {
             commit_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text(suggested_commit_message, cx);
+                editor.set_placeholder_text(&suggested_commit_message, window, cx);
             });
         }
 
@@ -368,10 +368,6 @@ impl CommitModal {
             .icon_color(Color::Placeholder)
             .color(Color::Muted)
             .icon_position(IconPosition::Start)
-            .tooltip(Tooltip::for_action_title(
-                "Switch Branch",
-                &zed_actions::git::Branch,
-            ))
             .on_click(cx.listener(|_, _, window, cx| {
                 window.dispatch_action(zed_actions::git::Branch.boxed_clone(), cx);
             }))

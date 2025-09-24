@@ -22,11 +22,11 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
     },
 };
-use sum_tree::{Bias, Dimensions, SumTree, Summary, TreeMap};
+use sum_tree::{Bias, ContextLessSummary, Dimensions, SumTree, TreeMap};
 use text::{BufferId, Edit};
 use ui::ElementId;
 
-const NEWLINES: &[u8] = &[b'\n'; u8::MAX as usize];
+const NEWLINES: &[u8] = &[b'\n'; u128::BITS as usize];
 const BULLETS: &str = "********************************************************************************************************************************";
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
@@ -128,10 +128,10 @@ impl<T> BlockPlacement<T> {
         }
     }
 
-    fn sort_order(&self) -> u8 {
+    fn tie_break(&self) -> u8 {
         match self {
-            BlockPlacement::Above(_) => 0,
-            BlockPlacement::Replace(_) => 1,
+            BlockPlacement::Replace(_) => 0,
+            BlockPlacement::Above(_) => 1,
             BlockPlacement::Near(_) => 2,
             BlockPlacement::Below(_) => 3,
         }
@@ -143,7 +143,7 @@ impl BlockPlacement<Anchor> {
         self.start()
             .cmp(other.start(), buffer)
             .then_with(|| other.end().cmp(self.end(), buffer))
-            .then_with(|| self.sort_order().cmp(&other.sort_order()))
+            .then_with(|| self.tie_break().cmp(&other.tie_break()))
     }
 
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
@@ -433,7 +433,7 @@ struct TransformSummary {
 }
 
 pub struct BlockChunks<'a> {
-    transforms: sum_tree::Cursor<'a, Transform, Dimensions<BlockRow, WrapRow>>,
+    transforms: sum_tree::Cursor<'a, 'static, Transform, Dimensions<BlockRow, WrapRow>>,
     input_chunks: wrap_map::WrapChunks<'a>,
     input_chunk: Chunk<'a>,
     output_row: u32,
@@ -443,7 +443,7 @@ pub struct BlockChunks<'a> {
 
 #[derive(Clone)]
 pub struct BlockRows<'a> {
-    transforms: sum_tree::Cursor<'a, Transform, Dimensions<BlockRow, WrapRow>>,
+    transforms: sum_tree::Cursor<'a, 'static, Transform, Dimensions<BlockRow, WrapRow>>,
     input_rows: wrap_map::WrapRows<'a>,
     output_row: BlockRow,
     started: bool,
@@ -527,7 +527,7 @@ impl BlockMap {
 
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
-        let mut cursor = transforms.cursor::<WrapRow>(&());
+        let mut cursor = transforms.cursor::<WrapRow>(());
         let mut last_block_ix = 0;
         let mut blocks_in_edit = Vec::new();
         let mut edits = edits.into_iter().peekable();
@@ -541,20 +541,20 @@ impl BlockMap {
             // * Isomorphic transforms that end *at* the start of the edit
             // * Below blocks that end at the start of the edit
             // However, if we hit a replace block that ends at the start of the edit we want to reconstruct it.
-            new_transforms.append(cursor.slice(&old_start, Bias::Left), &());
+            new_transforms.append(cursor.slice(&old_start, Bias::Left), ());
             if let Some(transform) = cursor.item()
                 && transform.summary.input_rows > 0
                 && cursor.end() == old_start
                 && transform.block.as_ref().is_none_or(|b| !b.is_replacement())
             {
                 // Preserve the transform (push and next)
-                new_transforms.push(transform.clone(), &());
+                new_transforms.push(transform.clone(), ());
                 cursor.next();
 
                 // Preserve below blocks at end of edit
                 while let Some(transform) = cursor.item() {
                     if transform.block.as_ref().is_some_and(|b| b.place_below()) {
-                        new_transforms.push(transform.clone(), &());
+                        new_transforms.push(transform.clone(), ());
                         cursor.next();
                     } else {
                         break;
@@ -720,7 +720,7 @@ impl BlockMap {
                         summary,
                         block: Some(block),
                     },
-                    &(),
+                    (),
                 );
             }
 
@@ -731,7 +731,7 @@ impl BlockMap {
             push_isomorphic(&mut new_transforms, rows_after_last_block, wrap_snapshot);
         }
 
-        new_transforms.append(cursor.suffix(), &());
+        new_transforms.append(cursor.suffix(), ());
         debug_assert_eq!(
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + 1
@@ -847,6 +847,7 @@ impl BlockMap {
                 .start()
                 .cmp(placement_b.start())
                 .then_with(|| placement_b.end().cmp(placement_a.end()))
+                .then_with(|| placement_a.tie_break().cmp(&placement_b.tie_break()))
                 .then_with(|| {
                     if block_a.is_header() {
                         Ordering::Less
@@ -856,7 +857,6 @@ impl BlockMap {
                         Ordering::Equal
                     }
                 })
-                .then_with(|| placement_a.sort_order().cmp(&placement_b.sort_order()))
                 .then_with(|| match (block_a, block_b) {
                     (
                         Block::ExcerptBoundary {
@@ -925,11 +925,11 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32, wrap_snapshot: &Wra
     tree.update_last(
         |last_transform| {
             if last_transform.block.is_none() {
-                last_transform.summary.add_summary(&summary, &());
+                last_transform.summary.add_summary(&summary);
                 merged = true;
             }
         },
-        &(),
+        (),
     );
     if !merged {
         tree.push(
@@ -937,7 +937,7 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32, wrap_snapshot: &Wra
                 summary,
                 block: None,
             },
-            &(),
+            (),
         );
     }
 }
@@ -997,7 +997,7 @@ impl BlockMapReader<'_> {
                 .unwrap_or(self.wrap_snapshot.max_point().row() + 1),
         );
 
-        let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(());
         cursor.seek(&start_wrap_row, Bias::Left);
         while let Some(transform) = cursor.item() {
             if cursor.start().0 > end_wrap_row {
@@ -1264,36 +1264,30 @@ impl BlockMapWriter<'_> {
         range: Range<usize>,
         inclusive: bool,
     ) -> &[Arc<CustomBlock>] {
+        if range.is_empty() && !inclusive {
+            return &[];
+        }
         let wrap_snapshot = self.0.wrap_snapshot.borrow();
         let buffer = wrap_snapshot.buffer_snapshot();
 
         let start_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
             let block_end = block.end().to_offset(buffer);
-            block_end.cmp(&range.start).then_with(|| {
-                if inclusive || (range.is_empty() && block.start().to_offset(buffer) == block_end) {
-                    Ordering::Greater
-                } else {
-                    Ordering::Less
-                }
+            block_end.cmp(&range.start).then(Ordering::Greater)
+        }) {
+            Ok(ix) | Err(ix) => ix,
+        };
+        let end_block_ix = match self.0.custom_blocks[start_block_ix..].binary_search_by(|block| {
+            let block_start = block.start().to_offset(buffer);
+            block_start.cmp(&range.end).then(if inclusive {
+                Ordering::Less
+            } else {
+                Ordering::Greater
             })
         }) {
             Ok(ix) | Err(ix) => ix,
         };
-        let end_block_ix = match self.0.custom_blocks.binary_search_by(|block| {
-            block
-                .start()
-                .to_offset(buffer)
-                .cmp(&range.end)
-                .then(if inclusive {
-                    Ordering::Less
-                } else {
-                    Ordering::Greater
-                })
-        }) {
-            Ok(ix) | Err(ix) => ix,
-        };
 
-        &self.0.custom_blocks[start_block_ix..end_block_ix]
+        &self.0.custom_blocks[start_block_ix..][..end_block_ix]
     }
 }
 
@@ -1319,7 +1313,7 @@ impl BlockSnapshot {
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
 
-        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&BlockRow(rows.start), Bias::Right);
         let transform_output_start = cursor.start().0.0;
         let transform_input_start = cursor.start().1.0;
@@ -1351,7 +1345,7 @@ impl BlockSnapshot {
     }
 
     pub(super) fn row_infos(&self, start_row: BlockRow) -> BlockRows<'_> {
-        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&start_row, Bias::Right);
         let Dimensions(output_start, input_start, _) = cursor.start();
         let overshoot = if cursor
@@ -1372,7 +1366,7 @@ impl BlockSnapshot {
     }
 
     pub fn blocks_in_range(&self, rows: Range<u32>) -> impl Iterator<Item = (u32, &Block)> {
-        let mut cursor = self.transforms.cursor::<BlockRow>(&());
+        let mut cursor = self.transforms.cursor::<BlockRow>(());
         cursor.seek(&BlockRow(rows.start), Bias::Left);
         while cursor.start().0 < rows.start && cursor.end().0 <= rows.start {
             cursor.next();
@@ -1403,7 +1397,7 @@ impl BlockSnapshot {
 
     pub fn sticky_header_excerpt(&self, position: f32) -> Option<StickyHeaderExcerpt<'_>> {
         let top_row = position as u32;
-        let mut cursor = self.transforms.cursor::<BlockRow>(&());
+        let mut cursor = self.transforms.cursor::<BlockRow>(());
         cursor.seek(&BlockRow(top_row), Bias::Right);
 
         while let Some(transform) = cursor.item() {
@@ -1442,7 +1436,7 @@ impl BlockSnapshot {
         };
         let wrap_row = WrapRow(wrap_point.row());
 
-        let mut cursor = self.transforms.cursor::<WrapRow>(&());
+        let mut cursor = self.transforms.cursor::<WrapRow>(());
         cursor.seek(&wrap_row, Bias::Left);
 
         while let Some(transform) = cursor.item() {
@@ -1470,7 +1464,7 @@ impl BlockSnapshot {
     }
 
     pub fn longest_row_in_range(&self, range: Range<BlockRow>) -> BlockRow {
-        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&range.start, Bias::Right);
 
         let mut longest_row = range.start;
@@ -1521,7 +1515,7 @@ impl BlockSnapshot {
     }
 
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
-        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&BlockRow(row.0), Bias::Right);
         if let Some(transform) = cursor.item() {
             let Dimensions(output_start, input_start, _) = cursor.start();
@@ -1539,13 +1533,13 @@ impl BlockSnapshot {
     }
 
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
-        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&row, Bias::Right);
         cursor.item().is_some_and(|t| t.block.is_some())
     }
 
     pub(super) fn is_folded_buffer_header(&self, row: BlockRow) -> bool {
-        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&row, Bias::Right);
         let Some(transform) = cursor.item() else {
             return false;
@@ -1557,7 +1551,7 @@ impl BlockSnapshot {
         let wrap_point = self
             .wrap_snapshot
             .make_wrap_point(Point::new(row.0, 0), Bias::Left);
-        let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right);
         cursor.item().is_some_and(|transform| {
             transform
@@ -1568,7 +1562,7 @@ impl BlockSnapshot {
     }
 
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
-        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&BlockRow(point.row), Bias::Right);
 
         let max_input_row = WrapRow(self.transforms.summary().input_rows);
@@ -1627,7 +1621,7 @@ impl BlockSnapshot {
     }
 
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
-        let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right);
         if let Some(transform) = cursor.item() {
             if transform.block.is_some() {
@@ -1645,7 +1639,7 @@ impl BlockSnapshot {
     }
 
     pub fn to_wrap_point(&self, block_point: BlockPoint, bias: Bias) -> WrapPoint {
-        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(&());
+        let mut cursor = self.transforms.cursor::<Dimensions<BlockRow, WrapRow>>(());
         cursor.seek(&BlockRow(block_point.row), Bias::Right);
         if let Some(transform) = cursor.item() {
             match transform.block.as_ref() {
@@ -1732,11 +1726,13 @@ impl<'a> Iterator for BlockChunks<'a> {
 
             let start_in_block = self.output_row - block_start;
             let end_in_block = cmp::min(self.max_output_row, block_end) - block_start;
-            let line_count = end_in_block - start_in_block;
+            // todo: We need to split the chunk here?
+            let line_count = cmp::min(end_in_block - start_in_block, u128::BITS);
             self.output_row += line_count;
 
             return Some(Chunk {
                 text: unsafe { std::str::from_utf8_unchecked(&NEWLINES[..line_count as usize]) },
+                chars: 1u128.unbounded_shl(line_count) - 1,
                 ..Default::default()
             });
         }
@@ -1751,6 +1747,7 @@ impl<'a> Iterator for BlockChunks<'a> {
                     if self.transforms.item().is_some() {
                         return Some(Chunk {
                             text: "\n",
+                            chars: 1,
                             ..Default::default()
                         });
                     }
@@ -1766,17 +1763,26 @@ impl<'a> Iterator for BlockChunks<'a> {
 
         let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
+        self.input_chunk.tabs >>= prefix_bytes.saturating_sub(1);
+        self.input_chunk.chars >>= prefix_bytes.saturating_sub(1);
+
+        let mut tabs = self.input_chunk.tabs;
+        let mut chars = self.input_chunk.chars;
 
         if self.masked {
             // Not great for multibyte text because to keep cursor math correct we
             // need to have the same number of bytes in the input as output.
-            let chars = prefix.chars().count();
-            let bullet_len = chars;
+            let chars_count = prefix.chars().count();
+            let bullet_len = chars_count;
             prefix = &BULLETS[..bullet_len];
+            chars = 1u128.unbounded_shl(bullet_len as u32) - 1;
+            tabs = 0;
         }
 
         let chunk = Chunk {
             text: prefix,
+            tabs,
+            chars,
             ..self.input_chunk.clone()
         };
 
@@ -1842,19 +1848,17 @@ impl Iterator for BlockRows<'_> {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _cx: ()) -> Self::Summary {
         self.summary.clone()
     }
 }
 
-impl sum_tree::Summary for TransformSummary {
-    type Context = ();
-
-    fn zero(_cx: &()) -> Self {
+impl sum_tree::ContextLessSummary for TransformSummary {
+    fn zero() -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &Self, _: &()) {
+    fn add_summary(&mut self, summary: &Self) {
         if summary.longest_row_chars > self.longest_row_chars {
             self.longest_row = self.output_rows + summary.longest_row;
             self.longest_row_chars = summary.longest_row_chars;
@@ -1865,21 +1869,21 @@ impl sum_tree::Summary for TransformSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapRow {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.input_rows;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
-    fn zero(_cx: &()) -> Self {
+    fn zero(_cx: ()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
+    fn add_summary(&mut self, summary: &'a TransformSummary, _: ()) {
         self.0 += summary.output_rows;
     }
 }
@@ -2922,21 +2926,21 @@ mod tests {
             .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
             .unwrap_or(10);
 
-        let wrap_width = if rng.gen_bool(0.2) {
+        let wrap_width = if rng.random_bool(0.2) {
             None
         } else {
-            Some(px(rng.gen_range(0.0..=100.0)))
+            Some(px(rng.random_range(0.0..=100.0)))
         };
         let tab_size = 1.try_into().unwrap();
         let font_size = px(14.0);
-        let buffer_start_header_height = rng.gen_range(1..=5);
-        let excerpt_header_height = rng.gen_range(1..=5);
+        let buffer_start_header_height = rng.random_range(1..=5);
+        let excerpt_header_height = rng.random_range(1..=5);
 
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
-        let is_singleton = rng.r#gen();
+        let is_singleton = rng.random();
         let buffer = if is_singleton {
-            let len = rng.gen_range(0..10);
+            let len = rng.random_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             log::info!("initial singleton buffer text: {:?}", text);
             cx.update(|cx| MultiBuffer::build_simple(&text, cx))
@@ -2966,30 +2970,30 @@ mod tests {
 
         for _ in 0..operations {
             let mut buffer_edits = Vec::new();
-            match rng.gen_range(0..=100) {
+            match rng.random_range(0..=100) {
                 0..=19 => {
-                    let wrap_width = if rng.gen_bool(0.2) {
+                    let wrap_width = if rng.random_bool(0.2) {
                         None
                     } else {
-                        Some(px(rng.gen_range(0.0..=100.0)))
+                        Some(px(rng.random_range(0.0..=100.0)))
                     };
                     log::info!("Setting wrap width to {:?}", wrap_width);
                     wrap_map.update(cx, |map, cx| map.set_wrap_width(wrap_width, cx));
                 }
                 20..=39 => {
-                    let block_count = rng.gen_range(1..=5);
+                    let block_count = rng.random_range(1..=5);
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
                             let offset =
-                                buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left);
+                                buffer.clip_offset(rng.random_range(0..=buffer.len()), Bias::Left);
                             let mut min_height = 0;
-                            let placement = match rng.gen_range(0..3) {
+                            let placement = match rng.random_range(0..3) {
                                 0 => {
                                     min_height = 1;
                                     let start = buffer.anchor_after(offset);
                                     let end = buffer.anchor_after(buffer.clip_offset(
-                                        rng.gen_range(offset..=buffer.len()),
+                                        rng.random_range(offset..=buffer.len()),
                                         Bias::Left,
                                     ));
                                     BlockPlacement::Replace(start..=end)
@@ -2998,7 +3002,7 @@ mod tests {
                                 _ => BlockPlacement::Below(buffer.anchor_after(offset)),
                             };
 
-                            let height = rng.gen_range(min_height..5);
+                            let height = rng.random_range(min_height..5);
                             BlockProperties {
                                 style: BlockStyle::Fixed,
                                 placement,
@@ -3040,7 +3044,7 @@ mod tests {
                     }
                 }
                 40..=59 if !block_map.custom_blocks.is_empty() => {
-                    let block_count = rng.gen_range(1..=4.min(block_map.custom_blocks.len()));
+                    let block_count = rng.random_range(1..=4.min(block_map.custom_blocks.len()));
                     let block_ids_to_remove = block_map
                         .custom_blocks
                         .choose_multiple(&mut rng, block_count)
@@ -3095,8 +3099,8 @@ mod tests {
                     let mut folded_count = folded_buffers.len();
                     let mut unfolded_count = unfolded_buffers.len();
 
-                    let fold = !unfolded_buffers.is_empty() && rng.gen_bool(0.5);
-                    let unfold = !folded_buffers.is_empty() && rng.gen_bool(0.5);
+                    let fold = !unfolded_buffers.is_empty() && rng.random_bool(0.5);
+                    let unfold = !folded_buffers.is_empty() && rng.random_bool(0.5);
                     if !fold && !unfold {
                         log::info!(
                             "Noop fold/unfold operation. Unfolded buffers: {unfolded_count}, folded buffers: {folded_count}"
@@ -3107,7 +3111,7 @@ mod tests {
                     buffer.update(cx, |buffer, cx| {
                         if fold {
                             let buffer_to_fold =
-                                unfolded_buffers[rng.gen_range(0..unfolded_buffers.len())];
+                                unfolded_buffers[rng.random_range(0..unfolded_buffers.len())];
                             log::info!("Folding {buffer_to_fold:?}");
                             let related_excerpts = buffer_snapshot
                                 .excerpts()
@@ -3133,7 +3137,7 @@ mod tests {
                         }
                         if unfold {
                             let buffer_to_unfold =
-                                folded_buffers[rng.gen_range(0..folded_buffers.len())];
+                                folded_buffers[rng.random_range(0..folded_buffers.len())];
                             log::info!("Unfolding {buffer_to_unfold:?}");
                             unfolded_count += 1;
                             folded_count -= 1;
@@ -3146,7 +3150,7 @@ mod tests {
                 }
                 _ => {
                     buffer.update(cx, |buffer, cx| {
-                        let mutation_count = rng.gen_range(1..=5);
+                        let mutation_count = rng.random_range(1..=5);
                         let subscription = buffer.subscribe();
                         buffer.randomly_mutate(&mut rng, mutation_count, cx);
                         buffer_snapshot = buffer.snapshot(cx);
@@ -3331,7 +3335,7 @@ mod tests {
             );
 
             for start_row in 0..expected_row_count {
-                let end_row = rng.gen_range(start_row + 1..=expected_row_count);
+                let end_row = rng.random_range(start_row + 1..=expected_row_count);
                 let mut expected_text = expected_lines[start_row..end_row].join("\n");
                 if end_row < expected_row_count {
                     expected_text.push('\n');
@@ -3426,8 +3430,8 @@ mod tests {
             );
 
             for _ in 0..10 {
-                let end_row = rng.gen_range(1..=expected_lines.len());
-                let start_row = rng.gen_range(0..end_row);
+                let end_row = rng.random_range(1..=expected_lines.len());
+                let start_row = rng.random_range(0..end_row);
 
                 let mut expected_longest_rows_in_range = vec![];
                 let mut longest_line_len_in_range = 0;

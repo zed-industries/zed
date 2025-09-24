@@ -1,7 +1,7 @@
 use crate::{
     Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics, FontRun,
     FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
-    RenderGlyphParams, Result, SUBPIXEL_VARIANTS, ShapedGlyph, ShapedRun, SharedString, Size,
+    RenderGlyphParams, Result, SUBPIXEL_VARIANTS_X, ShapedGlyph, ShapedRun, SharedString, Size,
     point, px, size, swap_rgba_pa_to_bgra,
 };
 use anyhow::anyhow;
@@ -16,7 +16,7 @@ use core_foundation::{
 use core_graphics::{
     base::{CGGlyph, kCGImageAlphaPremultipliedLast},
     color_space::CGColorSpace,
-    context::CGContext,
+    context::{CGContext, CGTextDrawingMode},
     display::CGPoint,
 };
 use core_text::{
@@ -395,7 +395,12 @@ impl MacTextSystemState {
 
             let subpixel_shift = params
                 .subpixel_variant
-                .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
+                .map(|v| v as f32 / SUBPIXEL_VARIANTS_X as f32);
+            cx.set_allows_font_smoothing(true);
+            cx.set_text_drawing_mode(CGTextDrawingMode::CGTextFill);
+            cx.set_gray_fill_color(0.0, 1.0);
+            cx.set_allows_antialiasing(true);
+            cx.set_should_antialias(true);
             cx.set_allows_font_subpixel_positioning(true);
             cx.set_should_subpixel_position_fonts(true);
             cx.set_allows_font_subpixel_quantization(false);

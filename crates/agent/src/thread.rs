@@ -664,7 +664,7 @@ impl Thread {
     }
 
     pub fn get_or_init_configured_model(&mut self, cx: &App) -> Option<ConfiguredModel> {
-        if self.configured_model.is_none() || self.messages.is_empty() {
+        if self.configured_model.is_none() {
             self.configured_model = LanguageModelRegistry::read_global(cx).default_model();
         }
         self.configured_model.clone()
@@ -2097,7 +2097,7 @@ impl Thread {
     }
 
     pub fn summarize(&mut self, cx: &mut Context<Self>) {
-        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model(cx) else {
+        let Some(model) = LanguageModelRegistry::read_global(cx).thread_summary_model() else {
             println!("No thread summary model");
             return;
         };
@@ -2416,7 +2416,7 @@ impl Thread {
         }
 
         let Some(ConfiguredModel { model, provider }) =
-            LanguageModelRegistry::read_global(cx).thread_summary_model(cx)
+            LanguageModelRegistry::read_global(cx).thread_summary_model()
         else {
             return;
         };
@@ -3272,7 +3272,7 @@ mod tests {
 
     // Test-specific constants
     const TEST_RATE_LIMIT_RETRY_SECS: u64 = 30;
-    use agent_settings::{AgentProfileId, AgentSettings, LanguageModelParameters};
+    use agent_settings::{AgentProfileId, AgentSettings};
     use assistant_tool::ToolRegistry;
     use assistant_tools;
     use futures::StreamExt;
@@ -3289,7 +3289,7 @@ mod tests {
     use project::{FakeFs, Project};
     use prompt_store::PromptBuilder;
     use serde_json::json;
-    use settings::{Settings, SettingsStore};
+    use settings::{LanguageModelParameters, Settings, SettingsStore};
     use std::sync::Arc;
     use std::time::Duration;
     use theme::ThemeSettings;
@@ -5410,10 +5410,13 @@ fn main() {{
                     }),
                     cx,
                 );
-                registry.set_thread_summary_model(Some(ConfiguredModel {
-                    provider,
-                    model: model.clone(),
-                }));
+                registry.set_thread_summary_model(
+                    Some(ConfiguredModel {
+                        provider,
+                        model: model.clone(),
+                    }),
+                    cx,
+                );
             })
         });
 

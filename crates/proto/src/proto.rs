@@ -16,8 +16,8 @@ pub use typed_envelope::*;
 
 include!(concat!(env!("OUT_DIR"), "/zed.messages.rs"));
 
-pub const SSH_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
-pub const SSH_PROJECT_ID: u64 = 0;
+pub const REMOTE_SERVER_PEER_ID: PeerId = PeerId { owner_id: 0, id: 0 };
+pub const REMOTE_SERVER_PROJECT_ID: u64 = 0;
 
 messages!(
     (Ack, Foreground),
@@ -26,6 +26,8 @@ messages!(
     (ActivateToolchain, Foreground),
     (ActiveToolchain, Foreground),
     (ActiveToolchainResponse, Foreground),
+    (ResolveToolchain, Background),
+    (ResolveToolchainResponse, Background),
     (AddNotification, Foreground),
     (AddProjectCollaborator, Foreground),
     (AddWorktree, Foreground),
@@ -102,6 +104,8 @@ messages!(
     (GetPathMetadata, Background),
     (GetPathMetadataResponse, Background),
     (GetPermalinkToLine, Foreground),
+    (GetProcesses, Background),
+    (GetProcessesResponse, Background),
     (GetPermalinkToLineResponse, Foreground),
     (GetProjectSymbols, Background),
     (GetProjectSymbolsResponse, Background),
@@ -171,9 +175,6 @@ messages!(
     (ReorderChannel, Foreground),
     (LspQuery, Background),
     (LspQueryResponse, Background),
-    // todo(lsp) remove after Zed Stable hits v0.204.x
-    (MultiLspQuery, Background),
-    (MultiLspQueryResponse, Background),
     (OnTypeFormatting, Background),
     (OnTypeFormattingResponse, Background),
     (OpenBufferById, Background),
@@ -257,6 +258,8 @@ messages!(
     (Unstage, Background),
     (Stash, Background),
     (StashPop, Background),
+    (StashApply, Background),
+    (StashDrop, Background),
     (UpdateBuffer, Foreground),
     (UpdateBufferFile, Foreground),
     (UpdateChannelBuffer, Foreground),
@@ -278,6 +281,7 @@ messages!(
     (UpdateUserChannels, Foreground),
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
+    (UpdateUserSettings, Background),
     (UpdateRepository, Foreground),
     (RemoveRepository, Foreground),
     (UsersResponse, Foreground),
@@ -296,6 +300,7 @@ messages!(
     (AskPassResponse, Background),
     (GitCreateBranch, Background),
     (GitChangeBranch, Background),
+    (GitRenameBranch, Background),
     (CheckForPushedCommits, Background),
     (CheckForPushedCommitsResponse, Background),
     (GitDiff, Background),
@@ -312,7 +317,13 @@ messages!(
     (GetDefaultBranch, Background),
     (GetDefaultBranchResponse, Background),
     (GitClone, Background),
-    (GitCloneResponse, Background)
+    (GitCloneResponse, Background),
+    (ToggleLspLogs, Background),
+    (GetAgentServerCommand, Background),
+    (AgentServerCommand, Background),
+    (ExternalAgentsUpdated, Background),
+    (ExternalAgentLoadingStatusUpdated, Background),
+    (NewExternalAgentVersionAvailable, Background),
 );
 
 request_messages!(
@@ -417,6 +428,8 @@ request_messages!(
     (Unstage, Ack),
     (Stash, Ack),
     (StashPop, Ack),
+    (StashApply, Ack),
+    (StashDrop, Ack),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
     (UpdateProject, Ack),
@@ -429,8 +442,6 @@ request_messages!(
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
-    // todo(lsp) remove after Zed Stable hits v0.204.x
-    (MultiLspQuery, MultiLspQueryResponse),
     (LspQuery, Ack),
     (LspQueryResponse, Ack),
     (RestartLanguageServers, Ack),
@@ -455,6 +466,7 @@ request_messages!(
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
+    (ResolveToolchain, ResolveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
     (GetCrashFiles, GetCrashFilesResponse),
     (CancelLanguageServerWork, Ack),
@@ -472,6 +484,7 @@ request_messages!(
     (AskPassRequest, AskPassResponse),
     (GitCreateBranch, Ack),
     (GitChangeBranch, Ack),
+    (GitRenameBranch, Ack),
     (CheckForPushedCommits, CheckForPushedCommitsResponse),
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
@@ -481,7 +494,10 @@ request_messages!(
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
     (PullWorkspaceDiagnostics, Ack),
     (GetDefaultBranch, GetDefaultBranchResponse),
-    (GitClone, GitCloneResponse)
+    (GitClone, GitCloneResponse),
+    (ToggleLspLogs, Ack),
+    (GetProcesses, GetProcessesResponse),
+    (GetAgentServerCommand, AgentServerCommand)
 );
 
 lsp_messages!(
@@ -542,8 +558,6 @@ entity_messages!(
     LoadCommitDiff,
     LspQuery,
     LspQueryResponse,
-    // todo(lsp) remove after Zed Stable hits v0.204.x
-    MultiLspQuery,
     RestartLanguageServers,
     StopLanguageServers,
     OnTypeFormatting,
@@ -570,6 +584,8 @@ entity_messages!(
     Unstage,
     Stash,
     StashPop,
+    StashApply,
+    StashDrop,
     UpdateBuffer,
     UpdateBufferFile,
     UpdateDiagnosticSummary,
@@ -581,6 +597,7 @@ entity_messages!(
     UpdateRepository,
     RemoveRepository,
     UpdateWorktreeSettings,
+    UpdateUserSettings,
     LspExtExpandMacro,
     LspExtOpenDocs,
     LspExtRunnables,
@@ -605,13 +622,16 @@ entity_messages!(
     ListToolchains,
     ActivateToolchain,
     ActiveToolchain,
+    ResolveToolchain,
     GetPathMetadata,
+    GetProcesses,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GitShow,
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
+    ToggleLspLogs,
 
     Push,
     Fetch,
@@ -619,6 +639,7 @@ entity_messages!(
     Pull,
     AskPassRequest,
     GitChangeBranch,
+    GitRenameBranch,
     GitCreateBranch,
     CheckForPushedCommits,
     GitDiff,
@@ -631,7 +652,11 @@ entity_messages!(
     GetDocumentDiagnostics,
     PullWorkspaceDiagnostics,
     GetDefaultBranch,
-    GitClone
+    GitClone,
+    GetAgentServerCommand,
+    ExternalAgentsUpdated,
+    ExternalAgentLoadingStatusUpdated,
+    NewExternalAgentVersionAvailable,
 );
 
 entity_messages!(
@@ -817,26 +842,6 @@ impl LspQuery {
             Some(lsp_query::Request::GetReferences(_)) => ("GetReferences", false),
             Some(lsp_query::Request::GetDocumentColor(_)) => ("GetDocumentColor", false),
             None => ("<unknown>", true),
-        }
-    }
-}
-
-// todo(lsp) remove after Zed Stable hits v0.204.x
-impl MultiLspQuery {
-    pub fn request_str(&self) -> &str {
-        match self.request {
-            Some(multi_lsp_query::Request::GetHover(_)) => "GetHover",
-            Some(multi_lsp_query::Request::GetCodeActions(_)) => "GetCodeActions",
-            Some(multi_lsp_query::Request::GetSignatureHelp(_)) => "GetSignatureHelp",
-            Some(multi_lsp_query::Request::GetCodeLens(_)) => "GetCodeLens",
-            Some(multi_lsp_query::Request::GetDocumentDiagnostics(_)) => "GetDocumentDiagnostics",
-            Some(multi_lsp_query::Request::GetDocumentColor(_)) => "GetDocumentColor",
-            Some(multi_lsp_query::Request::GetDefinition(_)) => "GetDefinition",
-            Some(multi_lsp_query::Request::GetDeclaration(_)) => "GetDeclaration",
-            Some(multi_lsp_query::Request::GetTypeDefinition(_)) => "GetTypeDefinition",
-            Some(multi_lsp_query::Request::GetImplementation(_)) => "GetImplementation",
-            Some(multi_lsp_query::Request::GetReferences(_)) => "GetReferences",
-            None => "<unknown>",
         }
     }
 }

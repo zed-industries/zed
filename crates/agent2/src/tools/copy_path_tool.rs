@@ -9,14 +9,14 @@ use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 /// Copies a file or directory in the project, and returns confirmation that the copy succeeded.
-/// Directory contents will be copied recursively (like `cp -r`).
+/// Directory contents will be copied recursively.
 ///
 /// This tool should be used when it's desirable to create a copy of a file or directory without modifying the original.
 /// It's much more efficient than doing this by separately reading and then writing the file or directory's contents, so this tool should be preferred over that approach whenever copying is the goal.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct CopyPathToolInput {
     /// The source path of the file or directory to copy.
-    /// If a directory is specified, its contents will be copied recursively (like `cp -r`).
+    /// If a directory is specified, its contents will be copied recursively.
     ///
     /// <example>
     /// If the project has the following files:
@@ -58,7 +58,11 @@ impl AgentTool for CopyPathTool {
         ToolKind::Move
     }
 
-    fn initial_title(&self, input: Result<Self::Input, serde_json::Value>) -> ui::SharedString {
+    fn initial_title(
+        &self,
+        input: Result<Self::Input, serde_json::Value>,
+        _cx: &mut App,
+    ) -> ui::SharedString {
         if let Ok(input) = input {
             let src = MarkdownInlineCode(&input.source_path);
             let dest = MarkdownInlineCode(&input.destination_path);

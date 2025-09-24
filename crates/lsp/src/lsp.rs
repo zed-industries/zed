@@ -62,7 +62,7 @@ pub enum IoKind {
 
 /// Represents a launchable language server. This can either be a standalone binary or the path
 /// to a runtime with arguments to instruct it to launch the actual language server file.
-#[derive(Clone, Deserialize)]
+#[derive(Clone)]
 pub struct LanguageServerBinary {
     pub path: PathBuf,
     pub arguments: Vec<OsString>,
@@ -70,12 +70,14 @@ pub struct LanguageServerBinary {
 }
 
 /// Configures the search (and installation) of language servers.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct LanguageServerBinaryOptions {
     /// Whether the adapter should look at the users system
     pub allow_path_lookup: bool,
     /// Whether the adapter should download its own version
     pub allow_binary_download: bool,
+    /// Whether the adapter should download a pre-release version
+    pub pre_release: bool,
 }
 
 /// A running language server process.
@@ -100,8 +102,8 @@ pub struct LanguageServer {
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
-    workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
-    root_uri: Url,
+    workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
+    root_uri: Uri,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -163,6 +165,12 @@ impl LanguageServerName {
 impl<'a> From<&'a str> for LanguageServerName {
     fn from(str: &'a str) -> LanguageServerName {
         LanguageServerName(str.to_string().into())
+    }
+}
+
+impl PartialEq<str> for LanguageServerName {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
     }
 }
 
@@ -310,7 +318,7 @@ impl LanguageServer {
         binary: LanguageServerBinary,
         root_path: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
-        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let working_dir = if root_path.is_dir() {
@@ -318,7 +326,7 @@ impl LanguageServer {
         } else {
             root_path.parent().unwrap_or_else(|| Path::new("/"))
         };
-        let root_uri = Url::from_file_path(&working_dir)
+        let root_uri = Uri::from_file_path(&working_dir)
             .map_err(|()| anyhow!("{working_dir:?} is not a valid URI"))?;
 
         log::info!(
@@ -384,8 +392,8 @@ impl LanguageServer {
         server: Option<Child>,
         code_action_kinds: Option<Vec<CodeActionKind>>,
         binary: LanguageServerBinary,
-        root_uri: Url,
-        workspace_folders: Option<Arc<Mutex<BTreeSet<Url>>>>,
+        root_uri: Uri,
+        workspace_folders: Option<Arc<Mutex<BTreeSet<Uri>>>>,
         cx: &mut AsyncApp,
         on_unhandled_notification: F,
     ) -> Self
@@ -1350,7 +1358,7 @@ impl LanguageServer {
     }
 
     /// Add new workspace folder to the list.
-    pub fn add_workspace_folder(&self, uri: Url) {
+    pub fn add_workspace_folder(&self, uri: Uri) {
         if self
             .capabilities()
             .workspace
@@ -1383,8 +1391,9 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
-    /// Add new workspace folder to the list.
-    pub fn remove_workspace_folder(&self, uri: Url) {
+
+    /// Remove existing workspace folder from the list.
+    pub fn remove_workspace_folder(&self, uri: Uri) {
         if self
             .capabilities()
             .workspace
@@ -1416,7 +1425,7 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(&params).ok();
         }
     }
-    pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
+    pub fn set_workspace_folders(&self, folders: BTreeSet<Uri>) {
         let Some(workspace_folders) = self.workspace_folders.as_ref() else {
             return;
         };
@@ -1449,7 +1458,7 @@ impl LanguageServer {
         }
     }
 
-    pub fn workspace_folders(&self) -> BTreeSet<Url> {
+    pub fn workspace_folders(&self) -> BTreeSet<Uri> {
         self.workspace_folders.as_ref().map_or_else(
             || BTreeSet::from_iter([self.root_uri.clone()]),
             |folders| folders.lock().clone(),
@@ -1458,7 +1467,7 @@ impl LanguageServer {
 
     pub fn register_buffer(
         &self,
-        uri: Url,
+        uri: Uri,
         language_id: String,
         version: i32,
         initial_text: String,
@@ -1469,7 +1478,7 @@ impl LanguageServer {
         .ok();
     }
 
-    pub fn unregister_buffer(&self, uri: Url) {
+    pub fn unregister_buffer(&self, uri: Uri) {
         self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
             text_document: TextDocumentIdentifier::new(uri),
         })
@@ -1586,7 +1595,7 @@ impl FakeLanguageServer {
         let server_name = LanguageServerName(name.clone().into());
         let process_name = Arc::from(name.as_str());
         let root = Self::root_path();
-        let workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+        let workspace_folders: Arc<Mutex<BTreeSet<Uri>>> = Default::default();
         let mut server = LanguageServer::new_internal(
             server_id,
             server_name.clone(),
@@ -1656,13 +1665,13 @@ impl FakeLanguageServer {
         (server, fake)
     }
     #[cfg(target_os = "windows")]
-    fn root_path() -> Url {
-        Url::from_file_path("C:/").unwrap()
+    fn root_path() -> Uri {
+        Uri::from_file_path("C:/").unwrap()
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn root_path() -> Url {
-        Url::from_file_path("/").unwrap()
+    fn root_path() -> Uri {
+        Uri::from_file_path("/").unwrap()
     }
 }
 
@@ -1864,7 +1873,7 @@ mod tests {
         server
             .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
-                    Url::from_str("file://a/b").unwrap(),
+                    Uri::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
                     0,
                     "".to_string(),
@@ -1885,7 +1894,7 @@ mod tests {
             message: "ok".to_string(),
         });
         fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
-            uri: Url::from_str("file://b/c").unwrap(),
+            uri: Uri::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
         });

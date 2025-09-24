@@ -24,8 +24,8 @@ use std::{
 };
 use supermaven::{AccountStatus, Supermaven};
 use ui::{
-    Clickable, ContextMenu, ContextMenuEntry, DocumentationSide, IconButton, IconButtonShape,
-    Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
+    Clickable, ContextMenu, ContextMenuEntry, DocumentationEdge, DocumentationSide, IconButton,
+    IconButtonShape, Indicator, PopoverMenu, PopoverMenuHandle, ProgressBar, Tooltip, prelude::*,
 };
 use workspace::{
     StatusItemView, Toast, Workspace, create_and_open_local_file, item::ItemHandle,
@@ -447,7 +447,7 @@ impl EditPredictionButton {
                     menu = menu.item(
                         entry
                             .disabled(true)
-                            .documentation_aside(DocumentationSide::Left, move |_cx| {
+                            .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_cx| {
                                 Label::new(format!("Edit predictions cannot be toggled for this buffer because they are disabled for {}", language.name()))
                                     .into_any_element()
                             })
@@ -499,7 +499,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Eager")
                         .toggleable(IconPosition::Start, eager_mode)
-                        .documentation_aside(DocumentationSide::Left, move |_| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
                             Label::new("Display predictions inline when there are no language server completions available.").into_any_element()
                         })
                         .handler({
@@ -512,7 +512,7 @@ impl EditPredictionButton {
                 .item(
                     ContextMenuEntry::new("Subtle")
                         .toggleable(IconPosition::Start, subtle_mode)
-                        .documentation_aside(DocumentationSide::Left, move |_| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |_| {
                             Label::new("Display predictions inline only when holding a modifier key (alt by default).").into_any_element()
                         })
                         .handler({
@@ -543,7 +543,7 @@ impl EditPredictionButton {
                         .toggleable(IconPosition::Start, data_collection.is_enabled())
                         .icon(icon_name)
                         .icon_color(icon_color)
-                        .documentation_aside(DocumentationSide::Left, move |cx| {
+                        .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, move |cx| {
                             let (msg, label_color, icon_name, icon_color) = match (is_open_source, is_collecting) {
                                 (true, true) => (
                                     "Project identified as open source, and you're sharing data.",
@@ -626,7 +626,7 @@ impl EditPredictionButton {
             ContextMenuEntry::new("Configure Excluded Files")
                 .icon(IconName::LockOutlined)
                 .icon_color(Color::Muted)
-                .documentation_aside(DocumentationSide::Left, |_| {
+                .documentation_aside(DocumentationSide::Left, DocumentationEdge::Top, |_| {
                     Label::new(indoc!{"
                         Open your settings to add sensitive paths for which Zed will never predict edits."}).into_any_element()
                 })
@@ -910,8 +910,10 @@ async fn open_disabled_globs_setting_in_editor(
             let settings = cx.global::<SettingsStore>();
 
             // Ensure that we always have "edit_predictions { "disabled_globs": [] }"
-            let edits = settings.edits_for_update::<AllLanguageSettings>(&text, |file| {
-                file.edit_predictions
+            let edits = settings.edits_for_update(&text, |file| {
+                file.project
+                    .all_languages
+                    .edit_predictions
                     .get_or_insert_with(Default::default)
                     .disabled_globs
                     .get_or_insert_with(Vec::new);
@@ -948,9 +950,12 @@ async fn open_disabled_globs_setting_in_editor(
 }
 
 fn set_completion_provider(fs: Arc<dyn Fs>, cx: &mut App, provider: EditPredictionProvider) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.features
-            .get_or_insert(Default::default())
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .features
+            .get_or_insert_default()
             .edit_prediction_provider = Some(provider);
     });
 }
@@ -962,18 +967,24 @@ fn toggle_show_edit_predictions_for_language(
 ) {
     let show_edit_predictions =
         all_language_settings(None, cx).show_edit_predictions(Some(&language), cx);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.languages
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .languages
             .0
-            .entry(language.name())
+            .entry(language.name().0)
             .or_default()
             .show_edit_predictions = Some(!show_edit_predictions);
     });
 }
 
 fn hide_copilot(fs: Arc<dyn Fs>, cx: &mut App) {
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
-        file.features
+    update_settings_file(fs, cx, move |settings, _| {
+        settings
+            .project
+            .all_languages
+            .features
             .get_or_insert(Default::default())
             .edit_prediction_provider = Some(EditPredictionProvider::None);
     });
@@ -984,13 +995,14 @@ fn toggle_edit_prediction_mode(fs: Arc<dyn Fs>, mode: EditPredictionsMode, cx: &
     let current_mode = settings.edit_predictions_mode();
 
     if current_mode != mode {
-        update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _cx| {
-            if let Some(edit_predictions) = settings.edit_predictions.as_mut() {
-                edit_predictions.mode = mode;
+        update_settings_file(fs, cx, move |settings, _cx| {
+            if let Some(edit_predictions) = settings.project.all_languages.edit_predictions.as_mut()
+            {
+                edit_predictions.mode = Some(mode);
             } else {
-                settings.edit_predictions =
-                    Some(language_settings::EditPredictionSettingsContent {
-                        mode,
+                settings.project.all_languages.edit_predictions =
+                    Some(settings::EditPredictionSettingsContent {
+                        mode: Some(mode),
                         ..Default::default()
                     });
             }

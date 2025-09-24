@@ -68,6 +68,12 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                             MODE_NAMES[mode as usize].clone(),
                             move |_, _, cx| {
                                 write_mode_change(mode, cx);
+
+                                telemetry::event!(
+                                    "Welcome Theme mode Changed",
+                                    from = theme_mode,
+                                    to = mode
+                                );
                             },
                         )
                     }),
@@ -105,7 +111,7 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
             ThemeMode::Dark => Appearance::Dark,
             ThemeMode::System => *system_appearance,
         };
-        let current_theme_name = theme_selection.theme(appearance);
+        let current_theme_name = SharedString::new(theme_selection.theme(appearance));
 
         let theme_names = match appearance {
             Appearance::Light => LIGHT_THEMES,
@@ -149,8 +155,15 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
                         })
                         .on_click({
                             let theme_name = theme.name.clone();
+                            let current_theme_name = current_theme_name.clone();
+
                             move |_, _, cx| {
                                 write_theme_change(theme_name.clone(), theme_mode, cx);
+                                telemetry::event!(
+                                    "Welcome Theme Changed",
+                                    from = current_theme_name,
+                                    to = theme_name
+                                );
                             }
                         })
                         .map(|this| {
@@ -181,27 +194,27 @@ fn render_theme_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement
 
     fn write_mode_change(mode: ThemeMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, _cx| {
-            settings.set_mode(mode);
+        update_settings_file(fs, cx, move |settings, _cx| {
+            theme::set_mode(settings, mode);
         });
     }
 
     fn write_theme_change(theme: impl Into<Arc<str>>, theme_mode: ThemeMode, cx: &mut App) {
         let fs = <dyn Fs>::global(cx);
         let theme = theme.into();
-        update_settings_file::<ThemeSettings>(fs, cx, move |settings, cx| {
+        update_settings_file(fs, cx, move |settings, cx| {
             if theme_mode == ThemeMode::System {
                 let (light_theme, dark_theme) =
                     get_theme_family_themes(&theme).unwrap_or((theme.as_ref(), theme.as_ref()));
 
-                settings.theme = Some(ThemeSelection::Dynamic {
+                settings.theme.theme = Some(settings::ThemeSelection::Dynamic {
                     mode: ThemeMode::System,
                     light: ThemeName(light_theme.into()),
                     dark: ThemeName(dark_theme.into()),
                 });
             } else {
                 let appearance = *SystemAppearance::global(cx);
-                settings.set_theme(theme, appearance);
+                theme::set_theme(settings, theme, appearance);
             }
         });
     }
@@ -234,11 +247,25 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                     ToggleState::Indeterminate => { return; },
                 };
 
-                update_settings_file::<TelemetrySettings>(
+                update_settings_file(
                     fs.clone(),
                     cx,
-                    move |setting, _| setting.metrics = Some(enabled),
+                    move |setting, _| {
+                        setting.telemetry.get_or_insert_default().metrics = Some(enabled);
+                    }
+                    ,
                 );
+
+                // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
+                // and can fix it in a timely manner to respect a user's choice.
+                telemetry::event!("Welcome Page Telemetry Metrics Toggled",
+                    options = if enabled {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                );
+
             }},
         ).tab_index({
             *tab_index += 1;
@@ -262,10 +289,23 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
                         ToggleState::Indeterminate => { return; },
                     };
 
-                    update_settings_file::<TelemetrySettings>(
+                    update_settings_file(
                         fs.clone(),
                         cx,
-                        move |setting, _| setting.diagnostics = Some(enabled),
+                        move |setting, _| {
+                            setting.telemetry.get_or_insert_default().diagnostics = Some(enabled);
+                        },
+
+                    );
+
+                    // This telemetry event shouldn't fire when it's off. If it does we'll be alerted
+                    // and can fix it in a timely manner to respect a user's choice.
+                    telemetry::event!("Welcome Page Telemetry Diagnostics Toggled",
+                        options = if enabled {
+                            "on"
+                        } else {
+                            "off"
+                        }
                     );
                 }
             }
@@ -324,9 +364,11 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
     fn write_keymap_base(keymap_base: BaseKeymap, cx: &App) {
         let fs = <dyn Fs>::global(cx);
 
-        update_settings_file::<BaseKeymap>(fs, cx, move |setting, _| {
-            *setting = Some(keymap_base);
+        update_settings_file(fs, cx, move |setting, _| {
+            setting.base_keymap = Some(keymap_base.into());
         });
+
+        telemetry::event!("Welcome Keymap Changed", keymap = keymap_base);
     }
 }
 
@@ -344,13 +386,21 @@ fn render_vim_mode_switch(tab_index: &mut isize, cx: &mut App) -> impl IntoEleme
         {
             let fs = <dyn Fs>::global(cx);
             move |&selection, _, cx| {
-                update_settings_file::<VimModeSetting>(fs.clone(), cx, move |setting, _| {
-                    *setting = match selection {
-                        ToggleState::Selected => Some(true),
-                        ToggleState::Unselected => Some(false),
-                        ToggleState::Indeterminate => None,
+                let vim_mode = match selection {
+                    ToggleState::Selected => true,
+                    ToggleState::Unselected => false,
+                    ToggleState::Indeterminate => {
+                        return;
                     }
+                };
+                update_settings_file(fs.clone(), cx, move |setting, _| {
+                    setting.vim_mode = Some(vim_mode);
                 });
+
+                telemetry::event!(
+                    "Welcome Vim Mode Toggled",
+                    options = if vim_mode { "on" } else { "off" },
+                );
             }
         },
     )

@@ -1,9 +1,13 @@
 pub mod disconnected_overlay;
+mod remote_connections;
 mod remote_servers;
 mod ssh_config;
-mod ssh_connections;
 
-pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
+#[cfg(target_os = "windows")]
+mod wsl_picker;
+
+use remote::RemoteConnectionOptions;
+pub use remote_connections::open_remote_project;
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
@@ -16,9 +20,9 @@ use picker::{
     Picker, PickerDelegate,
     highlighted_match_with_paths::{HighlightedMatch, HighlightedMatchWithPaths},
 };
+pub use remote_connections::SshSettings;
 pub use remote_servers::RemoteServerProjects;
 use settings::Settings;
-pub use ssh_connections::SshSettings;
 use std::{path::Path, sync::Arc};
 use ui::{KeyBinding, ListItem, ListItemSpacing, Tooltip, prelude::*, tooltip_container};
 use util::{ResultExt, paths::PathExt};
@@ -30,6 +34,74 @@ use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut App) {
     SshSettings::register(cx);
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenFolderInWsl, cx| {
+        let create_new_window = open_wsl.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            use gpui::PathPromptOptions;
+            use project::DirectoryLister;
+
+            let paths = workspace.prompt_for_open_path(
+                PathPromptOptions {
+                    files: true,
+                    directories: true,
+                    multiple: false,
+                    prompt: None,
+                },
+                DirectoryLister::Local(
+                    workspace.project().clone(),
+                    workspace.app_state().fs.clone(),
+                ),
+                window,
+                cx,
+            );
+
+            cx.spawn_in(window, async move |workspace, cx| {
+                use util::paths::SanitizedPath;
+
+                let Some(paths) = paths.await.log_err().flatten() else {
+                    return;
+                };
+
+                let paths = paths
+                    .into_iter()
+                    .filter_map(|path| SanitizedPath::new(&path).local_to_wsl())
+                    .collect::<Vec<_>>();
+
+                if paths.is_empty() {
+                    let message = indoc::indoc! { r#"
+                        Invalid path specified when trying to open a folder inside WSL.
+
+                        Please note that Zed currently does not support opening network share folders inside wsl.
+                    "#};
+
+                    let _ = cx.prompt(gpui::PromptLevel::Critical, "Invalid path", Some(&message), &["Ok"]).await;
+                    return;
+                }
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    workspace.toggle_modal(window, cx, |window, cx| {
+                        crate::wsl_picker::WslOpenModal::new(paths, create_new_window, window, cx)
+                    });
+                }).log_err();
+            })
+            .detach();
+        });
+    });
+
+    #[cfg(target_os = "windows")]
+    cx.on_action(|open_wsl: &zed_actions::wsl_actions::OpenWsl, cx| {
+        let create_new_window = open_wsl.create_new_window;
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let handle = cx.entity().downgrade();
+            let fs = workspace.project().read(cx).fs().clone();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                RemoteServerProjects::wsl(create_new_window, fs, window, handle, cx)
+            });
+        });
+    });
+
     cx.on_action(|open_recent: &OpenRecent, cx| {
         let create_new_window = open_recent.create_new_window;
         with_active_or_new_workspace(cx, move |workspace, window, cx| {
@@ -290,7 +362,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                     if workspace.database_id() == Some(*candidate_workspace_id) {
                         Task::ready(Ok(()))
                     } else {
-                        match candidate_workspace_location {
+                        match candidate_workspace_location.clone() {
                             SerializedWorkspaceLocation::Local => {
                                 let paths = candidate_workspace_paths.paths().to_vec();
                                 if replace_current_window {
@@ -320,7 +392,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     workspace.open_workspace_for_paths(false, paths, window, cx)
                                 }
                             }
-                            SerializedWorkspaceLocation::Ssh(connection) => {
+                            SerializedWorkspaceLocation::Remote(mut connection) => {
                                 let app_state = workspace.app_state().clone();
 
                                 let replace_window = if replace_current_window {
@@ -334,18 +406,16 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     ..Default::default()
                                 };
 
-                                let connection_options = SshSettings::get_global(cx)
-                                    .connection_options_for(
-                                        connection.host.clone(),
-                                        connection.port,
-                                        connection.user.clone(),
-                                    );
+                                if let RemoteConnectionOptions::Ssh(connection) = &mut connection {
+                                    SshSettings::get_global(cx)
+                                        .fill_connection_options_from_settings(connection);
+                                };
 
                                 let paths = candidate_workspace_paths.paths().to_vec();
 
                                 cx.spawn_in(window, async move |_, cx| {
-                                    open_ssh_project(
-                                        connection_options,
+                                    open_remote_project(
+                                        connection.clone(),
                                         paths,
                                         app_state,
                                         open_options,
@@ -393,8 +463,7 @@ impl PickerDelegate for RecentProjectsDelegate {
             .map(|path| {
                 let highlighted_text =
                     highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
-
-                path_start_offset += highlighted_text.1.char_count;
+                path_start_offset += highlighted_text.1.text.len();
                 highlighted_text
             })
             .unzip();
@@ -418,9 +487,14 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 SerializedWorkspaceLocation::Local => Icon::new(IconName::Screen)
                                     .color(Color::Muted)
                                     .into_any_element(),
-                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
+                                SerializedWorkspaceLocation::Remote(options) => {
+                                    Icon::new(match options {
+                                        RemoteConnectionOptions::Ssh { .. } => IconName::Server,
+                                        RemoteConnectionOptions::Wsl { .. } => IconName::Linux,
+                                    })
                                     .color(Color::Muted)
-                                    .into_any_element(),
+                                    .into_any_element()
+                                }
                             })
                         })
                         .child({
@@ -515,34 +589,33 @@ fn highlights_for_path(
     path_start_offset: usize,
 ) -> (Option<HighlightedMatch>, HighlightedMatch) {
     let path_string = path.to_string_lossy();
-    let path_char_count = path_string.chars().count();
+    let path_text = path_string.to_string();
+    let path_byte_len = path_text.len();
     // Get the subset of match highlight positions that line up with the given path.
     // Also adjusts them to start at the path start
     let path_positions = match_positions
         .iter()
         .copied()
         .skip_while(|position| *position < path_start_offset)
-        .take_while(|position| *position < path_start_offset + path_char_count)
+        .take_while(|position| *position < path_start_offset + path_byte_len)
         .map(|position| position - path_start_offset)
         .collect::<Vec<_>>();
 
     // Again subset the highlight positions to just those that line up with the file_name
     // again adjusted to the start of the file_name
     let file_name_text_and_positions = path.file_name().map(|file_name| {
-        let text = file_name.to_string_lossy();
-        let char_count = text.chars().count();
-        let file_name_start = path_char_count - char_count;
+        let file_name_text = file_name.to_string_lossy().to_string();
+        let file_name_start_byte = path_byte_len - file_name_text.len();
         let highlight_positions = path_positions
             .iter()
             .copied()
-            .skip_while(|position| *position < file_name_start)
-            .take_while(|position| *position < file_name_start + char_count)
-            .map(|position| position - file_name_start)
+            .skip_while(|position| *position < file_name_start_byte)
+            .take_while(|position| *position < file_name_start_byte + file_name_text.len())
+            .map(|position| position - file_name_start_byte)
             .collect::<Vec<_>>();
         HighlightedMatch {
-            text: text.to_string(),
+            text: file_name_text,
             highlight_positions,
-            char_count,
             color: Color::Default,
         }
     });
@@ -550,9 +623,8 @@ fn highlights_for_path(
     (
         file_name_text_and_positions,
         HighlightedMatch {
-            text: path_string.to_string(),
+            text: path_text,
             highlight_positions: path_positions,
-            char_count: path_char_count,
             color: Color::Default,
         },
     )
@@ -625,7 +697,7 @@ mod tests {
     use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
-    use project::{Project, project_settings::ProjectSettings};
+    use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
@@ -639,8 +711,11 @@ mod tests {
 
         cx.update(|cx| {
             SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                    settings.session.restore_unsaved_buffers = false
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .session
+                        .get_or_insert_default()
+                        .restore_unsaved_buffers = Some(false)
                 });
             });
         });

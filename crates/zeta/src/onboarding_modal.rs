@@ -9,12 +9,12 @@ use gpui::{
     ClickEvent, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, MouseDownEvent, Render,
     linear_color_stop, linear_gradient,
 };
-use language::language_settings::{AllLanguageSettings, EditPredictionProvider};
+use language::language_settings::EditPredictionProvider;
 use settings::update_settings_file;
 use ui::{Vector, VectorName, prelude::*};
 use workspace::{ModalView, Workspace};
 
-/// Introduces user to Zed's Edit Prediction feature and terms of service
+/// Introduces user to Zed's Edit Prediction feature
 pub struct ZedPredictModal {
     onboarding: Entity<EditPredictionOnboarding>,
     focus_handle: FocusHandle,
@@ -22,8 +22,10 @@ pub struct ZedPredictModal {
 
 pub(crate) fn set_edit_prediction_provider(provider: EditPredictionProvider, cx: &mut App) {
     let fs = <dyn Fs>::global(cx);
-    update_settings_file::<AllLanguageSettings>(fs, cx, move |settings, _| {
+    update_settings_file(fs, cx, move |settings, _| {
         settings
+            .project
+            .all_languages
             .features
             .get_or_insert(Default::default())
             .edit_prediction_provider = Some(provider);
@@ -86,7 +88,16 @@ impl Focusable for ZedPredictModal {
     }
 }
 
-impl ModalView for ZedPredictModal {}
+impl ModalView for ZedPredictModal {
+    fn on_before_dismiss(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> workspace::DismissDecision {
+        ZedPredictUpsell::set_dismissed(true, cx);
+        workspace::DismissDecision::Dismiss(true)
+    }
+}
 
 impl Render for ZedPredictModal {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

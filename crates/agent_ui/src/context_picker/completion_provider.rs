@@ -13,7 +13,10 @@ use http_client::HttpClientWithUrl;
 use itertools::Itertools;
 use language::{Buffer, CodeLabel, HighlightId};
 use lsp::CompletionContext;
-use project::{Completion, CompletionIntent, CompletionResponse, ProjectPath, Symbol, WorktreeId};
+use project::{
+    Completion, CompletionDisplayOptions, CompletionIntent, CompletionResponse, ProjectPath,
+    Symbol, WorktreeId,
+};
 use prompt_store::PromptStore;
 use rope::Point;
 use text::{Anchor, OffsetRangeExt, ToPoint};
@@ -593,11 +596,12 @@ impl ContextPickerCompletionProvider {
             file_name.to_string()
         };
 
+        let path = Path::new(&full_path);
         let crease_icon_path = if is_directory {
-            FileIcons::get_folder_icon(false, cx).unwrap_or_else(|| IconName::Folder.path().into())
+            FileIcons::get_folder_icon(false, path, cx)
+                .unwrap_or_else(|| IconName::Folder.path().into())
         } else {
-            FileIcons::get_icon(Path::new(&full_path), cx)
-                .unwrap_or_else(|| IconName::File.path().into())
+            FileIcons::get_icon(path, cx).unwrap_or_else(|| IconName::File.path().into())
         };
         let completion_icon_path = if is_recent {
             IconName::HistoryRerun.path().into()
@@ -739,15 +743,15 @@ impl CompletionProvider for ContextPickerCompletionProvider {
         _window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Task<Result<Vec<CompletionResponse>>> {
-        let state = buffer.update(cx, |buffer, _cx| {
-            let position = buffer_position.to_point(buffer);
-            let line_start = Point::new(position.row, 0);
-            let offset_to_line = buffer.point_to_offset(line_start);
-            let mut lines = buffer.text_for_range(line_start..position).lines();
-            let line = lines.next()?;
-            MentionCompletion::try_parse(line, offset_to_line)
-        });
-        let Some(state) = state else {
+        let snapshot = buffer.read(cx).snapshot();
+        let position = buffer_position.to_point(&snapshot);
+        let line_start = Point::new(position.row, 0);
+        let offset_to_line = snapshot.point_to_offset(line_start);
+        let mut lines = snapshot.text_for_range(line_start..position).lines();
+        let Some(line) = lines.next() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+        let Some(state) = MentionCompletion::try_parse(line, offset_to_line) else {
             return Task::ready(Ok(Vec::new()));
         };
 
@@ -757,7 +761,6 @@ impl CompletionProvider for ContextPickerCompletionProvider {
             return Task::ready(Ok(Vec::new()));
         };
 
-        let snapshot = buffer.read(cx).snapshot();
         let source_range = snapshot.anchor_before(state.source_range.start)
             ..snapshot.anchor_after(state.source_range.end);
 
@@ -897,6 +900,7 @@ impl CompletionProvider for ContextPickerCompletionProvider {
 
             Ok(vec![CompletionResponse {
                 completions,
+                display_options: CompletionDisplayOptions::default(),
                 // Since this does its own filtering (see `filter_completions()` returns false),
                 // there is no benefit to computing whether this set of completions is incomplete.
                 is_incomplete: true,

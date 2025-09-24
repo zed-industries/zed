@@ -63,7 +63,21 @@ A `true` setting will set the target directory to `target/rust-analyzer`. You ca
 
 You can configure which `rust-analyzer` binary Zed should use.
 
-By default, Zed will try to find a `rust-analyzer` in your `$PATH` and try to use that. If that binary successfully executes `rust-analyzer --help`, it's used. Otherwise, Zed will fall back to installing its own `rust-analyzer` version and using that.
+By default, Zed will try to find a `rust-analyzer` in your `$PATH` and try to use that. If that binary successfully executes `rust-analyzer --help`, it's used. Otherwise, Zed will fall back to installing its own stable `rust-analyzer` version and use that.
+
+If you want to install pre-release `rust-analyzer` version instead you can instruct Zed to do so by setting `pre_release` to `true` in your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "rust-analyzer": {
+      "fetch": {
+        "pre_release": true
+      }
+    }
+  }
+}
+```
 
 If you want to disable Zed looking for a `rust-analyzer` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
 
@@ -98,7 +112,7 @@ This `"path"` has to be an absolute path.
 
 ## Alternate Targets
 
-If want rust-analyzer to provide diagnostics for a target other than you current platform (e.g. for windows when running on macOS) you can use the following Zed lsp settings:
+If you want rust-analyzer to provide diagnostics for a target other than your current platform (e.g. for windows when running on macOS) you can use the following Zed lsp settings:
 
 ```json
 {
@@ -114,7 +128,7 @@ If want rust-analyzer to provide diagnostics for a target other than you current
 }
 ```
 
-If you are using `rustup` and you can find a list of available target triples (`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, etc) by running:
+If you are using `rustup`, you can find a list of available target triples (`aarch64-apple-darwin`, `x86_64-unknown-linux-gnu`, etc) by running:
 
 ```sh
 rustup target list --installed
@@ -225,7 +239,7 @@ you can list them in `linkedProjects` in the local project settings:
 
 ### Snippets
 
-There's a way get custom completion items from rust-analyzer, that will transform the code according to the snippet body:
+There's a way to get custom completion items from rust-analyzer, that will transform the code according to the snippet body:
 
 ```json
 {

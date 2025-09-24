@@ -6,6 +6,7 @@ use assistant_tool::{Tool as _, ToolResultContent};
 use assistant_tools::{ReadFileTool, ReadFileToolInput};
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
+use collections::{HashMap, HashSet};
 use language_model::{LanguageModelRequest, fake_provider::FakeLanguageModel};
 
 use extension::ExtensionHostProxy;
@@ -20,14 +21,14 @@ use lsp::{CompletionContext, CompletionResponse, CompletionTriggerKind, Language
 use node_runtime::NodeRuntime;
 use project::{
     Project, ProjectPath,
+    agent_server_store::AgentServerCommand,
     search::{SearchQuery, SearchResult},
 };
-use remote::SshRemoteClient;
+use remote::RemoteClient;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore, initial_server_settings_content};
 use smol::stream::StreamExt;
 use std::{
-    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -280,7 +281,8 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["..."] // local settings are ignored
+            ["from-local-settings"],
+            "User language settings should be synchronized with the server settings"
         )
     });
 
@@ -300,7 +302,8 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["from-server-settings".to_string()]
+            ["from-server-settings".to_string()],
+            "Server language settings should take precedence over the user settings"
         )
     });
 
@@ -533,7 +536,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         Ok(Some(lsp::WorkspaceEdit {
             changes: Some(
                 [(
-                    lsp::Url::from_file_path(path!("/code/project1/src/lib.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/code/project1/src/lib.rs")).unwrap(),
                     vec![lsp::TextEdit::new(
                         lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
                         "two".to_string(),
@@ -1119,7 +1122,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
 
-    let client = cx.read(|cx| project.read(cx).ssh_client().unwrap());
+    let client = cx.read(|cx| project.read(cx).remote_client().unwrap());
     client
         .update(cx, |client, cx| client.simulate_disconnect(cx))
         .detach();
@@ -1768,6 +1771,92 @@ async fn test_remote_agent_fs_tool_calls(cx: &mut TestAppContext, server_cx: &mu
     does_not_exist_result.output.await.unwrap_err();
 }
 
+#[gpui::test]
+async fn test_remote_external_agent_server(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(path!("/project"), json!({})).await;
+
+    let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree(path!("/project"), true, cx)
+        })
+        .await
+        .unwrap();
+    let names = project.update(cx, |project, cx| {
+        project
+            .agent_server_store()
+            .read(cx)
+            .external_agents()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(names, ["gemini", "claude"]);
+    server_cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+        settings_store
+            .set_server_settings(
+                &json!({
+                    "agent_servers": {
+                        "foo": {
+                            "command": "foo-cli",
+                            "args": ["--flag"],
+                            "env": {
+                                "VAR": "val"
+                            }
+                        }
+                    }
+                })
+                .to_string(),
+                cx,
+            )
+            .unwrap();
+    });
+    server_cx.run_until_parked();
+    cx.run_until_parked();
+    let names = project.update(cx, |project, cx| {
+        project
+            .agent_server_store()
+            .read(cx)
+            .external_agents()
+            .map(|name| name.to_string())
+            .collect::<Vec<_>>()
+    });
+    pretty_assertions::assert_eq!(names, ["gemini", "foo", "claude"]);
+    let (command, root, login) = project
+        .update(cx, |project, cx| {
+            project.agent_server_store().update(cx, |store, cx| {
+                store
+                    .get_external_agent(&"foo".into())
+                    .unwrap()
+                    .get_command(
+                        None,
+                        HashMap::from_iter([("OTHER_VAR".into(), "other-val".into())]),
+                        None,
+                        None,
+                        &mut cx.to_async(),
+                    )
+            })
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        command,
+        AgentServerCommand {
+            path: "ssh".into(),
+            args: vec!["foo-cli".into(), "--flag".into()],
+            env: Some(HashMap::from_iter([
+                ("VAR".into(), "val".into()),
+                ("OTHER_VAR".into(), "other-val".into())
+            ]))
+        }
+    );
+    assert_eq!(&PathBuf::from(root), paths::home_dir());
+    assert!(login.is_none());
+}
+
 pub async fn init_test(
     server_fs: &Arc<FakeFs>,
     cx: &mut TestAppContext,
@@ -1782,7 +1871,7 @@ pub async fn init_test(
     });
     init_logger();
 
-    let (opts, ssh_server_client) = SshRemoteClient::fake_server(cx, server_cx);
+    let (opts, ssh_server_client) = RemoteClient::fake_server(cx, server_cx);
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
@@ -1804,7 +1893,7 @@ pub async fn init_test(
         )
     });
 
-    let ssh = SshRemoteClient::fake_client(opts, cx).await;
+    let ssh = RemoteClient::fake_client(opts, cx).await;
     let project = build_project(ssh, cx);
     project
         .update(cx, {
@@ -1819,7 +1908,7 @@ fn init_logger() {
     zlog::init_test();
 }
 
-fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {
+fn build_project(ssh: Entity<RemoteClient>, cx: &mut TestAppContext) -> Entity<Project> {
     cx.update(|cx| {
         if !cx.has_global::<SettingsStore>() {
             let settings_store = SettingsStore::test(cx);
@@ -1845,5 +1934,5 @@ fn build_project(ssh: Entity<SshRemoteClient>, cx: &mut TestAppContext) -> Entit
         language::init(cx);
     });
 
-    cx.update(|cx| Project::ssh(ssh, client, node, user_store, languages, fs, cx))
+    cx.update(|cx| Project::remote(ssh, client, node, user_store, languages, fs, cx))
 }

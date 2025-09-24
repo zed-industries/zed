@@ -146,6 +146,7 @@ pub enum IconName {
     Library,
     LineHeight,
     ListCollapse,
+    ListFilter,
     ListTodo,
     ListTree,
     ListX,
@@ -215,6 +216,7 @@ pub enum IconName {
     Tab,
     Terminal,
     TerminalAlt,
+    TerminalGhost,
     TextSnippet,
     TextThread,
     Thread,
@@ -261,6 +263,7 @@ pub enum IconName {
     ZedPredictError,
     ZedPredictUp,
     ZedXCopilot,
+    Linux,
 }
 
 impl IconName {

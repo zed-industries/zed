@@ -72,7 +72,6 @@ async fn test_echo(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_thinking(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -950,6 +949,7 @@ async fn test_mcp_tools(cx: &mut TestAppContext) {
         paths::settings_file(),
         json!({
             "agent": {
+                "always_allow_tool_actions": true,
                 "profiles": {
                     "test": {
                         "name": "Test Profile",
@@ -1299,6 +1299,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
                             status: Some(acp::ToolCallStatus::Completed),
                             ..
                         },
+                    meta: None,
                 },
             )) if Some(&id) == echo_id.as_ref() => {
                 echo_completed = true;
@@ -1348,7 +1349,6 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_in_progress_send_canceled_by_next_send(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -1687,7 +1687,6 @@ async fn test_truncate_second_message(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-#[cfg_attr(target_os = "windows", ignore)] // TODO: Fix this test on Windows
 async fn test_title_generation(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
@@ -1822,11 +1821,11 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
         let clock = Arc::new(clock::FakeSystemClock::new());
         let client = Client::new(clock, http_client, cx);
         let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        Project::init_settings(cx);
-        agent_settings::init(cx);
         language_model::init(client.clone(), cx);
         language_models::init(user_store, client.clone(), cx);
+        Project::init_settings(cx);
         LanguageModelRegistry::test(cx);
+        agent_settings::init(cx);
     });
     cx.executor().forbid_parking();
 
@@ -1851,8 +1850,18 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     .unwrap();
     let connection = NativeAgentConnection(agent.clone());
 
+    // Create a thread using new_thread
+    let connection_rc = Rc::new(connection.clone());
+    let acp_thread = cx
+        .update(|cx| connection_rc.new_thread(project, cwd, cx))
+        .await
+        .expect("new_thread should succeed");
+
+    // Get the session_id from the AcpThread
+    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
     // Test model_selector returns Some
-    let selector_opt = connection.model_selector();
+    let selector_opt = connection.model_selector(&session_id);
     assert!(
         selector_opt.is_some(),
         "agent2 should always support ModelSelector"
@@ -1869,23 +1878,16 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     };
     assert!(!listed_models.is_empty(), "should have at least one model");
     assert_eq!(
-        listed_models[&AgentModelGroupName("Fake".into())][0].id.0,
+        listed_models[&AgentModelGroupName("Fake".into())][0]
+            .id
+            .0
+            .as_ref(),
         "fake/fake"
     );
 
-    // Create a thread using new_thread
-    let connection_rc = Rc::new(connection.clone());
-    let acp_thread = cx
-        .update(|cx| connection_rc.new_thread(project, cwd, cx))
-        .await
-        .expect("new_thread should succeed");
-
-    // Get the session_id from the AcpThread
-    let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
-
     // Test selected_model returns the default
     let model = cx
-        .update(|cx| selector.selected_model(&session_id, cx))
+        .update(|cx| selector.selected_model(cx))
         .await
         .expect("selected_model should succeed");
     let model = cx
@@ -1928,6 +1930,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
                 acp::PromptRequest {
                     session_id: session_id.clone(),
                     prompt: vec!["ghi".into()],
+                    meta: None,
                 },
                 cx,
             )
@@ -1992,6 +1995,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
             locations: vec![],
             raw_input: Some(json!({})),
             raw_output: None,
+            meta: None,
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -2005,6 +2009,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 raw_input: Some(json!({ "content": "Thinking hard!" })),
                 ..Default::default()
             },
+            meta: None,
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -2016,6 +2021,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 status: Some(acp::ToolCallStatus::InProgress),
                 ..Default::default()
             },
+            meta: None,
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -2027,6 +2033,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 content: Some(vec!["Thinking hard!".into()]),
                 ..Default::default()
             },
+            meta: None,
         }
     );
     let update = expect_tool_call_update_fields(&mut events).await;
@@ -2039,6 +2046,7 @@ async fn test_tool_updates_to_completion(cx: &mut TestAppContext) {
                 raw_output: Some("Finished thinking.".into()),
                 ..Default::default()
             },
+            meta: None,
         }
     );
 }
@@ -2352,15 +2360,20 @@ async fn setup(cx: &mut TestAppContext, model: TestModel) -> ThreadTest {
         settings::init(cx);
         Project::init_settings(cx);
         agent_settings::init(cx);
-        gpui_tokio::init(cx);
-        let http_client = ReqwestClient::user_agent("agent tests").unwrap();
-        cx.set_http_client(Arc::new(http_client));
 
-        client::init_settings(cx);
-        let client = Client::production(cx);
-        let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
-        language_model::init(client.clone(), cx);
-        language_models::init(user_store, client.clone(), cx);
+        match model {
+            TestModel::Fake => {}
+            TestModel::Sonnet4 => {
+                gpui_tokio::init(cx);
+                let http_client = ReqwestClient::user_agent("agent tests").unwrap();
+                cx.set_http_client(Arc::new(http_client));
+                client::init_settings(cx);
+                let client = Client::production(cx);
+                let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+                language_model::init(client.clone(), cx);
+                language_models::init(user_store, client.clone(), cx);
+            }
+        };
 
         watch_settings(fs.clone(), cx);
     });
@@ -2474,6 +2487,7 @@ fn setup_context_server(
                     path: "somebinary".into(),
                     args: Vec::new(),
                     env: None,
+                    timeout: None,
                 },
             },
         );

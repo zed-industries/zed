@@ -4,7 +4,7 @@ use crate::{
 };
 use call::ActiveCall;
 use editor::{
-    DocumentColorsRenderMode, Editor, EditorSettings, RowInfo, SelectionEffects,
+    DocumentColorsRenderMode, Editor, RowInfo, SelectionEffects,
     actions::{
         ConfirmCodeAction, ConfirmCompletion, ConfirmRename, ContextMenuFirst,
         ExpandMacroRecursively, MoveToEnd, Redo, Rename, SelectAll, ToggleCodeActions, Undo,
@@ -18,20 +18,16 @@ use fs::Fs;
 use futures::{SinkExt, StreamExt, channel::mpsc, lock::Mutex};
 use gpui::{App, Rgba, TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
-use language::{
-    FakeLspAdapter,
-    language_settings::{AllLanguageSettings, InlayHintSettings},
-};
+use language::FakeLspAdapter;
 use lsp::LSP_REQUEST_TIMEOUT;
 use project::{
     ProjectPath, SERVER_PROGRESS_THROTTLE_TIMEOUT,
     lsp_store::lsp_ext_command::{ExpandedMacro, LspExtExpandMacro},
-    project_settings::{InlineBlameSettings, ProjectSettings},
 };
 use recent_projects::disconnected_overlay::DisconnectedOverlay;
 use rpc::RECEIVE_TIMEOUT;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{InlayHintSettingsContent, InlineBlameSettings, SettingsStore};
 use std::{
     collections::BTreeSet,
     ops::{Deref as _, Range},
@@ -369,7 +365,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -488,7 +484,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .set_request_handler::<lsp::request::Completion, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -615,7 +611,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(0, 0));
             assert_eq!(params.range.end, lsp::Position::new(0, 0));
@@ -637,7 +633,7 @@ async fn test_collaborating_with_code_actions(
         .set_request_handler::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.range.start, lsp::Position::new(1, 31));
             assert_eq!(params.range.end, lsp::Position::new(1, 31));
@@ -649,7 +645,7 @@ async fn test_collaborating_with_code_actions(
                         changes: Some(
                             [
                                 (
-                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(1, 22),
@@ -659,7 +655,7 @@ async fn test_collaborating_with_code_actions(
                                     )],
                                 ),
                                 (
-                                    lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap(),
                                     vec![lsp::TextEdit::new(
                                         lsp::Range::new(
                                             lsp::Position::new(0, 0),
@@ -721,7 +717,7 @@ async fn test_collaborating_with_code_actions(
                     changes: Some(
                         [
                             (
-                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(1, 22),
@@ -731,7 +727,7 @@ async fn test_collaborating_with_code_actions(
                                 )],
                             ),
                             (
-                                lsp::Url::from_file_path(path!("/a/other.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap(),
                                 vec![lsp::TextEdit::new(
                                     lsp::Range::new(
                                         lsp::Position::new(0, 0),
@@ -949,14 +945,14 @@ async fn test_collaborating_with_renames(cx_a: &mut TestAppContext, cx_b: &mut T
                 changes: Some(
                     [
                         (
-                            lsp::Url::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            lsp::Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
                             vec![lsp::TextEdit::new(
                                 lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
                                 "THREE".to_string(),
                             )],
                         ),
                         (
-                            lsp::Url::from_file_path(path!("/dir/two.rs")).unwrap(),
+                            lsp::Uri::from_file_path(path!("/dir/two.rs")).unwrap(),
                             vec![
                                 lsp::TextEdit::new(
                                     lsp::Range::new(
@@ -1574,7 +1570,7 @@ async fn test_on_input_format_from_host_to_guest(
         |params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1717,7 +1713,7 @@ async fn test_on_input_format_from_guest_to_host(
         .set_request_handler::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.text_document_position.position,
@@ -1789,35 +1785,37 @@ async fn test_mutual_editor_inlay_hint_cache_update(
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    enabled: true,
-                    show_value_hints: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: false,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        enabled: Some(true),
+                        show_value_hints: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: false,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: Some(true),
+                        enabled: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
@@ -1897,13 +1895,13 @@ async fn test_mutual_editor_inlay_hint_cache_update(
     let closure_edits_made = Arc::clone(&edits_made);
     fake_language_server
         .set_request_handler::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-            let task_edits_made = Arc::clone(&closure_edits_made);
+            let edits_made_2 = Arc::clone(&closure_edits_made);
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
-                let edits_made = task_edits_made.load(atomic::Ordering::Acquire);
+                let edits_made = AtomicUsize::load(&edits_made_2, atomic::Ordering::Acquire);
                 Ok(Some(vec![lsp::InlayHint {
                     position: lsp::Position::new(0, edits_made as u32),
                     label: lsp::InlayHintLabel::String(edits_made.to_string()),
@@ -2039,35 +2037,37 @@ async fn test_inlay_hint_refresh_is_forwarded(
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: false,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: false,
-                    show_parameter_hints: false,
-                    show_other_hints: false,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: Some(true),
+                        enabled: Some(false),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(false),
+                        show_parameter_hints: Some(false),
+                        show_other_hints: Some(false),
+                        show_background: Some(false),
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: true,
-                    show_parameter_hints: true,
-                    show_other_hints: true,
-                    show_background: false,
-                    toggle_on_modifiers_press: None,
-                })
+            store.update_user_settings(cx, |settings| {
+                settings.project.all_languages.defaults.inlay_hints =
+                    Some(InlayHintSettingsContent {
+                        show_value_hints: Some(true),
+                        enabled: Some(true),
+                        edit_debounce_ms: Some(0),
+                        scroll_debounce_ms: Some(0),
+                        show_type_hints: Some(true),
+                        show_parameter_hints: Some(true),
+                        show_other_hints: Some(true),
+                        show_background: Some(false),
+                        toggle_on_modifiers_press: None,
+                    })
             });
         });
     });
@@ -2151,7 +2151,7 @@ async fn test_inlay_hint_refresh_is_forwarded(
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 let other_hints = task_other_hints.load(atomic::Ordering::Acquire);
                 let character = if other_hints { 0 } else { 2 };
@@ -2241,15 +2241,15 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::None);
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::None);
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
             });
         });
     });
@@ -2332,7 +2332,7 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
             async move {
                 assert_eq!(
                     params.text_document.uri,
-                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                 );
                 requests_made.fetch_add(1, atomic::Ordering::Release);
                 Ok(vec![lsp::ColorInformation {
@@ -2422,8 +2422,8 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     cx_b.update(|_, cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::Background);
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Background);
             });
         });
     });
@@ -2450,8 +2450,8 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     cx_b.update(|_, cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Inlay);
             });
         });
     });
@@ -2478,8 +2478,8 @@ async fn test_lsp_document_color(cx_a: &mut TestAppContext, cx_b: &mut TestAppCo
 
     cx_a.update(|_, cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<EditorSettings>(cx, |settings| {
-                settings.lsp_document_colors = Some(DocumentColorsRenderMode::Border);
+            store.update_user_settings(cx, |settings| {
+                settings.editor.lsp_document_colors = Some(DocumentColorsRenderMode::Border);
             });
         });
     });
@@ -2621,11 +2621,11 @@ async fn test_lsp_pull_diagnostics(
             let requests_made = closure_diagnostics_pulls_made.clone();
             let diagnostics_pulls_result_ids = closure_diagnostics_pulls_result_ids.clone();
             async move {
-                let message = if lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                let message = if lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
                     == params.text_document.uri
                 {
                     expected_pull_diagnostic_main_message.to_string()
-                } else if lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap()
+                } else if lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap()
                     == params.text_document.uri
                 {
                     expected_pull_diagnostic_lib_message.to_string()
@@ -2717,7 +2717,7 @@ async fn test_lsp_pull_diagnostics(
                         items: vec![
                             lsp::WorkspaceDocumentDiagnosticReport::Full(
                                 lsp::WorkspaceFullDocumentDiagnosticReport {
-                                    uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                     version: None,
                                     full_document_diagnostic_report:
                                         lsp::FullDocumentDiagnosticReport {
@@ -2746,7 +2746,7 @@ async fn test_lsp_pull_diagnostics(
                             ),
                             lsp::WorkspaceDocumentDiagnosticReport::Full(
                                 lsp::WorkspaceFullDocumentDiagnosticReport {
-                                    uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                    uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
                                     version: None,
                                     full_document_diagnostic_report:
                                         lsp::FullDocumentDiagnosticReport {
@@ -2821,7 +2821,7 @@ async fn test_lsp_pull_diagnostics(
 
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             diagnostics: vec![lsp::Diagnostic {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -2842,7 +2842,7 @@ async fn test_lsp_pull_diagnostics(
     );
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
         &lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+            uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
             diagnostics: vec![lsp::Diagnostic {
                 range: lsp::Range {
                     start: lsp::Position {
@@ -2870,7 +2870,7 @@ async fn test_lsp_pull_diagnostics(
                     items: vec![
                         lsp::WorkspaceDocumentDiagnosticReport::Full(
                             lsp::WorkspaceFullDocumentDiagnosticReport {
-                                uri: lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                uri: lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                 version: None,
                                 full_document_diagnostic_report:
                                     lsp::FullDocumentDiagnosticReport {
@@ -2902,7 +2902,7 @@ async fn test_lsp_pull_diagnostics(
                         ),
                         lsp::WorkspaceDocumentDiagnosticReport::Full(
                             lsp::WorkspaceFullDocumentDiagnosticReport {
-                                uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                                uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
                                 version: None,
                                 full_document_diagnostic_report:
                                     lsp::FullDocumentDiagnosticReport {
@@ -3051,7 +3051,7 @@ async fn test_lsp_pull_diagnostics(
                 lsp::WorkspaceDiagnosticReportResult::Report(lsp::WorkspaceDiagnosticReport {
                     items: vec![lsp::WorkspaceDocumentDiagnosticReport::Full(
                         lsp::WorkspaceFullDocumentDiagnosticReport {
-                            uri: lsp::Url::from_file_path(path!("/a/lib.rs")).unwrap(),
+                            uri: lsp::Uri::from_file_path(path!("/a/lib.rs")).unwrap(),
                             version: None,
                             full_document_diagnostic_report: lsp::FullDocumentDiagnosticReport {
                                 result_id: Some(format!(
@@ -3306,20 +3306,20 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     cx_b.update(editor::init);
     // Turn inline-blame-off by default so no state is transferred without us explicitly doing so
     let inline_blame_off_settings = Some(InlineBlameSettings {
-        enabled: false,
+        enabled: Some(false),
         ..Default::default()
     });
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                settings.git.inline_blame = inline_blame_off_settings;
+            store.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().inline_blame = inline_blame_off_settings;
             });
         });
     });
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
-            store.update_user_settings::<ProjectSettings>(cx, |settings| {
-                settings.git.inline_blame = inline_blame_off_settings;
+            store.update_user_settings(cx, |settings| {
+                settings.git.get_or_insert_default().inline_blame = inline_blame_off_settings;
             });
         });
     });
@@ -3425,16 +3425,16 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         assert_eq!(
             entries,
             vec![
-                Some(blame_entry("1b1b1b", 0..1)),
-                Some(blame_entry("0d0d0d", 1..2)),
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("1b1b1b", 0..1))),
+                Some((buffer_id_b, blame_entry("0d0d0d", 1..2))),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
 
         blame.update(cx, |blame, _| {
-            for (idx, entry) in entries.iter().flatten().enumerate() {
-                let details = blame.details_for_entry(entry).unwrap();
+            for (idx, (buffer, entry)) in entries.iter().flatten().enumerate() {
+                let details = blame.details_for_entry(*buffer, entry).unwrap();
                 assert_eq!(details.message, format!("message for idx-{}", idx));
                 assert_eq!(
                     details.permalink.unwrap().to_string(),
@@ -3474,9 +3474,9 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             entries,
             vec![
                 None,
-                Some(blame_entry("0d0d0d", 1..2)),
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("0d0d0d", 1..2))),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
     });
@@ -3511,8 +3511,8 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
             vec![
                 None,
                 None,
-                Some(blame_entry("3a3a3a", 2..3)),
-                Some(blame_entry("4c4c4c", 3..4)),
+                Some((buffer_id_b, blame_entry("3a3a3a", 2..3))),
+                Some((buffer_id_b, blame_entry("4c4c4c", 3..4))),
             ]
         );
     });
@@ -4040,7 +4040,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
         |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(params.position, lsp::Position::new(0, 0));
             Ok(Some(ExpandedMacro {
@@ -4075,7 +4075,7 @@ async fn test_client_can_query_lsp_ext(cx_a: &mut TestAppContext, cx_b: &mut Tes
         |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
             );
             assert_eq!(
                 params.position,

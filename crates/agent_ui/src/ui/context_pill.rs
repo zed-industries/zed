@@ -13,11 +13,9 @@ use rope::Point;
 use ui::{IconButtonShape, Tooltip, prelude::*, tooltip_container};
 
 use agent::context::{
-    AgentContext, AgentContextHandle, ContextId, ContextKind, DirectoryContext,
-    DirectoryContextHandle, FetchedUrlContext, FileContext, FileContextHandle, ImageContext,
-    ImageStatus, RulesContext, RulesContextHandle, SelectionContext, SelectionContextHandle,
-    SymbolContext, SymbolContextHandle, TextThreadContext, TextThreadContextHandle, ThreadContext,
-    ThreadContextHandle,
+    AgentContextHandle, ContextId, ContextKind, DirectoryContextHandle, FetchedUrlContext,
+    FileContextHandle, ImageContext, ImageStatus, RulesContextHandle, SelectionContextHandle,
+    SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
 };
 
 #[derive(IntoElement)]
@@ -317,31 +315,9 @@ impl AddedContext {
         }
     }
 
-    pub fn new_attached(
-        context: &AgentContext,
-        model: Option<&Arc<dyn language_model::LanguageModel>>,
-        cx: &App,
-    ) -> AddedContext {
-        match context {
-            AgentContext::File(context) => Self::attached_file(context, cx),
-            AgentContext::Directory(context) => Self::attached_directory(context),
-            AgentContext::Symbol(context) => Self::attached_symbol(context, cx),
-            AgentContext::Selection(context) => Self::attached_selection(context, cx),
-            AgentContext::FetchedUrl(context) => Self::fetched_url(context.clone()),
-            AgentContext::Thread(context) => Self::attached_thread(context),
-            AgentContext::TextThread(context) => Self::attached_text_thread(context),
-            AgentContext::Rules(context) => Self::attached_rules(context),
-            AgentContext::Image(context) => Self::image(context.clone(), model, cx),
-        }
-    }
-
     fn pending_file(handle: FileContextHandle, cx: &App) -> Option<AddedContext> {
         let full_path = handle.buffer.read(cx).file()?.full_path(cx);
         Some(Self::file(handle, &full_path, cx))
-    }
-
-    fn attached_file(context: &FileContext, cx: &App) -> AddedContext {
-        Self::file(context.handle.clone(), &context.full_path, cx)
     }
 
     fn file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
@@ -369,10 +345,6 @@ impl AddedContext {
         let entry = worktree.entry_for_id(handle.entry_id)?;
         let full_path = worktree.full_path(&entry.path);
         Some(Self::directory(handle, &full_path))
-    }
-
-    fn attached_directory(context: &DirectoryContext) -> AddedContext {
-        Self::directory(context.handle.clone(), &context.full_path)
     }
 
     fn directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
@@ -411,25 +383,6 @@ impl AddedContext {
         })
     }
 
-    fn attached_symbol(context: &SymbolContext, cx: &App) -> AddedContext {
-        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range.clone(), cx);
-        AddedContext {
-            kind: ContextKind::Symbol,
-            name: context.handle.symbol.clone(),
-            parent: Some(excerpt.file_name_and_range.clone()),
-            tooltip: None,
-            icon_path: None,
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    excerpt.hover_view(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::Symbol(context.handle.clone()),
-        }
-    }
-
     fn pending_selection(handle: SelectionContextHandle, cx: &App) -> Option<AddedContext> {
         let excerpt = ContextFileExcerpt::new(&handle.full_path(cx)?, handle.line_range(cx), cx);
         Some(AddedContext {
@@ -447,25 +400,6 @@ impl AddedContext {
             },
             handle: AgentContextHandle::Selection(handle),
         })
-    }
-
-    fn attached_selection(context: &SelectionContext, cx: &App) -> AddedContext {
-        let excerpt = ContextFileExcerpt::new(&context.full_path, context.line_range.clone(), cx);
-        AddedContext {
-            kind: ContextKind::Selection,
-            name: excerpt.file_name_and_range.clone(),
-            parent: excerpt.parent_name.clone(),
-            tooltip: None,
-            icon_path: excerpt.icon_path.clone(),
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    excerpt.hover_view(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::Selection(context.handle.clone()),
-        }
     }
 
     fn fetched_url(context: FetchedUrlContext) -> AddedContext {
@@ -506,24 +440,6 @@ impl AddedContext {
         }
     }
 
-    fn attached_thread(context: &ThreadContext) -> AddedContext {
-        AddedContext {
-            kind: ContextKind::Thread,
-            name: context.title.clone(),
-            parent: None,
-            tooltip: None,
-            icon_path: None,
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    ContextPillHover::new_text(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::Thread(context.handle.clone()),
-        }
-    }
-
     fn pending_text_thread(handle: TextThreadContextHandle, cx: &App) -> AddedContext {
         AddedContext {
             kind: ContextKind::TextThread,
@@ -540,24 +456,6 @@ impl AddedContext {
                 }))
             },
             handle: AgentContextHandle::TextThread(handle),
-        }
-    }
-
-    fn attached_text_thread(context: &TextThreadContext) -> AddedContext {
-        AddedContext {
-            kind: ContextKind::TextThread,
-            name: context.title.clone(),
-            parent: None,
-            tooltip: None,
-            icon_path: None,
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    ContextPillHover::new_text(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::TextThread(context.handle.clone()),
         }
     }
 
@@ -582,28 +480,6 @@ impl AddedContext {
             render_hover: None,
             handle: AgentContextHandle::Rules(handle),
         })
-    }
-
-    fn attached_rules(context: &RulesContext) -> AddedContext {
-        let title = context
-            .title
-            .clone()
-            .unwrap_or_else(|| "Unnamed Rule".into());
-        AddedContext {
-            kind: ContextKind::Rules,
-            name: title,
-            parent: None,
-            tooltip: None,
-            icon_path: None,
-            status: ContextStatus::Ready,
-            render_hover: {
-                let text = context.text.clone();
-                Some(Rc::new(move |_, cx| {
-                    ContextPillHover::new_text(text.clone(), cx).into()
-                }))
-            },
-            handle: AgentContextHandle::Rules(context.handle.clone()),
-        }
     }
 
     fn image(

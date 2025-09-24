@@ -28,11 +28,11 @@ fn generate_random_rope_ranges(mut rng: StdRng, rope: &Rope) -> Vec<Range<usize>
     let mut start = 0;
     for _ in 0..num_ranges {
         let range_start = rope.clip_offset(
-            rng.gen_range(start..=(start + range_max_len)),
+            rng.random_range(start..=(start + range_max_len)),
             sum_tree::Bias::Left,
         );
         let range_end = rope.clip_offset(
-            rng.gen_range(range_start..(range_start + range_max_len)),
+            rng.random_range(range_start..(range_start + range_max_len)),
             sum_tree::Bias::Right,
         );
 
@@ -52,7 +52,7 @@ fn generate_random_rope_points(mut rng: StdRng, rope: &Rope) -> Vec<Point> {
 
     let mut points = Vec::new();
     for _ in 0..num_points {
-        points.push(rope.offset_to_point(rng.gen_range(0..rope.len())));
+        points.push(rope.offset_to_point(rng.random_range(0..rope.len())));
     }
     points
 }
@@ -144,7 +144,7 @@ fn rope_benchmarks(c: &mut Criterion) {
         group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
             let rope = generate_random_rope(rng.clone(), *size);
 
-            b.iter_with_large_drop(|| {
+            b.iter(|| {
                 let chars = rope.chars().count();
                 assert!(chars > 0);
             });
@@ -183,6 +183,34 @@ fn rope_benchmarks(c: &mut Criterion) {
                 |offsets| {
                     for offset in offsets.iter() {
                         black_box(rope.point_to_offset(*offset));
+                    }
+                },
+                BatchSize::SmallInput,
+            );
+        });
+    }
+    group.finish();
+
+    let mut group = c.benchmark_group("cursor");
+    for size in sizes.iter() {
+        group.throughput(Throughput::Bytes(*size as u64));
+        group.bench_with_input(BenchmarkId::from_parameter(size), &size, |b, &size| {
+            let rope = generate_random_rope(rng.clone(), *size);
+
+            b.iter_batched(
+                || {
+                    let mut rng = rng.clone();
+                    let num_points = rope.len() / 10;
+
+                    let mut points = Vec::new();
+                    for _ in 0..num_points {
+                        points.push(rng.random_range(0..rope.len()));
+                    }
+                    points
+                },
+                |offsets| {
+                    for offset in offsets.iter() {
+                        black_box(rope.cursor(*offset));
                     }
                 },
                 BatchSize::SmallInput,

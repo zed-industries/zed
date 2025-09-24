@@ -4,11 +4,11 @@ use anyhow::Context as _;
 use collections::{BTreeSet, HashMap, HashSet, hash_map};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorSettings, ExcerptId,
-    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, SelectionEffects, ShowScrollbar,
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, ExcerptId, ExcerptRange,
+    MultiBufferSnapshot, RangeToAnchorExt, SelectionEffects,
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
-    scroll::{Autoscroll, ScrollAnchor, ScrollbarAutoHide},
+    scroll::{Autoscroll, ScrollAnchor},
 };
 use file_icons::FileIcons;
 use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
@@ -38,26 +38,25 @@ use std::{
     u32,
 };
 
-use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
+use outline_panel_settings::{DockSide, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, GitEntry, GitTraversal, Project, ProjectItem};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
-use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
+use ui::{
+    ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, DynamicSpacing, FluentBuilder,
+    HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, IndentGuideColors,
+    IndentGuideLayout, Label, LabelCommon, ListItem, ScrollAxes, Scrollbars, StyledExt,
+    StyledTypography, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
+};
 use util::{RangeExt, ResultExt, TryFutureExt, debug_panic};
 use workspace::{
     OpenInTerminal, WeakItemHandle, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
     item::ItemHandle,
     searchable::{SearchEvent, SearchableItem},
-    ui::{
-        ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder, HighlightedLabel,
-        Icon, IconButton, IconButtonShape, IconName, IconSize, Label, LabelCommon, ListItem,
-        Scrollbar, ScrollbarState, StyledExt, StyledTypography, Toggleable, Tooltip, h_flex,
-        v_flex,
-    },
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
 
@@ -125,10 +124,6 @@ pub struct OutlinePanel {
     cached_entries: Vec<CachedEntry>,
     filter_editor: Entity<Editor>,
     mode: ItemsDisplayMode,
-    show_scrollbar: bool,
-    vertical_scrollbar_state: ScrollbarState,
-    horizontal_scrollbar_state: ScrollbarState,
-    hide_scrollbar_task: Option<Task<()>>,
     max_width_item_index: Option<usize>,
     preserve_selection_on_buffer_fold_toggles: HashSet<BufferId>,
     pending_default_expansion_depth: Option<usize>,
@@ -737,7 +732,7 @@ impl OutlinePanel {
         cx.new(|cx| {
             let filter_editor = cx.new(|cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Filter...", cx);
+                editor.set_placeholder_text("Filter...", window, cx);
                 editor
             });
             let filter_update_subscription = cx.subscribe_in(
@@ -752,10 +747,6 @@ impl OutlinePanel {
 
             let focus_handle = cx.focus_handle();
             let focus_subscription = cx.on_focus(&focus_handle, window, Self::focus_in);
-            let focus_out_subscription =
-                cx.on_focus_out(&focus_handle, window, |outline_panel, _, window, cx| {
-                    outline_panel.hide_scrollbar(window, cx);
-                });
             let workspace_subscription = cx.subscribe_in(
                 &workspace
                     .weak_handle()
@@ -868,12 +859,6 @@ impl OutlinePanel {
                 workspace: workspace_handle,
                 project,
                 fs: workspace.app_state().fs.clone(),
-                show_scrollbar: !Self::should_autohide_scrollbar(cx),
-                hide_scrollbar_task: None,
-                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_entity(&cx.entity()),
-                horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                    .parent_entity(&cx.entity()),
                 max_width_item_index: None,
                 scroll_handle,
                 focus_handle,
@@ -903,7 +888,6 @@ impl OutlinePanel {
                     settings_subscription,
                     icons_subscription,
                     focus_subscription,
-                    focus_out_subscription,
                     workspace_subscription,
                     filter_update_subscription,
                 ],
@@ -2319,7 +2303,7 @@ impl OutlinePanel {
                     is_active,
                 );
                 let icon = if settings.folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, cx)
+                    FileIcons::get_folder_icon(is_expanded, &directory.entry.path, cx)
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
@@ -2416,7 +2400,7 @@ impl OutlinePanel {
                 .unwrap_or_default();
             let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
             let icon = if settings.folder_icons {
-                FileIcons::get_folder_icon(is_expanded, cx)
+                FileIcons::get_folder_icon(is_expanded, &Path::new(&name), cx)
             } else {
                 FileIcons::get_chevron_icon(is_expanded, cx)
             }
@@ -3350,13 +3334,11 @@ impl OutlinePanel {
                         let buffer_language = buffer_snapshot.language().cloned();
                         let fetched_outlines = cx
                             .background_spawn(async move {
-                                let mut outlines = buffer_snapshot
-                                    .outline_items_containing(
-                                        excerpt_range.context,
-                                        false,
-                                        Some(&syntax_theme),
-                                    )
-                                    .unwrap_or_default();
+                                let mut outlines = buffer_snapshot.outline_items_containing(
+                                    excerpt_range.context,
+                                    false,
+                                    Some(&syntax_theme),
+                                );
                                 outlines.retain(|outline| {
                                     buffer_language.is_none()
                                         || buffer_language.as_ref()
@@ -4491,150 +4473,6 @@ impl OutlinePanel {
         cx.notify();
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx)
-            || !(self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())
-        {
-            return None;
-        }
-        Some(
-            div()
-                .occlude()
-                .id("project-panel-vertical-scroll")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|outline_panel, _, window, cx| {
-                        if !outline_panel.vertical_scrollbar_state.is_dragging()
-                            && !outline_panel.focus_handle.contains_focused(window, cx)
-                        {
-                            outline_panel.hide_scrollbar(window, cx);
-                            cx.notify();
-                        }
-
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_0()
-                .w(px(12.))
-                .cursor_default()
-                .children(Scrollbar::vertical(self.vertical_scrollbar_state.clone())),
-        )
-    }
-
-    fn render_horizontal_scrollbar(
-        &self,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx)
-            || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
-        {
-            return None;
-        }
-        Scrollbar::horizontal(self.horizontal_scrollbar_state.clone()).map(|scrollbar| {
-            div()
-                .occlude()
-                .id("project-panel-horizontal-scroll")
-                .on_mouse_move(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                    cx.stop_propagation()
-                }))
-                .on_hover(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_any_mouse_down(|_, _, cx| {
-                    cx.stop_propagation();
-                })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|outline_panel, _, window, cx| {
-                        if !outline_panel.horizontal_scrollbar_state.is_dragging()
-                            && !outline_panel.focus_handle.contains_focused(window, cx)
-                        {
-                            outline_panel.hide_scrollbar(window, cx);
-                            cx.notify();
-                        }
-
-                        cx.stop_propagation();
-                    }),
-                )
-                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
-                    cx.notify();
-                }))
-                .w_full()
-                .absolute()
-                .right_1()
-                .left_1()
-                .bottom_0()
-                .h(px(12.))
-                .cursor_default()
-                .child(scrollbar)
-        })
-    }
-
-    fn should_show_scrollbar(cx: &App) -> bool {
-        let show = OutlinePanelSettings::get_global(cx)
-            .scrollbar
-            .show
-            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
-        match show {
-            ShowScrollbar::Auto => true,
-            ShowScrollbar::System => true,
-            ShowScrollbar::Always => true,
-            ShowScrollbar::Never => false,
-        }
-    }
-
-    fn should_autohide_scrollbar(cx: &App) -> bool {
-        let show = OutlinePanelSettings::get_global(cx)
-            .scrollbar
-            .show
-            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
-        match show {
-            ShowScrollbar::Auto => true,
-            ShowScrollbar::System => cx
-                .try_global::<ScrollbarAutoHide>()
-                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
-            ShowScrollbar::Always => false,
-            ShowScrollbar::Never => true,
-        }
-    }
-
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        if !Self::should_autohide_scrollbar(cx) {
-            return;
-        }
-        self.hide_scrollbar_task = Some(cx.spawn_in(window, async move |panel, cx| {
-            cx.background_executor()
-                .timer(SCROLLBAR_SHOW_INTERVAL)
-                .await;
-            panel
-                .update(cx, |panel, cx| {
-                    panel.show_scrollbar = false;
-                    cx.notify();
-                })
-                .log_err();
-        }))
-    }
-
     fn width_estimate(&self, depth: usize, entry: &PanelEntry, cx: &App) -> u64 {
         let item_text_chars = match entry {
             PanelEntry::Fs(FsEntry::ExternalFile(external)) => self
@@ -4690,7 +4528,7 @@ impl OutlinePanel {
         indent_size: f32,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> impl IntoElement {
         let contents = if self.cached_entries.is_empty() {
             let header = if self.updating_fs_entries || self.updating_cached_entries {
                 None
@@ -4701,6 +4539,7 @@ impl OutlinePanel {
             };
 
             v_flex()
+                .id("empty-outline-state")
                 .flex_1()
                 .justify_center()
                 .size_full()
@@ -4850,10 +4689,16 @@ impl OutlinePanel {
                 .flex_shrink()
                 .size_full()
                 .child(list_contents.size_full().flex_shrink())
-                .children(self.render_vertical_scrollbar(cx))
-                .when_some(
-                    self.render_horizontal_scrollbar(window, cx),
-                    |this, scrollbar| this.pb_4().child(scrollbar),
+                .custom_scrollbars(
+                    Scrollbars::for_settings::<OutlinePanelSettings>()
+                        .tracked_scroll_handle(self.scroll_handle.clone())
+                        .with_track_along(
+                            ScrollAxes::Horizontal,
+                            cx.theme().colors().panel_background,
+                        )
+                        .tracked_entity(cx.entity_id()),
+                    window,
+                    cx,
                 )
         }
         .children(self.context_menu.as_ref().map(|(menu, position, _)| {
@@ -4994,8 +4839,8 @@ impl Panel for OutlinePanel {
 
     fn position(&self, _: &Window, cx: &App) -> DockPosition {
         match OutlinePanelSettings::get_global(cx).dock {
-            OutlinePanelDockPosition::Left => DockPosition::Left,
-            OutlinePanelDockPosition::Right => DockPosition::Right,
+            DockSide::Left => DockPosition::Left,
+            DockSide::Right => DockPosition::Right,
         }
     }
 
@@ -5004,17 +4849,13 @@ impl Panel for OutlinePanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        settings::update_settings_file::<OutlinePanelSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
-                    DockPosition::Right => OutlinePanelDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
-        );
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            let dock = match position {
+                DockPosition::Left | DockPosition::Bottom => DockSide::Left,
+                DockPosition::Right => DockSide::Right,
+            };
+            settings.outline_panel.get_or_insert_default().dock = Some(dock);
+        });
     }
 
     fn size(&self, _: &Window, cx: &App) -> Pixels {
@@ -5102,9 +4943,9 @@ impl EventEmitter<PanelEvent> for OutlinePanel {}
 
 impl Render for OutlinePanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (is_local, is_via_ssh) = self
-            .project
-            .read_with(cx, |project, _| (project.is_local(), project.is_via_ssh()));
+        let (is_local, is_via_ssh) = self.project.read_with(cx, |project, _| {
+            (project.is_local(), project.is_via_remote_server())
+        });
         let query = self.query(cx);
         let pinned = self.pinned;
         let settings = OutlinePanelSettings::get_global(cx);
@@ -5121,15 +4962,6 @@ impl Render for OutlinePanel {
             .size_full()
             .overflow_hidden()
             .relative()
-            .on_hover(cx.listener(|this, hovered, window, cx| {
-                if *hovered {
-                    this.show_scrollbar = true;
-                    this.hide_scrollbar_task.take();
-                    cx.notify();
-                } else if !this.focus_handle.contains_focused(window, cx) {
-                    this.hide_scrollbar(window, cx);
-                }
-            }))
             .key_context(self.dispatch_context(window, cx))
             .on_action(cx.listener(Self::open_selected_entry))
             .on_action(cx.listener(Self::cancel))
@@ -5402,8 +5234,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
-        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        let root = path!("/rust-analyzer");
+        populate_with_test_ra_project(&fs, root).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5448,15 +5281,16 @@ mod tests {
                 });
         });
 
-        let all_matches = r#"/rust-analyzer/
+        let all_matches = format!(
+            r#"{root}/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
-          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+          search: match config.param_names_for_lifetime_elision_hints {{
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
+          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5467,7 +5301,9 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#;
+        search: param_names_for_lifetime_elision_hints: self"#
+        );
+
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
@@ -5524,7 +5360,7 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"/rust-analyzer/
+                    r#"{root}/
   crates/
     ide/src/
       inlay_hints/
@@ -5594,7 +5430,7 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"/rust-analyzer/
+                    r#"{root}/
   crates/
     ide/src/{SELECTED_MARKER}
     rust-analyzer/src/
@@ -5631,8 +5467,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
-        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        let root = path!("/rust-analyzer");
+        populate_with_test_ra_project(&fs, root).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5676,15 +5513,16 @@ mod tests {
                     );
                 });
         });
-        let all_matches = r#"/rust-analyzer/
+        let all_matches = format!(
+            r#"{root}/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
-          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+          search: match config.param_names_for_lifetime_elision_hints {{
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
+          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5695,7 +5533,8 @@ mod tests {
         analysis_stats.rs
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
-        search: param_names_for_lifetime_elision_hints: self"#;
+        search: param_names_for_lifetime_elision_hints: self"#
+        );
 
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5768,8 +5607,9 @@ mod tests {
         init_test(cx);
 
         let fs = FakeFs::new(cx.background_executor.clone());
-        populate_with_test_ra_project(&fs, path!("/rust-analyzer")).await;
-        let project = Project::test(fs.clone(), [path!("/rust-analyzer").as_ref()], cx).await;
+        let root = path!("/rust-analyzer");
+        populate_with_test_ra_project(&fs, root).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(rust_lang()))
         });
@@ -5813,9 +5653,8 @@ mod tests {
                     );
                 });
         });
-        let root_path = format!("{}/", path!("/rust-analyzer"));
         let all_matches = format!(
-            r#"{root_path}
+            r#"{root}/
   crates/
     ide/src/
       inlay_hints/
@@ -5977,7 +5816,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/root",
+            path!("/root"),
             json!({
                 "one": {
                     "a.txt": "aaa aaa"
@@ -5989,7 +5828,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [Path::new("/root/one")], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/root/one"))], cx).await;
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -6000,7 +5839,7 @@ mod tests {
         let items = workspace
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
-                    vec![PathBuf::from("/root/two")],
+                    vec![PathBuf::from(path!("/root/two"))],
                     OpenOptions {
                         visible: Some(OpenVisible::OnlyDirectories),
                         ..Default::default()
@@ -6064,13 +5903,17 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/root/one/
+                format!(
+                    r#"{}/
   a.txt
     search: aaa aaa  <==== selected
     search: aaa aaa
-/root/two/
+{}/
   b.txt
-    search: a aaa"#
+    search: a aaa"#,
+                    path!("/root/one"),
+                    path!("/root/two"),
+                ),
             );
         });
 
@@ -6090,11 +5933,15 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/root/one/
+                format!(
+                    r#"{}/
   a.txt  <==== selected
-/root/two/
+{}/
   b.txt
-    search: a aaa"#
+    search: a aaa"#,
+                    path!("/root/one"),
+                    path!("/root/two"),
+                ),
             );
         });
 
@@ -6114,9 +5961,13 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/root/one/
+                format!(
+                    r#"{}/
   a.txt
-/root/two/  <==== selected"#
+{}/  <==== selected"#,
+                    path!("/root/one"),
+                    path!("/root/two"),
+                ),
             );
         });
 
@@ -6135,11 +5986,15 @@ mod tests {
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/root/one/
+                format!(
+                    r#"{}/
   a.txt
-/root/two/  <==== selected
+{}/  <==== selected
   b.txt
-    search: a aaa"#
+    search: a aaa"#,
+                    path!("/root/one"),
+                    path!("/root/two"),
+                )
             );
         });
     }
@@ -6165,7 +6020,7 @@ struct OutlineEntryExcerpt {
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [root.as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(
                 rust_lang()
@@ -6508,7 +6363,7 @@ outline: struct OutlineEntryExcerpt
     async fn test_frontend_repo_structure(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let root = "/frontend-project";
+        let root = path!("/frontend-project");
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             root,
@@ -6545,7 +6400,7 @@ outline: struct OutlineEntryExcerpt
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), [root.as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [Path::new(root)], cx).await;
         let workspace = add_outline_panel(&project, cx).await;
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let outline_panel = outline_panel(&workspace, cx);
@@ -6599,10 +6454,11 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }  <==== selected
+      search: {{ "something": "static" }}  <==== selected
   src/
     app/(site)/
       (about)/jobs/[slug]/
@@ -6614,6 +6470,7 @@ outline: struct OutlineEntryExcerpt
     components/
       ErrorBoundary.tsx
         search: static"#
+                )
             );
         });
 
@@ -6636,15 +6493,17 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: {{ "something": "static" }}
   src/
     app/(site)/  <==== selected
     components/
       ErrorBoundary.tsx
         search: static"#
+                )
             );
         });
 
@@ -6664,15 +6523,17 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: {{ "something": "static" }}
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx
         search: static  <==== selected"#
+                )
             );
         });
 
@@ -6696,14 +6557,16 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: {{ "something": "static" }}
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx  <==== selected"#
+                )
             );
         });
 
@@ -6727,15 +6590,17 @@ outline: struct OutlineEntryExcerpt
                     outline_panel.selected_entry(),
                     cx,
                 ),
-                r#"/frontend-project/
+                format!(
+                    r#"{root}/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: {{ "something": "static" }}
   src/
     app/(site)/
     components/
       ErrorBoundary.tsx  <==== selected
         search: static"#
+                )
             );
         });
     }

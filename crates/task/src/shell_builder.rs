@@ -1,3 +1,7 @@
+use std::fmt;
+
+use util::get_system_shell;
+
 use crate::Shell;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
@@ -6,14 +10,27 @@ pub enum ShellKind {
     Posix,
     Csh,
     Fish,
-    Powershell,
+    PowerShell,
     Nushell,
     Cmd,
 }
 
+impl fmt::Display for ShellKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ShellKind::Posix => write!(f, "sh"),
+            ShellKind::Csh => write!(f, "csh"),
+            ShellKind::Fish => write!(f, "fish"),
+            ShellKind::PowerShell => write!(f, "powershell"),
+            ShellKind::Nushell => write!(f, "nu"),
+            ShellKind::Cmd => write!(f, "cmd"),
+        }
+    }
+}
+
 impl ShellKind {
     pub fn system() -> Self {
-        Self::new(&system_shell())
+        Self::new(&get_system_shell())
     }
 
     pub fn new(program: &str) -> Self {
@@ -22,12 +39,12 @@ impl ShellKind {
         #[cfg(not(windows))]
         let (_, program) = program.rsplit_once('/').unwrap_or(("", program));
         if program == "powershell"
-            || program == "powershell.exe"
+            || program.ends_with("powershell.exe")
             || program == "pwsh"
-            || program == "pwsh.exe"
+            || program.ends_with("pwsh.exe")
         {
-            ShellKind::Powershell
-        } else if program == "cmd" || program == "cmd.exe" {
+            ShellKind::PowerShell
+        } else if program == "cmd" || program.ends_with("cmd.exe") {
             ShellKind::Cmd
         } else if program == "nu" {
             ShellKind::Nushell
@@ -36,7 +53,7 @@ impl ShellKind {
         } else if program == "csh" {
             ShellKind::Csh
         } else {
-            // Someother shell detected, the user might install and use a
+            // Some other shell detected, the user might install and use a
             // unix-like shell.
             ShellKind::Posix
         }
@@ -44,7 +61,7 @@ impl ShellKind {
 
     fn to_shell_variable(self, input: &str) -> String {
         match self {
-            Self::Powershell => Self::to_powershell_variable(input),
+            Self::PowerShell => Self::to_powershell_variable(input),
             Self::Cmd => Self::to_cmd_variable(input),
             Self::Posix => input.to_owned(),
             Self::Fish => input.to_owned(),
@@ -167,7 +184,7 @@ impl ShellKind {
 
     fn args_for_shell(&self, interactive: bool, combined_command: String) -> Vec<String> {
         match self {
-            ShellKind::Powershell => vec!["-C".to_owned(), combined_command],
+            ShellKind::PowerShell => vec!["-C".to_owned(), combined_command],
             ShellKind::Cmd => vec!["/C".to_owned(), combined_command],
             ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => interactive
                 .then(|| "-i".to_owned())
@@ -176,17 +193,13 @@ impl ShellKind {
                 .collect(),
         }
     }
-}
 
-fn system_shell() -> String {
-    if cfg!(target_os = "windows") {
-        // `alacritty_terminal` uses this as default on Windows. See:
-        // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
-        // We could use `util::get_windows_system_shell()` here, but we are running tasks here, so leave it to `powershell.exe`
-        // should be okay.
-        "powershell.exe".to_string()
-    } else {
-        std::env::var("SHELL").unwrap_or("/bin/sh".to_string())
+    pub fn command_prefix(&self) -> Option<char> {
+        match self {
+            ShellKind::PowerShell => Some('&'),
+            ShellKind::Nushell => Some('^'),
+            _ => None,
+        }
     }
 }
 
@@ -197,26 +210,29 @@ pub struct ShellBuilder {
     program: String,
     args: Vec<String>,
     interactive: bool,
+    redirect_stdin: bool,
     kind: ShellKind,
 }
 
 impl ShellBuilder {
     /// Create a new ShellBuilder as configured.
     pub fn new(remote_system_shell: Option<&str>, shell: &Shell) -> Self {
-        let (program, args) = match shell {
-            Shell::System => match remote_system_shell {
-                Some(remote_shell) => (remote_shell.to_string(), Vec::new()),
-                None => (system_shell(), Vec::new()),
+        let (program, args) = match remote_system_shell {
+            Some(program) => (program.to_string(), Vec::new()),
+            None => match shell {
+                Shell::System => (get_system_shell(), Vec::new()),
+                Shell::Program(shell) => (shell.clone(), Vec::new()),
+                Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
             },
-            Shell::Program(shell) => (shell.clone(), Vec::new()),
-            Shell::WithArguments { program, args, .. } => (program.clone(), args.clone()),
         };
+
         let kind = ShellKind::new(&program);
         Self {
             program,
             args,
             interactive: true,
             kind,
+            redirect_stdin: false,
         }
     }
     pub fn non_interactive(mut self) -> Self {
@@ -225,23 +241,33 @@ impl ShellBuilder {
     }
 
     /// Returns the label to show in the terminal tab
-    pub fn command_label(&self, command_label: &str) -> String {
-        match self.kind {
-            ShellKind::Powershell => {
-                format!("{} -C '{}'", self.program, command_label)
-            }
-            ShellKind::Cmd => {
-                format!("{} /C '{}'", self.program, command_label)
-            }
-            ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
-                let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
-                format!(
-                    "{} {interactivity}-c '$\"{}\"'",
-                    self.program, command_label
-                )
+    pub fn command_label(&self, command_to_use_in_label: &str) -> String {
+        if command_to_use_in_label.trim().is_empty() {
+            self.program.clone()
+        } else {
+            match self.kind {
+                ShellKind::PowerShell => {
+                    format!("{} -C '{}'", self.program, command_to_use_in_label)
+                }
+                ShellKind::Cmd => {
+                    format!("{} /C '{}'", self.program, command_to_use_in_label)
+                }
+                ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
+                    let interactivity = self.interactive.then_some("-i ").unwrap_or_default();
+                    format!(
+                        "{PROGRAM} {interactivity}-c '{command_to_use_in_label}'",
+                        PROGRAM = self.program
+                    )
+                }
             }
         }
     }
+
+    pub fn redirect_stdin_to_dev_null(mut self) -> Self {
+        self.redirect_stdin = true;
+        self
+    }
+
     /// Returns the program and arguments to run this task in a shell.
     pub fn build(
         mut self,
@@ -249,11 +275,24 @@ impl ShellBuilder {
         task_args: &[String],
     ) -> (String, Vec<String>) {
         if let Some(task_command) = task_command {
-            let combined_command = task_args.iter().fold(task_command, |mut command, arg| {
+            let mut combined_command = task_args.iter().fold(task_command, |mut command, arg| {
                 command.push(' ');
                 command.push_str(&self.kind.to_shell_variable(arg));
                 command
             });
+            if self.redirect_stdin {
+                match self.kind {
+                    ShellKind::Posix | ShellKind::Nushell | ShellKind::Fish | ShellKind::Csh => {
+                        combined_command.push_str(" </dev/null");
+                    }
+                    ShellKind::PowerShell => {
+                        combined_command.insert_str(0, "$null | ");
+                    }
+                    ShellKind::Cmd => {
+                        combined_command.push_str("< NUL");
+                    }
+                }
+            }
 
             self.args
                 .extend(self.kind.args_for_shell(self.interactive, combined_command));

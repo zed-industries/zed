@@ -268,7 +268,7 @@ impl TabMatch {
             .flatten();
         let colored_icon = icon.color(git_status_color.unwrap_or_default());
 
-        let most_sever_diagostic_level = if show_diagnostics == ShowDiagnostics::Off {
+        let most_severe_diagnostic_level = if show_diagnostics == ShowDiagnostics::Off {
             None
         } else {
             let buffer_store = project.read(cx).buffer_store().read(cx);
@@ -287,7 +287,7 @@ impl TabMatch {
         };
 
         let decorations =
-            entry_diagnostic_aware_icon_decoration_and_color(most_sever_diagostic_level)
+            entry_diagnostic_aware_icon_decoration_and_color(most_severe_diagnostic_level)
                 .filter(|(d, _)| {
                     *d != IconDecorationKind::Triangle
                         || show_diagnostics != ShowDiagnostics::Errors
@@ -360,7 +360,12 @@ impl TabSwitcherDelegate {
         .detach();
     }
 
-    fn update_all_pane_matches(&mut self, query: String, window: &mut Window, cx: &mut App) {
+    fn update_all_pane_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -418,7 +423,7 @@ impl TabSwitcherDelegate {
 
         let selected_item_id = self.selected_item_id();
         self.matches = matches;
-        self.selected_index = self.compute_selected_index(selected_item_id);
+        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
     }
 
     fn update_matches(
@@ -477,7 +482,7 @@ impl TabSwitcherDelegate {
             a_score.cmp(&b_score)
         });
 
-        self.selected_index = self.compute_selected_index(selected_item_id);
+        self.selected_index = self.compute_selected_index(selected_item_id, window, cx);
     }
 
     fn selected_item_id(&self) -> Option<EntityId> {
@@ -486,7 +491,12 @@ impl TabSwitcherDelegate {
             .map(|tab_match| tab_match.item.item_id())
     }
 
-    fn compute_selected_index(&mut self, prev_selected_item_id: Option<EntityId>) -> usize {
+    fn compute_selected_index(
+        &mut self,
+        prev_selected_item_id: Option<EntityId>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> usize {
         if self.matches.is_empty() {
             return 0;
         }
@@ -508,8 +518,10 @@ impl TabSwitcherDelegate {
             return self.matches.len() - 1;
         }
 
+        // This only runs when initially opening the picker
+        // Index 0 is already active, so don't preselect it for switching.
         if self.matches.len() > 1 {
-            // Index 0 is active, so don't preselect it for switching.
+            self.set_selected_index(1, window, cx);
             return 1;
         }
 
@@ -637,10 +649,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let tab_match = self
-            .matches
-            .get(ix)
-            .expect("Invalid matches state: no element for index {ix}");
+        let tab_match = self.matches.get(ix)?;
 
         let params = TabContentParams {
             detail: Some(tab_match.detail),

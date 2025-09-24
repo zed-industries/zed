@@ -8,6 +8,7 @@ use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::B
 use http_client::http::{self, HeaderMap, HeaderValue};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode};
 use serde::{Deserialize, Serialize};
+pub use settings::{AnthropicAvailableModel as AvailableModel, ModelMode};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 
@@ -29,6 +30,24 @@ pub enum AnthropicModelMode {
     Thinking {
         budget_tokens: Option<u32>,
     },
+}
+
+impl From<ModelMode> for AnthropicModelMode {
+    fn from(value: ModelMode) -> Self {
+        match value {
+            ModelMode::Default => AnthropicModelMode::Default,
+            ModelMode::Thinking { budget_tokens } => AnthropicModelMode::Thinking { budget_tokens },
+        }
+    }
+}
+
+impl From<AnthropicModelMode> for ModelMode {
+    fn from(value: AnthropicModelMode) -> Self {
+        match value {
+            AnthropicModelMode::Default => ModelMode::Default,
+            AnthropicModelMode::Thinking { budget_tokens } => ModelMode::Thinking { budget_tokens },
+        }
+    }
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -363,17 +382,15 @@ pub async fn complete(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<Response, AnthropicError> {
     let uri = format!("{api_url}/v1/messages");
-    let beta_headers = Model::from_id(&request.model)
-        .map(|model| model.beta_headers())
-        .unwrap_or_else(|_| Model::DEFAULT_BETA_HEADERS.join(","));
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
         .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key)
+        .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
 
     let serialized_request =
@@ -409,8 +426,9 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<BoxStream<'static, Result<Event, AnthropicError>>, AnthropicError> {
-    stream_completion_with_rate_limit_info(client, api_url, api_key, request)
+    stream_completion_with_rate_limit_info(client, api_url, api_key, request, beta_headers)
         .await
         .map(|output| output.0)
 }
@@ -506,6 +524,7 @@ pub async fn stream_completion_with_rate_limit_info(
     api_url: &str,
     api_key: &str,
     request: Request,
+    beta_headers: String,
 ) -> Result<
     (
         BoxStream<'static, Result<Event, AnthropicError>>,
@@ -518,15 +537,13 @@ pub async fn stream_completion_with_rate_limit_info(
         stream: true,
     };
     let uri = format!("{api_url}/v1/messages");
-    let beta_headers = Model::from_id(&request.base.model)
-        .map(|model| model.beta_headers())
-        .unwrap_or_else(|_| Model::DEFAULT_BETA_HEADERS.join(","));
+
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Anthropic-Version", "2023-06-01")
         .header("Anthropic-Beta", beta_headers)
-        .header("X-Api-Key", api_key)
+        .header("X-Api-Key", api_key.trim())
         .header("Content-Type", "application/json");
     let serialized_request =
         serde_json::to_string(&request).map_err(AnthropicError::SerializeRequest)?;

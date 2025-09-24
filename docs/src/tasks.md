@@ -45,7 +45,7 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     // Whether to show the task line in the output of the spawned task, defaults to `true`.
     "show_summary": true,
     // Whether to show the command line in the output of the spawned task, defaults to `true`.
-    "show_output": true
+    "show_command": true
     // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     // "tags": []
   }
@@ -132,6 +132,27 @@ Or explicitly include escaped quotes like so:
 }
 ```
 
+### Task filtering based on variables
+
+Task definitions with variables which are not present at the moment the task list is determined are filtered out.
+For example, the following task will appear in the spawn modal only if there is a text selection:
+
+```json
+{
+  "label": "selected text",
+  "command": "echo \"$ZED_SELECTED_TEXT\""
+}
+```
+
+Set default values to such variables to have such tasks always displayed:
+
+```json
+{
+  "label": "selected text with default",
+  "command": "echo \"${ZED_SELECTED_TEXT:no text selected}\""
+}
+```
+
 ## Oneshot tasks
 
 The same task modal opened via `task: spawn` supports arbitrary bash-like command execution: type a command inside the modal text field, and use `opt-enter` to spawn it.
@@ -144,6 +165,21 @@ You can also adjust the currently selected task in a modal (`tab` is the default
 
 You can use the `cmd` modifier when spawning a task via a modal; tasks spawned this way will not have their usage count increased (thus, they will not be respawned with `task: rerun` and they won't have a high rank in the task modal).
 The intended use of ephemeral tasks is to stay in the flow with continuous `task: rerun` usage.
+
+### More task rerun control
+
+By default, tasks capture their variables into a context once, and this "resolved task" is being rerun always.
+
+This can be controlled with the `"reevaluate_context"` argument to the task: setting it to `true` will force the task to be reevaluated before each run.
+
+```json
+{
+  "context": "Workspace",
+  "bindings": {
+    "alt-t": ["task::Rerun", { "reevaluate_context": true }]
+  }
+}
+```
 
 ## Custom keybindings for tasks
 

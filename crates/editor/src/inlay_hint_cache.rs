@@ -20,12 +20,14 @@ use anyhow::Context as _;
 use clock::Global;
 use futures::future;
 use gpui::{AppContext as _, AsyncApp, Context, Entity, Task, Window};
-use language::{Buffer, BufferSnapshot, language_settings::InlayHintKind};
+use language::{
+    Buffer, BufferSnapshot,
+    language_settings::{InlayHintKind, InlayHintSettings},
+};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
 
 use collections::{HashMap, HashSet, hash_map};
-use language::language_settings::InlayHintSettings;
 use smol::lock::Semaphore;
 use sum_tree::Bias;
 use text::{BufferId, ToOffset, ToPoint};
@@ -1301,13 +1303,13 @@ pub mod tests {
     use futures::StreamExt;
     use gpui::{AppContext as _, Context, SemanticVersion, TestAppContext, WindowHandle};
     use itertools::Itertools as _;
-    use language::{Capability, FakeLspAdapter, language_settings::AllLanguageSettingsContent};
+    use language::{Capability, FakeLspAdapter};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use lsp::FakeLanguageServer;
     use parking_lot::Mutex;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{AllLanguageSettingsContent, InlayHintSettingsContent, SettingsStore};
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use text::Point;
     use util::path;
@@ -1318,15 +1320,17 @@ pub mod tests {
     async fn test_basic_cache_update_with_duplicate_hints(cx: &mut gpui::TestAppContext) {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(allowed_hint_kinds.contains(&Some(InlayHintKind::Type))),
+                show_parameter_hints: Some(
+                    allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                ),
+                show_other_hints: Some(allowed_hint_kinds.contains(&None)),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1339,7 +1343,7 @@ pub mod tests {
                         let i = task_lsp_request_count.fetch_add(1, Ordering::Release) + 1;
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
                         Ok(Some(vec![lsp::InlayHint {
                             position: lsp::Position::new(0, i),
@@ -1428,15 +1432,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_cache_update_on_lsp_completion_tasks(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1449,7 +1453,7 @@ pub mod tests {
                     async move {
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
                         let current_call_id =
                             Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
@@ -1535,15 +1539,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_no_hint_updates_for_unrelated_language_files(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1594,7 +1598,7 @@ pub mod tests {
                                             "Rust" => {
                                                 assert_eq!(
                                                     params.text_document.uri,
-                                                    lsp::Url::from_file_path(path!("/a/main.rs"))
+                                                    lsp::Uri::from_file_path(path!("/a/main.rs"))
                                                         .unwrap(),
                                                 );
                                                 rs_lsp_request_count.fetch_add(1, Ordering::Release)
@@ -1603,7 +1607,7 @@ pub mod tests {
                                             "Markdown" => {
                                                 assert_eq!(
                                                     params.text_document.uri,
-                                                    lsp::Url::from_file_path(path!("/a/other.md"))
+                                                    lsp::Uri::from_file_path(path!("/a/other.md"))
                                                         .unwrap(),
                                                 );
                                                 md_lsp_request_count.fetch_add(1, Ordering::Release)
@@ -1765,15 +1769,17 @@ pub mod tests {
     async fn test_hint_setting_changes(cx: &mut gpui::TestAppContext) {
         let allowed_hint_kinds = HashSet::from_iter([None, Some(InlayHintKind::Type)]);
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: allowed_hint_kinds.contains(&None),
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(allowed_hint_kinds.contains(&Some(InlayHintKind::Type))),
+                show_parameter_hints: Some(
+                    allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                ),
+                show_other_hints: Some(allowed_hint_kinds.contains(&None)),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1789,7 +1795,7 @@ pub mod tests {
                         async move {
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(file_with_hints).unwrap(),
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
                             );
                             Ok(Some(vec![
                                 lsp::InlayHint {
@@ -1926,16 +1932,19 @@ pub mod tests {
             ),
         ] {
             update_test_language_settings(cx, |settings| {
-                settings.defaults.inlay_hints = Some(InlayHintSettings {
-                    show_value_hints: true,
-                    enabled: true,
-                    edit_debounce_ms: 0,
-                    scroll_debounce_ms: 0,
-                    show_type_hints: new_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                    show_parameter_hints: new_allowed_hint_kinds
-                        .contains(&Some(InlayHintKind::Parameter)),
-                    show_other_hints: new_allowed_hint_kinds.contains(&None),
-                    show_background: false,
+                settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                    show_value_hints: Some(true),
+                    enabled: Some(true),
+                    edit_debounce_ms: Some(0),
+                    scroll_debounce_ms: Some(0),
+                    show_type_hints: Some(
+                        new_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                    ),
+                    show_parameter_hints: Some(
+                        new_allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                    ),
+                    show_other_hints: Some(new_allowed_hint_kinds.contains(&None)),
+                    show_background: Some(false),
                     toggle_on_modifiers_press: None,
                 })
             });
@@ -1970,16 +1979,19 @@ pub mod tests {
 
         let another_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Type)]);
         update_test_language_settings(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: false,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: another_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: another_allowed_hint_kinds
-                    .contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: another_allowed_hint_kinds.contains(&None),
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(false),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(
+                    another_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                ),
+                show_parameter_hints: Some(
+                    another_allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                ),
+                show_other_hints: Some(another_allowed_hint_kinds.contains(&None)),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2027,16 +2039,19 @@ pub mod tests {
 
         let final_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Parameter)]);
         update_test_language_settings(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: final_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
-                show_parameter_hints: final_allowed_hint_kinds
-                    .contains(&Some(InlayHintKind::Parameter)),
-                show_other_hints: final_allowed_hint_kinds.contains(&None),
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(
+                    final_allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
+                ),
+                show_parameter_hints: Some(
+                    final_allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
+                ),
+                show_other_hints: Some(final_allowed_hint_kinds.contains(&None)),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2102,15 +2117,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_hint_request_cancellation(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2127,7 +2142,7 @@ pub mod tests {
                             let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(file_with_hints).unwrap(),
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
                             );
                             Ok(Some(vec![lsp::InlayHint {
                                 position: lsp::Position::new(0, i),
@@ -2239,15 +2254,15 @@ pub mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_large_buffer_inlay_requests_split(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2290,7 +2305,7 @@ pub mod tests {
                                 async move {
                                     assert_eq!(
                                         params.text_document.uri,
-                                        lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                        lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                     );
 
                                     task_lsp_request_ranges.lock().push(params.range);
@@ -2540,15 +2555,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_multiple_excerpts_large_multibuffer(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2633,11 +2648,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/other.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
@@ -2864,15 +2879,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_excerpts_removed(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: false,
-                show_parameter_hints: false,
-                show_other_hints: false,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(false),
+                show_parameter_hints: Some(false),
+                show_other_hints: Some(false),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -2944,11 +2959,11 @@ pub mod tests {
                 let task_editor_edited = Arc::clone(&closure_editor_edited);
                 async move {
                     let hint_text = if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/main.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap()
                     {
                         "main hint"
                     } else if params.text_document.uri
-                        == lsp::Url::from_file_path(path!("/a/other.rs")).unwrap()
+                        == lsp::Uri::from_file_path(path!("/a/other.rs")).unwrap()
                     {
                         "other hint"
                     } else {
@@ -3041,15 +3056,15 @@ pub mod tests {
             .unwrap();
 
         update_test_language_settings(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3074,15 +3089,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_inside_char_boundary_range_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3116,7 +3131,7 @@ pub mod tests {
                             async move {
                                 assert_eq!(
                                     params.text_document.uri,
-                                    lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                    lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                                 );
                                 let query_start = params.range.start;
                                 Ok(Some(vec![lsp::InlayHint {
@@ -3167,15 +3182,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_toggle_inlay_hints(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: false,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(false),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3188,7 +3203,7 @@ pub mod tests {
                     async move {
                         assert_eq!(
                             params.text_document.uri,
-                            lsp::Url::from_file_path(file_with_hints).unwrap(),
+                            lsp::Uri::from_file_path(file_with_hints).unwrap(),
                         );
 
                         let i = lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -3244,15 +3259,15 @@ pub mod tests {
             .unwrap();
 
         update_test_language_settings(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3305,15 +3320,15 @@ pub mod tests {
     #[gpui::test]
     async fn test_inlays_at_the_same_place(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                show_value_hints: true,
-                enabled: true,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -3351,7 +3366,7 @@ pub mod tests {
                         move |params, _| async move {
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path(path!("/a/main.rs")).unwrap(),
+                                lsp::Uri::from_file_path(path!("/a/main.rs")).unwrap(),
                             );
                             Ok(Some(
                                 serde_json::from_value(json!([

@@ -414,7 +414,7 @@ impl RulesLibrary {
         });
         Self {
             title_bar: if !cfg!(target_os = "macos") {
-                Some(cx.new(|_| PlatformTitleBar::new("rules-library-title-bar")))
+                Some(cx.new(|cx| PlatformTitleBar::new("rules-library-title-bar", cx)))
             } else {
                 None
             },
@@ -612,7 +612,7 @@ impl RulesLibrary {
                     Ok(rule) => {
                         let title_editor = cx.new(|cx| {
                             let mut editor = Editor::single_line(window, cx);
-                            editor.set_placeholder_text("Untitled", cx);
+                            editor.set_placeholder_text("Untitled", window, cx);
                             editor.set_text(rule_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);

@@ -7,8 +7,7 @@ use super::{
 use crate::{
     InlayHint, InlayHintLabel, ProjectEnvironment, ResolveState,
     debugger::session::SessionQuirks,
-    project_settings::ProjectSettings,
-    terminals::{SshCommand, wrap_for_ssh},
+    project_settings::{DapBinary, ProjectSettings},
     worktree_store::WorktreeStore,
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -31,10 +30,11 @@ use futures::{
 };
 use gpui::{App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task};
 use http_client::HttpClient;
-use language::{Buffer, LanguageToolchainStore, language_settings::InlayHintKind};
+use language::{Buffer, LanguageToolchainStore};
 use node_runtime::NodeRuntime;
+use settings::InlayHintKind;
 
-use remote::{SshInfo, SshRemoteClient, ssh_session::SshArgs};
+use remote::RemoteClient;
 use rpc::{
     AnyProtoClient, TypedEnvelope,
     proto::{self},
@@ -68,7 +68,7 @@ pub enum DapStoreEvent {
 
 enum DapStoreMode {
     Local(LocalDapStore),
-    Ssh(SshDapStore),
+    Remote(RemoteDapStore),
     Collab,
 }
 
@@ -80,8 +80,8 @@ pub struct LocalDapStore {
     toolchain_store: Arc<dyn LanguageToolchainStore>,
 }
 
-pub struct SshDapStore {
-    ssh_client: Entity<SshRemoteClient>,
+pub struct RemoteDapStore {
+    remote_client: Entity<RemoteClient>,
     upstream_client: AnyProtoClient,
     upstream_project_id: u64,
 }
@@ -147,16 +147,16 @@ impl DapStore {
         Self::new(mode, breakpoint_store, worktree_store, cx)
     }
 
-    pub fn new_ssh(
+    pub fn new_remote(
         project_id: u64,
-        ssh_client: Entity<SshRemoteClient>,
+        remote_client: Entity<RemoteClient>,
         breakpoint_store: Entity<BreakpointStore>,
         worktree_store: Entity<WorktreeStore>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mode = DapStoreMode::Ssh(SshDapStore {
-            upstream_client: ssh_client.read(cx).proto_client(),
-            ssh_client,
+        let mode = DapStoreMode::Remote(RemoteDapStore {
+            upstream_client: remote_client.read(cx).proto_client(),
+            remote_client,
             upstream_project_id: project_id,
         });
 
@@ -211,8 +211,10 @@ impl DapStore {
                 let dap_settings = ProjectSettings::get(Some(settings_location), cx)
                     .dap
                     .get(&adapter.name());
-                let user_installed_path =
-                    dap_settings.and_then(|s| s.binary.as_ref().map(PathBuf::from));
+                let user_installed_path = dap_settings.and_then(|s| match &s.binary {
+                    DapBinary::Default => None,
+                    DapBinary::Custom(binary) => Some(PathBuf::from(binary)),
+                });
                 let user_args = dap_settings.map(|s| s.args.clone());
 
                 let delegate = self.delegate(worktree, console, cx);
@@ -242,64 +244,57 @@ impl DapStore {
                     Ok(binary)
                 })
             }
-            DapStoreMode::Ssh(ssh) => {
-                let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {
-                    session_id: session_id.to_proto(),
-                    project_id: ssh.upstream_project_id,
-                    worktree_id: worktree.read(cx).id().to_proto(),
-                    definition: Some(definition.to_proto()),
-                });
-                let ssh_client = ssh.ssh_client.clone();
+            DapStoreMode::Remote(remote) => {
+                let request = remote
+                    .upstream_client
+                    .request(proto::GetDebugAdapterBinary {
+                        session_id: session_id.to_proto(),
+                        project_id: remote.upstream_project_id,
+                        worktree_id: worktree.read(cx).id().to_proto(),
+                        definition: Some(definition.to_proto()),
+                    });
+                let remote = remote.remote_client.clone();
 
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let (mut ssh_command, envs, path_style, ssh_shell) =
-                        ssh_client.read_with(cx, |ssh, _| {
-                            let SshInfo {
-                                args: SshArgs { arguments, envs },
-                                path_style,
-                                shell,
-                            } = ssh.ssh_info().context("SSH arguments not found")?;
-                            anyhow::Ok((
-                                SshCommand { arguments },
-                                envs.unwrap_or_default(),
-                                path_style,
-                                shell,
-                            ))
-                        })??;
 
-                    let mut connection = None;
+                    let port_forwarding;
+                    let connection;
                     if let Some(c) = binary.connection {
-                        let local_bind_addr = Ipv4Addr::LOCALHOST;
-                        let port =
-                            dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
-
-                        ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
+                        let host = Ipv4Addr::LOCALHOST;
+                        let port;
+                        if remote.read_with(cx, |remote, _cx| remote.shares_network_interface())? {
+                            port = c.port;
+                            port_forwarding = None;
+                        } else {
+                            port = dap::transport::TcpTransport::unused_port(host).await?;
+                            port_forwarding = Some((port, c.host.to_string(), c.port));
+                        }
                         connection = Some(TcpArguments {
                             port,
-                            host: local_bind_addr,
+                            host,
                             timeout: c.timeout,
                         })
+                    } else {
+                        port_forwarding = None;
+                        connection = None;
                     }
 
-                    let (program, args) = wrap_for_ssh(
-                        &ssh_shell,
-                        &ssh_command,
-                        binary
-                            .command
-                            .as_ref()
-                            .map(|command| (command, &binary.arguments)),
-                        binary.cwd.as_deref(),
-                        binary.envs,
-                        None,
-                        path_style,
-                    );
+                    let command = remote.read_with(cx, |remote, _cx| {
+                        remote.build_command(
+                            binary.command,
+                            &binary.arguments,
+                            &binary.envs,
+                            binary.cwd.map(|path| path.display().to_string()),
+                            port_forwarding,
+                        )
+                    })??;
 
                     Ok(DebugAdapterBinary {
-                        command: Some(program),
-                        arguments: args,
-                        envs,
+                        command: Some(command.program),
+                        arguments: command.args,
+                        envs: command.env,
                         cwd: None,
                         connection,
                         request_args: binary.request_args,
@@ -365,9 +360,9 @@ impl DapStore {
                     )))
                 }
             }
-            DapStoreMode::Ssh(ssh) => {
-                let request = ssh.upstream_client.request(proto::RunDebugLocators {
-                    project_id: ssh.upstream_project_id,
+            DapStoreMode::Remote(remote) => {
+                let request = remote.upstream_client.request(proto::RunDebugLocators {
+                    project_id: remote.upstream_project_id,
                     build_command: Some(build_command.to_proto()),
                     locator: locator_name.to_owned(),
                 });

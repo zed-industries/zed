@@ -22,16 +22,15 @@ use futures::{
     channel::oneshot, future::BoxFuture,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, WeakEntity, actions};
-use http_client::{HttpClient, HttpClientWithUrl, http};
+use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
 use parking_lot::RwLock;
 use postage::watch;
 use proxy::connect_proxy_stream;
 use rand::prelude::*;
 use release_channel::{AppVersion, ReleaseChannel};
 use rpc::proto::{AnyTypedEnvelope, EnvelopedMessage, PeerId, RequestMessage};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsContent};
 use std::{
     any::TypeId,
     convert::TryFrom,
@@ -96,35 +95,22 @@ actions!(
     ]
 );
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct ClientSettingsContent {
-    server_url: Option<String>,
-}
-
 #[derive(Deserialize)]
 pub struct ClientSettings {
     pub server_url: String,
 }
 
 impl Settings for ClientSettings {
-    const KEY: Option<&'static str> = None;
-
-    type FileContent = ClientSettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        let mut result = sources.json_merge::<Self>()?;
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
         if let Some(server_url) = &*ZED_SERVER_URL {
-            result.server_url.clone_from(server_url)
+            return Self {
+                server_url: server_url.clone(),
+            };
         }
-        Ok(result)
+        Self {
+            server_url: content.server_url.clone().unwrap(),
+        }
     }
-
-    fn import_from_vscode(_vscode: &settings::VsCodeSettings, _current: &mut Self::FileContent) {}
-}
-
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ProxySettingsContent {
-    proxy: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -132,22 +118,28 @@ pub struct ProxySettings {
     pub proxy: Option<String>,
 }
 
+impl ProxySettings {
+    pub fn proxy_url(&self) -> Option<Url> {
+        self.proxy
+            .as_ref()
+            .and_then(|input| {
+                input
+                    .parse::<Url>()
+                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                    .ok()
+            })
+            .or_else(read_proxy_from_env)
+    }
+}
+
 impl Settings for ProxySettings {
-    const KEY: Option<&'static str> = None;
-
-    type FileContent = ProxySettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        Ok(Self {
-            proxy: sources
-                .user
-                .or(sources.server)
-                .and_then(|value| value.proxy.clone())
-                .or(sources.default.proxy.clone()),
-        })
+    fn from_settings(content: &settings::SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            proxy: content.proxy.clone(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
         vscode.string_setting("http.proxy", &mut current.proxy);
     }
 }
@@ -287,6 +279,7 @@ pub enum Status {
     },
     ConnectionLost,
     Reauthenticating,
+    Reauthenticated,
     Reconnecting,
     ReconnectionError {
         next_reconnection: Instant,
@@ -296,6 +289,21 @@ pub enum Status {
 impl Status {
     pub fn is_connected(&self) -> bool {
         matches!(self, Self::Connected { .. })
+    }
+
+    pub fn was_connected(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionLost
+                | Self::Reauthenticating
+                | Self::Reauthenticated
+                | Self::Reconnecting
+        )
+    }
+
+    /// Returns whether the client is currently connected or was connected at some point.
+    pub fn is_or_was_connected(&self) -> bool {
+        self.is_connected() || self.was_connected()
     }
 
     pub fn is_signing_in(&self) -> bool {
@@ -510,38 +518,33 @@ pub struct TelemetrySettings {
     pub metrics: bool,
 }
 
-/// Control what info is collected by Zed.
-#[derive(Default, Clone, Serialize, Deserialize, JsonSchema, Debug)]
-pub struct TelemetrySettingsContent {
-    /// Send debug info like crash reports.
-    ///
-    /// Default: true
-    pub diagnostics: Option<bool>,
-    /// Send anonymized usage data like what languages you're using Zed with.
-    ///
-    /// Default: true
-    pub metrics: Option<bool>,
-}
-
 impl settings::Settings for TelemetrySettings {
-    const KEY: Option<&'static str> = Some("telemetry");
-
-    type FileContent = TelemetrySettingsContent;
-
-    fn load(sources: SettingsSources<Self::FileContent>, _: &mut App) -> Result<Self> {
-        sources.json_merge()
+    fn from_settings(content: &SettingsContent, _cx: &mut App) -> Self {
+        Self {
+            diagnostics: content.telemetry.as_ref().unwrap().diagnostics.unwrap(),
+            metrics: content.telemetry.as_ref().unwrap().metrics.unwrap(),
+        }
     }
 
-    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut Self::FileContent) {
-        vscode.enum_setting("telemetry.telemetryLevel", &mut current.metrics, |s| {
+    fn import_from_vscode(vscode: &settings::VsCodeSettings, current: &mut SettingsContent) {
+        let mut telemetry = settings::TelemetrySettingsContent::default();
+        vscode.enum_setting("telemetry.telemetryLevel", &mut telemetry.metrics, |s| {
             Some(s == "all")
         });
-        vscode.enum_setting("telemetry.telemetryLevel", &mut current.diagnostics, |s| {
-            Some(matches!(s, "all" | "error" | "crash"))
-        });
+        vscode.enum_setting(
+            "telemetry.telemetryLevel",
+            &mut telemetry.diagnostics,
+            |s| Some(matches!(s, "all" | "error" | "crash")),
+        );
         // we could translate telemetry.telemetryLevel, but just because users didn't want
         // to send microsoft telemetry doesn't mean they don't want to send it to zed. their
         // all/error/crash/off correspond to combinations of our "diagnostics" and "metrics".
+        if let Some(diagnostics) = telemetry.diagnostics {
+            current.telemetry.get_or_insert_default().diagnostics = Some(diagnostics)
+        }
+        if let Some(metrics) = telemetry.metrics {
+            current.telemetry.get_or_insert_default().metrics = Some(metrics)
+        }
     }
 }
 
@@ -675,7 +678,7 @@ impl Client {
                     #[cfg(any(test, feature = "test-support"))]
                     let mut rng = StdRng::seed_from_u64(0);
                     #[cfg(not(any(test, feature = "test-support")))]
-                    let mut rng = StdRng::from_entropy();
+                    let mut rng = StdRng::from_os_rng();
 
                     let mut delay = INITIAL_RECONNECTION_DELAY;
                     loop {
@@ -705,8 +708,9 @@ impl Client {
                                 },
                                 cx,
                             );
-                            let jitter =
-                                Duration::from_millis(rng.gen_range(0..delay.as_millis() as u64));
+                            let jitter = Duration::from_millis(
+                                rng.random_range(0..delay.as_millis() as u64),
+                            );
                             cx.background_executor().timer(delay + jitter).await;
                             delay = cmp::min(delay * 2, MAX_RECONNECTION_DELAY);
                         } else {
@@ -857,11 +861,13 @@ impl Client {
         try_provider: bool,
         cx: &AsyncApp,
     ) -> Result<Credentials> {
-        if self.status().borrow().is_signed_out() {
+        let is_reauthenticating = if self.status().borrow().is_signed_out() {
             self.set_status(Status::Authenticating, cx);
+            false
         } else {
             self.set_status(Status::Reauthenticating, cx);
-        }
+            true
+        };
 
         let mut credentials = None;
 
@@ -919,7 +925,14 @@ impl Client {
         self.cloud_client
             .set_credentials(credentials.user_id as u32, credentials.access_token.clone());
         self.state.write().credentials = Some(credentials.clone());
-        self.set_status(Status::Authenticated, cx);
+        self.set_status(
+            if is_reauthenticating {
+                Status::Reauthenticated
+            } else {
+                Status::Authenticated
+            },
+            cx,
+        );
 
         Ok(credentials)
     }
@@ -1034,6 +1047,7 @@ impl Client {
             | Status::Authenticating
             | Status::AuthenticationError
             | Status::Reauthenticating
+            | Status::Reauthenticated
             | Status::ReconnectionError { .. } => false,
             Status::Connected { .. } | Status::Connecting | Status::Reconnecting => {
                 return ConnectionResult::Result(Ok(()));
@@ -1670,21 +1684,10 @@ impl Client {
             );
             cx.spawn(async move |_| match future.await {
                 Ok(()) => {
-                    log::debug!(
-                        "rpc message handled. client_id:{}, sender_id:{:?}, type:{}",
-                        client_id,
-                        original_sender_id,
-                        type_name
-                    );
+                    log::debug!("rpc message handled. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}");
                 }
                 Err(error) => {
-                    log::error!(
-                        "error handling message. client_id:{}, sender_id:{:?}, type:{}, error:{:?}",
-                        client_id,
-                        original_sender_id,
-                        type_name,
-                        error
-                    );
+                    log::error!("error handling message. client_id:{client_id}, sender_id:{original_sender_id:?}, type:{type_name}, error:{error:#}");
                 }
             })
             .detach();

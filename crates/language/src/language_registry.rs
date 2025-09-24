@@ -1,14 +1,11 @@
 use crate::{
     CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
     LanguageServerName, LspAdapter, ManifestName, PLAIN_TEXT, ToolchainLister,
-    language_settings::{
-        AllLanguageSettingsContent, LanguageSettingsContent, all_language_settings,
-    },
-    task_context::ContextProvider,
-    with_parser,
+    language_settings::all_language_settings, task_context::ContextProvider, with_parser,
 };
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, HashMap, HashSet, hash_map};
+use settings::{AllLanguageSettingsContent, LanguageSettingsContent};
 
 use futures::{
     Future,
@@ -374,14 +371,23 @@ impl LanguageRegistry {
     pub fn register_available_lsp_adapter(
         &self,
         name: LanguageServerName,
-        load: impl Fn() -> Arc<dyn LspAdapter> + 'static + Send + Sync,
+        adapter: Arc<dyn LspAdapter>,
     ) {
-        self.state.write().available_lsp_adapters.insert(
+        let mut state = self.state.write();
+
+        if adapter.is_extension()
+            && let Some(existing_adapter) = state.all_lsp_adapters.get(&name)
+            && !existing_adapter.adapter.is_extension()
+        {
+            log::warn!(
+                "not registering extension-provided language server {name:?}, since a builtin language server exists with that name",
+            );
+            return;
+        }
+
+        state.available_lsp_adapters.insert(
             name,
-            Arc::new(move || {
-                let lsp_adapter = load();
-                CachedLspAdapter::new(lsp_adapter)
-            }),
+            Arc::new(move || CachedLspAdapter::new(adapter.clone())),
         );
     }
 
@@ -396,13 +402,21 @@ impl LanguageRegistry {
         Some(load_lsp_adapter())
     }
 
-    pub fn register_lsp_adapter(
-        &self,
-        language_name: LanguageName,
-        adapter: Arc<dyn LspAdapter>,
-    ) -> Arc<CachedLspAdapter> {
-        let cached = CachedLspAdapter::new(adapter);
+    pub fn register_lsp_adapter(&self, language_name: LanguageName, adapter: Arc<dyn LspAdapter>) {
         let mut state = self.state.write();
+
+        if adapter.is_extension()
+            && let Some(existing_adapter) = state.all_lsp_adapters.get(&adapter.name())
+            && !existing_adapter.adapter.is_extension()
+        {
+            log::warn!(
+                "not registering extension-provided language server {:?} for language {language_name:?}, since a builtin language server exists with that name",
+                adapter.name(),
+            );
+            return;
+        }
+
+        let cached = CachedLspAdapter::new(adapter);
         state
             .lsp_adapters
             .entry(language_name)
@@ -411,8 +425,6 @@ impl LanguageRegistry {
         state
             .all_lsp_adapters
             .insert(cached.name.clone(), cached.clone());
-
-        cached
     }
 
     /// Register a fake language server and adapter
@@ -632,6 +644,24 @@ impl LanguageRegistry {
             }
         });
         async move { rx.await? }
+    }
+
+    pub async fn language_for_id(self: &Arc<Self>, id: LanguageId) -> Result<Arc<Language>> {
+        let available_language = {
+            let state = self.state.read();
+
+            let Some(available_language) = state
+                .available_languages
+                .iter()
+                .find(|lang| lang.id == id)
+                .cloned()
+            else {
+                anyhow::bail!(LanguageNotFound);
+            };
+            available_language
+        };
+
+        self.load_language(&available_language).await?
     }
 
     pub fn language_name_for_extension(self: &Arc<Self>, extension: &str) -> Option<LanguageName> {
@@ -1160,7 +1190,7 @@ impl LanguageRegistryState {
             language.set_theme(theme.syntax());
         }
         self.language_settings.languages.0.insert(
-            language.name(),
+            language.name().0,
             LanguageSettingsContent {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,

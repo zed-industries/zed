@@ -66,9 +66,9 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
                     let n = n.base10_parse::<f32>().unwrap();
                     quote! {
                         DynamicSpacing::#variant => match ThemeSettings::get_global(cx).ui_density {
-                            UiDensity::Compact => (#n - 4.0).max(0.0) / BASE_REM_SIZE_IN_PX,
-                            UiDensity::Default => #n / BASE_REM_SIZE_IN_PX,
-                            UiDensity::Comfortable => (#n + 4.0) / BASE_REM_SIZE_IN_PX,
+                            ::theme::UiDensity::Compact => (#n - 4.0).max(0.0) / BASE_REM_SIZE_IN_PX,
+                            ::theme::UiDensity::Default => #n / BASE_REM_SIZE_IN_PX,
+                            ::theme::UiDensity::Comfortable => (#n + 4.0) / BASE_REM_SIZE_IN_PX,
                         }
                     }
                 }
@@ -78,9 +78,9 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
                     let c = c.base10_parse::<f32>().unwrap();
                     quote! {
                         DynamicSpacing::#variant => match ThemeSettings::get_global(cx).ui_density {
-                            UiDensity::Compact => #a / BASE_REM_SIZE_IN_PX,
-                            UiDensity::Default => #b / BASE_REM_SIZE_IN_PX,
-                            UiDensity::Comfortable => #c / BASE_REM_SIZE_IN_PX,
+                            ::theme::UiDensity::Compact => #a / BASE_REM_SIZE_IN_PX,
+                            ::theme::UiDensity::Default => #b / BASE_REM_SIZE_IN_PX,
+                            ::theme::UiDensity::Comfortable => #c / BASE_REM_SIZE_IN_PX,
                         }
                     }
                 }

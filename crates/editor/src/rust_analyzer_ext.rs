@@ -200,7 +200,7 @@ pub fn expand_macro_recursively(
         }
 
         let buffer = project
-            .update(cx, |project, cx| project.create_buffer(cx))?
+            .update(cx, |project, cx| project.create_buffer(false, cx))?
             .await?;
         workspace.update_in(cx, |workspace, window, cx| {
             buffer.update(cx, |buffer, cx| {
@@ -319,7 +319,7 @@ fn cancel_flycheck_action(
     };
     let buffer_id = editor
         .selections
-        .disjoint_anchors()
+        .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
             let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
@@ -344,7 +344,7 @@ fn run_flycheck_action(
     };
     let buffer_id = editor
         .selections
-        .disjoint_anchors()
+        .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
             let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;
@@ -369,7 +369,7 @@ fn clear_flycheck_action(
     };
     let buffer_id = editor
         .selections
-        .disjoint_anchors()
+        .disjoint_anchors_arc()
         .iter()
         .find_map(|selection| {
             let buffer_id = selection.start.buffer_id.or(selection.end.buffer_id)?;

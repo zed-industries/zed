@@ -151,9 +151,9 @@ impl From<Hsla> for Rgba {
         };
 
         Rgba {
-            r,
-            g,
-            b,
+            r: r.clamp(0., 1.),
+            g: g.clamp(0., 1.),
+            b: b.clamp(0., 1.),
             a: color.a,
         }
     }
@@ -473,6 +473,11 @@ impl Hsla {
         self.a == 0.0
     }
 
+    /// Returns true if the HSLA color is fully opaque, false otherwise.
+    pub fn is_opaque(&self) -> bool {
+        self.a == 1.0
+    }
+
     /// Blends `other` on top of `self` based on `other`'s alpha value. The resulting color is a combination of `self`'s and `other`'s colors.
     ///
     /// If `other`'s alpha value is 1.0 or greater, `other` color is fully opaque, thus `other` is returned as the output color.
@@ -532,9 +537,10 @@ impl Hsla {
     ///
     /// Example:
     /// ```
-    /// let color = hlsa(0.7, 1.0, 0.5, 0.7); // A saturated blue
+    /// use gpui::hsla;
+    /// let color = hsla(0.7, 1.0, 0.5, 0.7); // A saturated blue
     /// let faded_color = color.opacity(0.16);
-    /// assert_eq!(faded_color.a, 0.112);
+    /// assert!((faded_color.a - 0.112).abs() < 1e-6);
     /// ```
     ///
     /// This will return a blue color with around ~10% opacity,
@@ -563,6 +569,7 @@ impl Hsla {
     ///
     /// Example:
     /// ```
+    /// use gpui::hsla;
     /// let color = hsla(0.7, 1.0, 0.5, 0.7); // A saturated blue
     /// let faded_color = color.alpha(0.25);
     /// assert_eq!(faded_color.a, 0.25);

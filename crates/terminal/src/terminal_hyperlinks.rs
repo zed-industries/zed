@@ -79,7 +79,8 @@ pub(super) fn find_from_grid_point<T: EventListener>(
         Some((url, true, url_match))
     } else if let Some(url_match) = regex_match_at(term, point, &mut regex_searches.url_regex) {
         let url = term.bounds_to_string(*url_match.start(), *url_match.end());
-        Some((url, true, url_match))
+        let (sanitized_url, sanitized_match) = sanitize_url_punctuation(url, url_match, term);
+        Some((sanitized_url, true, sanitized_match))
     } else if let Some(python_match) =
         regex_match_at(term, point, &mut regex_searches.python_file_line_regex)
     {
@@ -164,6 +165,63 @@ pub(super) fn find_from_grid_point<T: EventListener>(
     })
 }
 
+fn sanitize_url_punctuation<T: EventListener>(
+    url: String,
+    url_match: Match,
+    term: &Term<T>,
+) -> (String, Match) {
+    let mut sanitized_url = url;
+    let mut chars_trimmed = 0;
+
+    // First, handle parentheses balancing using single traversal
+    let (open_parens, close_parens) =
+        sanitized_url
+            .chars()
+            .fold((0, 0), |(opens, closes), c| match c {
+                '(' => (opens + 1, closes),
+                ')' => (opens, closes + 1),
+                _ => (opens, closes),
+            });
+
+    // Trim unbalanced closing parentheses
+    if close_parens > open_parens {
+        let mut remaining_close = close_parens;
+        while sanitized_url.ends_with(')') && remaining_close > open_parens {
+            sanitized_url.pop();
+            chars_trimmed += 1;
+            remaining_close -= 1;
+        }
+    }
+
+    // Handle trailing periods
+    if sanitized_url.ends_with('.') {
+        let trailing_periods = sanitized_url
+            .chars()
+            .rev()
+            .take_while(|&c| c == '.')
+            .count();
+
+        if trailing_periods > 1 {
+            sanitized_url.truncate(sanitized_url.len() - trailing_periods);
+            chars_trimmed += trailing_periods;
+        } else if trailing_periods == 1
+            && let Some(second_last_char) = sanitized_url.chars().rev().nth(1)
+            && (second_last_char.is_alphanumeric() || second_last_char == '/')
+        {
+            sanitized_url.pop();
+            chars_trimmed += 1;
+        }
+    }
+
+    if chars_trimmed > 0 {
+        let new_end = url_match.end().sub(term, Boundary::Grid, chars_trimmed);
+        let sanitized_match = Match::new(*url_match.start(), new_end);
+        (sanitized_url, sanitized_match)
+    } else {
+        (sanitized_url, url_match)
+    }
+}
+
 fn is_path_surrounded_by_common_symbols(path: &str) -> bool {
     // Avoid detecting `[]` or `()` strings as paths, surrounded by common symbols
     path.len() > 2
@@ -231,6 +289,91 @@ mod tests {
                 "mailto:bob@example.com",
             ],
         );
+    }
+
+    #[test]
+    fn test_url_parentheses_sanitization() {
+        // Test our sanitize_url_parentheses function directly
+        let test_cases = vec![
+            // Cases that should be sanitized (unbalanced parentheses)
+            ("https://www.google.com/)", "https://www.google.com/"),
+            ("https://example.com/path)", "https://example.com/path"),
+            ("https://test.com/))", "https://test.com/"),
+            // Cases that should NOT be sanitized (balanced parentheses)
+            (
+                "https://en.wikipedia.org/wiki/Example_(disambiguation)",
+                "https://en.wikipedia.org/wiki/Example_(disambiguation)",
+            ),
+            ("https://test.com/(hello)", "https://test.com/(hello)"),
+            (
+                "https://example.com/path(1)(2)",
+                "https://example.com/path(1)(2)",
+            ),
+            // Edge cases
+            ("https://test.com/", "https://test.com/"),
+            ("https://example.com", "https://example.com"),
+        ];
+
+        for (input, expected) in test_cases {
+            // Create a minimal terminal for testing
+            let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
+
+            // Create a dummy match that spans the entire input
+            let start_point = AlacPoint::new(Line(0), Column(0));
+            let end_point = AlacPoint::new(Line(0), Column(input.len()));
+            let dummy_match = Match::new(start_point, end_point);
+
+            let (result, _) = sanitize_url_punctuation(input.to_string(), dummy_match, &term);
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_url_periods_sanitization() {
+        // Test URLs with trailing periods (sentence punctuation)
+        let test_cases = vec![
+            // Cases that should be sanitized (trailing periods likely punctuation)
+            ("https://example.com.", "https://example.com"),
+            (
+                "https://github.com/zed-industries/zed.",
+                "https://github.com/zed-industries/zed",
+            ),
+            (
+                "https://example.com/path/file.html.",
+                "https://example.com/path/file.html",
+            ),
+            (
+                "https://example.com/file.pdf.",
+                "https://example.com/file.pdf",
+            ),
+            ("https://example.com:8080.", "https://example.com:8080"),
+            ("https://example.com..", "https://example.com"),
+            (
+                "https://en.wikipedia.org/wiki/C.E.O.",
+                "https://en.wikipedia.org/wiki/C.E.O",
+            ),
+            // Cases that should NOT be sanitized (periods are part of URL structure)
+            (
+                "https://example.com/v1.0/api",
+                "https://example.com/v1.0/api",
+            ),
+            ("https://192.168.1.1", "https://192.168.1.1"),
+            ("https://sub.domain.com", "https://sub.domain.com"),
+        ];
+
+        for (input, expected) in test_cases {
+            // Create a minimal terminal for testing
+            let term = Term::new(Config::default(), &TermSize::new(80, 24), VoidListener);
+
+            // Create a dummy match that spans the entire input
+            let start_point = AlacPoint::new(Line(0), Column(0));
+            let end_point = AlacPoint::new(Line(0), Column(input.len()));
+            let dummy_match = Match::new(start_point, end_point);
+
+            // This test should initially fail since we haven't implemented period sanitization yet
+            let (result, _) = sanitize_url_punctuation(input.to_string(), dummy_match, &term);
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
     }
 
     #[test]
@@ -325,17 +468,6 @@ mod tests {
             )
         } };
 
-        ($($columns:literal),+; $($lines:expr),+; $hyperlink_kind:ident) => { {
-            use crate::terminal_hyperlinks::tests::line_cells_count;
-
-            let test_lines = vec![$($lines),+];
-            let total_cells = test_lines.iter().copied().map(line_cells_count).sum();
-
-            test_hyperlink!(
-                [ $($columns),+ ]; total_cells; test_lines.iter().copied(); $hyperlink_kind
-            )
-        } };
-
         ([ $($columns:expr),+ ]; $total_cells:expr; $lines:expr; $hyperlink_kind:ident) => { {
             use crate::terminal_hyperlinks::tests::{ test_hyperlink, HyperlinkKind };
 
@@ -361,9 +493,6 @@ mod tests {
         ///
         macro_rules! test_path {
             ($($lines:literal),+) => { test_hyperlink!($($lines),+; Path) };
-            ($($columns:literal),+; $($lines:literal),+) => {
-                test_hyperlink!($($columns),+; $($lines),+; Path)
-            };
         }
 
         #[test]
@@ -430,38 +559,51 @@ mod tests {
         }
 
         #[test]
+        fn quotes_and_brackets() {
+            test_path!("\"‹«/test/co👉ol.rs»:«4»›\"");
+            test_path!("'‹«/test/co👉ol.rs»:«4»›'");
+            test_path!("`‹«/test/co👉ol.rs»:«4»›`");
+
+            test_path!("[‹«/test/co👉ol.rs»:«4»›]");
+            test_path!("(‹«/test/co👉ol.rs»:«4»›)");
+            test_path!("{‹«/test/co👉ol.rs»:«4»›}");
+            test_path!("<‹«/test/co👉ol.rs»:«4»›>");
+
+            test_path!("[\"‹«/test/co👉ol.rs»:«4»›\"]");
+            test_path!("'(‹«/test/co👉ol.rs»:«4»›)'");
+        }
+
+        #[test]
         fn word_wide_chars() {
             // Rust paths
-            test_path!(4, 6, 12; "‹«/👉例/cool.rs»›");
-            test_path!(4, 6, 12; "‹«/例👈/cool.rs»›");
-            test_path!(4, 8, 16; "‹«/例/cool.rs»:«👉4»›");
-            test_path!(4, 8, 16; "‹«/例/cool.rs»:«4»:«👉2»›");
+            test_path!("‹«/👉例/cool.rs»›");
+            test_path!("‹«/例👈/cool.rs»›");
+            test_path!("‹«/例/cool.rs»:«👉4»›");
+            test_path!("‹«/例/cool.rs»:«4»:«👉2»›");
 
             // Cargo output
-            test_path!(4, 27, 30; "    Compiling Cool (‹«/👉例/Cool»›)");
-            test_path!(4, 27, 30; "    Compiling Cool (‹«/例👈/Cool»›)");
+            test_path!("    Compiling Cool (‹«/👉例/Cool»›)");
+            test_path!("    Compiling Cool (‹«/例👈/Cool»›)");
 
             // Python
-            test_path!(4, 11; "‹«👉例wesome.py»›");
-            test_path!(4, 11; "‹«例👈wesome.py»›");
-            test_path!(6, 17, 40; "    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
-            test_path!(6, 17, 40; "    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
+            test_path!("‹«👉例wesome.py»›");
+            test_path!("‹«例👈wesome.py»›");
+            test_path!("    ‹File \"«/👉例wesome.py»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/例👈wesome.py»\", line «42»›: Wat?");
         }
 
         #[test]
         fn non_word_wide_chars() {
             // Mojo diagnostic message
-            test_path!(4, 18, 38; "    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
-            test_path!(4, 18, 38; "    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
-            test_path!(4, 18, 38; "    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
-            test_path!(4, 18, 38; "    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awe👉some.🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome👉.🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.👉🔥»\", line «42»›: Wat?");
+            test_path!("    ‹File \"«/awesome.🔥👈»\", line «42»›: Wat?");
         }
 
         /// These likely rise to the level of being worth fixing.
         mod issues {
             #[test]
-            #[cfg_attr(not(target_os = "windows"), should_panic(expected = "Path = «例»"))]
-            #[cfg_attr(target_os = "windows", should_panic(expected = r#"Path = «C:\\例»"#))]
             // <https://github.com/alacritty/alacritty/issues/8586>
             fn issue_alacritty_8586() {
                 // Rust paths
@@ -546,21 +688,13 @@ mod tests {
         /// Minor issues arguably not important enough to fix/workaround...
         mod nits {
             #[test]
-            #[cfg_attr(
-                not(target_os = "windows"),
-                should_panic(expected = "Path = «/test/cool.rs(4»")
-            )]
-            #[cfg_attr(
-                target_os = "windows",
-                should_panic(expected = r#"Path = «C:\\test\\cool.rs(4»"#)
-            )]
             fn alacritty_bugs_with_two_columns() {
-                test_path!(2; "‹«/👉test/cool.rs»(«4»)›");
-                test_path!(2; "‹«/test/cool.rs»(«👉4»)›");
-                test_path!(2; "‹«/test/cool.rs»(«4»,«👉2»)›");
+                test_path!("‹«/👉test/cool.rs»(«4»)›");
+                test_path!("‹«/test/cool.rs»(«👉4»)›");
+                test_path!("‹«/test/cool.rs»(«4»,«👉2»)›");
 
                 // Python
-                test_path!(2; "‹«awe👉some.py»›");
+                test_path!("‹«awe👉some.py»›");
             }
 
             #[test]
@@ -648,9 +782,6 @@ mod tests {
         ///
         macro_rules! test_file_iri {
             ($file_iri:literal) => { { test_hyperlink!(concat!("‹«👉", $file_iri, "»›"); FileIri) } };
-            ($($columns:literal),+; $file_iri:literal) => { {
-                test_hyperlink!($($columns),+; concat!("‹«👉", $file_iri, "»›"); FileIri)
-            } };
         }
 
         #[cfg(not(target_os = "windows"))]
@@ -722,9 +853,6 @@ mod tests {
         ///
         macro_rules! test_iri {
             ($iri:literal) => { { test_hyperlink!(concat!("‹«👉", $iri, "»›"); Iri) } };
-            ($($columns:literal),+; $iri:literal) => { {
-                test_hyperlink!($($columns),+; concat!("‹«👉", $iri, "»›"); Iri)
-            } };
         }
 
         #[test]
@@ -755,26 +883,26 @@ mod tests {
         #[test]
         fn wide_chars() {
             // In the order they appear in URL_REGEX, except 'file://' which is treated as a path
-            test_iri!(4, 20; "ipfs://例🏃🦀/cool.ipfs");
-            test_iri!(4, 20; "ipns://例🏃🦀/cool.ipns");
-            test_iri!(6, 20; "magnet://例🏃🦀/cool.git");
-            test_iri!(4, 20; "mailto:someone@somewhere.here");
-            test_iri!(4, 20; "gemini://somewhere.here");
-            test_iri!(4, 20; "gopher://somewhere.here");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html");
-            test_iri!(4, 20; "http://10.10.10.10:1111/cool.html");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html#right%20here");
-            test_iri!(4, 20; "http://例🏃🦀/cool/index.html?amazing=1#right%20here");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html");
-            test_iri!(4, 20; "https://10.10.10.10:1111/cool.html");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html#right%20here");
-            test_iri!(4, 20; "https://例🏃🦀/cool/index.html?amazing=1#right%20here");
-            test_iri!(4, 20; "news://例🏃🦀/cool.news");
-            test_iri!(5, 20; "git://例/cool.git");
-            test_iri!(5, 20; "ssh://user@somewhere.over.here:12345/例🏃🦀/cool.git");
-            test_iri!(7, 20; "ftp://例🏃🦀/cool.ftp");
+            test_iri!("ipfs://例🏃🦀/cool.ipfs");
+            test_iri!("ipns://例🏃🦀/cool.ipns");
+            test_iri!("magnet://例🏃🦀/cool.git");
+            test_iri!("mailto:someone@somewhere.here");
+            test_iri!("gemini://somewhere.here");
+            test_iri!("gopher://somewhere.here");
+            test_iri!("http://例🏃🦀/cool/index.html");
+            test_iri!("http://10.10.10.10:1111/cool.html");
+            test_iri!("http://例🏃🦀/cool/index.html?amazing=1");
+            test_iri!("http://例🏃🦀/cool/index.html#right%20here");
+            test_iri!("http://例🏃🦀/cool/index.html?amazing=1#right%20here");
+            test_iri!("https://例🏃🦀/cool/index.html");
+            test_iri!("https://10.10.10.10:1111/cool.html");
+            test_iri!("https://例🏃🦀/cool/index.html?amazing=1");
+            test_iri!("https://例🏃🦀/cool/index.html#right%20here");
+            test_iri!("https://例🏃🦀/cool/index.html?amazing=1#right%20here");
+            test_iri!("news://例🏃🦀/cool.news");
+            test_iri!("git://例/cool.git");
+            test_iri!("ssh://user@somewhere.over.here:12345/例🏃🦀/cool.git");
+            test_iri!("ftp://例🏃🦀/cool.ftp");
         }
 
         // There are likely more tests needed for IRI vs URI
@@ -863,6 +991,22 @@ mod tests {
             point
         }
 
+        fn end_point_from_prev_input_point(
+            term: &Term<VoidListener>,
+            prev_input_point: AlacPoint,
+        ) -> AlacPoint {
+            if term
+                .grid()
+                .index(prev_input_point)
+                .flags
+                .contains(Flags::WIDE_CHAR)
+            {
+                prev_input_point.add(term, Boundary::Grid, 1)
+            } else {
+                prev_input_point
+            }
+        }
+
         let mut hovered_grid_point: Option<AlacPoint> = None;
         let mut hyperlink_match = AlacPoint::default()..=AlacPoint::default();
         let mut iri_or_path = String::default();
@@ -897,7 +1041,10 @@ mod tests {
                                 panic!("Should have been handled by char input")
                             }
                             CapturesState::Path(start_point) => {
-                                iri_or_path = term.bounds_to_string(start_point, prev_input_point);
+                                iri_or_path = term.bounds_to_string(
+                                    start_point,
+                                    end_point_from_prev_input_point(&term, prev_input_point),
+                                );
                                 CapturesState::RowScan
                             }
                             CapturesState::RowScan => CapturesState::Row(String::new()),
@@ -922,7 +1069,8 @@ mod tests {
                                 panic!("Should have been handled by char input")
                             }
                             MatchState::Match(start_point) => {
-                                hyperlink_match = start_point..=prev_input_point;
+                                hyperlink_match = start_point
+                                    ..=end_point_from_prev_input_point(&term, prev_input_point);
                                 MatchState::Done
                             }
                             MatchState::Done => {
