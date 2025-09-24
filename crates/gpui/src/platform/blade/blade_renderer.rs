@@ -83,7 +83,8 @@ struct ShaderUnderlinesData {
 #[derive(blade_macros::ShaderData)]
 struct ShaderMonoSpritesData {
     globals: GlobalParams,
-    gamma_params: [f32; 4],
+    gamma_ratios: [f32; 4],
+    grayscale_enhanced_contrast: f32,
     t_sprite: gpu::TextureView,
     s_sprite: gpu::Sampler,
     b_mono_sprites: gpu::BufferPiece,
@@ -343,7 +344,8 @@ pub struct BladeRenderer {
     path_intermediate_texture_view: gpu::TextureView,
     path_intermediate_msaa_texture: Option<gpu::Texture>,
     path_intermediate_msaa_texture_view: Option<gpu::TextureView>,
-    gamma_params: [f32; 4],
+    gamma_ratios: [f32; 4],
+    grayscale_enhanced_contrast: f32,
 }
 
 impl BladeRenderer {
@@ -438,7 +440,8 @@ impl BladeRenderer {
             // TODO kb check https://github.com/zed-industries/zed/issues/7992#issuecomment-3083871615
             // TODO kb find a way to un-hardcode this later
             // [1.0, 2.2] is the range; 1.8 is the default.
-            gamma_params: Self::get_gamma_ratios(1.8),
+            gamma_ratios: Self::get_gamma_ratios(1.8),
+            grayscale_enhanced_contrast: 1.0,
         })
     }
 
@@ -825,7 +828,8 @@ impl BladeRenderer {
                         0,
                         &ShaderMonoSpritesData {
                             globals,
-                            gamma_params: self.gamma_params,
+                            gamma_ratios: self.gamma_ratios,
+                            grayscale_enhanced_contrast: self.grayscale_enhanced_contrast,
                             t_sprite: tex_info.raw_view,
                             s_sprite: self.atlas_sampler,
                             b_mono_sprites: instance_buf,
