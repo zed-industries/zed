@@ -7152,6 +7152,8 @@ impl Editor {
             return None;
         }
 
+        self.update_visible_edit_prediction(window, cx);
+
         if !user_requested
             && (!self.should_show_edit_predictions()
                 || !self.is_focused(window)
@@ -7161,7 +7163,6 @@ impl Editor {
             return None;
         }
 
-        self.update_visible_edit_prediction(window, cx);
         provider.refresh(
             self.project.clone(),
             buffer,
@@ -7853,11 +7854,6 @@ impl Editor {
 
         self.edit_prediction_settings =
             self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
-
-        if let EditPredictionSettings::Disabled = self.edit_prediction_settings {
-            self.discard_edit_prediction(false, cx);
-            return None;
-        };
 
         self.edit_prediction_indent_conflict = multibuffer.is_line_whitespace_upto(cursor);
 
