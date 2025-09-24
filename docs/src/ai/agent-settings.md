@@ -12,7 +12,7 @@ If you're using [Zed's hosted LLM service](./subscription.md), it sets `claude-s
 {
   "agent": {
     "default_model": {
-      "provider": "zed.dev",
+      "provider": "openai",
       "model": "gpt-4o"
     }
   }
@@ -62,7 +62,7 @@ When configured, the inline assist UI will surface controls to cycle between the
 The models you specify here are always used in _addition_ to your [default model](#default-model).
 
 For example, the following configuration will generate two outputs for every assist.
-One with Claude Sonnet 4 (the default model), and one with GPT-4o.
+One with Claude Sonnet 4 (the default model), and one with GPT-5-mini.
 
 ```json
 {
@@ -74,7 +74,7 @@ One with Claude Sonnet 4 (the default model), and one with GPT-4o.
     "inline_alternatives": [
       {
         "provider": "zed.dev",
-        "model": "gpt-4o"
+        "model": "gpt-4-mini"
       }
     ]
   }
