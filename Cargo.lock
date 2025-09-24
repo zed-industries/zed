@@ -20440,6 +20440,7 @@ dependencies = [
  "collections",
  "command_palette",
  "component",
+ "convex",
  "copilot",
  "crashes",
  "dap",

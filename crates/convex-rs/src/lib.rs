@@ -44,28 +44,29 @@
 mod value;
 #[cfg(any(test, feature = "testing"))]
 pub use value::export::roundtrip::ExportContext;
-pub use value::{
-    ConvexError,
-    Value,
-};
+pub use value::{ConvexError, Value};
 
 mod client;
 pub use client::{
-    subscription::{
-        QuerySetSubscription,
-        QuerySubscription,
-    },
-    ConvexClient,
-    ConvexClientBuilder,
+    subscription::{QuerySetSubscription, QuerySubscription},
+    ConvexClient, ConvexClientBuilder,
 };
 pub use sync::WebSocketState;
 
 pub mod base_client;
 #[doc(inline)]
-pub use base_client::{
-    FunctionResult,
-    QueryResults,
-    SubscriberId,
-};
+pub use base_client::{FunctionResult, QueryResults, SubscriberId};
 
 mod sync;
+
+use gpui::App;
+
+#[doc(hidden)]
+pub fn init(deployment_url: &str, cx: &mut App) {
+    let deployment_url = deployment_url.to_string();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    match runtime.block_on(ConvexClient::new(&deployment_url)) {
+        Ok(client) => cx.set_global(client),
+        Err(err) => tracing::error!("failed to construct convex client: {err}"),
+    }
+}

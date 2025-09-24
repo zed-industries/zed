@@ -1,5 +1,4 @@
-use gpui::{App, Global};
-use gpui_tokio::Tokio;
+use gpui::Global;
 use std::{collections::BTreeMap, convert::Infallible, sync::Arc};
 
 use convex_sync_types::{AuthenticationToken, UdfPath, UserIdentityAttributes};
@@ -107,15 +106,6 @@ impl ConvexClient {
     /// ```
     pub async fn new(deployment_url: &str) -> anyhow::Result<Self> {
         ConvexClient::new_from_builder(ConvexClientBuilder::new(deployment_url)).await
-    }
-
-    pub fn init(deployment_url: &str, cx: &mut App) {
-        let deployment_url = deployment_url.to_string();
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        match runtime.block_on(ConvexClient::new(&deployment_url)) {
-            Ok(client) => cx.set_global(client),
-            Err(err) => tracing::error!("failed to construct convex client: {err}"),
-        }
     }
 
     #[doc(hidden)]

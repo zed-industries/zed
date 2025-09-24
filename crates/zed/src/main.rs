@@ -1,6 +1,7 @@
 mod reliability;
 mod zed;
 
+use convex;
 use dotenvy;
 use repo_name;
 
@@ -381,9 +382,10 @@ pub fn main() {
     app.run(move |cx| {
         menu::init();
         zed_actions::init();
-        repo_name::init();
+        repo_name::init(cx);
 
-        convex::init(cx);
+        let url = env::var("CONVEX_URL").unwrap_or("".to_string());
+        convex::init(&url, cx);
 
         release_channel::init(app_version, cx);
         gpui_tokio::init(cx);

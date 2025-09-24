@@ -20,7 +20,8 @@ path = "src/main.rs"
 
 [dependencies]
 dotenvy = "*"
-repo_name.workspace=true
+convex.workspace = true
+repo_name.workspace = true
 activity_indicator.workspace = true
 acp_tools.workspace = true
 agent.workspace = true
