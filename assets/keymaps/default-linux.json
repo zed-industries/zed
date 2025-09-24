@@ -1241,5 +1241,12 @@
     "bindings": {
       "ctrl-shift-enter": "workspace::OpenWithSystem"
     }
+  },
+  {
+    "context": "GitWorktreeSelector || (GitWorktreeSelector > Picker > Editor)",
+    "bindings": {
+      "ctrl-shift-space": "git::WorktreeFromDefaultOnWindow",
+      "ctrl-space": "git::WorktreeFromDefault"
+    }
   }
 ]
