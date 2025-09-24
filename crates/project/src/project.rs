@@ -882,27 +882,29 @@ impl DirectoryLister {
     }
 
     pub fn default_query(&self, cx: &mut App) -> String {
-        let separator = std::path::MAIN_SEPARATOR_STR;
-        match self {
+        let project = match self {
             DirectoryLister::Project(project) => project,
             DirectoryLister::Local(project, _) => project,
         }
-        .read(cx)
-        .visible_worktrees(cx)
-        .next()
-        .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
-        .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().to_string()))
-        .map(|mut s| {
-            s.push_str(separator);
-            s
-        })
-        .unwrap_or_else(|| {
-            if cfg!(target_os = "windows") {
-                format!("C:{separator}")
-            } else {
-                format!("~{separator}")
-            }
-        })
+        .read(cx);
+        let path_style = project.path_style(cx);
+        project
+            .visible_worktrees(cx)
+            .next()
+            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+            .or_else(|| std::env::home_dir().map(|dir| dir.to_string_lossy().to_string()))
+            .map(|mut s| {
+                s.push_str(path_style.separator());
+                s
+            })
+            .unwrap_or_else(|| {
+                if path_style.is_windows() {
+                    "C:\\"
+                } else {
+                    "~/"
+                }
+                .to_string()
+            })
     }
 
     pub fn list_directory(&self, path: String, cx: &mut App) -> Task<Result<Vec<DirectoryItem>>> {

@@ -29,7 +29,7 @@ use std::{
     collections::BTreeMap,
     hash::Hash,
     ops::Range,
-    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{
         Arc, OnceLock,
         atomic::{self, AtomicBool},
@@ -4502,7 +4502,7 @@ impl OutlinePanel {
                             .unwrap_or_default()
                     })
                     .sum::<usize>()
-                    + folded_dirs.entries.len().saturating_sub(1) * MAIN_SEPARATOR_STR.len()
+                    + folded_dirs.entries.len().saturating_sub(1) * "/".len()
             }
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => self
                 .excerpt_label(excerpt.buffer_id, &excerpt.range, cx)

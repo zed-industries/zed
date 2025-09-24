@@ -4082,6 +4082,7 @@ impl ProjectPanel {
             .canonical_path
             .as_ref()
             .map(|f| f.to_string_lossy().to_string());
+        let path_style = self.project.read(cx).path_style(cx);
         let path = details.path.clone();
         let path_for_external_paths = path.clone();
         let path_for_dragged_selection = path.clone();
@@ -4541,8 +4542,7 @@ impl ProjectPanel {
                                         .collect::<Vec<_>>();
                                     let active_index = folded_ancestors.active_index();
                                     let components_len = components.len();
-                                        const DELIMITER: SharedString =
-                                        SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
+                                    let delimiter = SharedString::new(path_style.separator());
                                     for (index, component) in components.iter().enumerate() {
                                         if index != 0 {
                                                 let delimiter_target_index = index - 1;
@@ -4586,7 +4586,7 @@ impl ProjectPanel {
                                                         )))
                                                     })
                                                     .child(
-                                                        Label::new(DELIMITER.clone())
+                                                        Label::new(delimiter.clone())
                                                             .single_line()
                                                             .color(filename_text_color)
                                                     )

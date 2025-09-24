@@ -3779,13 +3779,15 @@ impl EditorElement {
             .as_ref()
             .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
             .unwrap_or_default();
-        let can_open_excerpts = Editor::can_open_excerpts_in_file(for_excerpt.buffer.file());
+        let file = for_excerpt.buffer.file();
+        let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
+        let path_style = file.map(|file| file.path_style(cx));
         let relative_path = for_excerpt.buffer.resolve_file_path(cx, include_root);
         let filename = relative_path
             .as_ref()
             .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
         let parent_path = relative_path.as_ref().and_then(|path| {
-            Some(path.parent()?.to_string_lossy().to_string() + std::path::MAIN_SEPARATOR_STR)
+            Some(path.parent()?.to_string_lossy().to_string() + path_style?.separator())
         });
         let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();

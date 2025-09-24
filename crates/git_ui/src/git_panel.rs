@@ -1973,11 +1973,7 @@ impl GitPanel {
         cx.spawn_in(window, async move |this, cx| {
             let mut paths = path.await.ok()?.ok()??;
             let mut path = paths.pop()?;
-            let repo_name = repo
-                .split(std::path::MAIN_SEPARATOR_STR)
-                .last()?
-                .strip_suffix(".git")?
-                .to_owned();
+            let repo_name = repo.split("/").last()?.strip_suffix(".git")?.to_owned();
 
             let fs = this.read_with(cx, |this, _| this.fs.clone()).ok()?;
 
@@ -4063,8 +4059,11 @@ impl GitPanel {
                     .when_some(entry.parent_dir(path_style), |this, parent| {
                         if !parent.is_empty() {
                             this.child(
-                                self.entry_label(format!("{}/", parent), path_color)
-                                    .when(status.is_deleted(), |this| this.strikethrough()),
+                                self.entry_label(
+                                    format!("{parent}{}", path_style.separator()),
+                                    path_color,
+                                )
+                                .when(status.is_deleted(), |this| this.strikethrough()),
                             )
                         } else {
                             this

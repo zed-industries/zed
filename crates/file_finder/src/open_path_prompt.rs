@@ -7,7 +7,7 @@ use picker::{Picker, PickerDelegate};
 use project::{DirectoryItem, DirectoryLister};
 use settings::Settings;
 use std::{
-    path::{self, MAIN_SEPARATOR_STR, Path, PathBuf},
+    path::{self, Path, PathBuf},
     sync::{
         Arc,
         atomic::{self, AtomicBool},
@@ -822,7 +822,7 @@ impl PickerDelegate for OpenPathDelegate {
     }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        Arc::from(format!("[directory{MAIN_SEPARATOR_STR}]filename.ext"))
+        Arc::from(format!("[directory{}]filename.ext", self.path_style.separator()).as_str())
     }
 
     fn separators_after_indices(&self) -> Vec<usize> {
