@@ -1462,7 +1462,7 @@ impl Editor {
     }
 }
 
-pub(crate) enum BufferSearchHighlights {}
+pub enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
