@@ -20587,6 +20587,7 @@ dependencies = [
  "edit_prediction_context",
  "futures 0.3.31",
  "gpui",
+ "indoc",
  "language",
  "language_model",
  "log",
