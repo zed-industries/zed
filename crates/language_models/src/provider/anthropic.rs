@@ -870,7 +870,7 @@ impl ConfigurationView {
     }
 
     fn save_api_key(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
-        let api_key = self.api_key_editor.read(cx).text(cx).to_string();
+        let api_key = self.api_key_editor.read(cx).text(cx);
         if api_key.is_empty() {
             return;
         }
