@@ -2494,6 +2494,7 @@ mod test {
         cx.simulate_keystrokes(": w space other.rs");
         cx.run_until_parked();
         cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
 
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/other.rs"), "", cx);
@@ -2502,6 +2503,7 @@ mod test {
         cx.simulate_keystrokes(": w space dir/file.rs");
         cx.run_until_parked();
         cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
 
         cx.simulate_prompt_answer("Replace");
         cx.run_until_parked();
@@ -2513,6 +2515,7 @@ mod test {
         cx.simulate_keystrokes(": w ! space other.rs");
         cx.run_until_parked();
         cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
 
         cx.workspace(|workspace, _, cx| {
             assert_active_item(workspace, path!("/root/other.rs"), "", cx);
