@@ -1,4 +1,4 @@
-use crate::AgentServerDelegate;
+use crate::{AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
 use agent_client_protocol as acp;
 use anyhow::{Context as _, Result};
@@ -49,8 +49,14 @@ impl crate::AgentServer for CustomAgentServer {
 
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let name = self.name();
-        update_settings_file::<AllAgentServersSettings>(fs, cx, move |settings, _| {
-            settings.custom.get_mut(&name).unwrap().default_mode = mode_id.map(|m| m.to_string())
+        update_settings_file(fs, cx, move |settings, _| {
+            settings
+                .agent_servers
+                .get_or_insert_default()
+                .custom
+                .get_mut(&name)
+                .unwrap()
+                .default_mode = mode_id.map(|m| m.to_string())
         });
     }
 
@@ -65,6 +71,7 @@ impl crate::AgentServer for CustomAgentServer {
         let is_remote = delegate.project.read(cx).is_via_remote_server();
         let default_mode = self.default_mode(cx);
         let store = delegate.store.downgrade();
+        let extra_env = load_proxy_env(cx);
 
         cx.spawn(async move |cx| {
             let (command, root_dir, login) = store
@@ -76,7 +83,7 @@ impl crate::AgentServer for CustomAgentServer {
                         })?;
                     anyhow::Ok(agent.get_command(
                         root_dir.as_deref(),
-                        Default::default(),
+                        extra_env,
                         delegate.status_tx,
                         delegate.new_version_available,
                         &mut cx.to_async(),

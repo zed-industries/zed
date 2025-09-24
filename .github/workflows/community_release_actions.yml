@@ -1,3 +1,6 @@
+# IF YOU UPDATE THE NAME OF ANY GITHUB SECRET, YOU MUST CHERRY PICK THE COMMIT
+# TO BOTH STABLE AND PREVIEW CHANNELS
+
 name: Release Actions
 
 on:
@@ -13,9 +16,9 @@ jobs:
         id: get-release-url
         run: |
           if [ "${{ github.event.release.prerelease }}" == "true" ]; then
-              URL="https://zed.dev/releases/preview/latest"
+              URL="https://zed.dev/releases/preview"
           else
-              URL="https://zed.dev/releases/stable/latest"
+              URL="https://zed.dev/releases/stable"
           fi
 
           echo "URL=$URL" >> "$GITHUB_OUTPUT"

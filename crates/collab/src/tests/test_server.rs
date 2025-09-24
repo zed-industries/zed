@@ -604,7 +604,6 @@ impl TestServer {
                 migrations_path: None,
                 seed_path: None,
                 supermaven_admin_api_key: None,
-                user_backfiller_github_access_token: None,
                 kinesis_region: None,
                 kinesis_stream: None,
                 kinesis_access_key: None,

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ai_onboarding::{AgentPanelOnboardingCard, PlanDefinitions};
 use client::zed_urls;
-use cloud_llm_client::{Plan, PlanV1};
+use cloud_llm_client::{Plan, PlanV2};
 use gpui::{AnyElement, App, IntoElement, RenderOnce, Window};
 use ui::{Divider, Tooltip, prelude::*};
 
@@ -112,7 +112,7 @@ impl Component for EndTrialUpsell {
         Some(
             v_flex()
                 .child(EndTrialUpsell {
-                    plan: Plan::V1(PlanV1::ZedFree),
+                    plan: Plan::V2(PlanV2::ZedFree),
                     dismiss_upsell: Arc::new(|_, _| {}),
                 })
                 .into_any_element(),

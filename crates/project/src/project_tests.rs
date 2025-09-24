@@ -23,7 +23,7 @@ use language::{
     Diagnostic, DiagnosticEntry, DiagnosticSet, DiagnosticSourceKind, DiskState, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, ManifestName, ManifestProvider,
     ManifestQuery, OffsetRangeExt, Point, ToPoint, ToolchainList, ToolchainLister,
-    language_settings::{AllLanguageSettings, LanguageSettingsContent, language_settings},
+    language_settings::{LanguageSettingsContent, language_settings},
     tree_sitter_rust, tree_sitter_typescript,
 };
 use lsp::{
@@ -2246,8 +2246,8 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     // Disable Rust language server, ensuring only that server gets stopped.
     cx.update(|cx| {
         SettingsStore::update_global(cx, |settings, cx| {
-            settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.0.insert(
+            settings.update_user_settings(cx, |settings| {
+                settings.languages_mut().insert(
                     "Rust".into(),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
@@ -2265,16 +2265,16 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     // former gets started again and that the latter stops.
     cx.update(|cx| {
         SettingsStore::update_global(cx, |settings, cx| {
-            settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
-                settings.languages.0.insert(
-                    LanguageName::new("Rust"),
+            settings.update_user_settings(cx, |settings| {
+                settings.languages_mut().insert(
+                    "Rust".into(),
                     LanguageSettingsContent {
                         enable_language_server: Some(true),
                         ..Default::default()
                     },
                 );
-                settings.languages.0.insert(
-                    LanguageName::new("JavaScript"),
+                settings.languages_mut().insert(
+                    "JavaScript".into(),
                     LanguageSettingsContent {
                         enable_language_server: Some(false),
                         ..Default::default()
@@ -8769,8 +8769,8 @@ async fn test_rescan_with_gitignore(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     cx.update(|cx| {
         cx.update_global::<SettingsStore, _>(|store, cx| {
-            store.update_user_settings::<WorktreeSettings>(cx, |project_settings| {
-                project_settings.file_scan_exclusions = Some(Vec::new());
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new());
             });
         });
     });

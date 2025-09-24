@@ -35,6 +35,7 @@ proto.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+settings.workspace = true
 smol.workspace = true
 telemetry_events.workspace = true
 thiserror.workspace = true

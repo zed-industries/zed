@@ -20,6 +20,7 @@
 .venv
 .vscode
 .wrangler
+.perf-runs
 /assets/*licenses.*
 /crates/collab/seed.json
 /crates/theme/schemas/theme.json

@@ -1,34 +1,11 @@
 use anyhow::{Context as _, Result};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest, http};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
+pub use settings::KeepAlive;
 
 pub const OLLAMA_API_URL: &str = "http://localhost:11434";
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Serialize, Deserialize, Debug, Eq, PartialEq)]
-#[serde(untagged)]
-pub enum KeepAlive {
-    /// Keep model alive for N seconds
-    Seconds(isize),
-    /// Keep model alive for a fixed duration. Accepts durations like "5m", "10m", "1h", "1d", etc.
-    Duration(String),
-}
-
-impl KeepAlive {
-    /// Keep model alive until a new model is loaded or until Ollama shuts down
-    fn indefinite() -> Self {
-        Self::Seconds(-1)
-    }
-}
-
-impl Default for KeepAlive {
-    fn default() -> Self {
-        Self::indefinite()
-    }
-}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -59,6 +36,7 @@ fn get_max_tokens(name: &str) -> u64 {
         "cogito" | "command-r" | "deepseek-coder-v2" | "deepseek-r1" | "deepseek-v3"
         | "devstral" | "gemma3" | "gpt-oss" | "granite3.3" | "llama3.1" | "llama3.2"
         | "llama3.3" | "mistral-nemo" | "phi3" | "phi3.5" | "phi4" | "qwen3" | "yi-coder" => 128000,
+        "qwen3-coder" => 256000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
@@ -159,14 +137,6 @@ pub struct ChatRequest {
     pub think: Option<bool>,
 }
 
-impl ChatRequest {
-    pub fn with_tools(mut self, tools: Vec<OllamaTool>) -> Self {
-        self.stream = false;
-        self.tools = tools;
-        self
-    }
-}
-
 // https://github.com/ollama/ollama/blob/main/docs/modelfile.md#valid-parameters-and-values
 #[derive(Serialize, Default, Debug)]
 pub struct ChatOptions {
@@ -179,14 +149,10 @@ pub struct ChatOptions {
 
 #[derive(Deserialize, Debug)]
 pub struct ChatResponseDelta {
-    #[allow(unused)]
     pub model: String,
-    #[allow(unused)]
     pub created_at: String,
     pub message: ChatMessage,
-    #[allow(unused)]
     pub done_reason: Option<String>,
-    #[allow(unused)]
     pub done: bool,
     pub prompt_eval_count: Option<u64>,
     pub eval_count: Option<u64>,
@@ -244,38 +210,6 @@ impl ModelShow {
     }
 }
 
-pub async fn complete(
-    client: &dyn HttpClient,
-    api_url: &str,
-    request: ChatRequest,
-) -> Result<ChatResponseDelta> {
-    let uri = format!("{api_url}/api/chat");
-    let request_builder = HttpRequest::builder()
-        .method(Method::POST)
-        .uri(uri)
-        .header("Content-Type", "application/json");
-
-    let serialized_request = serde_json::to_string(&request)?;
-    let request = request_builder.body(AsyncBody::from(serialized_request))?;
-
-    let mut response = client.send(request).await?;
-
-    let mut body = Vec::new();
-    response.body_mut().read_to_end(&mut body).await?;
-
-    if response.status().is_success() {
-        let response_message: ChatResponseDelta = serde_json::from_slice(&body)?;
-        Ok(response_message)
-    } else {
-        let body_str = std::str::from_utf8(&body)?;
-        anyhow::bail!(
-            "Failed to connect to API: {} {}",
-            response.status(),
-            body_str
-        );
-    }
-}
-
 pub async fn stream_chat_completion(
     client: &dyn HttpClient,
     api_url: &str,
@@ -283,16 +217,15 @@ pub async fn stream_chat_completion(
     request: ChatRequest,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    let mut request_builder = http::Request::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json");
+        .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::from(serde_json::to_string(&request)?))?;
 
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
-    }
-
-    let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
@@ -319,19 +252,16 @@ pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
     api_key: Option<&str>,
-    _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
-    let mut request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
-        .header("Accept", "application/json");
-
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"));
-    }
-
-    let request = request_builder.body(AsyncBody::default())?;
+        .header("Accept", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::default())?;
 
     let mut response = client.send(request).await?;
 
@@ -357,18 +287,16 @@ pub async fn show_model(
     model: &str,
 ) -> Result<ModelShow> {
     let uri = format!("{api_url}/api/show");
-    let mut request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
-        .header("Content-Type", "application/json");
-
-    if let Some(api_key) = api_key {
-        request_builder = request_builder.header("Authorization", format!("Bearer {api_key}"))
-    }
-
-    let request = request_builder.body(AsyncBody::from(
-        serde_json::json!({ "model": model }).to_string(),
-    ))?;
+        .header("Content-Type", "application/json")
+        .when_some(api_key, |builder, api_key| {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        })
+        .body(AsyncBody::from(
+            serde_json::json!({ "model": model }).to_string(),
+        ))?;
 
     let mut response = client.send(request).await?;
     let mut body = String::new();

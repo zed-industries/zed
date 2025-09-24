@@ -627,7 +627,7 @@ pub fn show_link_definition(
                                 TriggerPoint::Text(trigger_anchor) => {
                                     // If no symbol range returned from language server, use the surrounding word.
                                     let (offset_range, _) =
-                                        snapshot.surrounding_word(*trigger_anchor, false);
+                                        snapshot.surrounding_word(*trigger_anchor, None);
                                     RangeInEditor::Text(
                                         snapshot.anchor_before(offset_range.start)
                                             ..snapshot.anchor_after(offset_range.end),
@@ -898,6 +898,7 @@ fn surrounding_filename(
             } else {
                 // Otherwise, we skip the quote
                 inside_quotes = true;
+                token_end += ch.len_utf8();
                 continue;
             }
         }
@@ -931,8 +932,8 @@ mod tests {
     use futures::StreamExt;
     use gpui::Modifiers;
     use indoc::indoc;
-    use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
+    use settings::InlayHintSettingsContent;
     use util::{assert_set_eq, path};
     use workspace::item::Item;
 
@@ -1280,15 +1281,15 @@ mod tests {
     #[gpui::test]
     async fn test_inlay_hover_links(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
-            settings.defaults.inlay_hints = Some(InlayHintSettings {
-                enabled: true,
-                show_value_hints: false,
-                edit_debounce_ms: 0,
-                scroll_debounce_ms: 0,
-                show_type_hints: true,
-                show_parameter_hints: true,
-                show_other_hints: true,
-                show_background: false,
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                enabled: Some(true),
+                show_value_hints: Some(false),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
                 toggle_on_modifiers_press: None,
             })
         });
@@ -1545,6 +1546,10 @@ mod tests {
             ("'fˇile.txt'", Some("file.txt")),
             ("ˇ'file.txt'", Some("file.txt")),
             ("ˇ'fi\\ le.txt'", Some("fi le.txt")),
+            // Quoted multibyte characters
+            (" ˇ\"常\"", Some("常")),
+            (" \"ˇ常\"", Some("常")),
+            ("ˇ\"常\"", Some("常")),
         ];
 
         for (input, expected) in test_cases {

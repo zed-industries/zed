@@ -51,9 +51,7 @@ use gpui::{
     transparent_black,
 };
 use itertools::Itertools;
-use language::language_settings::{
-    IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings, ShowWhitespaceSetting,
-};
+use language::{IndentGuideSettings, language_settings::ShowWhitespaceSetting};
 use markdown::Markdown;
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, ExpandExcerptDirection, ExpandInfo, MultiBufferPoint,
@@ -63,9 +61,12 @@ use multi_buffer::{
 use project::{
     Entry, ProjectPath,
     debugger::breakpoint_store::{Breakpoint, BreakpointSessionState},
-    project_settings::{GitGutterSetting, GitHunkStyleSetting, ProjectSettings},
+    project_settings::ProjectSettings,
 };
-use settings::Settings;
+use settings::{
+    GitGutterSetting, GitHunkStyleSetting, IndentGuideBackgroundColoring, IndentGuideColoring,
+    Settings,
+};
 use smallvec::{SmallVec, smallvec};
 use std::{
     any::TypeId,
@@ -1060,7 +1061,7 @@ impl EditorElement {
                     );
                     if mouse_down_time.elapsed() >= drag_and_drop_delay {
                         let drop_cursor = Selection {
-                            id: post_inc(&mut editor.selections.next_selection_id),
+                            id: post_inc(&mut editor.selections.next_selection_id()),
                             start: drop_anchor,
                             end: drop_anchor,
                             reversed: false,
@@ -1547,9 +1548,13 @@ impl EditorElement {
         // Local cursors
         if !skip_local {
             let color = cx.theme().players().local().cursor;
-            editor.selections.disjoint.iter().for_each(|selection| {
-                add_cursor(selection.head(), color);
-            });
+            editor
+                .selections
+                .disjoint_anchors()
+                .iter()
+                .for_each(|selection| {
+                    add_cursor(selection.head(), color);
+                });
             if let Some(ref selection) = editor.selections.pending_anchor() {
                 add_cursor(selection.head(), color);
             }
@@ -2095,10 +2100,7 @@ impl EditorElement {
             .display_diff_hunks_for_rows(display_rows, folded_buffers)
             .map(|hunk| (hunk, None))
             .collect::<Vec<_>>();
-        let git_gutter_setting = ProjectSettings::get_global(cx)
-            .git
-            .git_gutter
-            .unwrap_or_default();
+        let git_gutter_setting = ProjectSettings::get_global(cx).git.git_gutter;
         if let GitGutterSetting::TrackedFiles = git_gutter_setting {
             for (hunk, hitbox) in &mut display_hunks {
                 if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
@@ -2450,11 +2452,7 @@ impl EditorElement {
         let padding = {
             const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
 
-            let mut padding = ProjectSettings::get_global(cx)
-                .git
-                .inline_blame
-                .unwrap_or_default()
-                .padding as f32;
+            let mut padding = ProjectSettings::get_global(cx).git.inline_blame.padding as f32;
 
             if let Some(edit_prediction) = editor.active_edit_prediction.as_ref()
                 && let EditPrediction::Edit {
@@ -2488,12 +2486,10 @@ impl EditorElement {
 
             let padded_line_end = line_end + padding;
 
-            let min_column_in_pixels = ProjectSettings::get_global(cx)
-                .git
-                .inline_blame
-                .map(|settings| settings.min_column)
-                .map(|col| self.column_pixels(col as usize, window))
-                .unwrap_or(px(0.));
+            let min_column_in_pixels = self.column_pixels(
+                ProjectSettings::get_global(cx).git.inline_blame.min_column as usize,
+                window,
+            );
             let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
 
             cmp::max(padded_line_end, min_start)
@@ -3015,6 +3011,12 @@ impl EditorElement {
             .ilog10()
             + 1;
 
+        let git_gutter_width = Self::gutter_strip_width(line_height)
+            + gutter_dimensions
+                .git_blame_entries_width
+                .unwrap_or_default();
+        let available_width = gutter_dimensions.left_padding - git_gutter_width;
+
         buffer_rows
             .iter()
             .enumerate()
@@ -3029,9 +3031,6 @@ impl EditorElement {
                     ExpandExcerptDirection::Down => IconName::ExpandDown,
                     ExpandExcerptDirection::UpAndDown => IconName::ExpandVertical,
                 };
-
-                let git_gutter_width = Self::gutter_strip_width(line_height);
-                let available_width = gutter_dimensions.left_padding - git_gutter_width;
 
                 let editor = self.editor.clone();
                 let is_wide = max_line_number_length
@@ -3839,7 +3838,11 @@ impl EditorElement {
                                                 Tooltip::with_meta_in(
                                                     "Toggle Excerpt Fold",
                                                     Some(&ToggleFold),
-                                                    "Alt+click to toggle all",
+                                                    if cfg!(target_os = "macos") {
+                                                        "Option+click to toggle all"
+                                                    } else {
+                                                        "Alt+click to toggle all"
+                                                    },
                                                     &focus_handle,
                                                     window,
                                                     cx,
@@ -5666,7 +5669,7 @@ impl EditorElement {
 
         for indent_guide in indent_guides {
             let indent_accent_colors = cx.theme().accents().color_for_index(indent_guide.depth);
-            let settings = indent_guide.settings;
+            let settings = &indent_guide.settings;
 
             // TODO fixed for now, expose them through themes later
             const INDENT_AWARE_ALPHA: f32 = 0.2;
@@ -6001,7 +6004,7 @@ impl EditorElement {
             .unwrap_or_else(|| {
                 matches!(
                     ProjectSettings::get_global(cx).git.git_gutter,
-                    Some(GitGutterSetting::TrackedFiles)
+                    GitGutterSetting::TrackedFiles
                 )
             });
         if show_git_gutter {
@@ -7296,10 +7299,10 @@ impl EditorElement {
 
     fn diff_hunk_hollow(status: DiffHunkStatus, cx: &mut App) -> bool {
         let unstaged = status.has_secondary_hunk();
-        let unstaged_hollow = ProjectSettings::get_global(cx)
-            .git
-            .hunk_style
-            .is_some_and(|style| matches!(style, GitHunkStyleSetting::UnstagedHollow));
+        let unstaged_hollow = matches!(
+            ProjectSettings::get_global(cx).git.hunk_style,
+            GitHunkStyleSetting::UnstagedHollow
+        );
 
         unstaged == unstaged_hollow
     }
@@ -7613,7 +7616,7 @@ impl LineWithInvisibles {
                     let text_runs: &[TextRun] = if segments.is_empty() {
                         &styles
                     } else {
-                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
+                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
                     };
                     let shaped_line = window.text_system().shape_line(
                         line.clone().into(),
@@ -7700,7 +7703,7 @@ impl LineWithInvisibles {
                         let text_runs = if segments.is_empty() {
                             &styles
                         } else {
-                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast)
+                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
                         };
                         let shaped_line = window.text_system().shape_line(
                             line.clone().into(),
@@ -7799,9 +7802,10 @@ impl LineWithInvisibles {
         text_runs: &[TextRun],
         bg_segments: &[(Range<DisplayPoint>, Hsla)],
         min_contrast: f32,
+        start_col_offset: usize,
     ) -> Vec<TextRun> {
         let mut output_runs: Vec<TextRun> = Vec::with_capacity(text_runs.len());
-        let mut line_col = 0usize;
+        let mut line_col = start_col_offset;
         let mut segment_ix = 0usize;
 
         for text_run in text_runs.iter() {
@@ -8836,13 +8840,9 @@ impl Element for EditorElement {
                                 })
                                 .flatten()?;
                             let mut element = render_inline_blame_entry(blame_entry, style, cx)?;
-                            let inline_blame_padding = ProjectSettings::get_global(cx)
-                                .git
-                                .inline_blame
-                                .unwrap_or_default()
-                                .padding
-                                as f32
-                                * em_advance;
+                            let inline_blame_padding =
+                                ProjectSettings::get_global(cx).git.inline_blame.padding as f32
+                                    * em_advance;
                             Some(
                                 element
                                     .layout_as_root(AvailableSpace::min_size(), window, cx)
@@ -9694,7 +9694,7 @@ impl EditorScrollbars {
                 editor_bounds.bottom_left(),
                 size(
                     // The horizontal viewport size differs from the space available for the
-                    // horizontal scrollbar, so we have to manually stich it together here.
+                    // horizontal scrollbar, so we have to manually stitch it together here.
                     editor_bounds.size.width - right_margin,
                     scrollbar_width,
                 ),
@@ -11255,102 +11255,143 @@ mod tests {
     fn test_split_runs_by_bg_segments(cx: &mut gpui::TestAppContext) {
         init_test(cx, |_| {});
 
+        let dx = |start: u32, end: u32| {
+            DisplayPoint::new(DisplayRow(0), start)..DisplayPoint::new(DisplayRow(0), end)
+        };
+
         let text_color = Hsla {
             h: 210.0,
             s: 0.1,
             l: 0.4,
             a: 1.0,
         };
-        let bg1 = Hsla {
+        let bg_1 = Hsla {
             h: 30.0,
             s: 0.6,
             l: 0.8,
             a: 1.0,
         };
-        let bg2 = Hsla {
+        let bg_2 = Hsla {
             h: 200.0,
             s: 0.6,
             l: 0.2,
             a: 1.0,
         };
         let min_contrast = 45.0;
+        let adjusted_bg1 = ensure_minimum_contrast(text_color, bg_1, min_contrast);
+        let adjusted_bg2 = ensure_minimum_contrast(text_color, bg_2, min_contrast);
 
         // Case A: single run; disjoint segments inside the run
-        let runs = vec![generate_test_run(20, text_color)];
-        let segs = vec![
-            (
-                DisplayPoint::new(DisplayRow(0), 5)..DisplayPoint::new(DisplayRow(0), 10),
-                bg1,
-            ),
-            (
-                DisplayPoint::new(DisplayRow(0), 12)..DisplayPoint::new(DisplayRow(0), 16),
-                bg2,
-            ),
-        ];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
-        // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
-        assert_eq!(
-            out.iter().map(|r| r.len).collect::<Vec<_>>(),
-            vec![5, 5, 2, 4, 4]
-        );
-        assert_eq!(out[0].color, text_color);
-        assert_eq!(
-            out[1].color,
-            ensure_minimum_contrast(text_color, bg1, min_contrast)
-        );
-        assert_eq!(out[2].color, text_color);
-        assert_eq!(
-            out[3].color,
-            ensure_minimum_contrast(text_color, bg2, min_contrast)
-        );
-        assert_eq!(out[4].color, text_color);
+        {
+            let runs = vec![generate_test_run(20, text_color)];
+            let segs = vec![(dx(5, 10), bg_1), (dx(12, 16), bg_2)];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
+            // Expected slices: [0,5) [5,10) [10,12) [12,16) [16,20)
+            assert_eq!(
+                out.iter().map(|r| r.len).collect::<Vec<_>>(),
+                vec![5, 5, 2, 4, 4]
+            );
+            assert_eq!(out[0].color, text_color);
+            assert_eq!(out[1].color, adjusted_bg1);
+            assert_eq!(out[2].color, text_color);
+            assert_eq!(out[3].color, adjusted_bg2);
+            assert_eq!(out[4].color, text_color);
+        }
 
         // Case B: multiple runs; segment extends to end of line (u32::MAX)
-        let runs = vec![
-            generate_test_run(8, text_color),
-            generate_test_run(7, text_color),
-        ];
-        let segs = vec![(
-            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), u32::MAX),
-            bg1,
-        )];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
-        // Expected slices across runs: [0,6) [6,8) | [0,7)
-        assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
-        let adjusted = ensure_minimum_contrast(text_color, bg1, min_contrast);
-        assert_eq!(out[0].color, text_color);
-        assert_eq!(out[1].color, adjusted);
-        assert_eq!(out[2].color, adjusted);
+        {
+            let runs = vec![
+                generate_test_run(8, text_color),
+                generate_test_run(7, text_color),
+            ];
+            let segs = vec![(dx(6, u32::MAX), bg_1)];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
+            // Expected slices across runs: [0,6) [6,8) | [0,7)
+            assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![6, 2, 7]);
+            assert_eq!(out[0].color, text_color);
+            assert_eq!(out[1].color, adjusted_bg1);
+            assert_eq!(out[2].color, adjusted_bg1);
+        }
 
         // Case C: multi-byte characters
-        // for text: "Hello 🌍 世界!"
-        let runs = vec![
-            generate_test_run(5, text_color), // "Hello"
-            generate_test_run(6, text_color), // " 🌍 "
-            generate_test_run(6, text_color), // "世界"
-            generate_test_run(1, text_color), // "!"
-        ];
-        // selecting "🌍 世"
-        let segs = vec![(
-            DisplayPoint::new(DisplayRow(0), 6)..DisplayPoint::new(DisplayRow(0), 14),
-            bg1,
-        )];
-        let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast);
-        // "Hello" | " " | "🌍 " | "世" | "界" | "!"
-        assert_eq!(
-            out.iter().map(|r| r.len).collect::<Vec<_>>(),
-            vec![5, 1, 5, 3, 3, 1]
-        );
-        assert_eq!(out[0].color, text_color); // "Hello"
-        assert_eq!(
-            out[2].color,
-            ensure_minimum_contrast(text_color, bg1, min_contrast)
-        ); // "🌍 "
-        assert_eq!(
-            out[3].color,
-            ensure_minimum_contrast(text_color, bg1, min_contrast)
-        ); // "世"
-        assert_eq!(out[4].color, text_color); // "界"
-        assert_eq!(out[5].color, text_color); // "!"
+        {
+            // for text: "Hello 🌍 世界!"
+            let runs = vec![
+                generate_test_run(5, text_color), // "Hello"
+                generate_test_run(6, text_color), // " 🌍 "
+                generate_test_run(6, text_color), // "世界"
+                generate_test_run(1, text_color), // "!"
+            ];
+            // selecting "🌍 世"
+            let segs = vec![(dx(6, 14), bg_1)];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
+            // "Hello" | " " | "🌍 " | "世" | "界" | "!"
+            assert_eq!(
+                out.iter().map(|r| r.len).collect::<Vec<_>>(),
+                vec![5, 1, 5, 3, 3, 1]
+            );
+            assert_eq!(out[0].color, text_color); // "Hello"
+            assert_eq!(out[2].color, adjusted_bg1); // "🌍 "
+            assert_eq!(out[3].color, adjusted_bg1); // "世"
+            assert_eq!(out[4].color, text_color); // "界"
+            assert_eq!(out[5].color, text_color); // "!"
+        }
+
+        // Case D: split multiple consecutive text runs with segments
+        {
+            let segs = vec![
+                (dx(2, 4), bg_1),   // selecting "cd"
+                (dx(4, 8), bg_2),   // selecting "efgh"
+                (dx(9, 11), bg_1),  // selecting "jk"
+                (dx(12, 16), bg_2), // selecting "mnop"
+                (dx(18, 19), bg_1), // selecting "s"
+            ];
+
+            // for text: "abcdef"
+            let runs = vec![
+                generate_test_run(2, text_color), // ab
+                generate_test_run(4, text_color), // cdef
+            ];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 0);
+            // new splits "ab", "cd", "ef"
+            assert_eq!(out.iter().map(|r| r.len).collect::<Vec<_>>(), vec![2, 2, 2]);
+            assert_eq!(out[0].color, text_color);
+            assert_eq!(out[1].color, adjusted_bg1);
+            assert_eq!(out[2].color, adjusted_bg2);
+
+            // for text: "ghijklmn"
+            let runs = vec![
+                generate_test_run(3, text_color), // ghi
+                generate_test_run(2, text_color), // jk
+                generate_test_run(3, text_color), // lmn
+            ];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 6); // 2 + 4 from first run
+            // new splits "gh", "i", "jk", "l", "mn"
+            assert_eq!(
+                out.iter().map(|r| r.len).collect::<Vec<_>>(),
+                vec![2, 1, 2, 1, 2]
+            );
+            assert_eq!(out[0].color, adjusted_bg2);
+            assert_eq!(out[1].color, text_color);
+            assert_eq!(out[2].color, adjusted_bg1);
+            assert_eq!(out[3].color, text_color);
+            assert_eq!(out[4].color, adjusted_bg2);
+
+            // for text: "opqrs"
+            let runs = vec![
+                generate_test_run(1, text_color), // o
+                generate_test_run(4, text_color), // pqrs
+            ];
+            let out = LineWithInvisibles::split_runs_by_bg_segments(&runs, &segs, min_contrast, 14); // 6 + 3 + 2 + 3 from first two runs
+            // new splits "o", "p", "qr", "s"
+            assert_eq!(
+                out.iter().map(|r| r.len).collect::<Vec<_>>(),
+                vec![1, 1, 2, 1]
+            );
+            assert_eq!(out[0].color, adjusted_bg2);
+            assert_eq!(out[1].color, adjusted_bg2);
+            assert_eq!(out[2].color, text_color);
+            assert_eq!(out[3].color, adjusted_bg1);
+        }
     }
 }
