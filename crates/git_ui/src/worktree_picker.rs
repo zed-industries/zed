@@ -15,7 +15,7 @@ use ui::{HighlightedLabel, KeyBinding, ListItem, ListItemSpacing, Tooltip, prelu
 use util::ResultExt;
 use workspace::{ModalView, Workspace, notifications::DetachAndPromptErr};
 
-actions!(git, [WorktreeFromDefault]);
+actions!(git, [WorktreeFromDefault, WorktreeFromDefaultOnWindow]);
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(open);
@@ -111,6 +111,33 @@ impl WorktreeList {
             .update(cx, |picker, _| picker.delegate.modifiers = ev.modifiers)
     }
 
+    fn handle_worktree_from_default_on_window(
+        &mut self,
+        _: &WorktreeFromDefaultOnWindow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker.update(cx, |picker, cx| {
+            let ix = picker.delegate.selected_index();
+            let Some(entry) = picker.delegate.matches.get(ix) else {
+                return;
+            };
+            let Some(default_branch) = picker.delegate.default_branch.clone() else {
+                return;
+            };
+            if !entry.is_new {
+                return;
+            }
+            picker.delegate.create_worktree(
+                entry.worktree.name(),
+                true,
+                Some(default_branch.into()),
+                window,
+                cx,
+            );
+        })
+    }
+
     fn handle_worktree_from_default(
         &mut self,
         _: &WorktreeFromDefault,
@@ -154,6 +181,7 @@ impl Render for WorktreeList {
             .w(self.width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_worktree_from_default))
+            .on_action(cx.listener(Self::handle_worktree_from_default_on_window))
             .child(self.picker.clone())
             .on_mouse_down_out({
                 cx.listener(move |this, _, window, cx| {
@@ -442,6 +470,9 @@ impl PickerDelegate for WorktreeListDelegate {
                 IconButton::new("worktree-from-default", IconName::GitBranchAlt)
                     .on_click(|_, window, cx| {
                         window.dispatch_action(WorktreeFromDefault.boxed_clone(), cx)
+                    })
+                    .on_right_click(|_, window, cx| {
+                        window.dispatch_action(WorktreeFromDefaultOnWindow.boxed_clone(), cx)
                     })
                     .tooltip(move |window, cx| {
                         Tooltip::for_action_in(
