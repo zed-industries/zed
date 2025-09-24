@@ -1,7 +1,9 @@
-use crate::commit::parse_git_diff_name_status;
+use crate::commit::{
+    CommitDetails, CommitSummary, ParsedCommitMessage, parse_git_diff_name_status,
+};
 use crate::stash::GitStash;
 use crate::status::{GitStatus, StatusCode};
-use crate::{Oid, SHORT_SHA_LENGTH};
+use crate::{GitHostingProviderRegistry, Oid};
 use anyhow::{Context as _, Result, anyhow, bail};
 use collections::HashMap;
 use futures::future::BoxFuture;
@@ -14,6 +16,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use std::borrow::{Borrow, Cow};
 use std::ffi::{OsStr, OsString};
+use std::hash::Hash;
 use std::io::prelude::*;
 use std::path::Component;
 use std::process::{ExitStatus, Stdio};
@@ -145,25 +148,6 @@ pub struct UpstreamTrackingStatus {
     pub behind: u32,
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct CommitSummary {
-    pub sha: SharedString,
-    pub subject: SharedString,
-    /// This is a unix timestamp
-    pub commit_timestamp: i64,
-    pub author_name: SharedString,
-    pub has_parent: bool,
-}
-
-#[derive(Clone, Debug, Default, Hash, PartialEq, Eq)]
-pub struct CommitDetails {
-    pub sha: SharedString,
-    pub message: SharedString,
-    pub commit_timestamp: i64,
-    pub author_email: SharedString,
-    pub author_name: SharedString,
-}
-
 #[derive(Debug)]
 pub struct CommitDiff {
     pub files: Vec<CommitFile>,
@@ -174,12 +158,6 @@ pub struct CommitFile {
     pub path: RepoPath,
     pub old_text: Option<String>,
     pub new_text: Option<String>,
-}
-
-impl CommitDetails {
-    pub fn short_sha(&self) -> SharedString {
-        self.sha[..SHORT_SHA_LENGTH].to_string().into()
-    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -360,6 +338,10 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
+    fn default_remote_url(&self) -> Option<String> {
+        self.remote_url("upstream")
+            .or_else(|| self.remote_url("origin"))
+    }
 
     /// Resolve a list of refs to SHAs.
     fn revparse_batch(&self, revs: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>>;
@@ -402,7 +384,7 @@ pub trait GitRepository: Send + Sync {
         env: Arc<HashMap<String, String>>,
     ) -> BoxFuture<'_, Result<()>>;
 
-    fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>>;
+    fn show(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDetails>>;
 
     fn load_commit(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDiff>>;
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>>;
@@ -639,8 +621,13 @@ impl GitRepository for RealGitRepository {
         repo.commondir().into()
     }
 
-    fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
+    fn show(&self, commit: String, cx: AsyncApp) -> BoxFuture<'_, Result<CommitDetails>> {
         let working_directory = self.working_directory();
+
+        let git_hosting_provider_registry =
+            cx.update(GitHostingProviderRegistry::default_global).ok();
+        let remote_url = self.default_remote_url();
+
         self.executor
             .spawn(async move {
                 let working_directory = working_directory?;
@@ -659,14 +646,27 @@ impl GitRepository for RealGitRepository {
                 if fields.len() != 6 {
                     bail!("unexpected git-show output for {commit:?}: {output:?}")
                 }
-                let sha = fields[0].to_string().into();
-                let message = fields[1].to_string().into();
+                let sha = fields[0].to_string();
+                let raw_message = fields[1].to_string();
                 let commit_timestamp = fields[2].parse()?;
                 let author_email = fields[3].to_string().into();
                 let author_name = fields[4].to_string().into();
+
+                let message: ParsedCommitMessage =
+                    if let Some(provider_registry) = git_hosting_provider_registry {
+                        ParsedCommitMessage::parse_commit_message(
+                            Oid::from_bytes(sha.to_string().as_bytes()).unwrap_or_default(),
+                            raw_message,
+                            remote_url.as_deref(),
+                            provider_registry,
+                        )
+                        .await
+                    } else {
+                        raw_message.into()
+                    };
                 Ok(CommitDetails {
-                    sha,
-                    message,
+                    sha: sha.into(),
+                    message: Some(message),
                     commit_timestamp,
                     author_email,
                     author_name,
@@ -1191,10 +1191,8 @@ impl GitRepository for RealGitRepository {
     fn blame(&self, path: RepoPath, content: Rope) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let working_directory = self.working_directory();
         let git_binary_path = self.git_binary_path.clone();
-
-        let remote_url = self
-            .remote_url("upstream")
-            .or_else(|| self.remote_url("origin"));
+        // WARN: this will check for origin, then upstream. Previously, they were inverted
+        let remote_url = self.default_remote_url();
 
         self.executor
             .spawn(async move {

@@ -22,11 +22,12 @@ use futures::{
 use git::{
     BuildPermalinkParams, GitHostingProviderRegistry, Oid, WORK_DIRECTORY_REPO_PATH,
     blame::Blame,
+    commit::{CommitDetails, CommitSummary},
     parse_git_remote_url,
     repository::{
-        Branch, CommitDetails, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions,
-        GitRepository, GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath,
-        ResetMode, UpstreamTrackingStatus,
+        Branch, CommitDiff, CommitFile, CommitOptions, DiffType, FetchOptions, GitRepository,
+        GitRepositoryCheckpoint, PushOptions, Remote, RemoteCommandOutput, RepoPath, ResetMode,
+        UpstreamTrackingStatus,
     },
     stash::{GitStash, StashEntry},
     status::{
@@ -53,7 +54,7 @@ use std::{
     collections::{BTreeSet, VecDeque},
     future::Future,
     mem,
-    ops::Range,
+    ops::{Deref, Range},
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -1980,7 +1981,10 @@ impl GitStore {
             .await??;
         Ok(proto::GitCommitDetails {
             sha: commit.sha.into(),
-            message: commit.message.into(),
+            message: commit
+                .message
+                .map(|msg| msg.deref().to_string())
+                .unwrap_or_default(),
             commit_timestamp: commit.commit_timestamp,
             author_email: commit.author_email.into(),
             author_name: commit.author_name.into(),
@@ -3514,9 +3518,9 @@ impl Repository {
 
     pub fn show(&mut self, commit: String) -> oneshot::Receiver<Result<CommitDetails>> {
         let id = self.id;
-        self.send_job(None, move |git_repo, _cx| async move {
+        self.send_job(None, move |git_repo, cx| async move {
             match git_repo {
-                RepositoryState::Local { backend, .. } => backend.show(commit).await,
+                RepositoryState::Local { backend, .. } => backend.show(commit, cx).await,
                 RepositoryState::Remote { project_id, client } => {
                     let resp = client
                         .request(proto::GitShow {
@@ -3528,7 +3532,7 @@ impl Repository {
 
                     Ok(CommitDetails {
                         sha: resp.sha.into(),
-                        message: resp.message.into(),
+                        message: resp.message.try_into().ok(),
                         commit_timestamp: resp.commit_timestamp,
                         author_email: resp.author_email.into(),
                         author_name: resp.author_name.into(),
@@ -4532,13 +4536,14 @@ impl Repository {
                     bail!("not a local repository")
                 };
                 let (snapshot, events) = this
-                    .update(&mut cx, |this, _| {
+                    .update(&mut cx, |this, inner_cx| {
                         this.paths_needing_status_update.clear();
                         compute_snapshot(
                             this.id,
                             this.work_directory_abs_path.clone(),
                             this.snapshot.clone(),
                             backend.clone(),
+                            inner_cx.to_async(),
                         )
                     })?
                     .await?;
@@ -5019,22 +5024,27 @@ fn proto_to_branch(proto: &proto::Branch) -> git::repository::Branch {
                     })
                     .unwrap_or(git::repository::UpstreamTracking::Gone),
             }),
-        most_recent_commit: proto.most_recent_commit.as_ref().map(|commit| {
-            git::repository::CommitSummary {
+        most_recent_commit: proto
+            .most_recent_commit
+            .as_ref()
+            .map(|commit| CommitSummary {
                 sha: commit.sha.to_string().into(),
                 subject: commit.subject.to_string().into(),
                 commit_timestamp: commit.commit_timestamp,
                 author_name: commit.author_name.to_string().into(),
                 has_parent: true,
-            }
-        }),
+            }),
     }
 }
 
 fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
     proto::GitCommitDetails {
         sha: commit.sha.to_string(),
-        message: commit.message.to_string(),
+        message: commit
+            .message
+            .as_ref()
+            .map(|msg| msg.deref().to_string())
+            .unwrap_or_default(),
         commit_timestamp: commit.commit_timestamp,
         author_email: commit.author_email.to_string(),
         author_name: commit.author_name.to_string(),
@@ -5044,7 +5054,7 @@ fn commit_details_to_proto(commit: &CommitDetails) -> proto::GitCommitDetails {
 fn proto_to_commit_details(proto: &proto::GitCommitDetails) -> CommitDetails {
     CommitDetails {
         sha: proto.sha.clone().into(),
-        message: proto.message.clone().into(),
+        message: proto.message.clone().try_into().ok(),
         commit_timestamp: proto.commit_timestamp,
         author_email: proto.author_email.clone().into(),
         author_name: proto.author_name.clone().into(),
@@ -5056,6 +5066,7 @@ async fn compute_snapshot(
     work_directory_abs_path: Arc<Path>,
     prev_snapshot: RepositorySnapshot,
     backend: Arc<dyn GitRepository>,
+    cx: AsyncApp,
 ) -> Result<(RepositorySnapshot, Vec<RepositoryEvent>)> {
     let mut events = Vec::new();
     let branches = backend.branches().await?;
@@ -5096,7 +5107,7 @@ async fn compute_snapshot(
 
     // Useful when branch is None in detached head state
     let head_commit = match backend.head_sha().await {
-        Some(head_sha) => backend.show(head_sha).await.log_err(),
+        Some(head_sha) => backend.show(head_sha, cx).await.log_err(),
         None => None,
     };
 

@@ -14,11 +14,11 @@ use askpass::AskPassDelegate;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorElement, EditorMode, MultiBuffer};
 use futures::StreamExt as _;
-use git::blame::ParsedCommitMessage;
+use git::commit::{CommitDetails, CommitSummary};
 use git::repository::{
-    Branch, CommitDetails, CommitOptions, CommitSummary, DiffType, FetchOptions, GitCommitter,
-    PushOptions, Remote, RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking,
-    UpstreamTrackingStatus, get_git_committer,
+    Branch, CommitOptions, DiffType, FetchOptions, GitCommitter, PushOptions, Remote,
+    RemoteCommandOutput, ResetMode, Upstream, UpstreamTracking, UpstreamTrackingStatus,
+    get_git_committer,
 };
 use git::stash::GitStash;
 use git::status::StageStatus;
@@ -56,7 +56,6 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::{collections::HashSet, sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
-use time::OffsetDateTime;
 use ui::{
     Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IconPosition, Label, LabelSize,
     PopoverMenu, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar, prelude::*,
@@ -374,7 +373,6 @@ impl GitPanel {
     ) -> Entity<Self> {
         let project = workspace.project().clone();
         let app_state = workspace.app_state().clone();
-        let fs = app_state.fs.clone();
         let git_store = project.read(cx).git_store().clone();
         let active_repository = project.read(cx).active_repository(cx);
 
@@ -455,7 +453,7 @@ impl GitPanel {
                 generate_commit_message_task: None,
                 entries: Vec::new(),
                 focus_handle: cx.focus_handle(),
-                fs,
+                fs: app_state.fs.clone(),
                 new_count: 0,
                 new_staged_count: 0,
                 pending: Vec::new(),
@@ -1462,7 +1460,14 @@ impl GitPanel {
                     this.commit_message_buffer(cx).update(cx, |buffer, cx| {
                         let start = buffer.anchor_before(0);
                         let end = buffer.anchor_after(buffer.len());
-                        buffer.edit([(start..end, message)], None, cx);
+                        buffer.edit(
+                            [(
+                                start..end,
+                                message.map(|msg| msg.message).unwrap_or_default(),
+                            )],
+                            None,
+                            cx,
+                        );
                     });
                 })
                 .log_err();
@@ -1635,7 +1640,14 @@ impl GitPanel {
                     Ok(None) => {}
                     Ok(Some(prior_commit)) => {
                         this.commit_editor.update(cx, |editor, cx| {
-                            editor.set_text(prior_commit.message, window, cx)
+                            editor.set_text(
+                                prior_commit
+                                    .message
+                                    .map(|msg| msg.message)
+                                    .unwrap_or_default(),
+                                window,
+                                cx,
+                            )
                         });
                     }
                     Err(e) => this.show_error_toast("reset", e, cx),
@@ -4406,15 +4418,12 @@ impl GitPanelMessageTooltip {
                 })?;
                 let details = details.await?;
 
-                let commit_details = crate::commit_tooltip::CommitDetails {
+                let commit_details = git::commit::CommitDetails {
                     sha: details.sha.clone(),
                     author_name: details.author_name.clone(),
                     author_email: details.author_email.clone(),
-                    commit_time: OffsetDateTime::from_unix_timestamp(details.commit_timestamp)?,
-                    message: Some(ParsedCommitMessage {
-                        message: details.message,
-                        ..Default::default()
-                    }),
+                    commit_timestamp: details.commit_timestamp,
+                    message: details.message
                 };
 
                 this.update(cx, |this: &mut GitPanelMessageTooltip, cx| {

@@ -1,9 +1,10 @@
 use crate::commit_view::CommitView;
 use editor::hover_markdown_style;
 use futures::Future;
+use git::GitRemote;
 use git::blame::BlameEntry;
-use git::repository::CommitSummary;
-use git::{GitRemote, blame::ParsedCommitMessage};
+use git::commit::{CommitDetails, CommitSummary, ParsedCommitMessage};
+
 use gpui::{
     App, Asset, ClipboardItem, Element, Entity, MouseButton, ParentElement, Render, ScrollHandle,
     StatefulInteractiveElement, WeakEntity, prelude::*,
@@ -17,15 +18,6 @@ use time::{OffsetDateTime, UtcOffset};
 use time_format::format_local_timestamp;
 use ui::{Avatar, Divider, IconButtonShape, prelude::*, tooltip_container};
 use workspace::Workspace;
-
-#[derive(Clone, Debug)]
-pub struct CommitDetails {
-    pub sha: SharedString,
-    pub author_name: SharedString,
-    pub author_email: SharedString,
-    pub commit_time: OffsetDateTime,
-    pub message: Option<ParsedCommitMessage>,
-}
 
 pub struct CommitAvatar<'a> {
     commit: &'a CommitDetails,
@@ -116,15 +108,10 @@ impl CommitTooltip {
         workspace: WeakEntity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let commit_time = blame
-            .committer_time
-            .and_then(|t| OffsetDateTime::from_unix_timestamp(t).ok())
-            .unwrap_or(OffsetDateTime::now_utc());
-
         Self::new(
             CommitDetails {
                 sha: blame.sha.to_string().into(),
-                commit_time,
+                commit_timestamp: blame.committer_time.unwrap_or(0),
                 author_name: blame
                     .author
                     .clone()
@@ -183,7 +170,8 @@ impl Render for CommitTooltip {
             .unwrap_or_else(|| self.commit.sha.clone());
         let full_sha = self.commit.sha.to_string();
         let absolute_timestamp = format_local_timestamp(
-            self.commit.commit_time,
+            OffsetDateTime::from_unix_timestamp(self.commit.commit_timestamp)
+                .unwrap_or_else(|_| OffsetDateTime::now_utc()),
             OffsetDateTime::now_utc(),
             time_format::TimestampFormat::MediumAbsolute,
         );
@@ -228,7 +216,11 @@ impl Render for CommitTooltip {
                         .to_string()
                         .into()
                 }),
-            commit_timestamp: self.commit.commit_time.unix_timestamp(),
+            commit_timestamp: time::OffsetDateTime::from_unix_timestamp(
+                self.commit.commit_timestamp,
+            )
+            .unwrap_or_else(|_| time::OffsetDateTime::now_utc())
+            .unix_timestamp(),
             author_name: self.commit.author_name.clone(),
             has_parent: false,
         };
