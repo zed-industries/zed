@@ -2468,7 +2468,7 @@ impl LocalLspStore {
                         uri.clone(),
                         adapter.language_id(&language.name()),
                         0,
-                        initial_snapshot.text(),
+                        buffer_handle.read(cx).text_for_lsp(),
                     );
 
                     vec![snapshot]
@@ -10611,7 +10611,7 @@ impl LspStore {
                         uri,
                         adapter.language_id(&language.name()),
                         version,
-                        initial_snapshot.text(),
+                        buffer_handle.read(cx).text_for_lsp(),
                     );
                     buffer_paths_registered.push((buffer_id, file.abs_path(cx)));
                     local
