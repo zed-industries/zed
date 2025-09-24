@@ -176,7 +176,10 @@ impl EditFileTool {
         // Check if path is inside the global config directory
         // First check if it's already inside project - if not, try to canonicalize
         let Ok(project_path) = self.thread.read_with(cx, |thread, cx| {
-            thread.project().read(cx).find_project_path(&input.path, cx)
+            thread
+                .project()
+                .read(cx)
+                .find_project_path(dbg!(&input.path), cx)
         }) else {
             return Task::ready(Err(anyhow!("thread was dropped")));
         };
@@ -1434,16 +1437,18 @@ mod tests {
                 )
             });
 
+            cx.run_until_parked();
+
             if should_confirm {
                 stream_rx.expect_authorization().await;
             } else {
-                auth.await.unwrap();
                 assert!(
                     stream_rx.try_next().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
                 );
+                auth.await.unwrap();
             }
         }
     }

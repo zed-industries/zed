@@ -4413,7 +4413,7 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        for (i, worktree) in project.worktrees(cx).enumerate() {
+        for (i, worktree) in project.visible_worktrees(cx).enumerate() {
             let name = {
                 let settings_location = SettingsLocation {
                     worktree_id: worktree.read(cx).id(),

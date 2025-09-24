@@ -282,7 +282,6 @@ impl PathStyle {
     }
 }
 
-// FIXME rename this to remoteabspath or something
 #[derive(Debug, Clone)]
 pub struct RemotePathBuf {
     style: PathStyle,

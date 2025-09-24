@@ -388,12 +388,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: rel_path(path!("b/.zed")).into(),
-                    id_base: if cfg!(windows) {
-                        "local worktree tasks from directory \"b\\\\.zed\"".into()
-                    } else {
-                        "local worktree tasks from directory \"b/.zed\"".into()
-                    },
+                    directory_in_worktree: rel_path("b/.zed").into(),
+                    id_base: "local worktree tasks from directory \"b/.zed\"".into()
                 },
                 "cargo check".to_string(),
                 vec!["check".to_string()],
@@ -473,12 +469,8 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
             (
                 TaskSourceKind::Worktree {
                     id: worktree_id,
-                    directory_in_worktree: rel_path(path!("b/.zed")).into(),
-                    id_base: if cfg!(windows) {
-                        "local worktree tasks from directory \"b\\\\.zed\"".into()
-                    } else {
-                        "local worktree tasks from directory \"b/.zed\"".into()
-                    },
+                    directory_in_worktree: rel_path("b/.zed").into(),
+                    id_base: "local worktree tasks from directory \"b/.zed\"".into()
                 },
                 "cargo check".to_string(),
                 vec!["check".to_string()],
@@ -588,12 +580,8 @@ async fn test_fallback_to_single_worktree_tasks(cx: &mut gpui::TestAppContext) {
         vec![(
             TaskSourceKind::Worktree {
                 id: worktree_id,
-                directory_in_worktree: rel_path(path!(".zed")).into(),
-                id_base: if cfg!(windows) {
-                    "local worktree tasks from directory \".zed\"".into()
-                } else {
-                    "local worktree tasks from directory \".zed\"".into()
-                },
+                directory_in_worktree: rel_path(".zed").into(),
+                id_base: "local worktree tasks from directory \".zed\"".into(),
             },
             "echo /dir".to_string(),
         )]
@@ -4332,18 +4320,15 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
 
     cx.update(|app| {
         assert_eq!(
-            tree.read(app)
-                .paths()
-                .map(|p| p.as_str())
-                .collect::<Vec<_>>(),
+            tree.read(app).paths().collect::<Vec<_>>(),
             vec![
-                "a",
-                path!("a/file1"),
-                path!("a/file2.new"),
-                "b",
-                "d",
-                path!("d/file3"),
-                path!("d/file4"),
+                rel_path("a"),
+                rel_path("a/file1"),
+                rel_path("a/file2.new"),
+                rel_path("b"),
+                rel_path("d"),
+                rel_path("d/file3"),
+                rel_path("d/file4"),
             ]
         );
     });
@@ -4400,15 +4385,15 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     cx.executor().run_until_parked();
     remote.update(cx, |remote, _| {
         assert_eq!(
-            remote.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
+            remote.paths().collect::<Vec<_>>(),
             vec![
-                "a",
-                path!("a/file1"),
-                path!("a/file2.new"),
-                "b",
-                "d",
-                path!("d/file3"),
-                path!("d/file4"),
+                rel_path("a"),
+                rel_path("a/file1"),
+                rel_path("a/file2.new"),
+                rel_path("b"),
+                rel_path("d"),
+                rel_path("d/file3"),
+                rel_path("d/file4"),
             ]
         );
     });

@@ -157,6 +157,7 @@ impl WorktreeStore {
         abs_path: impl AsRef<Path>,
         cx: &App,
     ) -> Option<(Entity<Worktree>, Arc<RelPath>)> {
+        let abs_path = SanitizedPath::new(abs_path.as_ref());
         for tree in self.worktrees() {
             let path_style = tree.read(cx).path_style();
             if let Ok(relative_path) = abs_path.as_ref().strip_prefix(tree.read(cx).abs_path())
