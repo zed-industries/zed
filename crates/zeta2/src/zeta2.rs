@@ -332,12 +332,12 @@ impl Zeta {
                             new_snapshot,
                             ..
                         } => {
-                            let path = new_snapshot.file().map(|f| f.path().to_path_buf());
+                            let path = new_snapshot.file().map(|f| f.full_path(cx));
 
                             let old_path = old_snapshot.file().and_then(|f| {
-                                let old_path = f.path().as_ref();
-                                if Some(old_path) != path.as_deref() {
-                                    Some(old_path.to_path_buf())
+                                let old_path = f.full_path(cx);
+                                if Some(&old_path) != path.as_ref() {
+                                    Some(old_path)
                                 } else {
                                     None
                                 }
@@ -832,6 +832,7 @@ mod tests {
         http_client::{FakeHttpClient, Response},
         prelude::*,
     };
+    use indoc::indoc;
     use language::OffsetRangeExt as _;
     use project::{FakeFs, Project};
     use serde_json::json;
@@ -878,6 +879,87 @@ mod tests {
             })
             .await
             .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+        let prediction = zeta
+            .update(cx, |zeta, cx| {
+                zeta.request_prediction(&project, &buffer, position, cx)
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(prediction.edits.len(), 1);
+        assert_eq!(
+            prediction.edits[0].0.to_point(&snapshot).start,
+            language::Point::new(1, 3)
+        );
+        assert_eq!(prediction.edits[0].1, " are you?");
+    }
+
+    #[gpui::test]
+    async fn test_request_includes_events(cx: &mut TestAppContext) {
+        let start = "Hello!\n\nBye";
+
+        let zeta = init_test(
+            |req| {
+                assert_eq!(req.events.len(), 1);
+                assert_eq!(
+                    req.events[0],
+                    predict_edits_v3::Event::BufferChange {
+                        path: Some(PathBuf::from("root/foo.md")),
+                        old_path: None,
+                        diff: indoc! {"
+                            @@ -1,3 +1,3 @@
+                             Hello!
+                            -
+                            +How
+                             Bye
+                        "}
+                        .to_string(),
+                        predicted: false
+                    }
+                );
+
+                predict_edits_v3::PredictEditsResponse {
+                    request_id: Uuid::new_v4(),
+                    edits: vec![predict_edits_v3::Edit {
+                        path: PathBuf::from("/root/foo.md"),
+                        range: 0..start.len() + 3, // We inserted `How` below
+                        content: "Hello!\nHow are you?\nBye".into(),
+                    }],
+                    debug_info: None,
+                }
+            },
+            cx,
+        );
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md": start
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec!["/root".as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path("/root/foo.md", cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.register_buffer(&buffer, &project, cx);
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(vec![(7..7, "How")], None, cx);
+        });
+
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
         let position = snapshot.anchor_before(language::Point::new(1, 3));
 
