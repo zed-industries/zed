@@ -6,7 +6,7 @@ You can do that by either subscribing to [one of Zed's plans](./plans-and-usage.
 
 ## Use Your Own Keys {#use-your-own-keys}
 
-If you already have an API key for an existing LLM provider, like Anthropic or OpenAI,  you can add them to Zed and use the full power of the Agent Panel **_for free_**.
+If you already have an API key for an existing LLM provider, like Anthropic or OpenAI, you can add them to Zed and use the full power of the Agent Panel **_for free_**.
 
 To add an existing API key to a given provider, go to the Agent Panel settings (`agent: open settings`), look for the desired provider, paste the key into the input, and hit enter.
 
