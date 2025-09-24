@@ -1287,6 +1287,7 @@ mod tests {
         let buffer = cx.new(|cx| Buffer::local(old, cx));
         let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
 
+        // TODO cover more cases when multi-file is supported
         let big_edits = vec![predict_edits_v3::Edit {
             path: PathBuf::from("test.txt"),
             range: 0..old.len(),
