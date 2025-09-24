@@ -654,11 +654,14 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
                 // out on each straight line, rather than around the whole
                 // perimeter. This way each line starts and ends with a dash.
                 bool is_horizontal = corner_center_to_point.x < corner_center_to_point.y;
-                float border_width = is_horizontal ? border.x : border.y;
+                // Choosing the right border width for dashed borders.
+                // TODO: A better solution exists taking a look at the whole file.
+                // this does not fix single dashed borders at the corners
                 float2 dashed_border = float2(
                     max(quad.border_widths.bottom, quad.border_widths.top),
                     max(quad.border_widths.right, quad.border_widths.left)
                 );
+                float border_width = is_horizontal ? dashed_border.x : dashed_border.y;
                 dash_velocity = dv_numerator / border_width;
                 t = is_horizontal ? the_point.x : the_point.y;
                 t *= dash_velocity;

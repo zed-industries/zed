@@ -648,6 +648,8 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
                 // When applying dashed borders to just some, not all, the sides.
                 // The way we chose border widths above sometimes comes with a 0 width value.
                 // So we choose again to avoid division by zero.
+                // TODO: A better solution exists taking a look at the whole file.
+                // this does not fix single dashed borders at the corners
                 let dashed_border = vec2<f32>(
                         max(
                             quad.border_widths.bottom,
