@@ -47,11 +47,8 @@ pub(crate) fn play_remote_audio_track(
     cx: &mut gpui::App,
 ) -> Result<AudioStream> {
     info!("speaker: {speaker:?}");
-    let stream = source::LiveKitStream::new(
-        cx.background_executor(),
-        track,
-        speaker.legacy_audio_compatible,
-    );
+    let stream =
+        source::LiveKitStream::new(cx.background_executor(), track, speaker.sends_legacy_audio);
 
     let stop_handle = Arc::new(AtomicBool::new(false));
     let stop_handle_clone = stop_handle.clone();
@@ -141,9 +138,14 @@ impl AudioStack {
             let apm = self.apm.clone();
             let mixer = self.mixer.clone();
             async move {
-                Self::play_output(apm, mixer, SAMPLE_RATE.get(), CHANNEL_COUNT.get().into())
-                    .await
-                    .log_err();
+                Self::play_output(
+                    apm,
+                    mixer,
+                    LEGACY_SAMPLE_RATE.get(),
+                    LEGACY_CHANNEL_COUNT.get().into(),
+                )
+                .await
+                .log_err();
             }
         }));
         *self._output_task.borrow_mut() = Arc::downgrade(&task);
@@ -181,7 +183,7 @@ impl AudioStack {
         let speaker = Speaker {
             name: user_name,
             is_staff,
-            legacy_audio_compatible,
+            sends_legacy_audio: legacy_audio_compatible,
         };
         log::info!("Microphone speaker: {speaker:?}");
         let track_name = serde_urlencoded::to_string(speaker)
@@ -423,7 +425,7 @@ impl AudioStack {
 pub struct Speaker {
     pub name: String,
     pub is_staff: bool,
-    pub legacy_audio_compatible: bool,
+    pub sends_legacy_audio: bool,
 }
 
 fn send_to_livekit(frame_tx: UnboundedSender<AudioFrame<'static>>, mut microphone: impl Source) {

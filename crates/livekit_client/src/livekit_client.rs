@@ -139,13 +139,13 @@ impl Room {
             serde_urlencoded::from_str(&track.0.name()).unwrap_or_else(|_| Speaker {
                 name: track.0.name(),
                 is_staff: false,
-                legacy_audio_compatible: true,
+                sends_legacy_audio: true,
             });
 
         if AudioSettings::get_global(cx).rodio_audio {
             info!("Using experimental.rodio_audio audio pipeline for output");
             playback::play_remote_audio_track(&track.0, speaker, cx)
-        } else if speaker.legacy_audio_compatible {
+        } else if speaker.sends_legacy_audio {
             Ok(self.playback.play_remote_audio_track(&track.0))
         } else {
             Err(anyhow!("Client version too old to play audio in call"))
