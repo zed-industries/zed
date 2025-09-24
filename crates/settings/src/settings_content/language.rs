@@ -111,7 +111,7 @@ pub struct EditPredictionSettingsContent {
     /// Settings specific to GitHub Copilot.
     pub copilot: Option<CopilotSettingsContent>,
     /// Settings specific to Codestral.
-    pub codestral: CodestralSettings,
+    pub codestral: Option<CodestralSettingsContent>,
     /// Whether edit predictions are enabled in the assistant prompt editor.
     /// This has no effect if globally disabled.
     pub enabled_in_text_threads: Option<bool>,
@@ -132,6 +132,25 @@ pub struct CopilotSettingsContent {
     ///
     /// Default: none
     pub enterprise_uri: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct CodestralSettingsContent {
+    /// API key for Codestral.
+    ///
+    /// Default: none
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Model to use for completions.
+    ///
+    /// Default: "codestral-latest"
+    #[serde(default)]
+    pub model: Option<String>,
+    /// Maximum tokens to generate.
+    ///
+    /// Default: 150
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
 }
 
 /// The mode in which edit predictions should be displayed.
@@ -165,16 +184,6 @@ pub enum SoftWrap {
     PreferredLineLength,
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
     Bounded,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct CodestralSettings {
-    /// API key for Codestral.
-    pub api_key: Option<String>,
-    /// Model to use for completions.
-    pub model: Option<String>,
-    /// Maximum tokens to generate.
-    pub max_tokens: Option<u32>,
 }
 
 /// The settings for a particular language.

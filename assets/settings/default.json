@@ -1281,15 +1281,20 @@
     //   "proxy": "",
     //   "proxy_no_verify": false
     // },
-    // Whether edit predictions are enabled when editing text threads.
-    // This setting has no effect if globally disabled.
-    "enabled_in_text_threads": true,
-
     "copilot": {
       "enterprise_uri": null,
       "proxy": null,
       "proxy_no_verify": null
-    }
+    },
+    "codestral": {
+      // todo! remove api_key
+      "api_key": null,
+      "model": null,
+      "max_tokens": null
+    },
+    // Whether edit predictions are enabled when editing text threads.
+    // This setting has no effect if globally disabled.
+    "enabled_in_text_threads": true
   },
   // Settings specific to journaling
   "journal": {
