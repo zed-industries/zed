@@ -3,7 +3,6 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     collections::HashMap,
-    marker::PhantomData,
     rc::Rc,
     sync::Arc,
 };
@@ -25,42 +24,14 @@ use ui::{
 use util::{paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone)]
-struct SettingField<T> {
+struct SettingField<T: 'static> {
     pick: Arc<dyn Send + Fn(&SettingsContent) -> &T>,
     pick_mut: Arc<dyn Send + Sync + Fn(&mut SettingsContent) -> &mut T>,
 }
 
-#[derive(Clone)]
-struct AnySettingField {
-    pick: fn(&SettingsContent) -> &dyn Any,
-    pick_mut: fn(&mut SettingsContent) -> &mut dyn Any,
-    type_id: TypeId,
-}
-
-impl AnySettingField {
-    fn downcast<T: 'static>(&self) -> Option<SettingField<T>> {
-        if self.type_id == TypeId::of::<T>() {
-            let pick = self.pick.clone();
-            let pick_mut = self.pick_mut.clone();
-
-            // TODO: Can we not allocate so many closures?
-            Some(SettingField {
-                pick: Arc::new(move |settings_content| {
-                    pick(settings_content).downcast_ref::<T>().unwrap()
-                }),
-                pick_mut: Arc::new(move |settings_content| {
-                    pick_mut(settings_content).downcast_mut::<T>().unwrap()
-                }),
-            })
-        } else {
-            None
-        }
-    }
-}
-
 #[derive(Default, Clone)]
 struct SettingFieldRenderer {
-    renderers: Rc<RefCell<HashMap<TypeId, Box<dyn Fn(&AnySettingField, &mut App) -> AnyElement>>>>,
+    renderers: Rc<RefCell<HashMap<TypeId, Box<dyn Fn(&dyn Any, &mut App) -> AnyElement>>>>,
 }
 
 impl Global for SettingFieldRenderer {}
@@ -70,15 +41,15 @@ impl SettingFieldRenderer {
         &mut self,
         renderer: impl Fn(&SettingField<T>, &mut App) -> AnyElement + 'static,
     ) {
-        let type_id = TypeId::of::<T>();
-        let renderer = Box::new(move |any_setting_field: &AnySettingField, cx: &mut App| {
-            let field = any_setting_field.downcast::<T>().unwrap();
-            renderer(&field, cx)
+        let type_id = TypeId::of::<SettingField<T>>();
+        let renderer = Box::new(move |any_setting_field: &dyn Any, cx: &mut App| {
+            let field = any_setting_field.downcast_ref::<SettingField<T>>().unwrap();
+            renderer(field, cx)
         });
         self.renderers.borrow_mut().insert(type_id, renderer);
     }
 
-    fn render(&self, any_setting_field: &AnySettingField, cx: &mut App) -> AnyElement {
+    fn render(&self, any_setting_field: &dyn Any, cx: &mut App) -> AnyElement {
         let type_id = any_setting_field.type_id();
         if let Some(renderer) = self.renderers.borrow().get(&type_id) {
             renderer(any_setting_field, cx)
@@ -97,15 +68,12 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
-                    field: AnySettingField {
-                        pick: |settings_content| {
-                            &settings_content.workspace.confirm_quit as &dyn Any
-                        },
-                        pick_mut: |settings_content| {
-                            &mut settings_content.workspace.confirm_quit as &mut dyn Any
-                        },
-                        type_id: TypeId::of::<bool>(),
-                    },
+                    field: Box::new(SettingField {
+                        pick: Arc::new(|settings_content| &settings_content.workspace.confirm_quit),
+                        pick_mut: Arc::new(|settings_content| {
+                            &mut settings_content.workspace.confirm_quit
+                        }),
+                    }),
                 }),
                 // SettingsPageItem::SettingItem(SettingItem {
                 //     title: "Auto Update",
@@ -235,13 +203,11 @@ pub struct SettingsWindow {
     current_page: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
 }
 
-#[derive(Clone)]
 struct SettingsPage {
     title: &'static str,
     items: Vec<SettingsPageItem>,
 }
 
-#[derive(Clone)]
 enum SettingsPageItem {
     SectionHeader(&'static str),
     SettingItem(SettingItem),
@@ -259,7 +225,7 @@ impl SettingsPageItem {
                     .id(setting_item.title) // This would be a formatted version of the field name,
                     .child(setting_item.title)
                     .child(setting_item.description)
-                    .child(renderer.render(&setting_item.field, cx))
+                    .child(renderer.render(setting_item.field.as_ref(), cx))
                     .into_any_element()
             }
         }
@@ -275,11 +241,10 @@ impl SettingsPageItem {
     }
 }
 
-#[derive(Clone)]
 struct SettingItem {
     title: &'static str,
     description: &'static str,
-    field: AnySettingField,
+    field: Box<dyn Any>,
 }
 
 #[allow(unused)]
