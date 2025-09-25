@@ -17,6 +17,7 @@ use agent::context::{
     FileContextHandle, ImageContext, ImageStatus, RulesContextHandle, SelectionContextHandle,
     SymbolContextHandle, TextThreadContextHandle, ThreadContextHandle,
 };
+use util::paths::PathStyle;
 
 #[derive(IntoElement)]
 pub enum ContextPill {
@@ -303,33 +304,54 @@ impl AddedContext {
         cx: &App,
     ) -> Option<AddedContext> {
         match handle {
-            AgentContextHandle::File(handle) => Self::pending_file(handle, cx),
+            AgentContextHandle::File(handle) => {
+                Self::pending_file(handle, project.path_style(cx), cx)
+            }
             AgentContextHandle::Directory(handle) => Self::pending_directory(handle, project, cx),
-            AgentContextHandle::Symbol(handle) => Self::pending_symbol(handle, cx),
-            AgentContextHandle::Selection(handle) => Self::pending_selection(handle, cx),
+            AgentContextHandle::Symbol(handle) => {
+                Self::pending_symbol(handle, project.path_style(cx), cx)
+            }
+            AgentContextHandle::Selection(handle) => {
+                Self::pending_selection(handle, project.path_style(cx), cx)
+            }
             AgentContextHandle::FetchedUrl(handle) => Some(Self::fetched_url(handle)),
             AgentContextHandle::Thread(handle) => Some(Self::pending_thread(handle, cx)),
             AgentContextHandle::TextThread(handle) => Some(Self::pending_text_thread(handle, cx)),
             AgentContextHandle::Rules(handle) => Self::pending_rules(handle, prompt_store, cx),
-            AgentContextHandle::Image(handle) => Some(Self::image(handle, model, cx)),
+            AgentContextHandle::Image(handle) => {
+                Some(Self::image(handle, model, project.path_style(cx), cx))
+            }
         }
     }
 
-    fn pending_file(handle: FileContextHandle, cx: &App) -> Option<AddedContext> {
-        let full_path = handle.buffer.read(cx).file()?.full_path(cx);
-        Some(Self::file(handle, &full_path, cx))
+    fn pending_file(
+        handle: FileContextHandle,
+        path_style: PathStyle,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        let full_path = handle
+            .buffer
+            .read(cx)
+            .file()?
+            .full_path(cx)
+            .to_string_lossy()
+            .to_string();
+        Some(Self::file(handle, &full_path, path_style, cx))
     }
 
-    fn file(handle: FileContextHandle, full_path: &Path, cx: &App) -> AddedContext {
-        let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let (name, parent) =
-            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
+    fn file(
+        handle: FileContextHandle,
+        full_path: &str,
+        path_style: PathStyle,
+        cx: &App,
+    ) -> AddedContext {
+        let (name, parent) = extract_file_name_and_directory_from_full_path(full_path, path_style);
         AddedContext {
             kind: ContextKind::File,
             name,
             parent,
-            tooltip: Some(full_path_string),
-            icon_path: FileIcons::get_icon(full_path, cx),
+            tooltip: Some(SharedString::new(full_path)),
+            icon_path: FileIcons::get_icon(Path::new(full_path), cx),
             status: ContextStatus::Ready,
             render_hover: None,
             handle: AgentContextHandle::File(handle),
@@ -343,19 +365,24 @@ impl AddedContext {
     ) -> Option<AddedContext> {
         let worktree = project.worktree_for_entry(handle.entry_id, cx)?.read(cx);
         let entry = worktree.entry_for_id(handle.entry_id)?;
-        let full_path = worktree.full_path(&entry.path);
-        Some(Self::directory(handle, &full_path))
+        let full_path = worktree
+            .full_path(&entry.path)
+            .to_string_lossy()
+            .to_string();
+        Some(Self::directory(handle, &full_path, project.path_style(cx)))
     }
 
-    fn directory(handle: DirectoryContextHandle, full_path: &Path) -> AddedContext {
-        let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
-        let (name, parent) =
-            extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
+    fn directory(
+        handle: DirectoryContextHandle,
+        full_path: &str,
+        path_style: PathStyle,
+    ) -> AddedContext {
+        let (name, parent) = extract_file_name_and_directory_from_full_path(full_path, path_style);
         AddedContext {
             kind: ContextKind::Directory,
             name,
             parent,
-            tooltip: Some(full_path_string),
+            tooltip: Some(SharedString::new(full_path)),
             icon_path: None,
             status: ContextStatus::Ready,
             render_hover: None,
@@ -363,9 +390,17 @@ impl AddedContext {
         }
     }
 
-    fn pending_symbol(handle: SymbolContextHandle, cx: &App) -> Option<AddedContext> {
-        let excerpt =
-            ContextFileExcerpt::new(&handle.full_path(cx)?, handle.enclosing_line_range(cx), cx);
+    fn pending_symbol(
+        handle: SymbolContextHandle,
+        path_style: PathStyle,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        let excerpt = ContextFileExcerpt::new(
+            &handle.full_path(cx)?.to_string_lossy(),
+            handle.enclosing_line_range(cx),
+            path_style,
+            cx,
+        );
         Some(AddedContext {
             kind: ContextKind::Symbol,
             name: handle.symbol.clone(),
@@ -383,8 +418,17 @@ impl AddedContext {
         })
     }
 
-    fn pending_selection(handle: SelectionContextHandle, cx: &App) -> Option<AddedContext> {
-        let excerpt = ContextFileExcerpt::new(&handle.full_path(cx)?, handle.line_range(cx), cx);
+    fn pending_selection(
+        handle: SelectionContextHandle,
+        path_style: PathStyle,
+        cx: &App,
+    ) -> Option<AddedContext> {
+        let excerpt = ContextFileExcerpt::new(
+            &handle.full_path(cx)?.to_string_lossy(),
+            handle.line_range(cx),
+            path_style,
+            cx,
+        );
         Some(AddedContext {
             kind: ContextKind::Selection,
             name: excerpt.file_name_and_range.clone(),
@@ -485,13 +529,13 @@ impl AddedContext {
     fn image(
         context: ImageContext,
         model: Option<&Arc<dyn language_model::LanguageModel>>,
+        path_style: PathStyle,
         cx: &App,
     ) -> AddedContext {
         let (name, parent, icon_path) = if let Some(full_path) = context.full_path.as_ref() {
-            let full_path_string: SharedString = full_path.to_string_lossy().into_owned().into();
             let (name, parent) =
-                extract_file_name_and_directory_from_full_path(full_path, &full_path_string);
-            let icon_path = FileIcons::get_icon(full_path, cx);
+                extract_file_name_and_directory_from_full_path(full_path, path_style);
+            let icon_path = FileIcons::get_icon(Path::new(full_path), cx);
             (name, parent, icon_path)
         } else {
             ("Image".into(), None, None)
@@ -540,19 +584,20 @@ impl AddedContext {
 }
 
 fn extract_file_name_and_directory_from_full_path(
-    path: &Path,
-    name_fallback: &SharedString,
+    path: &str,
+    path_style: PathStyle,
 ) -> (SharedString, Option<SharedString>) {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned().into())
-        .unwrap_or_else(|| name_fallback.clone());
-    let parent = path
-        .parent()
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().into_owned().into());
-
-    (name, parent)
+    let (parent, file_name) = path_style.split(path);
+    let parent = parent.and_then(|parent| {
+        let parent = parent.trim_end_matches(path_style.separator());
+        let (_, parent) = path_style.split(parent);
+        if parent.is_empty() {
+            None
+        } else {
+            Some(SharedString::new(parent))
+        }
+    });
+    (SharedString::new(file_name), parent)
 }
 
 #[derive(Debug, Clone)]
@@ -564,25 +609,25 @@ struct ContextFileExcerpt {
 }
 
 impl ContextFileExcerpt {
-    pub fn new(full_path: &Path, line_range: Range<Point>, cx: &App) -> Self {
-        let full_path_string = full_path.to_string_lossy().into_owned();
-        let file_name = full_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| full_path_string.clone());
-
+    pub fn new(full_path: &str, line_range: Range<Point>, path_style: PathStyle, cx: &App) -> Self {
+        let (parent, file_name) = path_style.split(full_path);
         let line_range_text = format!(" ({}-{})", line_range.start.row + 1, line_range.end.row + 1);
-        let mut full_path_and_range = full_path_string;
+        let mut full_path_and_range = full_path.to_owned();
         full_path_and_range.push_str(&line_range_text);
-        let mut file_name_and_range = file_name;
+        let mut file_name_and_range = file_name.to_owned();
         file_name_and_range.push_str(&line_range_text);
 
-        let parent_name = full_path
-            .parent()
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().into_owned().into());
+        let parent_name = parent.and_then(|parent| {
+            let parent = parent.trim_end_matches(path_style.separator());
+            let (_, parent) = path_style.split(parent);
+            if parent.is_empty() {
+                None
+            } else {
+                Some(SharedString::new(parent))
+            }
+        });
 
-        let icon_path = FileIcons::get_icon(full_path, cx);
+        let icon_path = FileIcons::get_icon(Path::new(full_path), cx);
 
         ContextFileExcerpt {
             file_name_and_range: file_name_and_range.into(),
@@ -690,6 +735,7 @@ impl Component for AddedContext {
                     image_task: Task::ready(Some(LanguageModelImage::empty())).shared(),
                 },
                 None,
+                PathStyle::local(),
                 cx,
             ),
         );
@@ -710,6 +756,7 @@ impl Component for AddedContext {
                         .shared(),
                 },
                 None,
+                PathStyle::local(),
                 cx,
             ),
         );
@@ -725,6 +772,7 @@ impl Component for AddedContext {
                     image_task: Task::ready(None).shared(),
                 },
                 None,
+                PathStyle::local(),
                 cx,
             ),
         );
@@ -767,7 +815,8 @@ mod tests {
             full_path: None,
         };
 
-        let added_context = AddedContext::image(image_context, Some(&model), cx);
+        let added_context =
+            AddedContext::image(image_context, Some(&model), PathStyle::local(), cx);
 
         assert!(matches!(
             added_context.status,
@@ -790,7 +839,7 @@ mod tests {
             full_path: None,
         };
 
-        let added_context = AddedContext::image(image_context, None, cx);
+        let added_context = AddedContext::image(image_context, None, PathStyle::local(), cx);
 
         assert!(
             matches!(added_context.status, ContextStatus::Ready),

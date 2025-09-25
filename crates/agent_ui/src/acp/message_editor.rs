@@ -452,9 +452,12 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-            let buffer_content =
-                outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx)
-                    .await?;
+            let buffer_content = outline::get_buffer_content_or_outline(
+                buffer.clone(),
+                Some(&abs_path.to_string_lossy()),
+                &cx,
+            )
+            .await?;
 
             Ok(Mention::Text {
                 content: buffer_content.text,
@@ -1174,14 +1177,20 @@ fn full_mention_for_directory(
     abs_path: &Path,
     cx: &mut App,
 ) -> Task<Result<Mention>> {
-    fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<(Arc<RelPath>, PathBuf)> {
+    fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<(Arc<RelPath>, String)> {
         let mut files = Vec::new();
 
         for entry in worktree.child_entries(path) {
             if entry.is_dir() {
                 files.extend(collect_files_in_path(worktree, &entry.path));
             } else if entry.is_file() {
-                files.push((entry.path.clone(), worktree.full_path(&entry.path)));
+                files.push((
+                    entry.path.clone(),
+                    worktree
+                        .full_path(&entry.path)
+                        .to_string_lossy()
+                        .to_string(),
+                ));
             }
         }
 
@@ -1259,7 +1268,7 @@ fn full_mention_for_directory(
     })
 }
 
-fn render_directory_contents(entries: Vec<(Arc<RelPath>, PathBuf, String)>) -> String {
+fn render_directory_contents(entries: Vec<(Arc<RelPath>, String, String)>) -> String {
     let mut output = String::new();
     for (_relative_path, full_path, content) in entries {
         let fence = codeblock_fence_for_path(Some(&full_path), None);
