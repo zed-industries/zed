@@ -632,7 +632,7 @@ async fn test_following_tab_order(
     let pane_paths = |pane: &Entity<workspace::Pane>, cx: &mut VisualTestContext| {
         pane.update(cx, |pane, cx| {
             pane.items()
-                .map(|item| item.project_path(cx).unwrap().path.clone())
+                .map(|item| item.project_path(cx).unwrap().path)
                 .collect::<Vec<_>>()
         })
     };
