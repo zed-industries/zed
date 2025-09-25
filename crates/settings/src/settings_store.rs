@@ -7,7 +7,7 @@ use futures::{
     channel::{mpsc, oneshot},
     future::LocalBoxFuture,
 };
-use gpui::{App, AsyncApp, BorrowAppContext, Global, SharedString, Task, UpdateGlobal};
+use gpui::{App, AsyncApp, BorrowAppContext, Global, Task, UpdateGlobal};
 
 use paths::{EDITORCONFIG_NAME, local_settings_file_relative_path, task_file_name};
 use schemars::{JsonSchema, json_schema};
@@ -34,7 +34,7 @@ use crate::{
     ActiveSettingsProfileName, FontFamilyName, IconThemeName, LanguageSettingsContent,
     LanguageToSettingsMap, SettingsJsonSchemaParams, ThemeName, VsCodeSettings, WorktreeId,
     merge_from::MergeFrom,
-    parse_json_with_comments, replace_value_in_json_text,
+    parse_json_with_comments,
     settings_content::{
         ExtensionsSettingsContent, ProjectSettingsContent, SettingsContent, UserSettingsContent,
     },
