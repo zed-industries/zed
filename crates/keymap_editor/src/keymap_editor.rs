@@ -1575,6 +1575,8 @@ impl Render for KeymapEditor {
                                         context.add("BufferSearchBar");
                                         context
                                     })
+                                    .flex()
+                                    .items_center()
                                     .size_full()
                                     .h_8()
                                     .pl_2()
