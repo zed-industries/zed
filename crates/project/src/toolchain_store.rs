@@ -257,7 +257,7 @@ impl ToolchainStore {
         envelope: TypedEnvelope<proto::ActiveToolchain>,
         mut cx: AsyncApp,
     ) -> Result<proto::ActiveToolchainResponse> {
-        let path = RelPath::new(envelope.payload.path.as_deref().unwrap_or(""))?;
+        let path = RelPath::unix(envelope.payload.path.as_deref().unwrap_or(""))?;
         let toolchain = this
             .update(&mut cx, |this, cx| {
                 let language_name = LanguageName::from_proto(envelope.payload.language_name);

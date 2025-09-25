@@ -1181,11 +1181,11 @@ impl Event {
                 let old_path = old_snapshot
                     .file()
                     .map(|f| f.path().as_ref())
-                    .unwrap_or(RelPath::new("untitled").unwrap());
+                    .unwrap_or(RelPath::unix("untitled").unwrap());
                 let new_path = new_snapshot
                     .file()
                     .map(|f| f.path().as_ref())
-                    .unwrap_or(RelPath::new("untitled").unwrap());
+                    .unwrap_or(RelPath::unix("untitled").unwrap());
                 if old_path != new_path {
                     writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
                 }

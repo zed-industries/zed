@@ -8,6 +8,9 @@ You will need write access to the Zed repository to do this.
 
 Credentials for various services used in this process can be found in 1Password.
 
+Use the `releases` Slack channel to notify the team that releases will be starting.
+This is mostly a formality on Wednesday's minor update releases, but can be beneficial when doing patch releases, as other devs may have landed fixes they'd like to cherry pick.
+
 ---
 
 1. Checkout `main` and ensure your working copy is clean.
@@ -32,7 +35,7 @@ Credentials for various services used in this process can be found in 1Password.
 
 1. Once release drafts are up on [GitHub Releases](https://github.com/zed-industries/zed/releases), paste both preview and stable release notes into each and **save**.
 
-   - **Do not publish the drafts, yet.**
+   - **Do not publish the drafts!**
 
 1. Check the release assets.
 
@@ -40,24 +43,36 @@ Credentials for various services used in this process can be found in 1Password.
    - Ensure each draft has the proper number of assets—releases currently have 10 assets each.
    - Download the artifacts for each release draft and test that you can run them locally.
 
-1. Publish stable / preview drafts, one at a time.
+1. Publish the drafts.
 
-   - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
-     The release will be public once the rebuild has completed.
+   - Publish stable and preview drafts, one at a time.
+     - Use [Vercel](https://vercel.com/zed-industries/zed-dev) to check the progress of the website rebuild.
+       The release will be public once the rebuild has completed.
 
-1. Publish the release email that has been sent to [Kit](https://kit.com).
+1. Post the stable release notes to social media.
 
-   - Make sure to double-check that the email is correct before publishing.
-   - We sometimes correct things here and there that didn't translate from GitHub's renderer to Kit's.
-
-1. Build social media posts based on the popular items in stable.
-
-   - You can use the [prior week's post chain](https://zed.dev/channel/tweets-23331) as your outline.
-   - Stage the copy and assets using [Buffer](https://buffer.com), for both X and BlueSky.
+   - Bluesky and X posts will already be built as drafts in [Buffer](https://buffer.com).
    - Publish both, one at a time, ensuring both are posted to each respective platform.
 
-1. Store any media created in the `Feature Media` directory in our Google Drive.
-   Other team members may want to reference or use these later on.
+1. Send the stable release notes email.
+
+   - The email broadcast will already be built as a draft in [Kit](https://kit.com).
+
+1. Build social media posts based on the popular items in preview.
+
+   - Draft the copy in the [tweets](https://zed.dev/channel/tweets-23331) channel.
+   - Create the preview media (videos, screenshots).
+     - For features that you film videos around, try to create alternative photo-only versions to be used in the email, as videos and GIFs aren't great for email.
+     - Store all created media in `Feature Media` in our Google Drive.
+   - Build X and Bluesky post drafts (copy and media) in [Buffer](https://buffer.com), to be sent for next week's stable release.
+
+   **Note: These are preview items and you may discover bugs.**
+   **This is a very good time to report these findings to the team!**
+
+1. Build email based on the popular items in preview.
+
+   - You can reuse the copy and photo media from the preview social media posts.
+   - Create a draft email in [Kit](https://kit.com), to be sent for next week's stable release.
 
 ## Patch Release Process
 

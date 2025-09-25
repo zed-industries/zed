@@ -666,7 +666,7 @@ impl Matches {
         }
 
         if let Some(filename) = panel_match.0.path.file_name() {
-            let path_str = panel_match.0.path.as_str();
+            let path_str = panel_match.0.path.as_unix_str();
 
             if let Some(filename_pos) = path_str.rfind(filename)
                 && panel_match.0.positions[0] >= filename_pos
@@ -940,7 +940,7 @@ impl FileFinderDelegate {
 
             let path_style = self.project.read(cx).path_style(cx);
             let query_path = query.raw_query.as_str();
-            if let Ok(mut query_path) = RelPath::from_std_path(Path::new(query_path), path_style) {
+            if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
                     .project
                     .read(cx)
@@ -953,7 +953,7 @@ impl FileFinderDelegate {
                     let worktree_root = worktree.read(cx).root_name();
                     if worktree_count > 1 {
                         if let Ok(suffix) = query_path.strip_prefix(worktree_root) {
-                            query_path = suffix.into();
+                            query_path = Cow::Owned(suffix.to_owned());
                             expect_worktree = Some(worktree);
                             break;
                         }
@@ -973,7 +973,7 @@ impl FileFinderDelegate {
                     {
                         self.matches.matches.push(Match::CreateNew(ProjectPath {
                             worktree_id: worktree.id(),
-                            path: query_path,
+                            path: query_path.into_arc(),
                         }));
                     }
                 }
@@ -1128,7 +1128,7 @@ impl FileFinderDelegate {
         let mut path_positions = path_match.positions.clone();
 
         let file_name = full_path.file_name().unwrap_or("");
-        let file_name_start = full_path.as_str().len() - file_name.len();
+        let file_name_start = full_path.as_unix_str().len() - file_name.len();
         let file_name_positions = path_positions
             .iter()
             .filter_map(|pos| {
@@ -1315,8 +1315,8 @@ impl PickerDelegate for FileFinderDelegate {
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
-            Some(".\\") | Some("./") => &raw_query[2..],
-            Some("a\\") | Some("a/") => {
+            Some(".\\" | "./") => &raw_query[2..],
+            Some(prefix @ ("a\\" | "a/" | "b\\" | "b/")) => {
                 if self
                     .workspace
                     .upgrade()
@@ -1325,25 +1325,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .all(|worktree| {
                         worktree
                             .read(cx)
-                            .entry_for_path(RelPath::new("a").unwrap())
-                            .is_none_or(|entry| !entry.is_dir())
-                    })
-                {
-                    &raw_query[2..]
-                } else {
-                    raw_query
-                }
-            }
-            Some("b\\") | Some("b/") => {
-                if self
-                    .workspace
-                    .upgrade()
-                    .into_iter()
-                    .flat_map(|workspace| workspace.read(cx).worktrees(cx))
-                    .all(|worktree| {
-                        worktree
-                            .read(cx)
-                            .entry_for_path(RelPath::new("b").unwrap())
+                            .entry_for_path(RelPath::unix(prefix.split_at(1).0).unwrap())
                             .is_none_or(|entry| !entry.is_dir())
                     })
                 {

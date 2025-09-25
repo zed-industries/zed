@@ -1371,7 +1371,7 @@ impl EditorElement {
 
                     let layout = SelectionLayout::new(
                         selection,
-                        editor.selections.line_mode,
+                        editor.selections.line_mode(),
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
@@ -3149,7 +3149,7 @@ impl EditorElement {
                 let newest = editor.selections.newest::<Point>(cx);
                 SelectionLayout::new(
                     newest,
-                    editor.selections.line_mode,
+                    editor.selections.line_mode(),
                     editor.cursor_shape,
                     &snapshot.display_snapshot,
                     true,

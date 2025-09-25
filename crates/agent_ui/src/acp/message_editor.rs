@@ -48,7 +48,7 @@ use std::{
 use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
-use util::{ResultExt, debug_panic, paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
@@ -108,11 +108,6 @@ impl MessageEditor {
             available_commands.clone(),
         ));
         let mention_set = MentionSet::default();
-        // TODO: fix mentions when remoting with mixed path styles.
-        let host_and_guest_paths_differ = project
-            .read(cx)
-            .remote_client()
-            .is_some_and(|client| client.read(cx).path_style() != PathStyle::local());
         let editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -122,9 +117,7 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
-            if !host_and_guest_paths_differ {
-                editor.set_completion_provider(Some(completion_provider.clone()));
-            }
+            editor.set_completion_provider(Some(completion_provider.clone()));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
@@ -1609,7 +1602,7 @@ mod tests {
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::{path, paths::PathStyle, rel_path::rel_path, uri};
+    use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -2275,7 +2268,11 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
-        let url_one = uri!("file:///dir/a/one.txt");
+        let url_one = MentionUri::File {
+            abs_path: path!("/dir/a/one.txt").into(),
+        }
+        .to_uri()
+        .to_string();
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
             assert_eq!(text, format!("Lorem [@one.txt]({url_one}) "));
@@ -2380,7 +2377,11 @@ mod tests {
             .into_values()
             .collect::<Vec<_>>();
 
-        let url_eight = uri!("file:///dir/b/eight.txt");
+        let url_eight = MentionUri::File {
+            abs_path: path!("/dir/b/eight.txt").into(),
+        }
+        .to_uri()
+        .to_string();
 
         {
             let [_, (uri, Mention::Text { content, .. })] = contents.as_slice() else {
@@ -2479,6 +2480,12 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
+        let symbol = MentionUri::Symbol {
+            abs_path: path!("/dir/a/one.txt").into(),
+            name: "MySymbol".into(),
+            line_range: 0..=0,
+        };
+
         let contents = message_editor
             .update(&mut cx, |message_editor, cx| {
                 message_editor.mention_set().contents(
@@ -2498,12 +2505,7 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
-            pretty_assertions::assert_eq!(
-                uri,
-                &format!("{url_one}?symbol=MySymbol#L1:1")
-                    .parse::<MentionUri>()
-                    .unwrap()
-            );
+            pretty_assertions::assert_eq!(uri, &symbol);
         }
 
         cx.run_until_parked();
@@ -2511,7 +2513,10 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri(),
+                )
             );
         });
 
@@ -2521,7 +2526,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
             assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
@@ -2550,7 +2555,10 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri()
+                )
             );
         });
 
@@ -2560,7 +2568,7 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
                     assert_eq!(
                         editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
                     );
                     assert!(editor.has_visible_completions_menu());
                     assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
@@ -2575,11 +2583,14 @@ mod tests {
 
         // Mention was removed
         editor.read_with(&cx, |editor, cx| {
-                    assert_eq!(
-                        editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
-                    );
-                });
+            assert_eq!(
+                editor.text(cx),
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri()
+                )
+            );
+        });
 
         // Now getting the contents succeeds, because the invalid mention was removed
         let contents = message_editor

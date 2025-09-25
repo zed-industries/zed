@@ -243,7 +243,7 @@ impl ProjectDiff {
             TRACKED_NAMESPACE
         };
 
-        let path_key = PathKey::namespaced(namespace, entry.repo_path.as_str().into());
+        let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
 
         self.move_to_path(path_key, window, cx)
     }
@@ -397,7 +397,7 @@ impl ProjectDiff {
                 } else {
                     TRACKED_NAMESPACE
                 };
-                let path_key = PathKey::namespaced(namespace, entry.repo_path.as_str().into());
+                let path_key = PathKey::namespaced(namespace, entry.repo_path.as_unix_str().into());
 
                 previous_paths.remove(&path_key);
                 let load_buffer = self

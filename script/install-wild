@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+# Install wild-linker official binaries from GitHub Releases.
+
+set -euo pipefail
+
+WILD_VERSION="${WILD_VERSION:-${1:-0.6.0}}"
+if [ "$(uname -s)" != "Linux" ]; then
+    echo "Error: This script is intended for Linux systems only."
+    exit 1
+elif [ -z "$WILD_VERSION" ]; then
+    echo "Usage: $0 [version]"
+    exit 1
+elif which -s wild && wild --version | grep -Fq "$WILD_VERSION" ; then
+    echo "Warning: existing wild $WILD_VERSION found at $(which wild). Skipping installation."
+    exit 0
+fi
+
+if [ "$(whoami)" = root ]; then SUDO=; else SUDO="$(command -v sudo || command -v doas || true)"; fi
+
+ARCH="$(uname -m)"
+WILD_REPO="${WILD_REPO:-https://github.com/davidlattimore/wild}"
+WILD_PACKAGE="wild-linker-${ARCH}-unknown-linux-gnu"
+WILD_URL="${WILD_URL:-$WILD_REPO}/releases/download/$WILD_VERSION/${WILD_PACKAGE}.tar.gz"
+
+echo "Downloading from $WILD_URL"
+curl -fsSL --output - "$WILD_URL" \
+    | $SUDO tar -C /usr/local/bin --strip-components=1 --no-overwrite-dir -xJf - \
+    "wild-linker-${ARCH}-unknown-linux-gnu/wild"

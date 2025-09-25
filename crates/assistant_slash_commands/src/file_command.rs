@@ -290,7 +290,7 @@ fn collect_files(
                                     folded_directory_names.join(&path_including_worktree_name);
                             } else {
                                 folded_directory_names =
-                                    folded_directory_names.join(RelPath::new(&filename).unwrap());
+                                    folded_directory_names.join(RelPath::unix(&filename).unwrap());
                             }
                             continue;
                         }
@@ -320,7 +320,7 @@ fn collect_files(
                         directory_stack.push(entry.path.clone());
                     } else {
                         let entry_name =
-                            folded_directory_names.join(RelPath::new(&filename).unwrap());
+                            folded_directory_names.join(RelPath::unix(&filename).unwrap());
                         let entry_name = entry_name.display(path_style);
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,
@@ -503,7 +503,7 @@ mod custom_path_matcher {
                 .iter()
                 .zip(self.sources_with_trailing_slash.iter())
                 .any(|(source, with_slash)| {
-                    let as_bytes = other.as_str().as_bytes();
+                    let as_bytes = other.as_unix_str().as_bytes();
                     let with_slash = if source.ends_with('/') {
                         source.as_bytes()
                     } else {
@@ -512,12 +512,12 @@ mod custom_path_matcher {
 
                     as_bytes.starts_with(with_slash) || as_bytes.ends_with(source.as_bytes())
                 })
-                || self.glob.is_match(other)
+                || self.glob.is_match(other.as_std_path())
                 || self.check_with_end_separator(other)
         }
 
         fn check_with_end_separator(&self, path: &RelPath) -> bool {
-            let path_str = path.as_str();
+            let path_str = path.as_unix_str();
             let separator = "/";
             if path_str.ends_with(separator) {
                 false

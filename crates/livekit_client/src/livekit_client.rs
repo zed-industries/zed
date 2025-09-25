@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use audio::AudioSettings;
 use collections::HashMap;
 use futures::{SinkExt, channel::mpsc};
@@ -12,7 +12,10 @@ use settings::Settings;
 
 mod playback;
 
-use crate::{LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication};
+use crate::{
+    LocalTrack, Participant, RemoteTrack, RoomEvent, TrackPublication,
+    livekit_client::playback::Speaker,
+};
 pub use playback::AudioStream;
 pub(crate) use playback::{RemoteVideoFrame, play_remote_video_track};
 
@@ -132,11 +135,20 @@ impl Room {
         track: &RemoteAudioTrack,
         cx: &mut App,
     ) -> Result<playback::AudioStream> {
+        let speaker: Speaker =
+            serde_urlencoded::from_str(&track.0.name()).unwrap_or_else(|_| Speaker {
+                name: track.0.name(),
+                is_staff: false,
+                sends_legacy_audio: true,
+            });
+
         if AudioSettings::get_global(cx).rodio_audio {
             info!("Using experimental.rodio_audio audio pipeline for output");
-            playback::play_remote_audio_track(&track.0, cx)
-        } else {
+            playback::play_remote_audio_track(&track.0, speaker, cx)
+        } else if speaker.sends_legacy_audio {
             Ok(self.playback.play_remote_audio_track(&track.0))
+        } else {
+            Err(anyhow!("Client version too old to play audio in call"))
         }
     }
 }

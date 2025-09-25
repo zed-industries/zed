@@ -126,6 +126,39 @@ impl MentionUri {
                         abs_path: None,
                         line_range,
                     })
+                } else if let Some(name) = path.strip_prefix("/agent/symbol/") {
+                    let fragment = url
+                        .fragment()
+                        .context("Missing fragment for untitled buffer selection")?;
+                    let line_range = parse_line_range(fragment)?;
+                    let path =
+                        single_query_param(&url, "path")?.context("Missing path for symbol")?;
+                    Ok(Self::Symbol {
+                        name: name.to_string(),
+                        abs_path: path.into(),
+                        line_range,
+                    })
+                } else if path.starts_with("/agent/file") {
+                    let path =
+                        single_query_param(&url, "path")?.context("Missing path for file")?;
+                    Ok(Self::File {
+                        abs_path: path.into(),
+                    })
+                } else if path.starts_with("/agent/directory") {
+                    let path =
+                        single_query_param(&url, "path")?.context("Missing path for directory")?;
+                    Ok(Self::Directory {
+                        abs_path: path.into(),
+                    })
+                } else if path.starts_with("/agent/selection") {
+                    let fragment = url.fragment().context("Missing fragment for selection")?;
+                    let line_range = parse_line_range(fragment)?;
+                    let path =
+                        single_query_param(&url, "path")?.context("Missing path for selection")?;
+                    Ok(Self::Selection {
+                        abs_path: Some(path.into()),
+                        line_range,
+                    })
                 } else {
                     bail!("invalid zed url: {:?}", input);
                 }
@@ -180,20 +213,29 @@ impl MentionUri {
     pub fn to_uri(&self) -> Url {
         match self {
             MentionUri::File { abs_path } => {
-                Url::from_file_path(abs_path).expect("mention path should be absolute")
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/file");
+                url.query_pairs_mut()
+                    .append_pair("path", &abs_path.to_string_lossy());
+                url
             }
             MentionUri::PastedImage => Url::parse("zed:///agent/pasted-image").unwrap(),
             MentionUri::Directory { abs_path } => {
-                Url::from_directory_path(abs_path).expect("mention path should be absolute")
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path("/agent/directory");
+                url.query_pairs_mut()
+                    .append_pair("path", &abs_path.to_string_lossy());
+                url
             }
             MentionUri::Symbol {
                 abs_path,
                 name,
                 line_range,
             } => {
-                let mut url =
-                    Url::from_file_path(abs_path).expect("mention path should be absolute");
-                url.query_pairs_mut().append_pair("symbol", name);
+                let mut url = Url::parse("zed:///").unwrap();
+                url.set_path(&format!("/agent/symbol/{name}"));
+                url.query_pairs_mut()
+                    .append_pair("path", &abs_path.to_string_lossy());
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
                     line_range.start() + 1,
@@ -202,15 +244,16 @@ impl MentionUri {
                 url
             }
             MentionUri::Selection {
-                abs_path: path,
+                abs_path,
                 line_range,
             } => {
-                let mut url = if let Some(path) = path {
-                    Url::from_file_path(path).expect("mention path should be absolute")
+                let mut url = Url::parse("zed:///").unwrap();
+                if let Some(abs_path) = abs_path {
+                    url.set_path("/agent/selection");
+                    url.query_pairs_mut()
+                        .append_pair("path", &abs_path.to_string_lossy());
                 } else {
-                    let mut url = Url::parse("zed:///").unwrap();
                     url.set_path("/agent/untitled-buffer");
-                    url
                 };
                 url.set_fragment(Some(&format!(
                     "L{}:{}",
@@ -295,37 +338,32 @@ mod tests {
 
     #[test]
     fn test_parse_file_uri() {
-        let file_uri = uri!("file:///path/to/file.rs");
-        let parsed = MentionUri::parse(file_uri).unwrap();
+        let old_uri = uri!("file:///path/to/file.rs");
+        let parsed = MentionUri::parse(old_uri).unwrap();
         match &parsed {
             MentionUri::File { abs_path } => {
                 assert_eq!(abs_path.to_str().unwrap(), path!("/path/to/file.rs"));
             }
             _ => panic!("Expected File variant"),
         }
-        assert_eq!(parsed.to_uri().to_string(), file_uri);
+        let new_uri = parsed.to_uri().to_string();
+        assert!(new_uri.starts_with("zed:///agent/file"));
+        assert_eq!(MentionUri::parse(&new_uri).unwrap(), parsed);
     }
 
     #[test]
     fn test_parse_directory_uri() {
-        let file_uri = uri!("file:///path/to/dir/");
-        let parsed = MentionUri::parse(file_uri).unwrap();
+        let old_uri = uri!("file:///path/to/dir/");
+        let parsed = MentionUri::parse(old_uri).unwrap();
         match &parsed {
             MentionUri::Directory { abs_path } => {
                 assert_eq!(abs_path.to_str().unwrap(), path!("/path/to/dir/"));
             }
             _ => panic!("Expected Directory variant"),
         }
-        assert_eq!(parsed.to_uri().to_string(), file_uri);
-    }
-
-    #[test]
-    fn test_to_directory_uri_with_slash() {
-        let uri = MentionUri::Directory {
-            abs_path: PathBuf::from(path!("/path/to/dir/")),
-        };
-        let expected = uri!("file:///path/to/dir/");
-        assert_eq!(uri.to_uri().to_string(), expected);
+        let new_uri = parsed.to_uri().to_string();
+        assert!(new_uri.starts_with("zed:///agent/directory"));
+        assert_eq!(MentionUri::parse(&new_uri).unwrap(), parsed);
     }
 
     #[test]
@@ -333,14 +371,15 @@ mod tests {
         let uri = MentionUri::Directory {
             abs_path: PathBuf::from(path!("/path/to/dir")),
         };
-        let expected = uri!("file:///path/to/dir/");
-        assert_eq!(uri.to_uri().to_string(), expected);
+        let uri_string = uri.to_uri().to_string();
+        assert!(uri_string.starts_with("zed:///agent/directory"));
+        assert_eq!(MentionUri::parse(&uri_string).unwrap(), uri);
     }
 
     #[test]
     fn test_parse_symbol_uri() {
-        let symbol_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10:20");
-        let parsed = MentionUri::parse(symbol_uri).unwrap();
+        let old_uri = uri!("file:///path/to/file.rs?symbol=MySymbol#L10:20");
+        let parsed = MentionUri::parse(old_uri).unwrap();
         match &parsed {
             MentionUri::Symbol {
                 abs_path: path,
@@ -354,13 +393,15 @@ mod tests {
             }
             _ => panic!("Expected Symbol variant"),
         }
-        assert_eq!(parsed.to_uri().to_string(), symbol_uri);
+        let new_uri = parsed.to_uri().to_string();
+        assert!(new_uri.starts_with("zed:///agent/symbol/MySymbol"));
+        assert_eq!(MentionUri::parse(&new_uri).unwrap(), parsed);
     }
 
     #[test]
     fn test_parse_selection_uri() {
-        let selection_uri = uri!("file:///path/to/file.rs#L5:15");
-        let parsed = MentionUri::parse(selection_uri).unwrap();
+        let old_uri = uri!("file:///path/to/file.rs#L5:15");
+        let parsed = MentionUri::parse(old_uri).unwrap();
         match &parsed {
             MentionUri::Selection {
                 abs_path: path,
@@ -375,7 +416,9 @@ mod tests {
             }
             _ => panic!("Expected Selection variant"),
         }
-        assert_eq!(parsed.to_uri().to_string(), selection_uri);
+        let new_uri = parsed.to_uri().to_string();
+        assert!(new_uri.starts_with("zed:///agent/selection"));
+        assert_eq!(MentionUri::parse(&new_uri).unwrap(), parsed);
     }
 
     #[test]

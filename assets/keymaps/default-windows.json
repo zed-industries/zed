@@ -607,8 +607,6 @@
       "shift-alt--": ["workspace::DecreaseActiveDockSize", { "px": 0 }],
       "shift-alt-=": ["workspace::IncreaseActiveDockSize", { "px": 0 }],
       "shift-alt-0": "workspace::ResetOpenDocksSize",
-      "ctrl-shift-alt--": ["workspace::DecreaseOpenDocksSize", { "px": 0 }],
-      "ctrl-shift-alt-=": ["workspace::IncreaseOpenDocksSize", { "px": 0 }],
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
@@ -1112,6 +1110,7 @@
       "alt-f": ["terminal::SendText", "\u001bf"],
       "alt-.": ["terminal::SendText", "\u001b."],
       "ctrl-delete": ["terminal::SendText", "\u001bd"],
+      "ctrl-n": "workspace::NewTerminal",
       // Overrides for conflicting keybindings
       "ctrl-b": ["terminal::SendKeystroke", "ctrl-b"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],

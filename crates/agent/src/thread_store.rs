@@ -235,7 +235,7 @@ impl ThreadStore {
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
-                        .any(|name| path.as_ref() == RelPath::new(name).unwrap())
+                        .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
                 }) {
                     self.enqueue_system_prompt_reload();
                 }
@@ -368,7 +368,7 @@ impl ThreadStore {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(RelPath::new(name).unwrap())
+                    .entry_for_path(RelPath::unix(name).unwrap())
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })

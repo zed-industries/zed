@@ -77,7 +77,7 @@ async fn run_git_blame(
         .arg("-w")
         .arg("--contents")
         .arg("-")
-        .arg(path.as_str())
+        .arg(path.as_unix_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

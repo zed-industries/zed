@@ -632,13 +632,16 @@ async fn test_following_tab_order(
     let pane_paths = |pane: &Entity<workspace::Pane>, cx: &mut VisualTestContext| {
         pane.update(cx, |pane, cx| {
             pane.items()
-                .map(|item| item.project_path(cx).unwrap().path.as_str().to_owned())
+                .map(|item| item.project_path(cx).unwrap().path)
                 .collect::<Vec<_>>()
         })
     };
 
     //Verify that the tabs opened in the order we expect
-    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt"]);
+    assert_eq!(
+        &pane_paths(&pane_a, cx_a),
+        &[rel_path("1.txt").into(), rel_path("3.txt").into()]
+    );
 
     //Follow client B as client A
     workspace_a.update_in(cx_a, |workspace, window, cx| {
@@ -656,7 +659,14 @@ async fn test_following_tab_order(
     executor.run_until_parked();
 
     // Verify that newly opened followed file is at the end
-    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
+    assert_eq!(
+        &pane_paths(&pane_a, cx_a),
+        &[
+            rel_path("1.txt").into(),
+            rel_path("3.txt").into(),
+            rel_path("2.txt").into()
+        ]
+    );
 
     //Open just 1 on client B
     workspace_b
@@ -665,11 +675,21 @@ async fn test_following_tab_order(
         })
         .await
         .unwrap();
-    assert_eq!(&pane_paths(&pane_b, cx_b), &["2.txt", "1.txt"]);
+    assert_eq!(
+        &pane_paths(&pane_b, cx_b),
+        &[rel_path("2.txt").into(), rel_path("1.txt").into()]
+    );
     executor.run_until_parked();
 
     // Verify that following into 1 did not reorder
-    assert_eq!(&pane_paths(&pane_a, cx_a), &["1.txt", "3.txt", "2.txt"]);
+    assert_eq!(
+        &pane_paths(&pane_a, cx_a),
+        &[
+            rel_path("1.txt").into(),
+            rel_path("3.txt").into(),
+            rel_path("2.txt").into()
+        ]
+    );
 }
 
 #[gpui::test(iterations = 10)]

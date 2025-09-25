@@ -424,14 +424,23 @@ impl Vim {
     pub fn new(window: &mut Window, cx: &mut Context<Editor>) -> Entity<Self> {
         let editor = cx.entity();
 
-        let mut initial_mode = VimSettings::get_global(cx).default_mode;
-        if initial_mode == Mode::Normal && HelixModeSetting::get_global(cx).0 {
-            initial_mode = Mode::HelixNormal;
-        }
+        let initial_vim_mode = VimSettings::get_global(cx).default_mode;
+        let (mode, last_mode) = if HelixModeSetting::get_global(cx).0 {
+            let initial_helix_mode = match initial_vim_mode {
+                Mode::Normal => Mode::HelixNormal,
+                Mode::Insert => Mode::Insert,
+                // Otherwise, we panic with a note that we should never get there due to the
+                // possible values of VimSettings::get_global(cx).default_mode being either Mode::Normal or Mode::Insert.
+                _ => unreachable!("Invalid default mode"),
+            };
+            (initial_helix_mode, Mode::HelixNormal)
+        } else {
+            (initial_vim_mode, Mode::Normal)
+        };
 
         cx.new(|cx| Vim {
-            mode: initial_mode,
-            last_mode: Mode::Normal,
+            mode,
+            last_mode,
             temp_mode: false,
             exit_temporary_mode: false,
             operator_stack: Vec::new(),
@@ -822,7 +831,7 @@ impl Vim {
         editor.set_collapse_matches(false);
         editor.set_input_enabled(true);
         editor.set_autoindent(true);
-        editor.selections.line_mode = false;
+        editor.selections.set_line_mode(false);
         editor.unregister_addon::<VimAddon>();
         editor.set_relative_line_number(None, cx);
         if let Some(vim) = Vim::globals(cx).focused_vim()
@@ -1787,7 +1796,9 @@ impl Vim {
             editor.set_collapse_matches(true);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
-            editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
+            editor
+                .selections
+                .set_line_mode(matches!(vim.mode, Mode::VisualLine));
 
             let hide_edit_predictions = !matches!(vim.mode, Mode::Insert | Mode::Replace);
             editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
@@ -1843,7 +1854,6 @@ impl From<settings::ModeContent> for Mode {
         match mode {
             ModeContent::Normal => Self::Normal,
             ModeContent::Insert => Self::Insert,
-            ModeContent::HelixNormal => Self::HelixNormal,
         }
     }
 }
