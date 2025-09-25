@@ -59,8 +59,8 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
-            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
-            Mode::HelixSelect => write!(f, "HELIX SELECT"),
+            Mode::HelixNormal => write!(f, "NORMAL"),
+            Mode::HelixSelect => write!(f, "SELECT"),
         }
     }
 }
