@@ -1004,7 +1004,9 @@ async fn stream_completion(
         let reader = BufReader::new(response.into_body());
         Ok(reader
             .lines()
-            .filter_map(move |line| async move {
+            .filter_map(move |line| {
+                let model = model.clone();
+                async move {
                 match line {
                     Ok(line) => {
                         let line = line.strip_prefix("data: ")?;
@@ -1042,7 +1044,7 @@ async fn stream_completion(
                     }
                     Err(error) => Some(Err(anyhow!(error))),
                 }
-            })
+            }})
             .boxed())
     } else {
         let mut body = Vec::new();
