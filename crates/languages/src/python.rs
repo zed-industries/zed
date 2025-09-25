@@ -106,13 +106,13 @@ impl TyLspAdapter {
 
 #[cfg(target_os = "linux")]
 impl TyLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
     const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
 }
 
 #[cfg(target_os = "freebsd")]
 impl TyLspAdapter {
-    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Gz;
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
     const ARCH_SERVER_NAME: &str = "unknown-freebsd";
 }
 
