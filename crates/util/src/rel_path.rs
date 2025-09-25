@@ -1,5 +1,5 @@
 use crate::paths::{PathStyle, is_absolute};
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
@@ -24,14 +24,27 @@ impl RelPath {
 
     #[track_caller]
     pub fn new<'a>(path: &'a Path, path_style: PathStyle) -> Result<Cow<'a, Self>> {
-        let path = path.to_str().context("non utf-8 path")?;
-        let path = path.trim_start_matches("./");
-        let mut string = Cow::Borrowed(path);
+        let mut path = path.to_str().context("non utf-8 path")?;
 
-        if is_absolute(&string, path_style) {
+        let (prefixes, suffixes): (&[_], &[_]) = match path_style {
+            PathStyle::Posix => (&["./"], &['/']),
+            PathStyle::Windows => (&["./", ".\\"], &['/', '\\']),
+        };
+
+        while prefixes.iter().any(|prefix| path.starts_with(prefix)) {
+            path = &path[prefixes[0].len()..];
+        }
+        while let Some(prefix) = path.strip_suffix(suffixes)
+            && !prefix.is_empty()
+        {
+            path = prefix;
+        }
+
+        if is_absolute(&path, path_style) {
             return Err(anyhow!("absolute path not allowed: {path:?}"));
         }
 
+        let mut string = Cow::Borrowed(path);
         if path_style == PathStyle::Windows && path.contains('\\') {
             string = Cow::Owned(string.as_ref().replace('\\', "/"))
         }
@@ -151,21 +164,6 @@ impl RelPath {
         } else {
             None
         }
-    }
-
-    pub fn push(&self, component: &str) -> Result<Arc<Self>> {
-        if component.is_empty() {
-            bail!("pushed component is empty");
-        } else if component.contains('/') {
-            bail!("pushed component contains a separator: {component:?}");
-        }
-        let path = format!(
-            "{}{}{}",
-            &self.0,
-            if self.is_empty() { "" } else { "/" },
-            component
-        );
-        Ok(Arc::from(unsafe { Self::new_unchecked(&path) }))
     }
 
     pub fn join(&self, other: &Self) -> Arc<Self> {
@@ -415,23 +413,52 @@ impl<'a> DoubleEndedIterator for RelPathComponents<'a> {
 mod tests {
     use super::*;
     use itertools::Itertools;
-    use std::path::PathBuf;
+    use pretty_assertions::assert_matches;
 
     #[test]
     fn test_rel_path_new() {
         assert!(RelPath::new(Path::new("/"), PathStyle::local()).is_err());
         assert!(RelPath::new(Path::new("//"), PathStyle::local()).is_err());
         assert!(RelPath::new(Path::new("/foo/"), PathStyle::local()).is_err());
+
+        let path = RelPath::new("foo/".as_ref(), PathStyle::local()).unwrap();
+        assert_eq!(path, rel_path("foo").into());
+        assert_matches!(path, Cow::Borrowed(_));
+
+        let path = RelPath::new("foo\\".as_ref(), PathStyle::Windows).unwrap();
+        assert_eq!(path, rel_path("foo").into());
+        assert_matches!(path, Cow::Borrowed(_));
+
         assert_eq!(
-            RelPath::new(&PathBuf::from_iter(["foo", ""]), PathStyle::local()).unwrap(),
-            rel_path("foo").into()
-        );
-        assert_eq!(
-            RelPath::new(Path::new("foo/bar/../baz/./quux/"), PathStyle::local())
+            RelPath::new("foo/bar/../baz/./quux/".as_ref(), PathStyle::local())
                 .unwrap()
                 .as_ref(),
             rel_path("foo/baz/quux")
         );
+
+        let path = RelPath::new("./foo/bar".as_ref(), PathStyle::Posix).unwrap();
+        assert_eq!(path.as_ref(), rel_path("foo/bar"));
+        assert_matches!(path, Cow::Borrowed(_));
+
+        let path = RelPath::new(".\\foo".as_ref(), PathStyle::Windows).unwrap();
+        assert_eq!(path, rel_path("foo").into());
+        assert_matches!(path, Cow::Borrowed(_));
+
+        let path = RelPath::new("./.\\./foo/\\/".as_ref(), PathStyle::Windows).unwrap();
+        assert_eq!(path, rel_path("foo").into());
+        assert_matches!(path, Cow::Borrowed(_));
+
+        let path = RelPath::new("foo/./bar".as_ref(), PathStyle::Posix).unwrap();
+        assert_eq!(path.as_ref(), rel_path("foo/bar"));
+        assert_matches!(path, Cow::Owned(_));
+
+        let path = RelPath::new("./foo/bar".as_ref(), PathStyle::Windows).unwrap();
+        assert_eq!(path.as_ref(), rel_path("foo/bar"));
+        assert_matches!(path, Cow::Borrowed(_));
+
+        let path = RelPath::new(".\\foo\\bar".as_ref(), PathStyle::Windows).unwrap();
+        assert_eq!(path.as_ref(), rel_path("foo/bar"));
+        assert_matches!(path, Cow::Owned(_));
     }
 
     #[test]
@@ -510,14 +537,6 @@ mod tests {
         assert!(RelPath::new(Path::new("C:/a/b"), PathStyle::Windows).is_err());
         assert!(RelPath::new(Path::new("C:\\a\\b"), PathStyle::Windows).is_err());
         assert!(RelPath::new(Path::new("C:/a/b"), PathStyle::Posix).is_ok());
-    }
-
-    #[test]
-    fn test_push() {
-        assert_eq!(rel_path("a/b").push("c").unwrap().as_str(), "a/b/c");
-        assert_eq!(rel_path("").push("c").unwrap().as_str(), "c");
-        assert!(rel_path("a/b").push("").is_err());
-        assert!(rel_path("a/b").push("c/d").is_err());
     }
 
     #[test]

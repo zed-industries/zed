@@ -17525,6 +17525,7 @@ dependencies = [
  "libc",
  "log",
  "nix 0.29.0",
+ "pretty_assertions",
  "rand 0.9.1",
  "regex",
  "rust-embed",
