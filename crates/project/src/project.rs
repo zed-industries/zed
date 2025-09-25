@@ -4242,12 +4242,18 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
         let mut candidates = vec![];
-        if let Ok(path) = RelPath::new(Path::new(path), self.path_style(cx)) {
+        let path_style = self.path_style(cx);
+        if let Ok(path) = RelPath::new(path.as_ref(), path_style) {
             candidates.push(path.into_arc());
-            if let Some(file) = buffer.read(cx).file()
-                && let Some(dir) = file.path().parent()
+        }
+
+        if let Some(file) = buffer.read(cx).file()
+            && let Some(dir) = file.path().parent()
+        {
+            if let Some(joined) = path_style.join(&*dir.display(path_style), path)
+                && let Some(joined) = RelPath::new(joined.as_ref(), path_style).ok()
             {
-                candidates.push(dir.join(path.as_ref()))
+                candidates.push(joined.into_arc());
             }
         }
 
