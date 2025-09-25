@@ -71,7 +71,8 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 
    - You can reuse the copy from the preview social media posts.
    - For media, aim to have screenshots, as videos and GIFs in email are not well supported or very friendly.
-   - Store any new media created in `Feature Media` in our Google Drive.
+     - Store any new media created in `Feature Media` in our Google Drive.
+   - Create a draft email in [Kit](https://kit.com), to be sent for next week's stable release.
 
 ## Patch Release Process
 
