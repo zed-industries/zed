@@ -198,6 +198,7 @@ pub struct Dock {
     focus_handle: FocusHandle,
     pub(crate) serialized_dock: Option<DockData>,
     zoom_layer_open: bool,
+    overlay: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyElement>>,
     modal_layer: Entity<ModalLayer>,
     _subscriptions: [Subscription; 2],
 }
@@ -294,6 +295,7 @@ impl Dock {
                 _subscriptions: [focus_subscription, zoom_subscription],
                 serialized_dock: None,
                 zoom_layer_open: false,
+                overlay: None,
                 modal_layer,
             }
         });
@@ -352,6 +354,15 @@ impl Dock {
 
     fn resizable(&self, cx: &App) -> bool {
         !(self.zoom_layer_open || self.modal_layer.read(cx).has_active_modal())
+    }
+
+    pub fn add_overlay(
+        &mut self,
+        cx: &mut Context<Self>,
+        overlay: Box<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+    ) {
+        self.overlay = Some(overlay);
+        cx.notify();
     }
 
     pub fn panel<T: Panel>(&self) -> Option<Entity<T>> {
@@ -744,8 +755,10 @@ impl Dock {
 impl Render for Dock {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dispatch_context = Self::dispatch_context();
+        let overlay = self.overlay.as_ref().map(|overlay| overlay(window, cx));
         if let Some(entry) = self.visible_entry() {
             let size = entry.panel.size(window, cx);
+            // todo!() min width if overlay is showing
 
             let position = self.position;
             let create_resize_handle = || {
@@ -815,8 +828,8 @@ impl Render for Dock {
                 .border_color(cx.theme().colors().border)
                 .overflow_hidden()
                 .map(|this| match self.position().axis() {
-                    Axis::Horizontal => this.w(size).h_full().flex_row(),
-                    Axis::Vertical => this.h(size).w_full().flex_col(),
+                    Axis::Horizontal => this.w(size).h_full().flex_col(),
+                    Axis::Vertical => this.h(size).w_full().flex_row(),
                 })
                 .map(|this| match self.position() {
                     DockPosition::Left => this.border_r_1(),
@@ -824,18 +837,12 @@ impl Render for Dock {
                     DockPosition::Bottom => this.border_t_1(),
                 })
                 .child(
-                    div()
-                        .map(|this| match self.position().axis() {
-                            Axis::Horizontal => this.min_w(size).h_full(),
-                            Axis::Vertical => this.min_h(size).w_full(),
-                        })
-                        .child(
-                            entry
-                                .panel
-                                .to_any()
-                                .cached(StyleRefinement::default().v_flex().size_full()),
-                        ),
+                    entry
+                        .panel
+                        .to_any()
+                        .cached(StyleRefinement::default().v_flex().size_full()),
                 )
+                .children(overlay)
                 .when(self.resizable(cx), |this| {
                     this.child(create_resize_handle())
                 })
