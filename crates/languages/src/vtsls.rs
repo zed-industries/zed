@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::{ResultExt, maybe, merge_json_value_into};
+use util::{ResultExt, maybe, merge_json_value_into, rel_path::RelPath};
 
 fn typescript_server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
@@ -36,7 +36,7 @@ impl VtslsLspAdapter {
 
     async fn tsdk_path(&self, adapter: &Arc<dyn LspAdapterDelegate>) -> Option<&'static str> {
         let is_yarn = adapter
-            .read_text_file(PathBuf::from(".yarn/sdks/typescript/lib/typescript.js"))
+            .read_text_file(RelPath::new(".yarn/sdks/typescript/lib/typescript.js").unwrap())
             .await
             .is_ok();
 

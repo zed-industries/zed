@@ -32,12 +32,11 @@ use std::{
     any::{Any, TypeId},
     mem,
     ops::{Not, Range},
-    path::Path,
     pin::pin,
     sync::Arc,
 };
 use ui::{IconButtonShape, KeyBinding, Toggleable, Tooltip, prelude::*, utils::SearchInputWidth};
-use util::{ResultExt as _, paths::PathMatcher};
+use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
@@ -908,13 +907,11 @@ impl ProjectSearchView {
 
     pub fn new_search_in_directory(
         workspace: &mut Workspace,
-        dir_path: &Path,
+        dir_path: &RelPath,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        let Some(filter_str) = dir_path.to_str() else {
-            return;
-        };
+        let filter_str = dir_path.display(workspace.path_style(cx));
 
         let weak_workspace = cx.entity().downgrade();
 
@@ -1145,6 +1142,7 @@ impl ProjectSearchView {
 
     fn build_search_query(&mut self, cx: &mut Context<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
+
         let text = self.search_query_text(cx);
         let open_buffers = if self.included_opened_only {
             Some(self.open_buffers(cx))
@@ -1154,7 +1152,7 @@ impl ProjectSearchView {
         let included_files = self
             .filters_enabled
             .then(|| {
-                match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
+                match self.parse_path_matches(self.included_files_editor.read(cx).text(cx), cx) {
                     Ok(included_files) => {
                         let should_unmark_error =
                             self.panels_with_errors.remove(&InputPanel::Include);
@@ -1174,11 +1172,11 @@ impl ProjectSearchView {
                     }
                 }
             })
-            .unwrap_or_default();
+            .unwrap_or(PathMatcher::default());
         let excluded_files = self
             .filters_enabled
             .then(|| {
-                match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
+                match self.parse_path_matches(self.excluded_files_editor.read(cx).text(cx), cx) {
                     Ok(excluded_files) => {
                         let should_unmark_error =
                             self.panels_with_errors.remove(&InputPanel::Exclude);
@@ -1199,7 +1197,7 @@ impl ProjectSearchView {
                     }
                 }
             })
-            .unwrap_or_default();
+            .unwrap_or(PathMatcher::default());
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be
@@ -1300,14 +1298,15 @@ impl ProjectSearchView {
         buffers
     }
 
-    fn parse_path_matches(text: &str) -> anyhow::Result<PathMatcher> {
+    fn parse_path_matches(&self, text: String, cx: &App) -> anyhow::Result<PathMatcher> {
+        let path_style = self.entity.read(cx).project.read(cx).path_style(cx);
         let queries = text
             .split(',')
             .map(str::trim)
             .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        Ok(PathMatcher::new(&queries)?)
+        Ok(PathMatcher::new(&queries, path_style)?)
     }
 
     fn select_match(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
@@ -2354,7 +2353,7 @@ pub mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::DeploySearch;
 
     #[gpui::test]
@@ -3204,7 +3203,7 @@ pub mod tests {
                 .read(cx)
                 .project()
                 .read(cx)
-                .entry_for_path(&(worktree_id, "a").into(), cx)
+                .entry_for_path(&(worktree_id, rel_path("a")).into(), cx)
                 .expect("no entry for /a/ directory")
                 .clone()
         });
@@ -3242,7 +3241,7 @@ pub mod tests {
                     search_view.included_files_editor.update(cx, |editor, cx| {
                         assert_eq!(
                             editor.display_text(cx),
-                            a_dir_entry.path.to_str().unwrap(),
+                            a_dir_entry.path.display(PathStyle::local()),
                             "New search in directory should have included dir entry path"
                         );
                     });
@@ -3638,7 +3637,7 @@ pub mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_path(
-                    (worktree_id, "one.rs"),
+                    (worktree_id, rel_path("one.rs")),
                     Some(first_pane.downgrade()),
                     true,
                     window,
@@ -3855,7 +3854,7 @@ pub mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_path(
-                    (worktree_id, "one.rs"),
+                    (worktree_id, rel_path("one.rs")),
                     Some(first_pane.downgrade()),
                     true,
                     window,
@@ -4089,7 +4088,7 @@ pub mod tests {
 
         let editor = workspace
             .update_in(&mut cx, |workspace, window, cx| {
-                workspace.open_path((worktree_id, "one.rs"), None, true, window, cx)
+                workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
             })
             .await
             .unwrap()

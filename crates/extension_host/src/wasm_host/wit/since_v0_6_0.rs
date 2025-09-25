@@ -31,7 +31,7 @@ use std::{
 };
 use task::{SpawnInTerminal, ZedDebugConfig};
 use url::Url;
-use util::{archive::extract_zip, fs::make_file_executable, maybe};
+use util::{archive::extract_zip, fs::make_file_executable, maybe, rel_path::RelPath};
 use wasmtime::component::{Linker, Resource};
 
 pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 6, 0);
@@ -564,7 +564,7 @@ impl HostWorktree for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         let delegate = self.table.get(&delegate)?;
         Ok(delegate
-            .read_text_file(path.into())
+            .read_text_file(RelPath::new(&path)?)
             .await
             .map_err(|error| error.to_string()))
     }
@@ -914,12 +914,12 @@ impl ExtensionImports for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         self.on_main_thread(|cx| {
             async move {
-                let location = location
-                    .as_ref()
-                    .map(|location| ::settings::SettingsLocation {
+                let location = location.as_ref().and_then(|location| {
+                    Some(::settings::SettingsLocation {
                         worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path: Path::new(&location.path),
-                    });
+                        path: RelPath::new(&location.path).ok()?,
+                    })
+                });
 
                 cx.update(|cx| match category.as_str() {
                     "language" => {

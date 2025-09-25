@@ -23,6 +23,7 @@ use std::{
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
+use util::rel_path::RelPath;
 use util::{ResultExt, maybe};
 
 use crate::github_download::{GithubBinaryMetadata, download_server_binary};
@@ -88,10 +89,10 @@ impl ManifestProvider for CargoManifestProvider {
             depth,
             delegate,
         }: ManifestQuery,
-    ) -> Option<Arc<Path>> {
+    ) -> Option<Arc<RelPath>> {
         let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(depth) {
-            let p = path.join("Cargo.toml");
+            let p = path.join(RelPath::new("Cargo.toml").unwrap());
             if delegate.exists(&p, Some(false)) {
                 outermost_cargo_toml = Some(Arc::from(path));
             }

@@ -48,7 +48,7 @@ use std::{
 use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
-use util::{ResultExt, debug_panic};
+use util::{ResultExt, debug_panic, paths::PathStyle, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
@@ -108,6 +108,11 @@ impl MessageEditor {
             available_commands.clone(),
         ));
         let mention_set = MentionSet::default();
+        // TODO: fix mentions when remoting with mixed path styles.
+        let host_and_guest_paths_differ = project
+            .read(cx)
+            .remote_client()
+            .is_some_and(|client| client.read(cx).path_style() != PathStyle::local());
         let editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -117,7 +122,9 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
-            editor.set_completion_provider(Some(completion_provider.clone()));
+            if !host_and_guest_paths_differ {
+                editor.set_completion_provider(Some(completion_provider.clone()));
+            }
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
@@ -947,6 +954,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
@@ -956,18 +964,15 @@ impl MessageEditor {
             let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
                 continue;
             };
-            let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
+            let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
-            let path_prefix = abs_path
-                .file_name()
-                .unwrap_or(path.path.as_os_str())
-                .display()
-                .to_string();
+            let abs_path = worktree.read(cx).absolutize(&path.path);
             let (file_name, _) =
                 crate::context_picker::file_context_picker::extract_file_name_and_directory(
                     &path.path,
-                    &path_prefix,
+                    worktree.read(cx).root_name(),
+                    path_style,
                 );
 
             let uri = if entry.is_dir() {
@@ -1176,7 +1181,7 @@ fn full_mention_for_directory(
     abs_path: &Path,
     cx: &mut App,
 ) -> Task<Result<Mention>> {
-    fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
+    fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<(Arc<RelPath>, PathBuf)> {
         let mut files = Vec::new();
 
         for entry in worktree.child_entries(path) {
@@ -1261,7 +1266,7 @@ fn full_mention_for_directory(
     })
 }
 
-fn render_directory_contents(entries: Vec<(Arc<Path>, PathBuf, String)>) -> String {
+fn render_directory_contents(entries: Vec<(Arc<RelPath>, PathBuf, String)>) -> String {
     let mut output = String::new();
     for (_relative_path, full_path, content) in entries {
         let fence = codeblock_fence_for_path(Some(&full_path), None);
@@ -1595,7 +1600,7 @@ mod tests {
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::{path, uri};
+    use util::{path, paths::PathStyle, rel_path::rel_path, uri};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -2105,15 +2110,17 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window, cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
-            path!("b/eight.txt"),
+            rel_path("a/one.txt"),
+            rel_path("a/two.txt"),
+            rel_path("a/three.txt"),
+            rel_path("a/four.txt"),
+            rel_path("b/five.txt"),
+            rel_path("b/six.txt"),
+            rel_path("b/seven.txt"),
+            rel_path("b/eight.txt"),
         ];
+
+        let slash = PathStyle::local().separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {
@@ -2122,7 +2129,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: Path::new(path).into(),
+                            path: path.into(),
                         },
                         None,
                         false,
@@ -2183,10 +2190,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
+                    format!("eight.txt dir{slash}b{slash}"),
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
                 ]
             );
             editor.set_text("", window, cx);
@@ -2214,14 +2221,14 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Threads",
-                    "Fetch"
+                    format!("eight.txt dir{slash}b{slash}"),
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into(),
+                    "Threads".into(),
+                    "Fetch".into()
                 ]
             );
         });
@@ -2248,7 +2255,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt dir{slash}a{slash}")]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2505,7 +2515,7 @@ mod tests {
                 format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+            assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2544,7 +2554,7 @@ mod tests {
                         format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
                     );
                     assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+                    assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
                 });
 
         editor.update_in(&mut cx, |editor, window, cx| {

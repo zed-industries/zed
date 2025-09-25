@@ -29,7 +29,7 @@ use std::{
     collections::BTreeMap,
     hash::Hash,
     ops::Range,
-    path::{MAIN_SEPARATOR_STR, Path, PathBuf},
+    path::{Path, PathBuf},
     sync::{
         Arc, OnceLock,
         atomic::{self, AtomicBool},
@@ -51,7 +51,7 @@ use ui::{
     IndentGuideLayout, Label, LabelCommon, ListItem, ScrollAxes, Scrollbars, StyledExt,
     StyledTypography, Toggleable, Tooltip, WithScrollbar, h_flex, v_flex,
 };
-use util::{RangeExt, ResultExt, TryFutureExt, debug_panic};
+use util::{RangeExt, ResultExt, TryFutureExt, debug_panic, rel_path::RelPath};
 use workspace::{
     OpenInTerminal, WeakItemHandle, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
@@ -107,7 +107,7 @@ pub struct OutlinePanel {
     pending_serialization: Task<Option<()>>,
     fs_entries_depth: HashMap<(WorktreeId, ProjectEntryId), usize>,
     fs_entries: Vec<FsEntry>,
-    fs_children_count: HashMap<WorktreeId, HashMap<Arc<Path>, FsChildren>>,
+    fs_children_count: HashMap<WorktreeId, HashMap<Arc<RelPath>, FsChildren>>,
     collapsed_entries: HashSet<CollapsedEntry>,
     unfolded_dirs: HashMap<WorktreeId, BTreeSet<ProjectEntryId>>,
     selected_entry: SelectedEntry,
@@ -1905,6 +1905,7 @@ impl OutlinePanel {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
         if let Some(clipboard_text) = self
             .selected_entry()
             .and_then(|entry| match entry {
@@ -1914,7 +1915,7 @@ impl OutlinePanel {
                 }
                 PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
             })
-            .map(|p| p.to_string_lossy().to_string())
+            .map(|p| p.display(path_style).to_string())
         {
             cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
@@ -2272,7 +2273,7 @@ impl OutlinePanel {
                 let color =
                     entry_git_aware_label_color(entry.git_summary, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
-                    FileIcons::get_icon(&entry.path, cx)
+                    FileIcons::get_icon(entry.path.as_std_path(), cx)
                         .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
                 } else {
                     None
@@ -2303,7 +2304,7 @@ impl OutlinePanel {
                     is_active,
                 );
                 let icon = if settings.folder_icons {
-                    FileIcons::get_folder_icon(is_expanded, &directory.entry.path, cx)
+                    FileIcons::get_folder_icon(is_expanded, directory.entry.path.as_std_path(), cx)
                 } else {
                     FileIcons::get_chevron_icon(is_expanded, cx)
                 }
@@ -2329,13 +2330,13 @@ impl OutlinePanel {
                         Some(file) => {
                             let path = file.path();
                             let icon = if settings.file_icons {
-                                FileIcons::get_icon(path.as_ref(), cx)
+                                FileIcons::get_icon(path.as_std_path(), cx)
                             } else {
                                 None
                             }
                             .map(Icon::from_path)
                             .map(|icon| icon.color(color).into_any_element());
-                            (icon, file_name(path.as_ref()))
+                            (icon, file_name(path.as_std_path()))
                         }
                         None => (None, "Untitled".to_string()),
                     },
@@ -2615,19 +2616,17 @@ impl OutlinePanel {
                         if root_entry.id == entry.id {
                             file_name(worktree.abs_path().as_ref())
                         } else {
-                            let path = worktree.absolutize(entry.path.as_ref()).ok();
-                            let path = path.as_deref().unwrap_or_else(|| entry.path.as_ref());
-                            file_name(path)
+                            let path = worktree.absolutize(entry.path.as_ref());
+                            file_name(&path)
                         }
                     }
                     None => {
-                        let path = worktree.absolutize(entry.path.as_ref()).ok();
-                        let path = path.as_deref().unwrap_or_else(|| entry.path.as_ref());
-                        file_name(path)
+                        let path = worktree.absolutize(entry.path.as_ref());
+                        file_name(&path)
                     }
                 }
             }
-            None => file_name(entry.path.as_ref()),
+            None => file_name(entry.path.as_std_path()),
         }
     }
 
@@ -2842,7 +2841,7 @@ impl OutlinePanel {
                     }
 
                     let mut new_children_count =
-                        HashMap::<WorktreeId, HashMap<Arc<Path>, FsChildren>>::default();
+                        HashMap::<WorktreeId, HashMap<Arc<RelPath>, FsChildren>>::default();
 
                     let worktree_entries = new_worktree_entries
                         .into_iter()
@@ -3518,17 +3517,17 @@ impl OutlinePanel {
                 .buffer_snapshot_for_id(*buffer_id, cx)
                 .and_then(|buffer_snapshot| {
                     let file = File::from_dyn(buffer_snapshot.file())?;
-                    file.worktree.read(cx).absolutize(&file.path).ok()
+                    Some(file.worktree.read(cx).absolutize(&file.path))
                 }),
             PanelEntry::Fs(FsEntry::Directory(FsEntryDirectory {
                 worktree_id, entry, ..
-            })) => self
-                .project
-                .read(cx)
-                .worktree_for_id(*worktree_id, cx)?
-                .read(cx)
-                .absolutize(&entry.path)
-                .ok(),
+            })) => Some(
+                self.project
+                    .read(cx)
+                    .worktree_for_id(*worktree_id, cx)?
+                    .read(cx)
+                    .absolutize(&entry.path),
+            ),
             PanelEntry::FoldedDirs(FoldedDirsEntry {
                 worktree_id,
                 entries: dirs,
@@ -3537,13 +3536,13 @@ impl OutlinePanel {
                 self.project
                     .read(cx)
                     .worktree_for_id(*worktree_id, cx)
-                    .and_then(|worktree| worktree.read(cx).absolutize(&entry.path).ok())
+                    .map(|worktree| worktree.read(cx).absolutize(&entry.path))
             }),
             PanelEntry::Search(_) | PanelEntry::Outline(..) => None,
         }
     }
 
-    fn relative_path(&self, entry: &FsEntry, cx: &App) -> Option<Arc<Path>> {
+    fn relative_path(&self, entry: &FsEntry, cx: &App) -> Option<Arc<RelPath>> {
         match entry {
             FsEntry::ExternalFile(FsEntryExternalFile { buffer_id, .. }) => {
                 let buffer_snapshot = self.buffer_snapshot_for_id(*buffer_id, cx)?;
@@ -3627,7 +3626,7 @@ impl OutlinePanel {
 
                 #[derive(Debug)]
                 struct ParentStats {
-                    path: Arc<Path>,
+                    path: Arc<RelPath>,
                     folded: bool,
                     expanded: bool,
                     depth: usize,
@@ -4023,8 +4022,9 @@ impl OutlinePanel {
             let id = state.entries.len();
             match &entry {
                 PanelEntry::Fs(fs_entry) => {
-                    if let Some(file_name) =
-                        self.relative_path(fs_entry, cx).as_deref().map(file_name)
+                    if let Some(file_name) = self
+                        .relative_path(fs_entry, cx)
+                        .and_then(|path| Some(path.file_name()?.to_string()))
                     {
                         state
                             .match_candidates
@@ -4477,21 +4477,19 @@ impl OutlinePanel {
         let item_text_chars = match entry {
             PanelEntry::Fs(FsEntry::ExternalFile(external)) => self
                 .buffer_snapshot_for_id(external.buffer_id, cx)
-                .and_then(|snapshot| {
-                    Some(snapshot.file()?.path().file_name()?.to_string_lossy().len())
-                })
+                .and_then(|snapshot| Some(snapshot.file()?.path().file_name()?.len()))
                 .unwrap_or_default(),
             PanelEntry::Fs(FsEntry::Directory(directory)) => directory
                 .entry
                 .path
                 .file_name()
-                .map(|name| name.to_string_lossy().len())
+                .map(|name| name.len())
                 .unwrap_or_default(),
             PanelEntry::Fs(FsEntry::File(file)) => file
                 .entry
                 .path
                 .file_name()
-                .map(|name| name.to_string_lossy().len())
+                .map(|name| name.len())
                 .unwrap_or_default(),
             PanelEntry::FoldedDirs(folded_dirs) => {
                 folded_dirs
@@ -4500,11 +4498,11 @@ impl OutlinePanel {
                     .map(|dir| {
                         dir.path
                             .file_name()
-                            .map(|name| name.to_string_lossy().len())
+                            .map(|name| name.len())
                             .unwrap_or_default()
                     })
                     .sum::<usize>()
-                    + folded_dirs.entries.len().saturating_sub(1) * MAIN_SEPARATOR_STR.len()
+                    + folded_dirs.entries.len().saturating_sub(1) * "/".len()
             }
             PanelEntry::Outline(OutlineEntry::Excerpt(excerpt)) => self
                 .excerpt_label(excerpt.buffer_id, &excerpt.range, cx)
@@ -4799,7 +4797,7 @@ fn workspace_active_editor(
 }
 
 fn back_to_common_visited_parent(
-    visited_dirs: &mut Vec<(ProjectEntryId, Arc<Path>)>,
+    visited_dirs: &mut Vec<(ProjectEntryId, Arc<RelPath>)>,
     worktree_id: &WorktreeId,
     new_entry: &Entry,
 ) -> Option<(WorktreeId, ProjectEntryId)> {
@@ -5281,16 +5279,15 @@ mod tests {
                 });
         });
 
-        let all_matches = format!(
-            r#"{root}/
+        let all_matches = r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {{
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
-          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5302,7 +5299,7 @@ mod tests {
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
         search: param_names_for_lifetime_elision_hints: self"#
-        );
+            .to_string();
 
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
@@ -5360,7 +5357,7 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
@@ -5430,7 +5427,7 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"rust-analyzer/
   crates/
     ide/src/{SELECTED_MARKER}
     rust-analyzer/src/
@@ -5513,16 +5510,15 @@ mod tests {
                     );
                 });
         });
-        let all_matches = format!(
-            r#"{root}/
+        let all_matches = r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {{
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
-          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5534,7 +5530,7 @@ mod tests {
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
         search: param_names_for_lifetime_elision_hints: self"#
-        );
+            .to_string();
 
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
@@ -5653,16 +5649,15 @@ mod tests {
                     );
                 });
         });
-        let all_matches = format!(
-            r#"{root}/
+        let all_matches = r#"rust-analyzer/
   crates/
     ide/src/
       inlay_hints/
         fn_lifetime_fn.rs
-          search: match config.param_names_for_lifetime_elision_hints {{
-          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {{
-          search: Some(it) if config.param_names_for_lifetime_elision_hints => {{
-          search: InlayHintsConfig {{ param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG }},
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
       inlay_hints.rs
         search: pub param_names_for_lifetime_elision_hints: bool,
         search: param_names_for_lifetime_elision_hints: self
@@ -5674,7 +5669,7 @@ mod tests {
           search: param_names_for_lifetime_elision_hints: true,
       config.rs
         search: param_names_for_lifetime_elision_hints: self"#
-        );
+            .to_string();
         let select_first_in_all_matches = |line_to_select: &str| {
             assert!(all_matches.contains(line_to_select));
             all_matches.replacen(
@@ -5904,15 +5899,13 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{}/
+                    r#"one/
   a.txt
     search: aaa aaa  <==== selected
     search: aaa aaa
-{}/
+two/
   b.txt
     search: a aaa"#,
-                    path!("/root/one"),
-                    path!("/root/two"),
                 ),
             );
         });
@@ -5934,13 +5927,11 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{}/
+                    r#"one/
   a.txt  <==== selected
-{}/
+two/
   b.txt
     search: a aaa"#,
-                    path!("/root/one"),
-                    path!("/root/two"),
                 ),
             );
         });
@@ -5962,11 +5953,9 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{}/
+                    r#"one/
   a.txt
-{}/  <==== selected"#,
-                    path!("/root/one"),
-                    path!("/root/two"),
+two/  <==== selected"#,
                 ),
             );
         });
@@ -5987,13 +5976,11 @@ mod tests {
                     cx,
                 ),
                 format!(
-                    r#"{}/
+                    r#"one/
   a.txt
-{}/  <==== selected
+two/  <==== selected
   b.txt
     search: a aaa"#,
-                    path!("/root/one"),
-                    path!("/root/two"),
                 )
             );
         });
@@ -6455,7 +6442,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}  <==== selected
@@ -6494,7 +6481,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}
@@ -6524,7 +6511,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}
@@ -6558,7 +6545,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}
@@ -6591,7 +6578,7 @@ outline: struct OutlineEntryExcerpt
                     cx,
                 ),
                 format!(
-                    r#"{root}/
+                    r#"frontend-project/
   public/lottie/
     syntax-tree.json
       search: {{ "something": "static" }}
@@ -6649,6 +6636,7 @@ outline: struct OutlineEntryExcerpt
         selected_entry: Option<&PanelEntry>,
         cx: &mut App,
     ) -> String {
+        let project = project.read(cx);
         let mut display_string = String::new();
         for entry in cached_entries {
             if !display_string.is_empty() {
@@ -6663,44 +6651,39 @@ outline: struct OutlineEntryExcerpt
                         panic!("Did not cover external files with tests")
                     }
                     FsEntry::Directory(directory) => {
-                        match project
-                            .read(cx)
+                        let path = if let Some(worktree) = project
                             .worktree_for_id(directory.worktree_id, cx)
-                            .and_then(|worktree| {
-                                if worktree.read(cx).root_entry() == Some(&directory.entry.entry) {
-                                    Some(worktree.read(cx).abs_path())
-                                } else {
-                                    None
-                                }
+                            .filter(|worktree| {
+                                worktree.read(cx).root_entry() == Some(&directory.entry.entry)
                             }) {
-                            Some(root_path) => format!(
-                                "{}/{}",
-                                root_path.display(),
-                                directory.entry.path.display(),
-                            ),
-                            None => format!(
-                                "{}/",
-                                directory
-                                    .entry
-                                    .path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                            ),
-                        }
+                            worktree
+                                .read(cx)
+                                .root_name()
+                                .join(&directory.entry.path)
+                                .as_str()
+                                .to_string()
+                        } else {
+                            directory
+                                .entry
+                                .path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string()
+                        };
+                        format!("{path}/")
                     }
                     FsEntry::File(file) => file
                         .entry
                         .path
                         .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
+                        .map(|name| name.to_string())
                         .unwrap_or_default(),
                 },
                 PanelEntry::FoldedDirs(folded_dirs) => folded_dirs
                     .entries
                     .iter()
                     .filter_map(|dir| dir.path.file_name())
-                    .map(|name| name.to_string_lossy().to_string() + "/")
+                    .map(|name| name.to_string() + "/")
                     .collect(),
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Excerpt(_) => continue,

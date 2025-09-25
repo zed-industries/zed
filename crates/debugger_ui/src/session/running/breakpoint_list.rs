@@ -26,6 +26,7 @@ use ui::{
     Divider, DividerColor, FluentBuilder as _, Indicator, IntoElement, ListItem, Render,
     StatefulInteractiveElement, Tooltip, WithScrollbar, prelude::*,
 };
+use util::rel_path::RelPath;
 use workspace::Workspace;
 use zed_actions::{ToggleEnableBreakpoint, UnsetBreakpoint};
 
@@ -663,6 +664,7 @@ impl Render for BreakpointList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl ui::IntoElement {
         let breakpoints = self.breakpoint_store.read(cx).all_source_breakpoints(cx);
         self.breakpoints.clear();
+        let path_style = self.worktree_store.read(cx).path_style();
         let weak = cx.weak_entity();
         let breakpoints = breakpoints.into_iter().flat_map(|(path, mut breakpoints)| {
             let relative_worktree_path = self
@@ -673,7 +675,7 @@ impl Render for BreakpointList {
                     worktree
                         .read(cx)
                         .is_visible()
-                        .then(|| Path::new(worktree.read(cx).root_name()).join(relative_path))
+                        .then(|| worktree.read(cx).root_name().join(&relative_path))
                 });
             breakpoints.sort_by_key(|breakpoint| breakpoint.row);
             let weak = weak.clone();
@@ -683,14 +685,9 @@ impl Render for BreakpointList {
 
                 let dir = relative_worktree_path
                     .clone()
-                    .unwrap_or_else(|| PathBuf::from(&*breakpoint.path))
+                    .or_else(|| RelPath::from_std_path(&breakpoint.path, path_style).ok())?
                     .parent()
-                    .and_then(|parent| {
-                        parent
-                            .to_str()
-                            .map(ToOwned::to_owned)
-                            .map(SharedString::from)
-                    });
+                    .map(|parent| SharedString::from(parent.display(path_style).to_string()));
                 let name = file_name
                     .to_str()
                     .map(ToOwned::to_owned)

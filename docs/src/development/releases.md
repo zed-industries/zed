@@ -1,8 +1,8 @@
 # Zed Releases
 
-Read about Zed's release channels [here](https://zed.dev/faq#what-are-the-release-channels).
+Read about Zed's [release channels here](https://zed.dev/faq#what-are-the-release-channels).
 
-## Wednesday release process
+## Wednesday Release Process
 
 You will need write access to the Zed repository to do this.
 
@@ -59,7 +59,7 @@ Credentials for various services used in this process can be found in 1Password.
 1. Store any media created in the `Feature Media` directory in our Google Drive.
    Other team members may want to reference or use these later on.
 
-## Patch release process
+## Patch Release Process
 
 If your PR fixes a panic or a crash, you should cherry-pick it to the current stable and preview branches.
 If your PR fixes a regression in recently released code, you should cherry-pick it to preview.

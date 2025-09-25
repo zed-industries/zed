@@ -355,8 +355,8 @@ pub enum ShowWhitespaceSetting {
 #[skip_serializing_none]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
 pub struct WhitespaceMapContent {
-    pub space: char,
-    pub tab: char,
+    pub space: Option<char>,
+    pub tab: Option<char>,
 }
 
 /// The behavior of `editor::Rewrap`.

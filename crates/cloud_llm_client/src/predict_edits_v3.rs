@@ -1,6 +1,10 @@
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
-use std::{ops::Range, path::PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
@@ -10,7 +14,7 @@ use crate::PredictEditsGitInfo;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRequest {
     pub excerpt: String,
-    pub excerpt_path: PathBuf,
+    pub excerpt_path: Arc<Path>,
     /// Within file
     pub excerpt_range: Range<usize>,
     /// Within `excerpt`
@@ -32,7 +36,17 @@ pub struct PredictEditsRequest {
     // Only available to staff
     #[serde(default)]
     pub debug_info: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub prompt_max_bytes: Option<usize>,
+    #[serde(default)]
+    pub prompt_format: PromptFormat,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum PromptFormat {
+    #[default]
+    MarkedExcerpt,
+    LabeledSections,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,7 +73,7 @@ pub struct Signature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferencedDeclaration {
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub text: String,
     pub text_is_truncated: bool,
     /// Range of `text` within file, possibly truncated according to `text_is_truncated`
@@ -117,7 +131,7 @@ pub struct DebugInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edit {
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub range: Range<usize>,
     pub content: String,
 }

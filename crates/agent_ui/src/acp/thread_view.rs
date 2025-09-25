@@ -3704,29 +3704,32 @@ impl AcpThreadView {
             |(index, (buffer, _diff))| {
                 let file = buffer.read(cx).file()?;
                 let path = file.path();
+                let path_style = file.path_style(cx);
+                let separator = file.path_style(cx).separator();
 
                 let file_path = path.parent().and_then(|parent| {
-                    let parent_str = parent.to_string_lossy();
-
-                    if parent_str.is_empty() {
+                    if parent.is_empty() {
                         None
                     } else {
                         Some(
-                            Label::new(format!("/{}{}", parent_str, std::path::MAIN_SEPARATOR_STR))
-                                .color(Color::Muted)
-                                .size(LabelSize::XSmall)
-                                .buffer_font(cx),
+                            Label::new(format!(
+                                "{separator}{}{separator}",
+                                parent.display(path_style)
+                            ))
+                            .color(Color::Muted)
+                            .size(LabelSize::XSmall)
+                            .buffer_font(cx),
                         )
                     }
                 });
 
                 let file_name = path.file_name().map(|name| {
-                    Label::new(name.to_string_lossy().to_string())
+                    Label::new(name.to_string())
                         .size(LabelSize::XSmall)
                         .buffer_font(cx)
                 });
 
-                let file_icon = FileIcons::get_icon(path, cx)
+                let file_icon = FileIcons::get_icon(path.as_std_path(), cx)
                     .map(Icon::from_path)
                     .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
                     .unwrap_or_else(|| {
@@ -4569,7 +4572,7 @@ impl AcpThreadView {
                 .read(cx)
                 .visible_worktrees(cx)
                 .next()
-                .map(|worktree| worktree.read(cx).root_name().to_string())
+                .map(|worktree| worktree.read(cx).root_name_str().to_string())
         });
 
         if let Some(screen_window) = cx

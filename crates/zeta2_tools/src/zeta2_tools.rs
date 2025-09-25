@@ -1,11 +1,4 @@
-use std::{
-    collections::hash_map::Entry,
-    ffi::OsStr,
-    path::{Path, PathBuf},
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::hash_map::Entry, path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use chrono::TimeDelta;
 use client::{Client, UserStore};
@@ -20,7 +13,7 @@ use language::{Buffer, DiskState};
 use project::{Project, WorktreeId};
 use ui::prelude::*;
 use ui_input::SingleLineInput;
-use util::ResultExt;
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use workspace::{Item, SplitDirection, Workspace};
 use zeta2::{Zeta, ZetaOptions};
 
@@ -251,11 +244,13 @@ impl Zeta2Inspector {
                     ),
                 };
 
+                let zeta_options = this.zeta.read(cx).options();
                 this.set_options(
                     ZetaOptions {
                         excerpt: excerpt_options,
                         max_prompt_bytes: number_input_value(&this.max_prompt_bytes_input, cx),
-                        max_diagnostic_bytes: this.zeta.read(cx).options().max_diagnostic_bytes,
+                        max_diagnostic_bytes: zeta_options.max_diagnostic_bytes,
+                        prompt_format: zeta_options.prompt_format,
                     },
                     cx,
                 );
@@ -271,9 +266,9 @@ impl Zeta2Inspector {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(worktree_id) = self
-            .project
-            .read(cx)
+        let project = self.project.read(cx);
+        let path_style = project.path_style(cx);
+        let Some(worktree_id) = project
             .worktrees(cx)
             .next()
             .map(|worktree| worktree.read(cx).id())
@@ -311,7 +306,8 @@ impl Zeta2Inspector {
                         let multibuffer = cx.new(|cx| {
                             let mut multibuffer = MultiBuffer::new(language::Capability::ReadOnly);
                             let excerpt_file = Arc::new(ExcerptMetadataFile {
-                                title: PathBuf::from("Cursor Excerpt").into(),
+                                title: RelPath::new("Cursor Excerpt").unwrap().into(),
+                                path_style,
                                 worktree_id,
                             });
 
@@ -344,13 +340,15 @@ impl Zeta2Inspector {
                                     .path_for_entry(snippet.declaration.project_entry_id(), cx);
 
                                 let snippet_file = Arc::new(ExcerptMetadataFile {
-                                    title: PathBuf::from(format!(
+                                    title: RelPath::new(&format!(
                                         "{} (Score density: {})",
-                                        path.map(|p| p.path.to_string_lossy().to_string())
+                                        path.map(|p| p.path.display(path_style).to_string())
                                             .unwrap_or_else(|| "".to_string()),
                                         snippet.score_density(SnippetStyle::Declaration)
                                     ))
+                                    .unwrap()
                                     .into(),
+                                    path_style,
                                     worktree_id,
                                 });
 
@@ -639,8 +637,9 @@ impl Render for Zeta2Inspector {
 // Using same approach as commit view
 
 struct ExcerptMetadataFile {
-    title: Arc<Path>,
+    title: Arc<RelPath>,
     worktree_id: WorktreeId,
+    path_style: PathStyle,
 }
 
 impl language::File for ExcerptMetadataFile {
@@ -652,16 +651,20 @@ impl language::File for ExcerptMetadataFile {
         DiskState::New
     }
 
-    fn path(&self) -> &Arc<Path> {
+    fn path(&self) -> &Arc<RelPath> {
         &self.title
     }
 
     fn full_path(&self, _: &App) -> PathBuf {
-        self.title.as_ref().into()
+        self.title.as_std_path().to_path_buf()
     }
 
-    fn file_name<'a>(&'a self, _: &'a App) -> &'a OsStr {
+    fn file_name<'a>(&'a self, _: &'a App) -> &'a str {
         self.title.file_name().unwrap()
+    }
+
+    fn path_style(&self, _: &App) -> PathStyle {
+        self.path_style
     }
 
     fn worktree_id(&self, _: &App) -> WorktreeId {

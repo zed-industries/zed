@@ -20,7 +20,7 @@ use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
 };
-use util::{ResultExt, maybe};
+use util::{ResultExt, maybe, paths::PathStyle, rel_path::RelPath};
 
 #[derive(Default)]
 pub(crate) struct PythonDebugAdapter {
@@ -726,13 +726,16 @@ impl DebugAdapter for PythonDebugAdapter {
             .config
             .get("cwd")
             .and_then(|cwd| {
-                cwd.as_str()
-                    .map(Path::new)?
-                    .strip_prefix(delegate.worktree_root_path())
-                    .ok()
+                RelPath::from_std_path(
+                    cwd.as_str()
+                        .map(Path::new)?
+                        .strip_prefix(delegate.worktree_root_path())
+                        .ok()?,
+                    PathStyle::local(),
+                )
+                .ok()
             })
-            .unwrap_or_else(|| "".as_ref())
-            .into();
+            .unwrap_or_else(|| RelPath::empty().into());
         let toolchain = delegate
             .toolchain_store()
             .active_toolchain(

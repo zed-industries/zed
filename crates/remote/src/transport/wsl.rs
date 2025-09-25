@@ -17,7 +17,10 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use util::paths::{PathStyle, RemotePathBuf};
+use util::{
+    paths::{PathStyle, RemotePathBuf},
+    rel_path::RelPath,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WslConnectionOptions {
@@ -35,7 +38,7 @@ impl From<settings::WslConnection> for WslConnectionOptions {
 }
 
 pub(crate) struct WslRemoteConnection {
-    remote_binary_path: Option<RemotePathBuf>,
+    remote_binary_path: Option<Arc<RelPath>>,
     platform: RemotePlatform,
     shell: String,
     default_system_shell: String,
@@ -122,7 +125,7 @@ impl WslRemoteConnection {
         version: SemanticVersion,
         commit: Option<AppCommitSha>,
         cx: &mut AsyncApp,
-    ) -> Result<RemotePathBuf> {
+    ) -> Result<Arc<RelPath>> {
         let version_str = match release_channel {
             ReleaseChannel::Nightly => {
                 let commit = commit.map(|s| s.full()).unwrap_or_default();
@@ -138,13 +141,11 @@ impl WslRemoteConnection {
             version_str
         );
 
-        let dst_path = RemotePathBuf::new(
-            paths::remote_wsl_server_dir_relative().join(binary_name),
-            PathStyle::Posix,
-        );
+        let dst_path =
+            paths::remote_wsl_server_dir_relative().join(RelPath::new(&binary_name).unwrap());
 
         if let Some(parent) = dst_path.parent() {
-            self.run_wsl_command("mkdir", &["-p", &parent.to_string()])
+            self.run_wsl_command("mkdir", &["-p", &parent.display(PathStyle::Posix)])
                 .await
                 .map_err(|e| anyhow!("Failed to create directory: {}", e))?;
         }
@@ -153,13 +154,13 @@ impl WslRemoteConnection {
         if let Some(remote_server_path) =
             super::build_remote_server_from_source(&self.platform, delegate.as_ref(), cx).await?
         {
-            let tmp_path = RemotePathBuf::new(
-                paths::remote_wsl_server_dir_relative().join(format!(
+            let tmp_path = paths::remote_wsl_server_dir_relative().join(
+                &RelPath::new(&format!(
                     "download-{}-{}",
                     std::process::id(),
                     remote_server_path.file_name().unwrap().to_string_lossy()
-                )),
-                PathStyle::Posix,
+                ))
+                .unwrap(),
             );
             self.upload_file(&remote_server_path, &tmp_path, delegate, cx)
                 .await?;
@@ -169,7 +170,7 @@ impl WslRemoteConnection {
         }
 
         if self
-            .run_wsl_command(&dst_path.to_string(), &["version"])
+            .run_wsl_command(&dst_path.display(PathStyle::Posix), &["version"])
             .await
             .is_ok()
         {
@@ -187,10 +188,12 @@ impl WslRemoteConnection {
             .download_server_binary_locally(self.platform, release_channel, wanted_version, cx)
             .await?;
 
-        let tmp_path = RemotePathBuf::new(
-            PathBuf::from(format!("{}.{}.gz", dst_path, std::process::id())),
-            PathStyle::Posix,
+        let tmp_path = format!(
+            "{}.{}.gz",
+            dst_path.display(PathStyle::Posix),
+            std::process::id()
         );
+        let tmp_path = RelPath::new(&tmp_path).unwrap();
 
         self.upload_file(&src_path, &tmp_path, delegate, cx).await?;
         self.extract_and_install(&tmp_path, &dst_path, delegate, cx)
@@ -202,14 +205,14 @@ impl WslRemoteConnection {
     async fn upload_file(
         &self,
         src_path: &Path,
-        dst_path: &RemotePathBuf,
+        dst_path: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Uploading remote server to WSL"), cx);
 
         if let Some(parent) = dst_path.parent() {
-            self.run_wsl_command("mkdir", &["-p", &parent.to_string()])
+            self.run_wsl_command("mkdir", &["-p", &parent.display(PathStyle::Posix)])
                 .await
                 .map_err(|e| anyhow!("Failed to create directory when uploading file: {}", e))?;
         }
@@ -224,17 +227,20 @@ impl WslRemoteConnection {
         );
 
         let src_path_in_wsl = self.windows_path_to_wsl_path(src_path).await?;
-        self.run_wsl_command("cp", &["-f", &src_path_in_wsl, &dst_path.to_string()])
-            .await
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to copy file {}({}) to WSL {:?}: {}",
-                    src_path.display(),
-                    src_path_in_wsl,
-                    dst_path,
-                    e
-                )
-            })?;
+        self.run_wsl_command(
+            "cp",
+            &["-f", &src_path_in_wsl, &dst_path.display(PathStyle::Posix)],
+        )
+        .await
+        .map_err(|e| {
+            anyhow!(
+                "Failed to copy file {}({}) to WSL {:?}: {}",
+                src_path.display(),
+                src_path_in_wsl,
+                dst_path,
+                e
+            )
+        })?;
 
         log::info!("uploaded remote server in {:?}", t0.elapsed());
         Ok(())
@@ -242,15 +248,15 @@ impl WslRemoteConnection {
 
     async fn extract_and_install(
         &self,
-        tmp_path: &RemotePathBuf,
-        dst_path: &RemotePathBuf,
+        tmp_path: &RelPath,
+        dst_path: &RelPath,
         delegate: &Arc<dyn RemoteClientDelegate>,
         cx: &mut AsyncApp,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote server"), cx);
 
-        let tmp_path_str = tmp_path.to_string();
-        let dst_path_str = dst_path.to_string();
+        let tmp_path_str = tmp_path.display(PathStyle::Posix);
+        let dst_path_str = dst_path.display(PathStyle::Posix);
 
         // Build extraction script with proper error handling
         let script = if tmp_path_str.ends_with(".gz") {
@@ -293,7 +299,8 @@ impl RemoteConnection for WslRemoteConnection {
 
         let mut proxy_command = format!(
             "exec {} proxy --identifier {}",
-            remote_binary_path, unique_identifier
+            remote_binary_path.display(PathStyle::Posix),
+            unique_identifier
         );
 
         if reconnect {
@@ -377,7 +384,7 @@ impl RemoteConnection for WslRemoteConnection {
         }
 
         let working_dir = working_dir
-            .map(|working_dir| RemotePathBuf::new(working_dir.into(), PathStyle::Posix).to_string())
+            .map(|working_dir| RemotePathBuf::new(working_dir, PathStyle::Posix).to_string())
             .unwrap_or("~".to_string());
 
         let mut script = String::new();

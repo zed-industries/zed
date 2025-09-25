@@ -255,20 +255,23 @@ impl EventEmitter<ConflictSetUpdate> for ConflictSet {}
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::mpsc};
+    use std::sync::mpsc;
 
     use crate::Project;
 
     use super::*;
     use fs::FakeFs;
-    use git::status::{UnmergedStatus, UnmergedStatusCode};
+    use git::{
+        repository::repo_path,
+        status::{UnmergedStatus, UnmergedStatusCode},
+    };
     use gpui::{BackgroundExecutor, TestAppContext};
     use language::language_settings::AllLanguageSettings;
     use serde_json::json;
     use settings::Settings as _;
     use text::{Buffer, BufferId, Point, ToOffset as _};
     use unindent::Unindent as _;
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use worktree::WorktreeSettings;
 
     #[test]
@@ -543,7 +546,7 @@ mod tests {
 
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                "a.txt".into(),
+                repo_path("a.txt"),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,
@@ -621,7 +624,7 @@ mod tests {
         cx.run_until_parked();
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                "a.txt".into(),
+                rel_path("a.txt").into(),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,
@@ -647,7 +650,7 @@ mod tests {
 
         // Simulate the conflict being removed by e.g. staging the file.
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
-            state.unmerged_paths.remove(Path::new("a.txt"))
+            state.unmerged_paths.remove(&repo_path("a.txt"))
         })
         .unwrap();
 
@@ -660,7 +663,7 @@ mod tests {
         // Simulate the conflict being re-added.
         fs.with_git_state(path!("/project/.git").as_ref(), true, |state| {
             state.unmerged_paths.insert(
-                "a.txt".into(),
+                repo_path("a.txt"),
                 UnmergedStatus {
                     first_head: UnmergedStatusCode::Updated,
                     second_head: UnmergedStatusCode::Updated,

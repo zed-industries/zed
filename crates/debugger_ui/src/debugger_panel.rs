@@ -33,6 +33,7 @@ use std::sync::{Arc, LazyLock};
 use task::{DebugScenario, TaskContext};
 use tree_sitter::{Query, StreamingIterator as _};
 use ui::{ContextMenu, Divider, PopoverMenuHandle, Tab, Tooltip, prelude::*};
+use util::rel_path::RelPath;
 use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
 use workspace::item::SaveOptions;
@@ -1061,14 +1062,14 @@ impl DebugPanel {
                 directory_in_worktree: dir,
                 ..
             } => {
-                let relative_path = if dir.ends_with(".vscode") {
-                    dir.join("launch.json")
+                let relative_path = if dir.ends_with(RelPath::new(".vscode").unwrap()) {
+                    dir.join(RelPath::new("launch.json").unwrap())
                 } else {
-                    dir.join("debug.json")
+                    dir.join(RelPath::new("debug.json").unwrap())
                 };
                 ProjectPath {
                     worktree_id: id,
-                    path: Arc::from(relative_path),
+                    path: relative_path,
                 }
             }
             _ => return self.save_scenario(scenario, worktree_id, window, cx),
@@ -1129,7 +1130,7 @@ impl DebugPanel {
                     let fs =
                         workspace.read_with(cx, |workspace, _| workspace.app_state().fs.clone())?;
 
-                    path.push(paths::local_settings_folder_relative_path());
+                    path.push(paths::local_settings_folder_name());
                     if !fs.is_dir(path.as_path()).await {
                         fs.create_dir(path.as_path()).await?;
                     }

@@ -1,28 +1,46 @@
 //! Zeta2 prompt planning and generation code shared with cloud.
 
-use anyhow::{Result, anyhow};
-use cloud_llm_client::predict_edits_v3::{self, Event, ReferencedDeclaration};
+use anyhow::{Context as _, Result, anyhow};
+use cloud_llm_client::predict_edits_v3::{self, Event, PromptFormat, ReferencedDeclaration};
 use indoc::indoc;
 use ordered_float::OrderedFloat;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::fmt::Write;
+use std::sync::Arc;
 use std::{cmp::Reverse, collections::BinaryHeap, ops::Range, path::Path};
 use strum::{EnumIter, IntoEnumIterator};
 
 pub const DEFAULT_MAX_PROMPT_BYTES: usize = 10 * 1024;
 
-pub const CURSOR_MARKER: &str = "<|user_cursor_is_here|>";
+pub const CURSOR_MARKER: &str = "<|cursor_position|>";
 /// NOTE: Differs from zed version of constant - includes a newline
 pub const EDITABLE_REGION_START_MARKER_WITH_NEWLINE: &str = "<|editable_region_start|>\n";
 /// NOTE: Differs from zed version of constant - includes a newline
 pub const EDITABLE_REGION_END_MARKER_WITH_NEWLINE: &str = "<|editable_region_end|>\n";
 
 // TODO: use constants for markers?
-pub const SYSTEM_PROMPT: &str = indoc! {"
+const MARKED_EXCERPT_SYSTEM_PROMPT: &str = indoc! {"
     You are a code completion assistant and your task is to analyze user edits and then rewrite an excerpt that the user provides, suggesting the appropriate edits within the excerpt, taking into account the cursor location.
 
-    The excerpt to edit will be wrapped in markers <|editable_region_start|> and <|editable_region_end|>. The cursor position is marked with <|user_cursor_is_here|>. Please respond with edited code for that region.
+    The excerpt to edit will be wrapped in markers <|editable_region_start|> and <|editable_region_end|>. The cursor position is marked with <|cursor_position|>.  Please respond with edited code for that region.
+
+    Other code is provided for context, and `…` indicates when code has been skipped.
 "};
+
+const LABELED_SECTIONS_SYSTEM_PROMPT: &str = indoc! {r#"
+    You are a code completion assistant and your task is to analyze user edits, and suggest an edit to one of the provided sections of code.
+
+    Sections of code are grouped by file and then labeled by `<|section_N|>` (e.g `<|section_8|>`).
+
+    The cursor position is marked with `<|cursor_position|>` and it will appear within a special section labeled `<|current_section|>`. Prefer editing the current section until no more changes are needed within it.
+
+    Respond ONLY with the name of the section to edit on a single line, followed by all of the code that should replace that section. For example:
+
+    <|current_section|>
+    for i in 0..16 {
+        println!("{i}");
+    }
+"#};
 
 pub struct PlannedPrompt<'a> {
     request: &'a predict_edits_v3::PredictEditsRequest,
@@ -32,13 +50,16 @@ pub struct PlannedPrompt<'a> {
     budget_used: usize,
 }
 
-pub struct PlanOptions {
-    pub max_bytes: usize,
+pub fn system_prompt(format: PromptFormat) -> &'static str {
+    match format {
+        PromptFormat::MarkedExcerpt => MARKED_EXCERPT_SYSTEM_PROMPT,
+        PromptFormat::LabeledSections => LABELED_SECTIONS_SYSTEM_PROMPT,
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct PlannedSnippet<'a> {
-    path: &'a Path,
+    path: Arc<Path>,
     range: Range<usize>,
     text: &'a str,
     // TODO: Indicate this in the output
@@ -50,6 +71,12 @@ pub struct PlannedSnippet<'a> {
 pub enum SnippetStyle {
     Signature,
     Declaration,
+}
+
+#[derive(Clone, Debug)]
+pub struct SectionLabels {
+    pub excerpt_index: usize,
+    pub section_ranges: Vec<(Arc<Path>, Range<usize>)>,
 }
 
 impl<'a> PlannedPrompt<'a> {
@@ -74,10 +101,7 @@ impl<'a> PlannedPrompt<'a> {
     /// signatures may be shared by multiple snippets.
     ///
     /// * Does not include file paths / other text when considering max_bytes.
-    pub fn populate(
-        request: &'a predict_edits_v3::PredictEditsRequest,
-        options: &PlanOptions,
-    ) -> Result<Self> {
+    pub fn populate(request: &'a predict_edits_v3::PredictEditsRequest) -> Result<Self> {
         let mut this = PlannedPrompt {
             request,
             snippets: Vec::new(),
@@ -91,11 +115,13 @@ impl<'a> PlannedPrompt<'a> {
         )?;
         this.add_parents(&mut included_parents, additional_parents);
 
-        if this.budget_used > options.max_bytes {
+        let max_bytes = request.prompt_max_bytes.unwrap_or(DEFAULT_MAX_PROMPT_BYTES);
+
+        if this.budget_used > max_bytes {
             return Err(anyhow!(
                 "Excerpt + signatures size of {} already exceeds budget of {}",
                 this.budget_used,
-                options.max_bytes
+                max_bytes
             ));
         }
 
@@ -138,7 +164,7 @@ impl<'a> PlannedPrompt<'a> {
             };
 
             let mut additional_bytes = declaration_size(declaration, queue_entry.style);
-            if this.budget_used + additional_bytes > options.max_bytes {
+            if this.budget_used + additional_bytes > max_bytes {
                 continue;
             }
 
@@ -151,7 +177,7 @@ impl<'a> PlannedPrompt<'a> {
                 .iter()
                 .map(|(_, snippet)| snippet.text.len())
                 .sum::<usize>();
-            if this.budget_used + additional_bytes > options.max_bytes {
+            if this.budget_used + additional_bytes > max_bytes {
                 continue;
             }
 
@@ -168,7 +194,7 @@ impl<'a> PlannedPrompt<'a> {
                         ));
                     };
                     PlannedSnippet {
-                        path: &declaration.path,
+                        path: declaration.path.clone(),
                         range: (declaration.signature_range.start + declaration.range.start)
                             ..(declaration.signature_range.end + declaration.range.start),
                         text,
@@ -176,7 +202,7 @@ impl<'a> PlannedPrompt<'a> {
                     }
                 }
                 SnippetStyle::Declaration => PlannedSnippet {
-                    path: &declaration.path,
+                    path: declaration.path.clone(),
                     range: declaration.range.clone(),
                     text: &declaration.text,
                     text_is_truncated: declaration.text_is_truncated,
@@ -220,7 +246,7 @@ impl<'a> PlannedPrompt<'a> {
 
     fn additional_parent_signatures(
         &self,
-        path: &'a Path,
+        path: &Arc<Path>,
         parent_index: Option<usize>,
         included_parents: &FxHashSet<usize>,
     ) -> Result<Vec<(usize, PlannedSnippet<'a>)>> {
@@ -231,7 +257,7 @@ impl<'a> PlannedPrompt<'a> {
 
     fn additional_parent_signatures_impl(
         &self,
-        path: &'a Path,
+        path: &Arc<Path>,
         parent_index: Option<usize>,
         included_parents: &FxHashSet<usize>,
         results: &mut Vec<(usize, PlannedSnippet<'a>)>,
@@ -248,7 +274,7 @@ impl<'a> PlannedPrompt<'a> {
         results.push((
             parent_index,
             PlannedSnippet {
-                path,
+                path: path.clone(),
                 range: parent_signature.range.clone(),
                 text: &parent_signature.text,
                 text_is_truncated: parent_signature.text_is_truncated,
@@ -265,7 +291,7 @@ impl<'a> PlannedPrompt<'a> {
     /// Renders the planned context. Each file starts with "```FILE_PATH\n` and ends with triple
     /// backticks, with a newline after each file. Outputs a line with "..." between nonconsecutive
     /// chunks.
-    pub fn to_prompt_string(&self) -> String {
+    pub fn to_prompt_string(&'a self) -> Result<(String, SectionLabels)> {
         let mut file_to_snippets: FxHashMap<&'a std::path::Path, Vec<&PlannedSnippet<'a>>> =
             FxHashMap::default();
         for snippet in &self.snippets {
@@ -279,14 +305,14 @@ impl<'a> PlannedPrompt<'a> {
         let mut file_snippets = Vec::new();
         let mut excerpt_file_snippets = Vec::new();
         for (file_path, snippets) in file_to_snippets {
-            if file_path == &self.request.excerpt_path {
+            if file_path == self.request.excerpt_path.as_ref() {
                 excerpt_file_snippets = snippets;
             } else {
                 file_snippets.push((file_path, snippets, false));
             }
         }
         let excerpt_snippet = PlannedSnippet {
-            path: &self.request.excerpt_path,
+            path: self.request.excerpt_path.clone(),
             range: self.request.excerpt_range.clone(),
             text: &self.request.excerpt,
             text_is_truncated: false,
@@ -294,32 +320,39 @@ impl<'a> PlannedPrompt<'a> {
         excerpt_file_snippets.push(&excerpt_snippet);
         file_snippets.push((&self.request.excerpt_path, excerpt_file_snippets, true));
 
-        let mut excerpt_file_insertions = vec![
-            (
-                self.request.excerpt_range.start,
-                EDITABLE_REGION_START_MARKER_WITH_NEWLINE,
-            ),
-            (
+        let mut excerpt_file_insertions = match self.request.prompt_format {
+            PromptFormat::MarkedExcerpt => vec![
+                (
+                    self.request.excerpt_range.start,
+                    EDITABLE_REGION_START_MARKER_WITH_NEWLINE,
+                ),
+                (
+                    self.request.excerpt_range.start + self.request.cursor_offset,
+                    CURSOR_MARKER,
+                ),
+                (
+                    self.request
+                        .excerpt_range
+                        .end
+                        .saturating_sub(0)
+                        .max(self.request.excerpt_range.start),
+                    EDITABLE_REGION_END_MARKER_WITH_NEWLINE,
+                ),
+            ],
+            PromptFormat::LabeledSections => vec![(
                 self.request.excerpt_range.start + self.request.cursor_offset,
                 CURSOR_MARKER,
-            ),
-            (
-                self.request
-                    .excerpt_range
-                    .end
-                    .saturating_sub(0)
-                    .max(self.request.excerpt_range.start),
-                EDITABLE_REGION_END_MARKER_WITH_NEWLINE,
-            ),
-        ];
+            )],
+        };
 
-        let mut output = String::new();
-        output.push_str("## User Edits\n\n");
-        Self::push_events(&mut output, &self.request.events);
+        let mut prompt = String::new();
+        prompt.push_str("## User Edits\n\n");
+        Self::push_events(&mut prompt, &self.request.events);
 
-        output.push_str("\n## Code\n\n");
-        Self::push_file_snippets(&mut output, &mut excerpt_file_insertions, file_snippets);
-        output
+        prompt.push_str("\n## Code\n\n");
+        let section_labels =
+            self.push_file_snippets(&mut prompt, &mut excerpt_file_insertions, file_snippets)?;
+        Ok((prompt, section_labels))
     }
 
     fn push_events(output: &mut String, events: &[predict_edits_v3::Event]) {
@@ -366,79 +399,93 @@ impl<'a> PlannedPrompt<'a> {
     }
 
     fn push_file_snippets(
+        &self,
         output: &mut String,
         excerpt_file_insertions: &mut Vec<(usize, &'static str)>,
-        file_snippets: Vec<(&Path, Vec<&PlannedSnippet>, bool)>,
-    ) {
-        fn push_excerpt_file_range(
-            range: Range<usize>,
-            text: &str,
-            excerpt_file_insertions: &mut Vec<(usize, &'static str)>,
-            output: &mut String,
-        ) {
-            let mut last_offset = range.start;
-            let mut i = 0;
-            while i < excerpt_file_insertions.len() {
-                let (offset, insertion) = &excerpt_file_insertions[i];
-                let found = *offset >= range.start && *offset <= range.end;
-                if found {
-                    output.push_str(&text[last_offset - range.start..offset - range.start]);
-                    output.push_str(insertion);
-                    last_offset = *offset;
-                    excerpt_file_insertions.remove(i);
-                    continue;
-                }
-                i += 1;
-            }
-            output.push_str(&text[last_offset - range.start..]);
-        }
+        file_snippets: Vec<(&'a Path, Vec<&'a PlannedSnippet>, bool)>,
+    ) -> Result<SectionLabels> {
+        let mut section_ranges = Vec::new();
+        let mut excerpt_index = None;
 
         for (file_path, mut snippets, is_excerpt_file) in file_snippets {
-            output.push_str(&format!("```{}\n", file_path.display()));
-
-            let mut last_included_range: Option<Range<usize>> = None;
             snippets.sort_by_key(|s| (s.range.start, Reverse(s.range.end)));
+
+            // TODO: What if the snippets get expanded too large to be editable?
+            let mut current_snippet: Option<(&PlannedSnippet, Range<usize>)> = None;
+            let mut disjoint_snippets: Vec<(&PlannedSnippet, Range<usize>)> = Vec::new();
             for snippet in snippets {
-                if let Some(last_range) = &last_included_range
-                    && snippet.range.start < last_range.end
+                if let Some((_, current_snippet_range)) = current_snippet.as_mut()
+                    && snippet.range.start < current_snippet_range.end
                 {
-                    if snippet.range.end <= last_range.end {
-                        continue;
+                    if snippet.range.end > current_snippet_range.end {
+                        current_snippet_range.end = snippet.range.end;
                     }
-                    // TODO: Should probably also handle case where there is just one char (newline)
-                    // between snippets - assume it's a newline.
-                    let text = &snippet.text[last_range.end - snippet.range.start..];
-                    if is_excerpt_file {
-                        push_excerpt_file_range(
-                            last_range.end..snippet.range.end,
-                            text,
-                            excerpt_file_insertions,
-                            output,
-                        );
-                    } else {
-                        output.push_str(text);
-                    }
-                    last_included_range = Some(last_range.start..snippet.range.end);
                     continue;
                 }
-                if last_included_range.is_some() {
-                    output.push_str("…\n");
+                if let Some(current_snippet) = current_snippet.take() {
+                    disjoint_snippets.push(current_snippet);
                 }
+                current_snippet = Some((snippet, snippet.range.clone()));
+            }
+            if let Some(current_snippet) = current_snippet.take() {
+                disjoint_snippets.push(current_snippet);
+            }
+
+            writeln!(output, "```{}", file_path.display()).ok();
+            for (snippet, range) in disjoint_snippets {
+                let section_index = section_ranges.len();
+
+                match self.request.prompt_format {
+                    PromptFormat::MarkedExcerpt => {
+                        if range.start > 0 {
+                            output.push_str("…\n");
+                        }
+                    }
+                    PromptFormat::LabeledSections => {
+                        if is_excerpt_file
+                            && range.start <= self.request.excerpt_range.start
+                            && range.end >= self.request.excerpt_range.end
+                        {
+                            writeln!(output, "<|current_section|>").ok();
+                        } else {
+                            writeln!(output, "<|section_{}|>", section_index).ok();
+                        }
+                    }
+                }
+
                 if is_excerpt_file {
-                    push_excerpt_file_range(
-                        snippet.range.clone(),
-                        snippet.text,
-                        excerpt_file_insertions,
-                        output,
-                    );
+                    excerpt_index = Some(section_index);
+                    let mut last_offset = range.start;
+                    let mut i = 0;
+                    while i < excerpt_file_insertions.len() {
+                        let (offset, insertion) = &excerpt_file_insertions[i];
+                        let found = *offset >= range.start && *offset <= range.end;
+                        if found {
+                            output.push_str(
+                                &snippet.text[last_offset - range.start..offset - range.start],
+                            );
+                            output.push_str(insertion);
+                            last_offset = *offset;
+                            excerpt_file_insertions.remove(i);
+                            continue;
+                        }
+                        i += 1;
+                    }
+                    output.push_str(&snippet.text[last_offset - range.start..]);
                 } else {
                     output.push_str(snippet.text);
                 }
-                last_included_range = Some(snippet.range.clone());
+
+                section_ranges.push((snippet.path.clone(), range));
             }
 
             output.push_str("```\n\n");
         }
+
+        Ok(SectionLabels {
+            excerpt_index: excerpt_index.context("bug: no snippet found for excerpt")?,
+            section_ranges,
+        })
     }
 }
 

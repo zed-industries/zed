@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
@@ -6,7 +6,7 @@ use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
-use gpui::{Action, App, AppContext as _, Context, Global, Keystroke, Window, actions};
+use gpui::{Action, App, AppContext as _, Context, Global, Keystroke, Task, Window, actions};
 use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
@@ -22,12 +22,12 @@ use std::{
     path::Path,
     process::Stdio,
     str::Chars,
-    sync::{Arc, OnceLock},
+    sync::OnceLock,
     time::Instant,
 };
 use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use ui::ActiveTheme;
-use util::ResultExt;
+use util::{ResultExt, rel_path::RelPath};
 use workspace::{Item, SaveIntent, notifications::NotifyResultExt};
 use workspace::{SplitDirection, notifications::DetachAndPromptErr};
 use zed_actions::{OpenDocs, RevealTarget};
@@ -305,31 +305,54 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
                 return;
             };
-            let project_path = ProjectPath {
-                worktree_id: worktree.read(cx).id(),
-                path: Arc::from(Path::new(&action.filename)),
+            let path_style = worktree.read(cx).path_style();
+            let Ok(project_path) = RelPath::from_std_path(Path::new(&action.filename), path_style)
+                .map(|path| ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path,
+                })
+            else {
+                // TODO implement save_as with absolute path
+                Task::ready(Err::<(), _>(anyhow!(
+                    "Cannot save buffer with absolute path"
+                )))
+                .detach_and_prompt_err(
+                    "Failed to save",
+                    window,
+                    cx,
+                    |_, _, _| None,
+                );
+                return;
             };
 
-            if project.read(cx).entry_for_path(&project_path, cx).is_some() && action.save_intent != Some(SaveIntent::Overwrite) {
+            if project.read(cx).entry_for_path(&project_path, cx).is_some()
+                && action.save_intent != Some(SaveIntent::Overwrite)
+            {
                 let answer = window.prompt(
                     gpui::PromptLevel::Critical,
-                    &format!("{} already exists. Do you want to replace it?", project_path.path.to_string_lossy()),
+                    &format!(
+                        "{} already exists. Do you want to replace it?",
+                        project_path.path.display(path_style)
+                    ),
                     Some(
-                        "A file or folder with the same name already exists. Replacing it will overwrite its current contents.",
+                        "A file or folder with the same name already exists. \
+                        Replacing it will overwrite its current contents.",
                     ),
                     &["Replace", "Cancel"],
-                cx);
+                    cx,
+                );
                 cx.spawn_in(window, async move |editor, cx| {
                     if answer.await.ok() != Some(0) {
                         return;
                     }
 
-                    let _ = editor.update_in(cx, |editor, window, cx|{
+                    let _ = editor.update_in(cx, |editor, window, cx| {
                         editor
                             .save_as(project, project_path, window, cx)
                             .detach_and_prompt_err("Failed to :w", window, cx, |_, _, _| None);
                     });
-                }).detach();
+                })
+                .detach();
             } else {
                 editor
                     .save_as(project, project_path, window, cx)
@@ -348,9 +371,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
                 return;
             };
+            let path_style = worktree.read(cx).path_style();
+            let Some(path) =
+                RelPath::from_std_path(Path::new(&action.filename), path_style).log_err()
+            else {
+                return;
+            };
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path: Arc::from(Path::new(&action.filename)),
+                path,
             };
 
             let direction = if action.vertical {
@@ -442,9 +471,15 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
             let Some(worktree) = project.read(cx).visible_worktrees(cx).next() else {
                 return;
             };
+            let path_style = worktree.read(cx).path_style();
+            let Some(path) =
+                RelPath::from_std_path(Path::new(&action.filename), path_style).log_err()
+            else {
+                return;
+            };
             let project_path = ProjectPath {
                 worktree_id: worktree.read(cx).id(),
-                path: Arc::from(Path::new(&action.filename)),
+                path,
             };
 
             let _ = workspace.update(cx, |workspace, cx| {
@@ -1710,9 +1745,8 @@ impl Vim {
                         if let Some((_, buffer, _)) = editor.active_excerpt(cx)
                             && let Some(file) = buffer.read(cx).file()
                             && let Some(local) = file.as_local()
-                            && let Some(str) = local.path().to_str()
                         {
-                            ret.push_str(str)
+                            ret.push_str(&local.path().display(local.path_style(cx)));
                         }
                     });
                 }
