@@ -349,10 +349,9 @@ pub fn set_icon_theme(
             },
         };
 
-        *icon_theme_to_update = icon_theme_name.into();
+        *icon_theme_to_update = icon_theme_name;
     } else {
-        current.theme.icon_theme =
-            Some(settings::IconThemeSelection::Static(icon_theme_name.into()));
+        current.theme.icon_theme = Some(settings::IconThemeSelection::Static(icon_theme_name));
     }
 }
 
