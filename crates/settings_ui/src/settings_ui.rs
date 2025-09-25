@@ -4,7 +4,7 @@ use std::{ops::Range, rc::Rc, sync::Arc};
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, IntoElement, ReadGlobal as _, Render, UniformList,
+    App, AppContext as _, Context, Div, Entity, IntoElement, ReadGlobal as _, Render,
     UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div, px, size,
     uniform_list,
 };
@@ -15,7 +15,7 @@ use ui::{
     ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color,
     FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label, LabelCommon as _,
     LabelSize, ListItem, ParentElement, SharedString, StatefulInteractiveElement as _, Styled,
-    StyledTypography, Switch, Toggleable, h_flex, v_flex,
+    StyledTypography, Switch, h_flex, v_flex,
 };
 
 fn user_settings_data() -> Vec<SettingsPage> {
@@ -158,7 +158,7 @@ pub struct SettingsWindow {
     current_file: SettingsFile,
     pages: Vec<SettingsPage>,
     search: Entity<Editor>,
-    current_page: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
+    navbar_entry: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
     navbar_entries: Vec<NavBarEntry>,
     list_handle: UniformListScrollHandle,
 }
@@ -267,7 +267,7 @@ impl SettingsWindow {
             current_file: current_file,
             pages: vec![],
             navbar_entries: vec![],
-            current_page: 0,
+            navbar_entry: 0,
             list_handle: UniformListScrollHandle::default(),
             search,
         };
@@ -284,11 +284,11 @@ impl SettingsWindow {
         if self.navbar_entries[ix].is_root {
             let expanded = &mut self.page_for_navbar_index(ix).expanded;
             *expanded = !*expanded;
-            let current_page_index = self.page_index_from_navbar_index(self.current_page);
+            let current_page_index = self.page_index_from_navbar_index(self.navbar_entry);
             // if currently selected page is a child of the parent page we are folding,
             // set the current page to the parent page
             if current_page_index == ix {
-                self.current_page = ix;
+                self.navbar_entry = ix;
             }
             self.build_navbar(cx);
         }
@@ -344,7 +344,7 @@ impl SettingsWindow {
     }
 
     fn render_search(&self, _window: &mut Window, _cx: &mut App) -> Div {
-        div()
+        h_flex()
             .child(Icon::new(IconName::MagnifyingGlass))
             .child(self.search.clone())
     }
@@ -352,7 +352,9 @@ impl SettingsWindow {
     fn render_nav(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
         v_flex()
             .bg(cx.theme().colors().panel_background)
-            .child(self.render_search(window, cx))
+            .p_3()
+            .child(self.render_search(window, cx).pb_1())
+            .gap_3()
             .child(
                 uniform_list(
                     "settings-ui-nav-bar",
@@ -382,16 +384,30 @@ impl SettingsWindow {
                                                 }))
                                             })
                                             .child(
-                                                div().text_ui(cx).w_full().child(entry.title).when(
-                                                    this.is_page_selected(ix),
-                                                    |this| {
-                                                        this.text_color(Color::Selected.color(cx))
-                                                    },
-                                                ),
+                                                div()
+                                                    .text_ui(cx)
+                                                    .size_full()
+                                                    .child(entry.title)
+                                                    .hover(|style| {
+                                                        style.bg(cx.theme().colors().element_hover)
+                                                    })
+                                                    .when(!entry.is_root, |this| {
+                                                        this.text_color(
+                                                            cx.theme().colors().text_muted,
+                                                        )
+                                                    })
+                                                    .when(
+                                                        this.is_navbar_entry_selected(ix),
+                                                        |this| {
+                                                            this.text_color(
+                                                                Color::Selected.color(cx),
+                                                            )
+                                                        },
+                                                    ),
                                             ),
                                     )
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.current_page = ix;
+                                        this.navbar_entry = ix;
                                         cx.notify();
                                     }))
                             })
@@ -418,7 +434,7 @@ impl SettingsWindow {
     }
 
     fn current_page(&self) -> &SettingsPage {
-        &self.pages[self.page_index_from_navbar_index(self.current_page)]
+        &self.pages[self.page_index_from_navbar_index(self.navbar_entry)]
     }
 
     fn page_index_from_navbar_index(&self, index: usize) -> usize {
@@ -435,8 +451,8 @@ impl SettingsWindow {
         &mut self.pages[index]
     }
 
-    fn is_page_selected(&self, ix: usize) -> bool {
-        ix == self.current_page
+    fn is_navbar_entry_selected(&self, ix: usize) -> bool {
+        ix == self.navbar_entry
     }
 }
 
