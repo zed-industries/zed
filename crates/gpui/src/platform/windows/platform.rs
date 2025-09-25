@@ -536,8 +536,6 @@ impl Platform for WindowsPlatform {
             .validate_app_menu_command = Some(callback);
     }
 
-    fn on_action_triggered(&self, _action: &dyn Action) {}
-
     fn app_path(&self) -> Result<PathBuf> {
         Ok(std::env::current_exe()?)
     }
