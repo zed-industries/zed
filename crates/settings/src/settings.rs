@@ -8,6 +8,9 @@ mod settings_json;
 mod settings_store;
 mod vscode_import;
 
+#[cfg(test)]
+mod tests;
+
 pub use settings_content::*;
 
 use gpui::{App, Global};
