@@ -739,31 +739,11 @@ mod tests {
         provider.read_with(cx, |provider, _cx| {
             assert!(provider.current_completion.is_none());
         });
-    }
 
-    #[gpui::test]
-    async fn test_partial_typing_handling(cx: &mut TestAppContext) {
-        init_test(cx);
-
+        // Partial typing scenario
         let buffer = cx.new(|cx| Buffer::local("let result = vec", cx));
         let cursor_position = buffer.read_with(cx, |buffer, _| {
             buffer.anchor_after(16) // After "vec"
-        });
-
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-
-        let _provider = cx.update(|cx| {
-            let provider =
-                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
-            OllamaLanguageModelProvider::set_global(provider, cx);
-        });
-
-        let provider = cx.new(|cx| {
-            OllamaEditPredictionProvider::new(
-                "qwen2.5-coder:3b".to_string(),
-                "http://localhost:11434".into(),
-                cx,
-            )
         });
 
         fake_http_client.set_generate_response("vec![1, 2, 3]");
