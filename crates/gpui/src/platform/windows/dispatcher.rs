@@ -53,6 +53,7 @@ impl WindowsDispatcher {
         let handler = {
             let mut task_wrapper = Some(runnable);
             WorkItemHandler::new(move |_| {
+                profiling::register_thread!();
                 task_wrapper.take().unwrap().run();
                 Ok(())
             })
@@ -64,6 +65,7 @@ impl WindowsDispatcher {
         let handler = {
             let mut task_wrapper = Some(runnable);
             TimerElapsedHandler::new(move |_| {
+                profiling::register_thread!();
                 task_wrapper.take().unwrap().run();
                 Ok(())
             })

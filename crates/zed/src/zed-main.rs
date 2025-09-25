@@ -2,9 +2,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 pub fn main() {
-    #[cfg(feature = "tracy")]
+    #[cfg(feature = "profile-with-tracy")]
     {
-        tracy_client::register_demangler!();
         tracy_client::Client::start();
     }
 

@@ -1460,6 +1460,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "log",
+ "profiling",
  "simplelog",
  "windows 0.61.1",
  "winresource",
@@ -16898,7 +16899,6 @@ checksum = "ef54005d3d760186fd662dad4b7bb27ecd5531cdef54d1573ebd3f20a9205ed7"
 dependencies = [
  "loom",
  "once_cell",
- "rustc-demangle",
  "tracy-client-sys",
 ]
 

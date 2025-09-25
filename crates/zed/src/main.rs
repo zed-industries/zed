@@ -59,16 +59,16 @@ use zed::{
 
 use crate::zed::OpenRequestKind;
 
-#[cfg(all(feature = "mimalloc", not(features = "tracy-memory")))]
+#[cfg(all(feature = "mimalloc", not(features = "profile-with-tracy-memory")))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-#[cfg(all(feature = "mimalloc", features = "tracy-memory"))]
+#[cfg(all(feature = "mimalloc", features = "profile-with-tracy-memory"))]
 #[global_allocator]
 static GLOBAL: tracy_client::ProfiledAllocator<mimalloc::MiMalloc> =
     tracy_client::ProfiledAllocator::new(mimalloc::MiMalloc, 100);
 
-#[cfg(all(not(feature = "mimalloc"), feature = "tracy-memory"))]
+#[cfg(all(not(feature = "mimalloc"), feature = "profile-with-tracy-memory"))]
 #[global_allocator]
 static GLOBAL: tracy_client::ProfiledAllocator<std::alloc::System> =
     tracy_client::ProfiledAllocator::new(std::alloc::System, 100);
