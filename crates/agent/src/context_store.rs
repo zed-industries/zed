@@ -14,7 +14,10 @@ use futures::{self, FutureExt};
 use gpui::{App, Context, Entity, EventEmitter, Image, SharedString, Task, WeakEntity};
 use language::{Buffer, File as _};
 use language_model::LanguageModelImage;
-use project::{Project, ProjectItem, ProjectPath, Symbol, image_store::is_image_file};
+use project::{
+    Project, ProjectItem, ProjectPath, Symbol, image_store::is_image_file,
+    lsp_store::SymbolLocation,
+};
 use prompt_store::UserPromptId;
 use ref_cast::RefCast as _;
 use std::{
@@ -500,7 +503,7 @@ impl ContextStore {
                 let Some(context_path) = buffer.project_path(cx) else {
                     return false;
                 };
-                if context_path != symbol.path {
+                if symbol.path != SymbolLocation::InProject(context_path) {
                     return false;
                 }
                 let context_range = context.range.to_point_utf16(&buffer.snapshot());

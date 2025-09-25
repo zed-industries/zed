@@ -196,8 +196,6 @@ It is set to `4` by default, and the max number of lines is always double of the
 }
 ```
 
-> This setting is currently available only in Preview.
-
 ### Modifier to Send
 
 Make a modifier (`cmd` on macOS, `ctrl` on Linux) required to send messages.

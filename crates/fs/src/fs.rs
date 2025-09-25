@@ -47,7 +47,7 @@ use collections::{BTreeMap, btree_map};
 use fake_git_repo::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use git::{
-    repository::RepoPath,
+    repository::{RepoPath, repo_path},
     status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus},
 };
 #[cfg(any(test, feature = "test-support"))]
@@ -1608,13 +1608,13 @@ impl FakeFs {
         .unwrap();
     }
 
-    pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(RepoPath, String)]) {
+    pub fn set_index_for_repo(&self, dot_git: &Path, index_state: &[(&str, String)]) {
         self.with_git_state(dot_git, true, |state| {
             state.index_contents.clear();
             state.index_contents.extend(
                 index_state
                     .iter()
-                    .map(|(path, content)| (path.clone(), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.clone())),
             );
         })
         .unwrap();
@@ -1623,7 +1623,7 @@ impl FakeFs {
     pub fn set_head_for_repo(
         &self,
         dot_git: &Path,
-        head_state: &[(RepoPath, String)],
+        head_state: &[(&str, String)],
         sha: impl Into<String>,
     ) {
         self.with_git_state(dot_git, true, |state| {
@@ -1631,50 +1631,22 @@ impl FakeFs {
             state.head_contents.extend(
                 head_state
                     .iter()
-                    .map(|(path, content)| (path.clone(), content.clone())),
+                    .map(|(path, content)| (repo_path(path), content.clone())),
             );
             state.refs.insert("HEAD".into(), sha.into());
         })
         .unwrap();
     }
 
-    pub fn set_git_content_for_repo(
-        &self,
-        dot_git: &Path,
-        head_state: &[(RepoPath, String, Option<String>)],
-    ) {
+    pub fn set_head_and_index_for_repo(&self, dot_git: &Path, contents_by_path: &[(&str, String)]) {
         self.with_git_state(dot_git, true, |state| {
             state.head_contents.clear();
             state.head_contents.extend(
-                head_state
+                contents_by_path
                     .iter()
-                    .map(|(path, head_content, _)| (path.clone(), head_content.clone())),
+                    .map(|(path, contents)| (repo_path(path), contents.clone())),
             );
-            state.index_contents.clear();
-            state.index_contents.extend(head_state.iter().map(
-                |(path, head_content, index_content)| {
-                    (
-                        path.clone(),
-                        index_content.as_ref().unwrap_or(head_content).clone(),
-                    )
-                },
-            ));
-        })
-        .unwrap();
-    }
-
-    pub fn set_head_and_index_for_repo(
-        &self,
-        dot_git: &Path,
-        contents_by_path: &[(RepoPath, String)],
-    ) {
-        self.with_git_state(dot_git, true, |state| {
-            state.head_contents.clear();
-            state.index_contents.clear();
-            state.head_contents.extend(contents_by_path.iter().cloned());
-            state
-                .index_contents
-                .extend(contents_by_path.iter().cloned());
+            state.index_contents = state.head_contents.clone();
         })
         .unwrap();
     }
@@ -1689,7 +1661,7 @@ impl FakeFs {
 
     /// Put the given git repository into a state with the given status,
     /// by mutating the head, index, and unmerged state.
-    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&Path, FileStatus)]) {
+    pub fn set_status_for_repo(&self, dot_git: &Path, statuses: &[(&str, FileStatus)]) {
         let workdir_path = dot_git.parent().unwrap();
         let workdir_contents = self.files_with_contents(workdir_path);
         self.with_git_state(dot_git, true, |state| {
@@ -1697,10 +1669,12 @@ impl FakeFs {
             state.head_contents.clear();
             state.unmerged_paths.clear();
             for (path, content) in workdir_contents {
-                let repo_path: RepoPath = path.strip_prefix(&workdir_path).unwrap().into();
+                use util::{paths::PathStyle, rel_path::RelPath};
+
+                let repo_path: RepoPath = RelPath::from_std_path(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap().into();
                 let status = statuses
                     .iter()
-                    .find_map(|(p, status)| (**p == *repo_path.0).then_some(status));
+                    .find_map(|(p, status)| (*p == repo_path.as_str()).then_some(status));
                 let mut content = String::from_utf8_lossy(&content).to_string();
 
                 let mut index_content = None;

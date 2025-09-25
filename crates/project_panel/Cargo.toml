@@ -20,7 +20,6 @@ db.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 git_ui.workspace = true
-indexmap.workspace = true
 git.workspace = true
 gpui.workspace = true
 menu.workspace = true

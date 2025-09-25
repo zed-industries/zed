@@ -100,7 +100,7 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     };
 
     let inner_fn_attributes = mem::take(&mut inner_fn.attrs);
-    let inner_fn_name = format_ident!("_{}", inner_fn.sig.ident);
+    let inner_fn_name = format_ident!("__{}", inner_fn.sig.ident);
     let outer_fn_name = mem::replace(&mut inner_fn.sig.ident, inner_fn_name.clone());
 
     let result = generate_test_function(

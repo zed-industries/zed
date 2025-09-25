@@ -1,4 +1,3 @@
-use ::proto::{FromProto, ToProto};
 use anyhow::{Context as _, Result, anyhow};
 use lsp::LanguageServerId;
 
@@ -34,7 +33,7 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
 };
 use sysinfo::System;
-use util::ResultExt;
+use util::{ResultExt, paths::PathStyle, rel_path::RelPath};
 use worktree::Worktree;
 
 pub struct HeadlessProject {
@@ -405,7 +404,7 @@ impl HeadlessProject {
     ) -> Result<proto::AddWorktreeResponse> {
         use client::ErrorCodeExt;
         let fs = this.read_with(&cx, |this, _| this.fs.clone())?;
-        let path = PathBuf::from_proto(shellexpand::tilde(&message.payload.path).to_string());
+        let path = PathBuf::from(shellexpand::tilde(&message.payload.path).to_string());
 
         let canonicalized = match fs.canonicalize(&path).await {
             Ok(path) => path,
@@ -443,7 +442,7 @@ impl HeadlessProject {
             let worktree = worktree.read(cx);
             proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
-                canonicalized_path: canonicalized.to_proto(),
+                canonicalized_path: canonicalized.to_string_lossy().to_string(),
             }
         })?;
 
@@ -492,16 +491,11 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::OpenBufferResponse> {
         let worktree_id = WorktreeId::from_proto(message.payload.worktree_id);
+        let path = RelPath::from_proto(&message.payload.path)?;
         let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
             let buffer_store = this.buffer_store.clone();
             let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
-                buffer_store.open_buffer(
-                    ProjectPath {
-                        worktree_id,
-                        path: Arc::<Path>::from_proto(message.payload.path),
-                    },
-                    cx,
-                )
+                buffer_store.open_buffer(ProjectPath { worktree_id, path }, cx)
             });
             anyhow::Ok((buffer_store, buffer))
         })??;
@@ -590,7 +584,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path.into(),
+                        path: path,
                     },
                     cx,
                 )
@@ -630,7 +624,10 @@ impl HeadlessProject {
         mut cx: AsyncApp,
     ) -> Result<proto::FindSearchCandidatesResponse> {
         let message = envelope.payload;
-        let query = SearchQuery::from_proto(message.query.context("missing query field")?)?;
+        let query = SearchQuery::from_proto(
+            message.query.context("missing query field")?,
+            PathStyle::local(),
+        )?;
         let results = this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
@@ -662,7 +659,7 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::ListRemoteDirectoryResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
         let check_info = envelope
             .payload
             .config
@@ -694,7 +691,7 @@ impl HeadlessProject {
         cx: AsyncApp,
     ) -> Result<proto::GetPathMetadataResponse> {
         let fs = cx.read_entity(&this, |this, _| this.fs.clone())?;
-        let expanded = PathBuf::from_proto(shellexpand::tilde(&envelope.payload.path).to_string());
+        let expanded = PathBuf::from(shellexpand::tilde(&envelope.payload.path).to_string());
 
         let metadata = fs.metadata(&expanded).await?;
         let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
@@ -702,7 +699,7 @@ impl HeadlessProject {
         Ok(proto::GetPathMetadataResponse {
             exists: metadata.is_some(),
             is_dir,
-            path: expanded.to_proto(),
+            path: expanded.to_string_lossy().to_string(),
         })
     }
 

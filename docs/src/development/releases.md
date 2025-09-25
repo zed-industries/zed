@@ -1,8 +1,8 @@
 # Zed Releases
 
-Read about Zed's release channels [here](https://zed.dev/faq#what-are-the-release-channels).
+Read about Zed's [release channels here](https://zed.dev/faq#what-are-the-release-channels).
 
-## Wednesday release process
+## Wednesday Release Process
 
 You will need write access to the Zed repository to do this.
 
@@ -51,11 +51,15 @@ Credentials for various services used in this process can be found in 1Password.
    - We sometimes correct things here and there that didn't translate from GitHub's renderer to Kit's.
 
 1. Build social media posts based on the popular items in stable.
+
    - You can use the [prior week's post chain](https://zed.dev/channel/tweets-23331) as your outline.
    - Stage the copy and assets using [Buffer](https://buffer.com), for both X and BlueSky.
    - Publish both, one at a time, ensuring both are posted to each respective platform.
 
-## Patch release process
+1. Store any media created in the `Feature Media` directory in our Google Drive.
+   Other team members may want to reference or use these later on.
+
+## Patch Release Process
 
 If your PR fixes a panic or a crash, you should cherry-pick it to the current stable and preview branches.
 If your PR fixes a regression in recently released code, you should cherry-pick it to preview.

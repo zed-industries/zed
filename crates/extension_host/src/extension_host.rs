@@ -1752,7 +1752,14 @@ impl ExtensionStore {
             })?
             .await?;
             let dest_dir = RemotePathBuf::new(
-                PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id),
+                path_style
+                    .join(&response.tmp_dir, &missing_extension.id)
+                    .with_context(|| {
+                        format!(
+                            "failed to construct destination path: {:?}, {:?}",
+                            response.tmp_dir, missing_extension.id,
+                        )
+                    })?,
                 path_style,
             );
             log::info!("Uploading extension {}", missing_extension.clone().id);

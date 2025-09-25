@@ -378,7 +378,7 @@ remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
 reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
-rodio = { git = "https://github.com/RustAudio/rodio", branch = "better_wav_output"}
+rodio = { git = "https://github.com/RustAudio/rodio" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
 rules_library = { path = "crates/rules_library" }
@@ -442,7 +442,7 @@ zlog_settings = { path = "crates/zlog_settings" }
 # External crates
 #
 
-agent-client-protocol = { version = "0.4.2", features = ["unstable"] }
+agent-client-protocol = { version = "0.4.3", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = "0.25.1-rc1"
 any_vec = "0.14"

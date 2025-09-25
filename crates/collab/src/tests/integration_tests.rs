@@ -14,7 +14,10 @@ use client::{RECEIVE_TIMEOUT, User};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{StreamExt as _, channel::mpsc};
-use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
+use git::{
+    repository::repo_path,
+    status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode},
+};
 use gpui::{
     App, BackgroundExecutor, Entity, Modifiers, MouseButton, MouseDownEvent, TestAppContext,
     UpdateGlobal, px, size,
@@ -30,7 +33,7 @@ use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::{
     DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
-    lsp_store::{FormatTrigger, LspFormatTarget},
+    lsp_store::{FormatTrigger, LspFormatTarget, SymbolLocation},
     search::{SearchQuery, SearchResult},
 };
 use prompt_store::PromptBuilder;
@@ -49,7 +52,7 @@ use std::{
     time::Duration,
 };
 use unindent::Unindent as _;
-use util::{path, uri};
+use util::{path, rel_path::rel_path, uri};
 use workspace::Pane;
 
 #[ctor::ctor]
@@ -1418,7 +1421,9 @@ async fn test_unshare_project(
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
 
     project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
 
@@ -1454,7 +1459,9 @@ async fn test_unshare_project(
 
     assert!(worktree_a.read_with(cx_a, |tree, _| tree.has_update_observer()));
     project_c2
-        .update(cx_c, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_c, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
 
@@ -1584,11 +1591,15 @@ async fn test_project_reconnect(
     });
 
     let buffer_a1 = project_a1
-        .update(cx_a, |p, cx| p.open_buffer((worktree1_id, "a.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree1_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
     let buffer_b1 = project_b1
-        .update(cx_b, |p, cx| p.open_buffer((worktree1_id, "a.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree1_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
 
@@ -1675,20 +1686,15 @@ async fn test_project_reconnect(
         assert!(project.is_shared());
         assert!(worktree_a1.read(cx).has_update_observer());
         assert_eq!(
-            worktree_a1
-                .read(cx)
-                .snapshot()
-                .paths()
-                .map(|p| p.to_str().unwrap())
-                .collect::<Vec<_>>(),
+            worktree_a1.read(cx).snapshot().paths().collect::<Vec<_>>(),
             vec![
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("subdir2"),
-                path!("subdir2/f.txt"),
-                path!("subdir2/g.txt"),
-                path!("subdir2/h.txt"),
-                path!("subdir2/i.txt")
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("subdir2"),
+                rel_path("subdir2/f.txt"),
+                rel_path("subdir2/g.txt"),
+                rel_path("subdir2/h.txt"),
+                rel_path("subdir2/i.txt")
             ]
         );
         assert!(worktree_a3.read(cx).has_update_observer());
@@ -1697,7 +1703,7 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.to_str().unwrap())
+                .map(|p| p.as_str())
                 .collect::<Vec<_>>(),
             vec!["w.txt", "x.txt", "y.txt"]
         );
@@ -1712,16 +1718,15 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("subdir2"),
-                path!("subdir2/f.txt"),
-                path!("subdir2/g.txt"),
-                path!("subdir2/h.txt"),
-                path!("subdir2/i.txt")
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("subdir2"),
+                rel_path("subdir2/f.txt"),
+                rel_path("subdir2/g.txt"),
+                rel_path("subdir2/h.txt"),
+                rel_path("subdir2/i.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1732,7 +1737,7 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.to_str().unwrap())
+                .map(|p| p.as_str())
                 .collect::<Vec<_>>(),
             vec!["w.txt", "x.txt", "y.txt"]
         );
@@ -1809,16 +1814,15 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
             vec![
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("subdir2"),
-                path!("subdir2/f.txt"),
-                path!("subdir2/g.txt"),
-                path!("subdir2/h.txt"),
-                path!("subdir2/j.txt")
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("subdir2"),
+                rel_path("subdir2/f.txt"),
+                rel_path("subdir2/g.txt"),
+                rel_path("subdir2/h.txt"),
+                rel_path("subdir2/j.txt")
             ]
         );
         assert!(project.worktree_for_id(worktree2_id, cx).is_none());
@@ -1829,7 +1833,7 @@ async fn test_project_reconnect(
                 .read(cx)
                 .snapshot()
                 .paths()
-                .map(|p| p.to_str().unwrap())
+                .map(|p| p.as_str())
                 .collect::<Vec<_>>(),
             vec!["z.txt"]
         );
@@ -2370,11 +2374,15 @@ async fn test_propagate_saves_and_fs_changes(
 
     // Open and edit a buffer as both guests B and C.
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "file1.rs"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("file1.rs")), cx)
+        })
         .await
         .unwrap();
     let buffer_c = project_c
-        .update(cx_c, |p, cx| p.open_buffer((worktree_id, "file1.rs"), cx))
+        .update(cx_c, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("file1.rs")), cx)
+        })
         .await
         .unwrap();
 
@@ -2390,7 +2398,9 @@ async fn test_propagate_saves_and_fs_changes(
 
     // Open and edit that buffer as the host.
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "file1.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("file1.rs")), cx)
+        })
         .await
         .unwrap();
 
@@ -2461,27 +2471,21 @@ async fn test_propagate_saves_and_fs_changes(
 
     worktree_a.read_with(cx_a, |tree, _| {
         assert_eq!(
-            tree.paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            tree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["file1.js", "file3", "file4"]
         )
     });
 
     worktree_b.read_with(cx_b, |tree, _| {
         assert_eq!(
-            tree.paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            tree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["file1.js", "file3", "file4"]
         )
     });
 
     worktree_c.read_with(cx_c, |tree, _| {
         assert_eq!(
-            tree.paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            tree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["file1.js", "file3", "file4"]
         )
     });
@@ -2489,17 +2493,17 @@ async fn test_propagate_saves_and_fs_changes(
     // Ensure buffer files are updated as well.
 
     buffer_a.read_with(cx_a, |buffer, _| {
-        assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
+        assert_eq!(buffer.file().unwrap().path().as_str(), "file1.js");
         assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
     buffer_b.read_with(cx_b, |buffer, _| {
-        assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
+        assert_eq!(buffer.file().unwrap().path().as_str(), "file1.js");
         assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
     buffer_c.read_with(cx_c, |buffer, _| {
-        assert_eq!(buffer.file().unwrap().path().to_str(), Some("file1.js"));
+        assert_eq!(buffer.file().unwrap().path().as_str(), "file1.js");
         assert_eq!(buffer.language().unwrap().name(), "JavaScript".into());
     });
 
@@ -2524,7 +2528,7 @@ async fn test_propagate_saves_and_fs_changes(
     project_a
         .update(cx_a, |project, cx| {
             let path = ProjectPath {
-                path: Arc::from(Path::new("file3.rs")),
+                path: rel_path("file3.rs").into(),
                 worktree_id: worktree_a.read(cx).id(),
             };
 
@@ -2538,7 +2542,7 @@ async fn test_propagate_saves_and_fs_changes(
     new_buffer_b.read_with(cx_b, |buffer_b, _| {
         assert_eq!(
             buffer_b.file().unwrap().path().as_ref(),
-            Path::new("file3.rs")
+            rel_path("file3.rs")
         );
 
         new_buffer_a.read_with(cx_a, |buffer_a, _| {
@@ -2621,19 +2625,20 @@ async fn test_git_diff_base_change(
     "
     .unindent();
 
-    client_a.fs().set_index_for_repo(
-        Path::new("/dir/.git"),
-        &[("a.txt".into(), staged_text.clone())],
-    );
+    client_a
+        .fs()
+        .set_index_for_repo(Path::new("/dir/.git"), &[("a.txt", staged_text.clone())]);
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("a.txt".into(), committed_text.clone())],
+        &[("a.txt", committed_text.clone())],
         "deadbeef",
     );
 
     // Create the buffer
     let buffer_local_a = project_local
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
     let local_unstaged_diff_a = project_local
@@ -2661,7 +2666,9 @@ async fn test_git_diff_base_change(
 
     // Create remote buffer
     let remote_buffer_a = project_remote
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
     let remote_unstaged_diff_a = project_remote
@@ -2717,11 +2724,11 @@ async fn test_git_diff_base_change(
     // Update the index text of the open buffer
     client_a.fs().set_index_for_repo(
         Path::new("/dir/.git"),
-        &[("a.txt".into(), new_staged_text.clone())],
+        &[("a.txt", new_staged_text.clone())],
     );
     client_a.fs().set_head_for_repo(
         Path::new("/dir/.git"),
-        &[("a.txt".into(), new_committed_text.clone())],
+        &[("a.txt", new_committed_text.clone())],
         "deadbeef",
     );
 
@@ -2790,12 +2797,14 @@ async fn test_git_diff_base_change(
 
     client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
-        &[("b.txt".into(), staged_text.clone())],
+        &[("b.txt", staged_text.clone())],
     );
 
     // Create the buffer
     let buffer_local_b = project_local
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("sub/b.txt")), cx)
+        })
         .await
         .unwrap();
     let local_unstaged_diff_b = project_local
@@ -2823,7 +2832,9 @@ async fn test_git_diff_base_change(
 
     // Create remote buffer
     let remote_buffer_b = project_remote
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "sub/b.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("sub/b.txt")), cx)
+        })
         .await
         .unwrap();
     let remote_unstaged_diff_b = project_remote
@@ -2851,7 +2862,7 @@ async fn test_git_diff_base_change(
     // Updatet the staged text
     client_a.fs().set_index_for_repo(
         Path::new("/dir/sub/.git"),
-        &[("b.txt".into(), new_staged_text.clone())],
+        &[("b.txt", new_staged_text.clone())],
     );
 
     // Wait for buffer_local_b to receive it
@@ -3011,21 +3022,21 @@ async fn test_git_status_sync(
     // and b.txt is unmerged.
     client_a.fs().set_head_for_repo(
         path!("/dir/.git").as_ref(),
-        &[("b.txt".into(), "B".into()), ("c.txt".into(), "c".into())],
+        &[("b.txt", "B".into()), ("c.txt", "c".into())],
         "deadbeef",
     );
     client_a.fs().set_index_for_repo(
         path!("/dir/.git").as_ref(),
         &[
-            ("a.txt".into(), "".into()),
-            ("b.txt".into(), "B".into()),
-            ("c.txt".into(), "c".into()),
+            ("a.txt", "".into()),
+            ("b.txt", "B".into()),
+            ("c.txt", "c".into()),
         ],
     );
     client_a.fs().set_unmerged_paths_for_repo(
         path!("/dir/.git").as_ref(),
         &[(
-            "b.txt".into(),
+            repo_path("b.txt"),
             UnmergedStatus {
                 first_head: UnmergedStatusCode::Updated,
                 second_head: UnmergedStatusCode::Deleted,
@@ -3056,13 +3067,8 @@ async fn test_git_status_sync(
     executor.run_until_parked();
 
     #[track_caller]
-    fn assert_status(
-        file: impl AsRef<Path>,
-        status: Option<FileStatus>,
-        project: &Project,
-        cx: &App,
-    ) {
-        let file = file.as_ref();
+    fn assert_status(file: &str, status: Option<FileStatus>, project: &Project, cx: &App) {
+        let file = repo_path(file);
         let repos = project
             .repositories(cx)
             .values()
@@ -3072,7 +3078,7 @@ async fn test_git_status_sync(
         let repo = repos.into_iter().next().unwrap();
         assert_eq!(
             repo.read(cx)
-                .status_for_path(&file.into())
+                .status_for_path(&file)
                 .map(|entry| entry.status),
             status
         );
@@ -3107,7 +3113,7 @@ async fn test_git_status_sync(
     // and modify c.txt in the working copy.
     client_a.fs().set_index_for_repo(
         path!("/dir/.git").as_ref(),
-        &[("a.txt".into(), "a".into()), ("c.txt".into(), "c".into())],
+        &[("a.txt", "a".into()), ("c.txt", "c".into())],
     );
     client_a
         .fs()
@@ -3202,7 +3208,7 @@ async fn test_fs_operations(
 
     let entry = project_b
         .update(cx_b, |project, cx| {
-            project.create_entry((worktree_id, "c.txt"), false, cx)
+            project.create_entry((worktree_id, rel_path("c.txt")), false, cx)
         })
         .await
         .unwrap()
@@ -3211,27 +3217,21 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["a.txt", "b.txt", "c.txt"]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["a.txt", "b.txt", "c.txt"]
         );
     });
 
     project_b
         .update(cx_b, |project, cx| {
-            project.rename_entry(entry.id, Path::new("d.txt"), cx)
+            project.rename_entry(entry.id, (worktree_id, rel_path("d.txt")).into(), cx)
         })
         .await
         .unwrap()
@@ -3240,27 +3240,21 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["a.txt", "b.txt", "d.txt"]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["a.txt", "b.txt", "d.txt"]
         );
     });
 
     let dir_entry = project_b
         .update(cx_b, |project, cx| {
-            project.create_entry((worktree_id, "DIR"), true, cx)
+            project.create_entry((worktree_id, rel_path("DIR")), true, cx)
         })
         .await
         .unwrap()
@@ -3269,27 +3263,21 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["DIR", "a.txt", "b.txt", "d.txt"]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["DIR", "a.txt", "b.txt", "d.txt"]
         );
     });
 
     project_b
         .update(cx_b, |project, cx| {
-            project.create_entry((worktree_id, "DIR/e.txt"), false, cx)
+            project.create_entry((worktree_id, rel_path("DIR/e.txt")), false, cx)
         })
         .await
         .unwrap()
@@ -3298,7 +3286,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.create_entry((worktree_id, "DIR/SUBDIR"), true, cx)
+            project.create_entry((worktree_id, rel_path("DIR/SUBDIR")), true, cx)
         })
         .await
         .unwrap()
@@ -3307,7 +3295,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.create_entry((worktree_id, "DIR/SUBDIR/f.txt"), false, cx)
+            project.create_entry((worktree_id, rel_path("DIR/SUBDIR/f.txt")), false, cx)
         })
         .await
         .unwrap()
@@ -3316,43 +3304,41 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                path!("DIR"),
-                path!("DIR/SUBDIR"),
-                path!("DIR/SUBDIR/f.txt"),
-                path!("DIR/e.txt"),
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("d.txt")
+                rel_path("DIR"),
+                rel_path("DIR/SUBDIR"),
+                rel_path("DIR/SUBDIR/f.txt"),
+                rel_path("DIR/e.txt"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("d.txt")
             ]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                path!("DIR"),
-                path!("DIR/SUBDIR"),
-                path!("DIR/SUBDIR/f.txt"),
-                path!("DIR/e.txt"),
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("d.txt")
+                rel_path("DIR"),
+                rel_path("DIR/SUBDIR"),
+                rel_path("DIR/SUBDIR/f.txt"),
+                rel_path("DIR/e.txt"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("d.txt")
             ]
         );
     });
 
     project_b
         .update(cx_b, |project, cx| {
-            project.copy_entry(entry.id, None, Path::new("f.txt"), cx)
+            project.copy_entry(
+                entry.id,
+                (worktree_b.read(cx).id(), rel_path("f.txt")).into(),
+                cx,
+            )
         })
         .await
         .unwrap()
@@ -3360,38 +3346,32 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                path!("DIR"),
-                path!("DIR/SUBDIR"),
-                path!("DIR/SUBDIR/f.txt"),
-                path!("DIR/e.txt"),
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("d.txt"),
-                path!("f.txt")
+                rel_path("DIR"),
+                rel_path("DIR/SUBDIR"),
+                rel_path("DIR/SUBDIR/f.txt"),
+                rel_path("DIR/e.txt"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("d.txt"),
+                rel_path("f.txt")
             ]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                path!("DIR"),
-                path!("DIR/SUBDIR"),
-                path!("DIR/SUBDIR/f.txt"),
-                path!("DIR/e.txt"),
-                path!("a.txt"),
-                path!("b.txt"),
-                path!("d.txt"),
-                path!("f.txt")
+                rel_path("DIR"),
+                rel_path("DIR/SUBDIR"),
+                rel_path("DIR/SUBDIR/f.txt"),
+                rel_path("DIR/e.txt"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("d.txt"),
+                rel_path("f.txt")
             ]
         );
     });
@@ -3406,20 +3386,14 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["a.txt", "b.txt", "d.txt", "f.txt"]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["a.txt", "b.txt", "d.txt", "f.txt"]
         );
     });
@@ -3433,20 +3407,14 @@ async fn test_fs_operations(
 
     worktree_a.read_with(cx_a, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["a.txt", "b.txt", "f.txt"]
         );
     });
 
     worktree_b.read_with(cx_b, |worktree, _| {
         assert_eq!(
-            worktree
-                .paths()
-                .map(|p| p.to_string_lossy())
-                .collect::<Vec<_>>(),
+            worktree.paths().map(|p| p.as_str()).collect::<Vec<_>>(),
             ["a.txt", "b.txt", "f.txt"]
         );
     });
@@ -3511,8 +3479,8 @@ async fn test_local_settings(
                 ))
                 .collect::<Vec<_>>(),
             &[
-                (Path::new("").into(), Some(2)),
-                (Path::new("a").into(), Some(8)),
+                (rel_path("").into(), Some(2)),
+                (rel_path("a").into(), Some(8)),
             ]
         )
     });
@@ -3533,10 +3501,7 @@ async fn test_local_settings(
                     content.all_languages.defaults.tab_size.map(Into::into)
                 ))
                 .collect::<Vec<_>>(),
-            &[
-                (Path::new("").into(), None),
-                (Path::new("a").into(), Some(8)),
-            ]
+            &[(rel_path("").into(), None), (rel_path("a").into(), Some(8)),]
         )
     });
 
@@ -3567,8 +3532,8 @@ async fn test_local_settings(
                 ))
                 .collect::<Vec<_>>(),
             &[
-                (Path::new("a").into(), Some(8)),
-                (Path::new("b").into(), Some(4)),
+                (rel_path("a").into(), Some(8)),
+                (rel_path("b").into(), Some(4)),
             ]
         )
     });
@@ -3599,7 +3564,7 @@ async fn test_local_settings(
                 .local_settings(worktree_b.read(cx).id())
                 .map(|(path, content)| (path, content.all_languages.defaults.hard_tabs))
                 .collect::<Vec<_>>(),
-            &[(Path::new("a").into(), Some(true))],
+            &[(rel_path("a").into(), Some(true))],
         )
     });
 }
@@ -3636,7 +3601,9 @@ async fn test_buffer_conflict_after_save(
 
     // Open a buffer as client B
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
 
@@ -3700,7 +3667,9 @@ async fn test_buffer_reloading(
 
     // Open a buffer as client B
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
 
@@ -3758,12 +3727,16 @@ async fn test_editing_while_guest_opens_buffer(
 
     // Open a buffer as client A
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
 
     // Start opening the same buffer as client B
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx));
+    let open_buffer = project_b.update(cx_b, |p, cx| {
+        p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+    });
     let buffer_b = cx_b.executor().spawn(open_buffer);
 
     // Edit the buffer as client A while client B is still opening it.
@@ -3810,7 +3783,9 @@ async fn test_leaving_worktree_while_opening_buffer(
     project_a.read_with(cx_a, |p, _| assert_eq!(p.collaborators().len(), 1));
 
     // Begin opening a buffer as client B, but leave the project before the open completes.
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx));
+    let open_buffer = project_b.update(cx_b, |p, cx| {
+        p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+    });
     let buffer_b = cx_b.executor().spawn(open_buffer);
     cx_b.update(|_| drop(project_b));
     drop(buffer_b);
@@ -3852,7 +3827,9 @@ async fn test_canceling_buffer_opening(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.txt")), cx)
+        })
         .await
         .unwrap();
 
@@ -3928,7 +3905,7 @@ async fn test_leaving_project(
     let buffer_b1 = project_b1
         .update(cx_b, |project, cx| {
             let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.open_buffer((worktree_id, "a.txt"), cx)
+            project.open_buffer((worktree_id, rel_path("a.txt")), cx)
         })
         .await
         .unwrap();
@@ -3966,7 +3943,7 @@ async fn test_leaving_project(
     let buffer_b2 = project_b2
         .update(cx_b, |project, cx| {
             let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
-            project.open_buffer((worktree_id, "a.txt"), cx)
+            project.open_buffer((worktree_id, rel_path("a.txt")), cx)
         })
         .await
         .unwrap();
@@ -4131,7 +4108,7 @@ async fn test_collaborating_with_diagnostics(
             &[(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("a.rs")),
+                    path: rel_path("a.rs").into(),
                 },
                 LanguageServerId(0),
                 DiagnosticSummary {
@@ -4167,7 +4144,7 @@ async fn test_collaborating_with_diagnostics(
         &[(
             ProjectPath {
                 worktree_id,
-                path: Arc::from(Path::new("a.rs")),
+                path: rel_path("a.rs").into(),
             },
             LanguageServerId(0),
             DiagnosticSummary {
@@ -4208,7 +4185,7 @@ async fn test_collaborating_with_diagnostics(
             [(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("a.rs")),
+                    path: rel_path("a.rs").into(),
                 },
                 LanguageServerId(0),
                 DiagnosticSummary {
@@ -4225,7 +4202,7 @@ async fn test_collaborating_with_diagnostics(
             [(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("a.rs")),
+                    path: rel_path("a.rs").into(),
                 },
                 LanguageServerId(0),
                 DiagnosticSummary {
@@ -4237,7 +4214,9 @@ async fn test_collaborating_with_diagnostics(
     });
 
     // Open the file with the errors on client B. They should be present.
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let open_buffer = project_b.update(cx_b, |p, cx| {
+        p.open_buffer((worktree_id, rel_path("a.rs")), cx)
+    });
     let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
 
     buffer_b.read_with(cx_b, |buffer, _| {
@@ -4356,7 +4335,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let guest_buffers = futures::future::try_join_all(file_names.iter().map(|file_name| {
         project_b.update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, file_name), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path(file_name)), cx)
         })
     }))
     .await
@@ -4454,7 +4433,9 @@ async fn test_reloading_buffer_manually(
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(path!("/a"), cx_a).await;
     let buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.rs")), cx)
+        })
         .await
         .unwrap();
     let project_id = active_call_a
@@ -4464,7 +4445,9 @@ async fn test_reloading_buffer_manually(
 
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
+    let open_buffer = project_b.update(cx_b, |p, cx| {
+        p.open_buffer((worktree_id, rel_path("a.rs")), cx)
+    });
     let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
     buffer_b.update(cx_b, |buffer, cx| {
         buffer.edit([(4..7, "six")], None, cx);
@@ -4562,7 +4545,9 @@ async fn test_formatting_buffer(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     let buffer_b = project_b
-        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, rel_path("a.rs")), cx)
+        })
         .await
         .unwrap();
 
@@ -4688,7 +4673,9 @@ async fn test_prettier_formatting_buffer(
         .await;
     let (project_a, worktree_id) = client_a.build_local_project(&directory, cx_a).await;
     let prettier_format_suffix = project::TEST_PRETTIER_FORMAT_SUFFIX;
-    let open_buffer = project_a.update(cx_a, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx));
+    let open_buffer = project_a.update(cx_a, |p, cx| {
+        p.open_buffer((worktree_id, rel_path("a.ts")), cx)
+    });
     let buffer_a = cx_a.executor().spawn(open_buffer).await.unwrap();
 
     let project_id = active_call_a
@@ -4698,7 +4685,7 @@ async fn test_prettier_formatting_buffer(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let (buffer_b, _) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "a.ts"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("a.ts")), cx)
         })
         .await
         .unwrap();
@@ -4838,7 +4825,7 @@ async fn test_definition(
     // Open the file on client B.
     let (buffer_b, _handle) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "a.rs"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("a.rs")), cx)
         })
         .await
         .unwrap();
@@ -5016,7 +5003,7 @@ async fn test_references(
     // Open the file on client B.
     let (buffer_b, _handle) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "one.rs"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("one.rs")), cx)
         })
         .await
         .unwrap();
@@ -5088,7 +5075,7 @@ async fn test_references(
         let three_buffer = references[2].buffer.read(cx);
         assert_eq!(
             two_buffer.file().unwrap().path().as_ref(),
-            Path::new("two.rs")
+            rel_path("two.rs")
         );
         assert_eq!(references[1].buffer, references[0].buffer);
         assert_eq!(
@@ -5288,7 +5275,7 @@ async fn test_document_highlights(
     // Open the file on client B.
     let (buffer_b, _handle) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "main.rs"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
@@ -5431,7 +5418,7 @@ async fn test_lsp_hover(
     // Open the file as the guest
     let (buffer_b, _handle) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "main.rs"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
@@ -5623,7 +5610,7 @@ async fn test_project_symbols(
     // Cause the language server to start.
     let _buffer = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "one.rs"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("one.rs")), cx)
         })
         .await
         .unwrap();
@@ -5673,7 +5660,10 @@ async fn test_project_symbols(
 
     // Attempt to craft a symbol and violate host's privacy by opening an arbitrary file.
     let mut fake_symbol = symbols[0].clone();
-    fake_symbol.path.path = Path::new(path!("/code/secrets")).into();
+    fake_symbol.path = SymbolLocation::OutsideProject {
+        abs_path: Path::new(path!("/code/secrets")).into(),
+        signature: [0x17; 32],
+    };
     let error = project_b
         .update(cx_b, |project, cx| {
             project.open_buffer_for_symbol(&fake_symbol, cx)
@@ -5738,7 +5728,7 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
 
     let (buffer_b1, _lsp) = project_b
         .update(cx_b, |p, cx| {
-            p.open_buffer_with_lsp((worktree_id, "a.rs"), cx)
+            p.open_buffer_with_lsp((worktree_id, rel_path("a.rs")), cx)
         })
         .await
         .unwrap();
@@ -5763,14 +5753,14 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         definitions = project_b.update(cx_b, |p, cx| p.definitions(&buffer_b1, 23, cx));
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
-                p.open_buffer_with_lsp((worktree_id, "b.rs"), cx)
+                p.open_buffer_with_lsp((worktree_id, rel_path("b.rs")), cx)
             })
             .await
             .unwrap();
     } else {
         (buffer_b2, _) = project_b
             .update(cx_b, |p, cx| {
-                p.open_buffer_with_lsp((worktree_id, "b.rs"), cx)
+                p.open_buffer_with_lsp((worktree_id, rel_path("b.rs")), cx)
             })
             .await
             .unwrap();
@@ -6587,15 +6577,15 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     let path_1 = ProjectPath {
         worktree_id,
-        path: Path::new("1.txt").into(),
+        path: rel_path("1.txt").into(),
     };
     let path_2 = ProjectPath {
         worktree_id,
-        path: Path::new("2.js").into(),
+        path: rel_path("2.js").into(),
     };
     let path_3 = ProjectPath {
         worktree_id,
-        path: Path::new("3.rs").into(),
+        path: rel_path("3.rs").into(),
     };
 
     let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());

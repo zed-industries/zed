@@ -182,7 +182,7 @@ mod tests {
 
         // TODO cover more cases when multi-file is supported
         let big_edits = vec![predict_edits_v3::Edit {
-            path: PathBuf::from("test.txt"),
+            path: PathBuf::from("test.txt").into(),
             range: 0..old.len(),
             content: new.into(),
         }];

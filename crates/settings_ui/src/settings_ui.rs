@@ -9,13 +9,13 @@ use gpui::{
 };
 use project::WorktreeId;
 use settings::{SettingsContent, SettingsStore};
-use std::path::Path;
 use ui::{
     ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color,
     FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label, LabelCommon as _,
     LabelSize, ParentElement, SharedString, StatefulInteractiveElement as _, Styled, Switch,
     v_flex,
 };
+use util::{paths::PathStyle, rel_path::RelPath};
 
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
@@ -84,7 +84,7 @@ fn project_settings_data() -> Vec<SettingsPage> {
                         "project_name",
                         SettingsFile::Local((
                             WorktreeId::from_usize(0),
-                            Arc::from(Path::new("TODO: actually pass through file")),
+                            Arc::from(RelPath::new("TODO: actually pass through file").unwrap()),
                         )),
                         window,
                         cx,
@@ -200,11 +200,11 @@ struct SettingItem {
 }
 
 #[allow(unused)]
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum SettingsFile {
-    User,                           // Uses all settings.
-    Local((WorktreeId, Arc<Path>)), // Has a special name, and special set of settings
-    Server(&'static str),           // Uses a special name, and the user settings
+    User,                              // Uses all settings.
+    Local((WorktreeId, Arc<RelPath>)), // Has a special name, and special set of settings
+    Server(&'static str),              // Uses a special name, and the user settings
 }
 
 impl SettingsFile {
@@ -216,11 +216,14 @@ impl SettingsFile {
         }
     }
 
-    fn name(&self) -> String {
+    fn name(&self) -> SharedString {
         match self {
-            SettingsFile::User => "User".to_string(),
-            SettingsFile::Local((_, path)) => format!("Local ({})", path.display()),
-            SettingsFile::Server(file) => format!("Server ({})", file),
+            SettingsFile::User => SharedString::new_static("User"),
+            // TODO is PathStyle::local() ever not appropriate?
+            SettingsFile::Local((_, path)) => {
+                format!("Local ({})", path.display(PathStyle::local())).into()
+            }
+            SettingsFile::Server(file) => format!("Server ({})", file).into(),
         }
     }
 }
@@ -234,22 +237,18 @@ impl SettingsWindow {
             editor
         });
         let mut this = Self {
-            files: vec![
-                SettingsFile::User,
-                SettingsFile::Local((
-                    WorktreeId::from_usize(0),
-                    Arc::from(Path::new("/my-project/")),
-                )),
-            ],
+            files: vec![],
             current_file: current_file,
             pages: vec![],
             current_page: 0,
             search,
         };
-        cx.observe_global_in::<SettingsStore>(window, move |_, _, cx| {
+        cx.observe_global_in::<SettingsStore>(window, move |this, _, cx| {
+            this.fetch_files(cx);
             cx.notify();
         })
         .detach();
+        this.fetch_files(cx);
 
         this.build_ui();
         this
@@ -259,7 +258,36 @@ impl SettingsWindow {
         self.pages = self.current_file.pages();
     }
 
+    fn fetch_files(&mut self, cx: &mut App) {
+        let settings_store = cx.global::<SettingsStore>();
+        let mut ui_files = vec![];
+        let all_files = settings_store.get_all_files();
+        for file in all_files {
+            let settings_ui_file = match file {
+                settings::SettingsFile::User => SettingsFile::User,
+                settings::SettingsFile::Global => continue,
+                settings::SettingsFile::Extension => continue,
+                settings::SettingsFile::Server => SettingsFile::Server("todo: server name"),
+                settings::SettingsFile::Default => continue,
+                settings::SettingsFile::Local(location) => SettingsFile::Local(location),
+            };
+            ui_files.push(settings_ui_file);
+        }
+        ui_files.reverse();
+        if !ui_files.contains(&self.current_file) {
+            self.change_file(0);
+        }
+        self.files = ui_files;
+    }
+
     fn change_file(&mut self, ix: usize) {
+        if ix >= self.files.len() {
+            self.current_file = SettingsFile::User;
+            return;
+        }
+        if self.files[ix] == self.current_file {
+            return;
+        }
         self.current_file = self.files[ix].clone();
         self.build_ui();
     }

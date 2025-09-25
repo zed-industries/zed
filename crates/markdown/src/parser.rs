@@ -4,7 +4,7 @@ pub use pulldown_cmark::TagEnd as MarkdownTagEnd;
 use pulldown_cmark::{
     Alignment, CowStr, HeadingLevel, LinkType, MetadataBlockKind, Options, Parser,
 };
-use std::{ops::Range, path::Path, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 use collections::HashSet;
 
@@ -25,7 +25,7 @@ pub fn parse_markdown(
 ) -> (
     Vec<(Range<usize>, MarkdownEvent)>,
     HashSet<SharedString>,
-    HashSet<Arc<Path>>,
+    HashSet<Arc<str>>,
 ) {
     let mut events = Vec::new();
     let mut language_names = HashSet::default();

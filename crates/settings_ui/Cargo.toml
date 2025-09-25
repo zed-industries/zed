@@ -28,16 +28,20 @@ serde.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
+util.workspace = true
 workspace-hack.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
-settings = { workspace = true, features = ["test-support"] }
+settings.workspace = true
 futures.workspace = true
 language.workspace = true
 assets.workspace = true
 paths.workspace = true
 zlog.workspace = true
+client.workspace = true
+session.workspace = true
+node_runtime.workspace = true
 
 [[example]]
 name = "ui"

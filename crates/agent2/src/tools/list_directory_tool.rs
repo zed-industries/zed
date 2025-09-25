@@ -2,12 +2,12 @@ use crate::{AgentTool, ToolCallEventStream};
 use agent_client_protocol::ToolKind;
 use anyhow::{Result, anyhow};
 use gpui::{App, Entity, SharedString, Task};
-use project::{Project, WorktreeSettings};
+use project::{Project, ProjectPath, WorktreeSettings};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::fmt::Write;
-use std::{path::Path, sync::Arc};
+use std::sync::Arc;
 use util::markdown::MarkdownInlineCode;
 
 /// Lists files and directories in a given path. Prefer the `grep` or `find_path` tools when searching the codebase.
@@ -86,13 +86,13 @@ impl AgentTool for ListDirectoryTool {
                 .read(cx)
                 .worktrees(cx)
                 .filter_map(|worktree| {
-                    worktree.read(cx).root_entry().and_then(|entry| {
-                        if entry.is_dir() {
-                            entry.path.to_str()
-                        } else {
-                            None
-                        }
-                    })
+                    let worktree = worktree.read(cx);
+                    let root_entry = worktree.root_entry()?;
+                    if root_entry.is_dir() {
+                        Some(root_entry.path.display(worktree.path_style()))
+                    } else {
+                        None
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -143,7 +143,7 @@ impl AgentTool for ListDirectoryTool {
         }
 
         let worktree_snapshot = worktree.read(cx).snapshot();
-        let worktree_root_name = worktree.read(cx).root_name().to_string();
+        let worktree_root_name = worktree.read(cx).root_name();
 
         let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
             return Task::ready(Err(anyhow!("Path not found: {}", input.path)));
@@ -165,25 +165,17 @@ impl AgentTool for ListDirectoryTool {
                 continue;
             }
 
-            if self
-                .project
-                .read(cx)
-                .find_project_path(&entry.path, cx)
-                .map(|project_path| {
-                    let worktree_settings = WorktreeSettings::get(Some((&project_path).into()), cx);
-
-                    worktree_settings.is_path_excluded(&project_path.path)
-                        || worktree_settings.is_path_private(&project_path.path)
-                })
-                .unwrap_or(false)
+            let project_path: ProjectPath = (worktree_snapshot.id(), entry.path.clone()).into();
+            if worktree_settings.is_path_excluded(&project_path.path)
+                || worktree_settings.is_path_private(&project_path.path)
             {
                 continue;
             }
 
-            let full_path = Path::new(&worktree_root_name)
+            let full_path = worktree_root_name
                 .join(&entry.path)
-                .display()
-                .to_string();
+                .display(worktree_snapshot.path_style())
+                .into_owned();
             if entry.is_dir() {
                 folders.push(full_path);
             } else {
