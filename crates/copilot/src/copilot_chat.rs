@@ -1014,31 +1014,33 @@ async fn stream_completion(
                             return None;
                         }
 
-                        // Try parsing with appropriate format based on model
-                        if model == "gpt-5-codex" {
-                            // Parse Responses API format
-                            match serde_json::from_str::<ResponsesApiEvent>(line) {
-                                Ok(responses_event) => {
-                                    let response: ResponseEvent = responses_event.into();
-                                    if response.choices.is_empty() {
-                                        None
-                                    } else {
-                                        Some(Ok(response))
-                                    }
+                        // Try parsing - GitHub Copilot always returns Chat Completions format
+                        // even for GPT-5 Codex, despite using Responses API request format
+                        match serde_json::from_str::<ResponseEvent>(line) {
+                            Ok(response) => {
+                                if response.choices.is_empty() {
+                                    None
+                                } else {
+                                    Some(Ok(response))
                                 }
-                                Err(error) => Some(Err(anyhow!(error))),
                             }
-                        } else {
-                            // Parse Chat Completions API format
-                            match serde_json::from_str::<ResponseEvent>(line) {
-                                Ok(response) => {
-                                    if response.choices.is_empty() {
-                                        None
-                                    } else {
-                                        Some(Ok(response))
+                            Err(error) => {
+                                // If Chat Completions parsing fails for GPT-5 Codex, try Responses API format
+                                if model == "gpt-5-codex" {
+                                    match serde_json::from_str::<ResponsesApiEvent>(line) {
+                                        Ok(responses_event) => {
+                                            let response: ResponseEvent = responses_event.into();
+                                            if response.choices.is_empty() {
+                                                None
+                                            } else {
+                                                Some(Ok(response))
+                                            }
+                                        }
+                                        Err(_) => Some(Err(anyhow!(error))), // Return original error
                                     }
+                                } else {
+                                    Some(Err(anyhow!(error)))
                                 }
-                                Err(error) => Some(Err(anyhow!(error))),
                             }
                         }
                     }
@@ -1051,14 +1053,21 @@ async fn stream_completion(
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
 
-        // Parse response based on model type
-        let response: ResponseEvent = if request.model == "gpt-5-codex" {
-            // Parse Responses API format and convert to ResponseEvent
-            let responses_event: ResponsesApiEvent = serde_json::from_str(body_str)?;
-            responses_event.into()
-        } else {
-            // Parse Chat Completions API format directly
-            serde_json::from_str(body_str)?
+        // Parse response - GitHub Copilot always returns Chat Completions format
+        // even for GPT-5 Codex, despite using Responses API request format
+        let response: ResponseEvent = match serde_json::from_str::<ResponseEvent>(body_str) {
+            Ok(response) => response,
+            Err(error) => {
+                // If Chat Completions parsing fails for GPT-5 Codex, try Responses API format
+                if request.model == "gpt-5-codex" {
+                    match serde_json::from_str::<ResponsesApiEvent>(body_str) {
+                        Ok(responses_event) => responses_event.into(),
+                        Err(_) => return Err(anyhow::anyhow!("Failed to parse response: {}", error)),
+                    }
+                } else {
+                    return Err(anyhow::anyhow!("Failed to parse response: {}", error));
+                }
+            }
         };
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
