@@ -1,5 +1,5 @@
 //! # settings_ui
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
@@ -26,26 +26,20 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
-                    render: Rc::new(|_, cx| {
-                        render_toggle_button(
-                            "confirm_quit",
-                            SettingsFile::User,
-                            cx,
-                            |settings_content| &mut settings_content.workspace.confirm_quit,
-                        )
-                    }),
+                    render: |file, _, cx| {
+                        render_toggle_button("confirm_quit", file, cx, |settings_content| {
+                            &mut settings_content.workspace.confirm_quit
+                        })
+                    },
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Update",
                     description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
-                    render: Rc::new(|_, cx| {
-                        render_toggle_button(
-                            "Auto Update",
-                            SettingsFile::User,
-                            cx,
-                            |settings_content| &mut settings_content.auto_update,
-                        )
-                    }),
+                    render: |file, _, cx| {
+                        render_toggle_button("Auto Update", file, cx, |settings_content| {
+                            &mut settings_content.auto_update
+                        })
+                    },
                 }),
             ],
         },
@@ -56,15 +50,11 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Name",
                     description: "The displayed name of this project. If not set, the root directory name",
-                    render: Rc::new(|window, cx| {
-                        render_text_field(
-                            "project_name",
-                            SettingsFile::User,
-                            window,
-                            cx,
-                            |settings_content| &mut settings_content.project.worktree.project_name,
-                        )
-                    }),
+                    render: |file, window, cx| {
+                        render_text_field("project_name", file, window, cx, |settings_content| {
+                            &mut settings_content.project.worktree.project_name
+                        })
+                    },
                 }),
             ],
         },
@@ -79,18 +69,11 @@ fn project_settings_data() -> Vec<SettingsPage> {
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Name",
                 description: " The displayed name of this project. If not set, the root directory name",
-                render: Rc::new(|window, cx| {
-                    render_text_field(
-                        "project_name",
-                        SettingsFile::Local((
-                            WorktreeId::from_usize(0),
-                            Arc::from(RelPath::new("TODO: actually pass through file").unwrap()),
-                        )),
-                        window,
-                        cx,
-                        |settings_content| &mut settings_content.project.worktree.project_name,
-                    )
-                }),
+                render: |file, window, cx| {
+                    render_text_field("project_name", file, window, cx, |settings_content| {
+                        &mut settings_content.project.worktree.project_name
+                    })
+                },
             }),
         ],
     }]
@@ -169,7 +152,7 @@ enum SettingsPageItem {
 }
 
 impl SettingsPageItem {
-    fn render(&self, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn render(&self, file: SettingsFile, window: &mut Window, cx: &mut App) -> AnyElement {
         match self {
             SettingsPageItem::SectionHeader(header) => Label::new(SharedString::new_static(header))
                 .size(LabelSize::Large)
@@ -177,7 +160,7 @@ impl SettingsPageItem {
             SettingsPageItem::SettingItem(setting_item) => div()
                 .child(setting_item.title)
                 .child(setting_item.description)
-                .child((setting_item.render)(window, cx))
+                .child((setting_item.render)(file, window, cx))
                 .into_any_element(),
         }
     }
@@ -196,7 +179,7 @@ impl SettingsPageItem {
 struct SettingItem {
     title: &'static str,
     description: &'static str,
-    render: std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+    render: fn(file: SettingsFile, &mut Window, &mut App) -> AnyElement,
 }
 
 #[allow(unused)]
@@ -345,7 +328,11 @@ impl SettingsWindow {
         div()
             .child(self.render_files(window, cx))
             .child(Label::new(page.title))
-            .children(page.items.iter().map(|item| item.render(window, cx)))
+            .children(
+                page.items
+                    .iter()
+                    .map(|item| item.render(self.current_file.clone(), window, cx)),
+            )
     }
 
     fn current_page(&self) -> &SettingsPage {
