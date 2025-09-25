@@ -20641,6 +20641,7 @@ dependencies = [
  "chrono",
  "clap",
  "client",
+ "cloud_llm_client",
  "collections",
  "edit_prediction_context",
  "editor",
