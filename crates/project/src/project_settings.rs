@@ -859,7 +859,7 @@ impl SettingsObserver {
                     .unwrap()
                     .into();
                 (settings_dir, LocalSettingsKind::Debug)
-            } else if path.ends_with(RelPath::new(EDITORCONFIG_NAME).unwrap()) {
+            } else if path.ends_with(RelPath::unix(EDITORCONFIG_NAME).unwrap()) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
                 };
@@ -1013,7 +1013,7 @@ impl SettingsObserver {
                         Ok(()) => {
                             cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
                                 .as_std_path()
-                                .join(RelPath::new(task_file_name()).unwrap()))));
+                                .join(RelPath::unix(task_file_name()).unwrap()))));
                         }
                     }
                 }
@@ -1044,7 +1044,7 @@ impl SettingsObserver {
                         Ok(()) => {
                             cx.emit(SettingsObserverEvent::LocalTasksUpdated(Ok(directory
                                 .as_std_path()
-                                .join(RelPath::new(task_file_name()).unwrap()))));
+                                .join(RelPath::unix(task_file_name()).unwrap()))));
                         }
                     }
                 }

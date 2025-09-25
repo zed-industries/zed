@@ -128,7 +128,7 @@ impl CommitView {
         let mut metadata_buffer_id = None;
         if let Some(worktree_id) = first_worktree_id {
             let file = Arc::new(CommitMetadataFile {
-                title: RelPath::new(&format!("commit {}", commit.sha))
+                title: RelPath::unix(&format!("commit {}", commit.sha))
                     .unwrap()
                     .into(),
                 worktree_id,

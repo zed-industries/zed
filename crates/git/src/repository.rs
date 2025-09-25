@@ -720,7 +720,7 @@ impl GitRepository for RealGitRepository {
             let mut newline = [b'\0'];
             for (path, status_code) in changes {
                 // git-show outputs `/`-delimited paths even on Windows.
-                let Ok(rel_path) = RelPath::new(path) else {
+                let Some(rel_path) = RelPath::unix(path).log_err() else {
                     continue;
                 };
 
@@ -2074,7 +2074,7 @@ pub struct RepoPath(pub Arc<RelPath>);
 
 impl RepoPath {
     pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
-        let rel_path = RelPath::new(s)?;
+        let rel_path = RelPath::unix(s.as_ref())?;
         Ok(rel_path.into())
     }
 
@@ -2084,14 +2084,14 @@ impl RepoPath {
     }
 
     pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Self> {
-        let rel_path = RelPath::from_std_path(path, path_style)?;
+        let rel_path = RelPath::new(path, path_style)?;
         Ok(Self(rel_path.as_ref().into()))
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
-    RepoPath(RelPath::new(s).unwrap().into())
+    RepoPath(RelPath::unix(s.as_ref()).unwrap().into())
 }
 
 impl From<&RelPath> for RepoPath {

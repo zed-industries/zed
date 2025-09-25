@@ -84,7 +84,7 @@ fn project_settings_data() -> Vec<SettingsPage> {
                         "project_name",
                         SettingsFile::Local((
                             WorktreeId::from_usize(0),
-                            Arc::from(RelPath::new("TODO: actually pass through file").unwrap()),
+                            Arc::from(RelPath::unix("TODO: actually pass through file").unwrap()),
                         )),
                         window,
                         cx,

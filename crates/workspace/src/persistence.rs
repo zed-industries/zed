@@ -915,7 +915,7 @@ impl WorkspaceDb {
                     relative_worktree_path == String::default()
                 );
 
-                let Some(relative_path) = RelPath::new(&relative_worktree_path).log_err() else {
+                let Some(relative_path) = RelPath::unix(&relative_worktree_path).log_err() else {
                     continue;
                 };
                 if worktree_id != u64::MAX && relative_worktree_path != String::default() {

@@ -344,8 +344,7 @@ impl MarksState {
                 .worktrees(cx)
                 .filter_map(|worktree| {
                     let relative = path.strip_prefix(worktree.read(cx).abs_path()).ok()?;
-                    let path = RelPath::from_std_path(relative, worktree.read(cx).path_style())
-                        .log_err()?;
+                    let path = RelPath::new(relative, worktree.read(cx).path_style()).log_err()?;
                     Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
                         path: path.into_arc(),

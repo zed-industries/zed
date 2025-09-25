@@ -1671,7 +1671,7 @@ impl FakeFs {
             for (path, content) in workdir_contents {
                 use util::{paths::PathStyle, rel_path::RelPath};
 
-                let repo_path: RepoPath = RelPath::from_std_path(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap().into();
+                let repo_path: RepoPath = RelPath::new(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap().into();
                 let status = statuses
                     .iter()
                     .find_map(|(p, status)| (*p == repo_path.as_str()).then_some(status));

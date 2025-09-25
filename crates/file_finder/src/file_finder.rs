@@ -940,7 +940,7 @@ impl FileFinderDelegate {
 
             let path_style = self.project.read(cx).path_style(cx);
             let query_path = query.raw_query.as_str();
-            if let Ok(mut query_path) = RelPath::from_std_path(Path::new(query_path), path_style) {
+            if let Ok(mut query_path) = RelPath::new(Path::new(query_path), path_style) {
                 let available_worktree = self
                     .project
                     .read(cx)
@@ -1325,7 +1325,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .all(|worktree| {
                         worktree
                             .read(cx)
-                            .entry_for_path(RelPath::new(prefix.split_at(1).0).unwrap())
+                            .entry_for_path(RelPath::unix(prefix.split_at(1).0).unwrap())
                             .is_none_or(|entry| !entry.is_dir())
                     })
                 {

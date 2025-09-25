@@ -306,8 +306,8 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 return;
             };
             let path_style = worktree.read(cx).path_style();
-            let Ok(project_path) = RelPath::from_std_path(Path::new(&action.filename), path_style)
-                .map(|path| ProjectPath {
+            let Ok(project_path) =
+                RelPath::new(Path::new(&action.filename), path_style).map(|path| ProjectPath {
                     worktree_id: worktree.read(cx).id(),
                     path: path.into_arc(),
                 })
@@ -372,9 +372,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 return;
             };
             let path_style = worktree.read(cx).path_style();
-            let Some(path) =
-                RelPath::from_std_path(Path::new(&action.filename), path_style).log_err()
-            else {
+            let Some(path) = RelPath::new(Path::new(&action.filename), path_style).log_err() else {
                 return;
             };
             let project_path = ProjectPath {
@@ -472,9 +470,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
                 return;
             };
             let path_style = worktree.read(cx).path_style();
-            let Some(path) =
-                RelPath::from_std_path(Path::new(&action.filename), path_style).log_err()
-            else {
+            let Some(path) = RelPath::new(Path::new(&action.filename), path_style).log_err() else {
                 return;
             };
             let project_path = ProjectPath {

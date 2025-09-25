@@ -23,21 +23,7 @@ impl RelPath {
     }
 
     #[track_caller]
-    pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> anyhow::Result<&Self> {
-        let this = unsafe { Self::new_unchecked(s) };
-        if this.0.starts_with("/")
-            || this.0.ends_with("/")
-            || this
-                .components()
-                .any(|component| component == ".." || component == "." || component.is_empty())
-        {
-            bail!("invalid relative path: {:?}", &this.0);
-        }
-        Ok(this)
-    }
-
-    #[track_caller]
-    pub fn from_std_path<'a>(path: &'a Path, path_style: PathStyle) -> Result<Cow<'a, Self>> {
+    pub fn new<'a>(path: &'a Path, path_style: PathStyle) -> Result<Cow<'a, Self>> {
         let path = path.to_str().context("non utf-8 path")?;
         let path = path.trim_start_matches("./");
         let mut string = Cow::Borrowed(path);
@@ -69,7 +55,7 @@ impl RelPath {
                             return Err(anyhow!("path is not relative: {result:?}"));
                         }
                     }
-                    other => normalized.push(RelPath::new(other)?),
+                    other => normalized.push(&RelPath::unix(other)?),
                 }
             }
             result = Cow::Owned(normalized)
@@ -78,8 +64,17 @@ impl RelPath {
         Ok(result)
     }
 
-    unsafe fn new_unchecked<S: AsRef<str> + ?Sized>(s: &S) -> &Self {
-        unsafe { &*(s.as_ref() as *const str as *const Self) }
+    #[track_caller]
+    pub fn unix<S: AsRef<Path> + ?Sized>(path: &S) -> anyhow::Result<&Self> {
+        let path = path.as_ref();
+        match Self::new(path, PathStyle::Posix)? {
+            Cow::Borrowed(path) => Ok(path),
+            Cow::Owned(_) => Err(anyhow!("invalid relative path {path:?}")),
+        }
+    }
+
+    unsafe fn new_unchecked(s: &str) -> &Self {
+        unsafe { &*(s as *const str as *const Self) }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -193,7 +188,7 @@ impl RelPath {
     }
 
     pub fn from_proto(path: &str) -> Result<Arc<Self>> {
-        Ok(Arc::from(Self::new(path)?))
+        Ok(Arc::from(Self::unix(path)?))
     }
 
     pub fn as_str(&self) -> &str {
@@ -345,7 +340,7 @@ impl From<&RelPath> for Arc<RelPath> {
 #[cfg(any(test, feature = "test-support"))]
 #[track_caller]
 pub fn rel_path(path: &str) -> &RelPath {
-    RelPath::new(path).unwrap()
+    RelPath::unix(path).unwrap()
 }
 
 impl PartialEq<str> for RelPath {
@@ -423,28 +418,16 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    fn test_path_construction() {
-        assert!(RelPath::new("/").is_err());
-        assert!(RelPath::new("/foo").is_err());
-        assert!(RelPath::new("foo/").is_err());
-        assert!(RelPath::new("foo//bar").is_err());
-        assert!(RelPath::new("foo/../bar").is_err());
-        assert!(RelPath::new("./foo/bar").is_err());
-        assert!(RelPath::new("..").is_err());
-
-        assert!(RelPath::from_std_path(Path::new("/"), PathStyle::local()).is_err());
-        assert!(RelPath::from_std_path(Path::new("//"), PathStyle::local()).is_err());
-        assert!(RelPath::from_std_path(Path::new("/foo/"), PathStyle::local()).is_err());
+    fn test_rel_path_new() {
+        assert!(RelPath::new(Path::new("/"), PathStyle::local()).is_err());
+        assert!(RelPath::new(Path::new("//"), PathStyle::local()).is_err());
+        assert!(RelPath::new(Path::new("/foo/"), PathStyle::local()).is_err());
         assert_eq!(
-            RelPath::from_std_path(&PathBuf::from_iter(["foo", ""]), PathStyle::local()).unwrap(),
+            RelPath::new(&PathBuf::from_iter(["foo", ""]), PathStyle::local()).unwrap(),
             rel_path("foo").into()
         );
-    }
-
-    #[test]
-    fn test_rel_path_from_std_path() {
         assert_eq!(
-            RelPath::from_std_path(Path::new("foo/bar/../baz/./quux/"), PathStyle::local())
+            RelPath::new(Path::new("foo/bar/../baz/./quux/"), PathStyle::local())
                 .unwrap()
                 .as_ref(),
             rel_path("foo/baz/quux")
@@ -492,10 +475,7 @@ mod tests {
 
     #[test]
     fn test_rel_path_parent() {
-        assert_eq!(
-            rel_path("foo/bar/baz").parent(),
-            Some(RelPath::new("foo/bar").unwrap())
-        );
+        assert_eq!(rel_path("foo/bar/baz").parent(), Some(rel_path("foo/bar")));
         assert_eq!(rel_path("foo").parent(), Some(RelPath::empty()));
         assert_eq!(rel_path("").parent(), None);
     }
@@ -506,7 +486,9 @@ mod tests {
         for [lhs, rhs] in test_cases.iter().array_combinations::<2>() {
             assert_eq!(
                 Path::new(lhs).cmp(Path::new(rhs)),
-                RelPath::new(lhs).unwrap().cmp(RelPath::new(rhs).unwrap())
+                RelPath::unix(lhs)
+                    .unwrap()
+                    .cmp(&RelPath::unix(rhs).unwrap())
             );
         }
     }
@@ -522,12 +504,12 @@ mod tests {
 
     #[test]
     fn test_rel_path_constructors_absolute_path() {
-        assert!(RelPath::from_std_path(Path::new("/a/b"), PathStyle::Windows).is_err());
-        assert!(RelPath::from_std_path(Path::new("\\a\\b"), PathStyle::Windows).is_err());
-        assert!(RelPath::from_std_path(Path::new("/a/b"), PathStyle::Posix).is_err());
-        assert!(RelPath::from_std_path(Path::new("C:/a/b"), PathStyle::Windows).is_err());
-        assert!(RelPath::from_std_path(Path::new("C:\\a\\b"), PathStyle::Windows).is_err());
-        assert!(RelPath::from_std_path(Path::new("C:/a/b"), PathStyle::Posix).is_ok());
+        assert!(RelPath::new(Path::new("/a/b"), PathStyle::Windows).is_err());
+        assert!(RelPath::new(Path::new("\\a\\b"), PathStyle::Windows).is_err());
+        assert!(RelPath::new(Path::new("/a/b"), PathStyle::Posix).is_err());
+        assert!(RelPath::new(Path::new("C:/a/b"), PathStyle::Windows).is_err());
+        assert!(RelPath::new(Path::new("C:\\a\\b"), PathStyle::Windows).is_err());
+        assert!(RelPath::new(Path::new("C:/a/b"), PathStyle::Posix).is_ok());
     }
 
     #[test]

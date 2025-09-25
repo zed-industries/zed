@@ -608,7 +608,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
             }: ManifestQuery,
         ) -> Option<Arc<RelPath>> {
             for path in path.ancestors().take(depth) {
-                let p = path.join(RelPath::new("pyproject.toml").unwrap());
+                let p = path.join(rel_path("pyproject.toml"));
                 if delegate.exists(&p, Some(false)) {
                     return Some(path.into());
                 }
@@ -737,7 +737,7 @@ async fn test_running_multiple_instances_of_a_single_server_in_one_worktree(
         })
         .await
         .expect("A toolchain to be discovered");
-    assert_eq!(root_path.as_ref(), RelPath::new("project-b").unwrap());
+    assert_eq!(root_path.as_ref(), rel_path("project-b"));
     assert_eq!(available_toolchains_for_b.toolchains().len(), 1);
     let currently_active_toolchain = project
         .update(cx, |this, cx| {

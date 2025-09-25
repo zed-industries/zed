@@ -61,7 +61,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
 
         let mut path_so_far = <Arc<RelPath>>::from(RelPath::empty());
         for key in path.0.iter() {
-            path_so_far = path_so_far.join(RelPath::new(key).unwrap());
+            path_so_far = path_so_far.join(RelPath::unix(key.as_ref()).unwrap());
             current = match current.children.entry(key.clone()) {
                 Entry::Vacant(vacant_entry) => {
                     vacant_entry.insert(RootPathTrie::new_with_key(path_so_far.clone()))

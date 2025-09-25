@@ -1463,7 +1463,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
         paths
             .iter()
             .map(|path| {
-                RelPath::from_std_path(path.strip_prefix(repo_path).unwrap(), PathStyle::local())
+                RelPath::new(path.strip_prefix(repo_path).unwrap(), PathStyle::local())
                     .unwrap()
                     .to_rel_path_buf()
             })

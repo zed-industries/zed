@@ -1037,10 +1037,10 @@ impl DebugDelegate {
 
                     match path.components().next_back() {
                         Some(".zed") => {
-                            path.push(RelPath::new("debug.json").unwrap());
+                            path.push(RelPath::unix("debug.json").unwrap());
                         }
                         Some(".vscode") => {
-                            path.push(RelPath::new("launch.json").unwrap());
+                            path.push(RelPath::unix("launch.json").unwrap());
                         }
                         _ => {}
                     }
@@ -1133,7 +1133,7 @@ impl DebugDelegate {
                         id: _,
                         directory_in_worktree: dir,
                         id_base: _,
-                    } => dir.ends_with(RelPath::new(".zed").unwrap()),
+                    } => dir.ends_with(RelPath::unix(".zed").unwrap()),
                     _ => false,
                 });
 
@@ -1154,7 +1154,7 @@ impl DebugDelegate {
                                     id_base: _,
                                 } => {
                                     !(hide_vscode
-                                        && dir.ends_with(RelPath::new(".vscode").unwrap()))
+                                        && dir.ends_with(RelPath::unix(".vscode").unwrap()))
                                 }
                                 _ => true,
                             })

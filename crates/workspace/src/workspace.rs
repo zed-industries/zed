@@ -2631,11 +2631,9 @@ impl Workspace {
                                     .strip_prefix(worktree_abs_path.as_ref())
                                     .ok()
                                     .and_then(|relative_path| {
-                                        let relative_path = RelPath::from_std_path(
-                                            relative_path,
-                                            PathStyle::local(),
-                                        )
-                                        .log_err()?;
+                                        let relative_path =
+                                            RelPath::new(relative_path, PathStyle::local())
+                                                .log_err()?;
                                         worktree.entry_for_path(&relative_path)
                                     })
                             }

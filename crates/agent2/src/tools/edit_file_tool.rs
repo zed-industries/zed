@@ -541,7 +541,7 @@ fn resolve_path(
                 .path
                 .file_name()
                 .and_then(|file_name| file_name.to_str())
-                .and_then(|file_name| RelPath::new(file_name).ok())
+                .and_then(|file_name| RelPath::unix(file_name).ok())
                 .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {

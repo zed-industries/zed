@@ -1062,10 +1062,10 @@ impl DebugPanel {
                 directory_in_worktree: dir,
                 ..
             } => {
-                let relative_path = if dir.ends_with(RelPath::new(".vscode").unwrap()) {
-                    dir.join(RelPath::new("launch.json").unwrap())
+                let relative_path = if dir.ends_with(RelPath::unix(".vscode").unwrap()) {
+                    dir.join(RelPath::unix("launch.json").unwrap())
                 } else {
-                    dir.join(RelPath::new("debug.json").unwrap())
+                    dir.join(RelPath::unix("debug.json").unwrap())
                 };
                 ProjectPath {
                     worktree_id: id,

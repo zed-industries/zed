@@ -475,7 +475,7 @@ impl NativeAgent {
             .into_iter()
             .filter_map(|name| {
                 worktree
-                    .entry_for_path(RelPath::new(name).unwrap())
+                    .entry_for_path(RelPath::unix(name).unwrap())
                     .filter(|entry| entry.is_file())
                     .map(|entry| entry.path.clone())
             })
@@ -559,7 +559,7 @@ impl NativeAgent {
                 if items.iter().any(|(path, _, _)| {
                     RULES_FILE_NAMES
                         .iter()
-                        .any(|name| path.as_ref() == RelPath::new(name).unwrap())
+                        .any(|name| path.as_ref() == RelPath::unix(name).unwrap())
                 }) {
                     self.project_context_needs_refresh.send(()).ok();
                 }

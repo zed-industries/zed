@@ -290,7 +290,7 @@ fn collect_files(
                                     folded_directory_names.join(&path_including_worktree_name);
                             } else {
                                 folded_directory_names =
-                                    folded_directory_names.join(RelPath::new(&filename).unwrap());
+                                    folded_directory_names.join(RelPath::unix(&filename).unwrap());
                             }
                             continue;
                         }
@@ -320,7 +320,7 @@ fn collect_files(
                         directory_stack.push(entry.path.clone());
                     } else {
                         let entry_name =
-                            folded_directory_names.join(RelPath::new(&filename).unwrap());
+                            folded_directory_names.join(RelPath::unix(&filename).unwrap());
                         let entry_name = entry_name.display(path_style);
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,

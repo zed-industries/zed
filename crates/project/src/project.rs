@@ -4242,7 +4242,7 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Task<Option<ResolvedPath>> {
         let mut candidates = vec![];
-        if let Ok(path) = RelPath::from_std_path(Path::new(path), self.path_style(cx)) {
+        if let Ok(path) = RelPath::new(Path::new(path), self.path_style(cx)) {
             candidates.push(path.into_arc());
             if let Some(file) = buffer.read(cx).file()
                 && let Some(dir) = file.path().parent()
@@ -4462,7 +4462,7 @@ impl Project {
                 let worktree_abs_path = worktree.read(cx).abs_path();
 
                 if let Ok(relative_path) = path.strip_prefix(worktree_abs_path)
-                    && let Ok(path) = RelPath::from_std_path(relative_path, path_style)
+                    && let Ok(path) = RelPath::new(relative_path, path_style)
                 {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
@@ -4474,7 +4474,7 @@ impl Project {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
                 if let Ok(relative_path) = path.strip_prefix(worktree_root_name)
-                    && let Ok(path) = RelPath::from_std_path(relative_path, path_style)
+                    && let Ok(path) = RelPath::new(relative_path, path_style)
                 {
                     return Some(ProjectPath {
                         worktree_id: worktree.read(cx).id(),
@@ -4485,7 +4485,7 @@ impl Project {
 
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(path) = RelPath::from_std_path(path, path_style)
+                if let Ok(path) = RelPath::new(path, path_style)
                     && let Some(entry) = worktree.entry_for_path(&path)
                 {
                     return Some(ProjectPath {
