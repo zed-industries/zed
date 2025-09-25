@@ -83,7 +83,7 @@ use aho_corasick::AhoCorasick;
 use anyhow::{Context as _, Result, anyhow};
 use blink_manager::BlinkManager;
 use buffer_diff::DiffHunkStatus;
-use client::{Collaborator, ParticipantIndex};
+use client::{Collaborator, ParticipantIndex, parse_zed_link};
 use clock::{AGENT_REPLICA_ID, ReplicaId};
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -16328,7 +16328,7 @@ impl Editor {
 
             if let Some(url) = url {
                 cx.update(|window, cx| {
-                    if url.starts_with("zed://") {
+                    if parse_zed_link(&url, cx).is_some() {
                         window.dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
                     } else {
                         cx.open_url(&url);

@@ -76,10 +76,8 @@ impl SchemaStore {
         app_state: Arc<workspace::AppState>,
         cx: &mut App,
     ) {
-        workspace::with_active_or_new_workspace(cx, |workspace, window, cx| {
-            // let app_state = app_state.clone();
+        workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
-                let app_state = app_state.clone();
                 let res = async move {
                     let json = app_state.languages.language_for_name("JSON").await.ok();
                     let json_schema_content =
