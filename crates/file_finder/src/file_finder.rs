@@ -666,7 +666,7 @@ impl Matches {
         }
 
         if let Some(filename) = panel_match.0.path.file_name() {
-            let path_str = panel_match.0.path.as_str();
+            let path_str = panel_match.0.path.as_unix_str();
 
             if let Some(filename_pos) = path_str.rfind(filename)
                 && panel_match.0.positions[0] >= filename_pos
@@ -1128,7 +1128,7 @@ impl FileFinderDelegate {
         let mut path_positions = path_match.positions.clone();
 
         let file_name = full_path.file_name().unwrap_or("");
-        let file_name_start = full_path.as_str().len() - file_name.len();
+        let file_name_start = full_path.as_unix_str().len() - file_name.len();
         let file_name_positions = path_positions
             .iter()
             .filter_map(|pos| {

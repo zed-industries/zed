@@ -6660,7 +6660,7 @@ outline: struct OutlineEntryExcerpt
                                 .read(cx)
                                 .root_name()
                                 .join(&directory.entry.path)
-                                .as_str()
+                                .as_unix_str()
                                 .to_string()
                         } else {
                             directory

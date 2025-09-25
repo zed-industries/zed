@@ -228,7 +228,7 @@ impl TaskSourceKind {
                 id_base,
                 directory_in_worktree,
             } => {
-                format!("{id_base}_{id}_{}", directory_in_worktree.as_str())
+                format!("{id_base}_{id}_{}", directory_in_worktree.as_unix_str())
             }
             Self::Language { name } => format!("language_{name}"),
             Self::Lsp {

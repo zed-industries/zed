@@ -2032,7 +2032,7 @@ impl Project {
 
     pub fn worktree_root_names<'a>(&'a self, cx: &'a App) -> impl Iterator<Item = &'a str> {
         self.visible_worktrees(cx)
-            .map(|tree| tree.read(cx).root_name().as_str())
+            .map(|tree| tree.read(cx).root_name().as_unix_str())
     }
 
     pub fn worktree_for_id(&self, id: WorktreeId, cx: &App) -> Option<Entity<Worktree>> {
@@ -4473,7 +4473,7 @@ impl Project {
         } else {
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
-                if let Ok(relative_path) = path.strip_prefix(worktree_root_name)
+                if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
                     && let Ok(path) = RelPath::new(relative_path, path_style)
                 {
                     return Some(ProjectPath {

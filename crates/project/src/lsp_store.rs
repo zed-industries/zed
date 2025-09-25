@@ -1850,7 +1850,7 @@ impl LocalLspStore {
                                                 if !extra_buffers.is_empty() {
                                                     extra_buffers.push_str(", ");
                                                 }
-                                                extra_buffers.push_str(path.path.as_str());
+                                                extra_buffers.push_str(path.path.as_unix_str());
                                             }
                                         })
                                         .ok();

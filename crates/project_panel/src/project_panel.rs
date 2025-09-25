@@ -1460,7 +1460,7 @@ impl ProjectPanel {
                 if already_exists {
                     edit_state.validation_state = ValidationState::Error(format!(
                         "File or directory '{}' already exists at location. Please choose a different name.",
-                        filename.as_str()
+                        filename.as_unix_str()
                     ));
                     cx.notify();
                     return;
@@ -3200,7 +3200,7 @@ impl ProjectPanel {
                                 })
                                 .unwrap_or_else(|| entry.path.clone());
                         let depth = path.components().count();
-                        (depth, path.as_str().chars().count())
+                        (depth, path.as_unix_str().chars().count())
                     };
                 let width_estimate =
                     item_width_estimate(depth, chars, entry.canonical_path.is_some());
@@ -3650,7 +3650,7 @@ impl ProjectPanel {
                                     }
                                 } else {
                                     details.filename.clear();
-                                    details.filename.push_str(processing_filename.as_str());
+                                    details.filename.push_str(processing_filename.as_unix_str());
                                 }
                             } else {
                                 if edit_state.is_new_entry() {
@@ -4019,7 +4019,7 @@ impl ProjectPanel {
             .path_for_entry(drag_state.active_selection.entry_id, cx)
         {
             if let Some(parent_path) = entry_path.path.parent() {
-                if !parent_path.as_os_str().is_empty() {
+                if !parent_path.is_empty() {
                     return true;
                 }
             }
@@ -4784,7 +4784,7 @@ impl ProjectPanel {
                 .path
                 .file_name()
                 .map(|name| name.to_string())
-                .unwrap_or_else(|| root_name.as_str().to_string())
+                .unwrap_or_else(|| root_name.as_unix_str().to_string())
         };
 
         let selection = SelectedEntry {

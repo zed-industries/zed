@@ -1674,7 +1674,7 @@ impl FakeFs {
                 let repo_path: RepoPath = RelPath::new(path.strip_prefix(&workdir_path).unwrap(), PathStyle::local()).unwrap().into();
                 let status = statuses
                     .iter()
-                    .find_map(|(p, status)| (*p == repo_path.as_str()).then_some(status));
+                    .find_map(|(p, status)| (*p == repo_path.as_unix_str()).then_some(status));
                 let mut content = String::from_utf8_lossy(&content).to_string();
 
                 let mut index_content = None;

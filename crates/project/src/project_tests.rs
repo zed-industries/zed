@@ -1285,7 +1285,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 .read(cx)
                 .snapshot()
                 .entries(true, 0)
-                .map(|entry| (entry.path.as_str(), entry.is_ignored))
+                .map(|entry| (entry.path.as_unix_str(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
                 ("", false),
@@ -1403,7 +1403,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 .read(cx)
                 .snapshot()
                 .entries(true, 0)
-                .map(|entry| (entry.path.as_str(), entry.is_ignored))
+                .map(|entry| (entry.path.as_unix_str(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
                 ("", false),
@@ -9336,7 +9336,7 @@ fn python_lang(fs: Arc<FakeFs>) -> Arc<Language> {
             let ancestors = subroot_relative_path.ancestors().collect::<Vec<_>>();
             let mut toolchains = vec![];
             for ancestor in ancestors {
-                let venv_path = worktree_root.join(ancestor).join(".venv");
+                let venv_path = worktree_root.join(ancestor.as_std_path()).join(".venv");
                 if self.0.is_dir(&venv_path).await {
                     toolchains.push(Toolchain {
                         name: SharedString::new("Python Venv"),

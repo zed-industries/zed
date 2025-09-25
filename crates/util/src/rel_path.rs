@@ -3,7 +3,6 @@ use anyhow::{Context as _, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::{
     borrow::{Borrow, Cow},
-    ffi::OsStr,
     fmt,
     ops::Deref,
     path::{Path, PathBuf},
@@ -178,7 +177,7 @@ impl RelPath {
     }
 
     pub fn to_proto(&self) -> String {
-        self.0.to_owned()
+        self.as_unix_str().to_owned()
     }
 
     pub fn to_rel_path_buf(&self) -> RelPathBuf {
@@ -189,7 +188,7 @@ impl RelPath {
         Ok(Arc::from(Self::unix(path)?))
     }
 
-    pub fn as_str(&self) -> &str {
+    pub fn as_unix_str(&self) -> &str {
         &self.0
     }
 
@@ -202,14 +201,6 @@ impl RelPath {
             PathStyle::Posix => Cow::Borrowed(&self.0),
             PathStyle::Windows => Cow::Owned(self.0.replace('/', "\\")),
         }
-    }
-
-    pub fn as_bytes(&self) -> &[u8] {
-        &self.0.as_bytes()
-    }
-
-    pub fn as_os_str(&self) -> &OsStr {
-        self.0.as_ref()
     }
 
     pub fn as_std_path(&self) -> &Path {
@@ -313,12 +304,6 @@ impl Deref for RelPathBuf {
 
     fn deref(&self) -> &Self::Target {
         self.as_ref()
-    }
-}
-
-impl AsRef<Path> for RelPath {
-    fn as_ref(&self) -> &Path {
-        Path::new(&self.0)
     }
 }
 
@@ -543,10 +528,10 @@ mod tests {
     fn test_pop() {
         let mut path = rel_path("a/b").to_rel_path_buf();
         path.pop();
-        assert_eq!(path.as_rel_path().as_str(), "a");
+        assert_eq!(path.as_rel_path().as_unix_str(), "a");
         path.pop();
-        assert_eq!(path.as_rel_path().as_str(), "");
+        assert_eq!(path.as_rel_path().as_unix_str(), "");
         path.pop();
-        assert_eq!(path.as_rel_path().as_str(), "");
+        assert_eq!(path.as_rel_path().as_unix_str(), "");
     }
 }

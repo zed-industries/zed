@@ -157,7 +157,7 @@ mod tests {
 
         trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, nodes| {
             assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
-            assert_eq!(path.as_str(), "a/b/c");
+            assert_eq!(path.as_unix_str(), "a/b/c");
             ControlFlow::Continue(())
         });
         // Now let's annotate a parent with "Known missing" node.
@@ -170,10 +170,10 @@ mod tests {
         // Ensure that we walk from the root to the leaf.
         let mut visited_paths = BTreeSet::new();
         trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, nodes| {
-            if path.as_str() == "a/b/c" {
+            if path.as_unix_str() == "a/b/c" {
                 assert_eq!(visited_paths, BTreeSet::from_iter([rel_path("a").into()]));
                 assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
-            } else if path.as_str() == "a" {
+            } else if path.as_unix_str() == "a" {
                 assert!(visited_paths.is_empty());
                 assert_eq!(nodes.get(&()), Some(&LabelPresence::KnownAbsent));
             } else {
@@ -189,10 +189,10 @@ mod tests {
         trie.walk(
             &TriePath::new(rel_path("a/b/c/d/e/f/g")),
             &mut |path, nodes| {
-                if path.as_str() == "a/b/c" {
+                if path.as_unix_str() == "a/b/c" {
                     assert_eq!(visited_paths, BTreeSet::from_iter([rel_path("a").into()]));
                     assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
-                } else if path.as_str() == "a" {
+                } else if path.as_unix_str() == "a" {
                     assert!(visited_paths.is_empty());
                     assert_eq!(nodes.get(&()), Some(&LabelPresence::KnownAbsent));
                 } else {
@@ -207,7 +207,7 @@ mod tests {
         // Test breaking from the tree-walk.
         let mut visited_paths = BTreeSet::new();
         trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, nodes| {
-            if path.as_str() == "a" {
+            if path.as_unix_str() == "a" {
                 assert!(visited_paths.is_empty());
                 assert_eq!(nodes.get(&()), Some(&LabelPresence::KnownAbsent));
             } else {
@@ -254,8 +254,8 @@ mod tests {
         let mut visited_paths = BTreeSet::new();
         trie.walk(&TriePath::new(rel_path("a/b/c")), &mut |path, nodes| {
             assert_eq!(nodes.get(&()), Some(&LabelPresence::Present));
-            if path.as_str() != "a" && path.as_str() != "a/b" {
-                panic!("Unexpected path: {}", path.as_str());
+            if path.as_unix_str() != "a" && path.as_unix_str() != "a/b" {
+                panic!("Unexpected path: {}", path.as_unix_str());
             }
             assert!(visited_paths.insert(path.clone()));
             ControlFlow::Continue(())

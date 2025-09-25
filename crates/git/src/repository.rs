@@ -829,7 +829,7 @@ impl GitRepository for RealGitRepository {
                 .current_dir(&working_directory?)
                 .envs(env.iter())
                 .args(["checkout", &commit, "--"])
-                .args(paths.iter().map(|path| path.as_str()))
+                .args(paths.iter().map(|path| path.as_unix_str()))
                 .output()
                 .await?;
             anyhow::ensure!(
@@ -921,7 +921,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory)
                         .envs(env.iter())
                         .args(["update-index", "--add", "--cacheinfo", "100644", sha])
-                        .arg(path.as_str())
+                        .arg(path.as_unix_str())
                         .output()
                         .await?;
 
@@ -936,7 +936,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory)
                         .envs(env.iter())
                         .args(["update-index", "--force-remove"])
-                        .arg(path.as_str())
+                        .arg(path.as_unix_str())
                         .output()
                         .await?;
                     anyhow::ensure!(
@@ -1254,7 +1254,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory?)
                         .envs(env.iter())
                         .args(["update-index", "--add", "--remove", "--"])
-                        .args(paths.iter().map(|p| p.as_str()))
+                        .args(paths.iter().map(|p| p.as_unix_str()))
                         .output()
                         .await?;
                     anyhow::ensure!(
@@ -1283,7 +1283,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory?)
                         .envs(env.iter())
                         .args(["reset", "--quiet", "--"])
-                        .args(paths.iter().map(|p| p.as_ref()))
+                        .args(paths.iter().map(|p| p.as_std_path()))
                         .output()
                         .await?;
 
@@ -1312,7 +1312,7 @@ impl GitRepository for RealGitRepository {
                     .args(["stash", "push", "--quiet"])
                     .arg("--include-untracked");
 
-                cmd.args(paths.iter().map(|p| p.as_ref()));
+                cmd.args(paths.iter().map(|p| p.as_unix_str()));
 
                 let output = cmd.output().await?;
 
@@ -1818,7 +1818,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         if path_prefix.is_empty() {
             Path::new(".").into()
         } else {
-            path_prefix.as_os_str().into()
+            path_prefix.as_std_path().into()
         }
     }));
     args
@@ -2126,11 +2126,11 @@ impl std::ops::Deref for RepoPath {
     }
 }
 
-impl AsRef<Path> for RepoPath {
-    fn as_ref(&self) -> &Path {
-        RelPath::as_ref(&self.0)
-    }
-}
+// impl AsRef<Path> for RepoPath {
+//     fn as_ref(&self) -> &Path {
+//         RelPath::as_ref(&self.0)
+//     }
+// }
 
 #[derive(Debug)]
 pub struct RepoPathDescendants<'a>(pub &'a RepoPath);

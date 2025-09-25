@@ -1408,12 +1408,12 @@ async fn test_share_project(
     project_b.read_with(cx_b, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(
-            worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                Path::new(".gitignore"),
-                Path::new("a.txt"),
-                Path::new("b.txt"),
-                Path::new("ignored-dir"),
+                rel_path(".gitignore"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("ignored-dir"),
             ]
         );
     });
@@ -1433,14 +1433,14 @@ async fn test_share_project(
     project_b.read_with(cx_b, |project, cx| {
         let worktree = project.worktrees(cx).next().unwrap().read(cx);
         assert_eq!(
-            worktree.paths().map(AsRef::as_ref).collect::<Vec<_>>(),
+            worktree.paths().collect::<Vec<_>>(),
             [
-                Path::new(".gitignore"),
-                Path::new("a.txt"),
-                Path::new("b.txt"),
-                Path::new("ignored-dir"),
-                Path::new("ignored-dir/c.txt"),
-                Path::new("ignored-dir/d.txt"),
+                rel_path(".gitignore"),
+                rel_path("a.txt"),
+                rel_path("b.txt"),
+                rel_path("ignored-dir"),
+                rel_path("ignored-dir/c.txt"),
+                rel_path("ignored-dir/d.txt"),
             ]
         );
     });

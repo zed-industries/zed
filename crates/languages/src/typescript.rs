@@ -269,7 +269,7 @@ impl TypeScriptContextProvider {
     ) -> Task<anyhow::Result<PackageJsonData>> {
         let new_json_data = file_relative_path
             .ancestors()
-            .map(|path| worktree_root.join(path))
+            .map(|path| worktree_root.join(path.as_std_path()))
             .map(|parent_path| {
                 self.package_json_data(&parent_path, self.last_package_json.clone(), fs.clone(), cx)
             })

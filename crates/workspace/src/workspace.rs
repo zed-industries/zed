@@ -10764,7 +10764,7 @@ mod tests {
             .flat_map(|item| {
                 item.project_paths(cx)
                     .into_iter()
-                    .map(|path| path.path.as_str().to_string())
+                    .map(|path| path.path.display(PathStyle::local()).into_owned())
             })
             .collect()
     }

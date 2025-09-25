@@ -2028,7 +2028,7 @@ impl Snapshot {
             abs_path: SanitizedPath::from_arc(abs_path),
             path_style,
             root_char_bag: root_name
-                .as_str()
+                .as_unix_str()
                 .chars()
                 .map(|c| c.to_ascii_lowercase())
                 .collect(),
@@ -2157,7 +2157,7 @@ impl Snapshot {
         self.abs_path = abs_path;
         if root_name != self.root_name {
             self.root_char_bag = root_name
-                .as_str()
+                .as_unix_str()
                 .chars()
                 .map(|c| c.to_ascii_lowercase())
                 .collect();
@@ -2352,7 +2352,7 @@ impl Snapshot {
     }
 
     pub fn root_name_str(&self) -> &str {
-        self.root_name.as_str()
+        self.root_name.as_unix_str()
     }
 
     pub fn scan_id(&self) -> usize {
@@ -3043,7 +3043,7 @@ impl language::File for File {
     fn file_name<'a>(&'a self, cx: &'a App) -> &'a str {
         self.path
             .file_name()
-            .unwrap_or_else(|| self.worktree.read(cx).root_name.as_str())
+            .unwrap_or_else(|| self.worktree.read(cx).root_name_str())
     }
 
     fn worktree_id(&self, cx: &App) -> WorktreeId {
@@ -4371,7 +4371,7 @@ impl BackgroundScanner {
 
                     if let (Some(scan_queue_tx), true) = (&scan_queue_tx, is_dir) {
                         if state.should_scan_directory(&fs_entry)
-                            || (fs_entry.path.as_os_str().is_empty()
+                            || (fs_entry.path.is_empty()
                                 && abs_path.file_name() == Some(OsStr::new(DOT_GIT)))
                         {
                             state.enqueue_scan_dir(
@@ -4915,7 +4915,7 @@ fn swap_to_front(child_paths: &mut Vec<PathBuf>, file: &str) {
 
 fn char_bag_for_path(root_char_bag: CharBag, path: &RelPath) -> CharBag {
     let mut result = root_char_bag;
-    result.extend(path.as_str().chars().map(|c| c.to_ascii_lowercase()));
+    result.extend(path.as_unix_str().chars().map(|c| c.to_ascii_lowercase()));
     result
 }
 

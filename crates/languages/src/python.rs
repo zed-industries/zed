@@ -1030,7 +1030,7 @@ impl ToolchainLister for PythonToolchainProvider {
         config.workspace_directories = Some(
             subroot_relative_path
                 .ancestors()
-                .map(|ancestor| worktree_root.join(ancestor))
+                .map(|ancestor| worktree_root.join(ancestor.as_std_path()))
                 .collect(),
         );
         for locator in locators.iter() {

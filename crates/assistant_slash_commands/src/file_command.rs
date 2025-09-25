@@ -505,7 +505,7 @@ mod custom_path_matcher {
                 .iter()
                 .zip(self.sources_with_trailing_slash.iter())
                 .any(|(source, with_slash)| {
-                    let as_bytes = other.as_str().as_bytes();
+                    let as_bytes = other.as_unix_str().as_bytes();
                     let with_slash = if source.ends_with('/') {
                         source.as_bytes()
                     } else {
@@ -514,12 +514,12 @@ mod custom_path_matcher {
 
                     as_bytes.starts_with(with_slash) || as_bytes.ends_with(source.as_bytes())
                 })
-                || self.glob.is_match(other)
+                || self.glob.is_match(other.as_std_path())
                 || self.check_with_end_separator(other)
         }
 
         fn check_with_end_separator(&self, path: &RelPath) -> bool {
-            let path_str = path.as_str();
+            let path_str = path.as_unix_str();
             let separator = "/";
             if path_str.ends_with(separator) {
                 false
