@@ -10,10 +10,10 @@ use gpui::{
 use project::WorktreeId;
 use settings::{SettingsContent, SettingsStore};
 use ui::{
-    ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color,
+    ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color, Divider,
     DropdownMenu, FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label,
     LabelCommon as _, LabelSize, ParentElement, SharedString, StatefulInteractiveElement as _,
-    Styled, Switch, v_flex,
+    Styled, Switch, h_flex, v_flex,
 };
 use util::{paths::PathStyle, rel_path::RelPath};
 
@@ -188,13 +188,30 @@ enum SettingsPageItem {
 impl SettingsPageItem {
     fn render(&self, file: SettingsFile, window: &mut Window, cx: &mut App) -> AnyElement {
         match self {
-            SettingsPageItem::SectionHeader(header) => Label::new(SharedString::new_static(header))
-                .size(LabelSize::Large)
+            SettingsPageItem::SectionHeader(header) => div()
+                .w_full()
+                .child(Label::new(SharedString::new_static(header)).size(LabelSize::Large))
+                .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => div()
-                .child(setting_item.title)
-                .child(setting_item.description)
-                .child((setting_item.render)(file, window, cx))
+                .child(
+                    Label::new(SharedString::new_static(setting_item.title))
+                        .size(LabelSize::Default),
+                )
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            div()
+                                .child(
+                                    Label::new(SharedString::new_static(setting_item.description))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .max_w_1_2(),
+                        )
+                        .child((setting_item.render)(file, window, cx)),
+                )
                 .into_any_element(),
         }
     }
@@ -330,6 +347,7 @@ impl SettingsWindow {
         let mut nav = v_flex()
             .p_4()
             .gap_2()
+            .bg(cx.theme().colors().panel_background)
             .child(div().h_10()) // Files spacer;
             .child(self.render_search(window, cx));
 
@@ -359,14 +377,11 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> Div {
-        div()
-            .child(self.render_files(window, cx))
-            .child(Label::new(page.title))
-            .children(
-                page.items
-                    .iter()
-                    .map(|item| item.render(self.current_file.clone(), window, cx)),
-            )
+        v_flex().gap_4().py_4().children(
+            page.items
+                .iter()
+                .map(|item| item.render(self.current_file.clone(), window, cx)),
+        )
     }
 
     fn current_page(&self) -> &SettingsPage {
@@ -387,7 +402,16 @@ impl Render for SettingsWindow {
             .flex_row()
             .text_color(cx.theme().colors().text)
             .child(self.render_nav(window, cx).w(px(300.0)))
-            .child(self.render_page(self.current_page(), window, cx).w_full())
+            .child(Divider::vertical().color(ui::DividerColor::BorderVariant))
+            .child(
+                v_flex()
+                    .bg(cx.theme().colors().editor_background)
+                    .px_6()
+                    .py_2()
+                    .child(self.render_files(window, cx))
+                    .child(self.render_page(self.current_page(), window, cx))
+                    .w_full(),
+            )
     }
 }
 
