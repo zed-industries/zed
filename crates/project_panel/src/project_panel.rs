@@ -3303,7 +3303,7 @@ impl ProjectPanel {
                     new_state
                 })
                 .await;
-            this.update(cx, |this, _| {
+            this.update(cx, |this, cx| {
                 this.state = new_state;
                 let elapsed = now.elapsed();
                 if this.last_reported_update.elapsed() > Duration::from_secs(3600) {
@@ -3318,6 +3318,7 @@ impl ProjectPanel {
                             .sum::<usize>(),
                     )
                 }
+                cx.notify();
             })
             .ok();
         });
