@@ -54,6 +54,7 @@ pub fn system_prompt(format: PromptFormat) -> &'static str {
     match format {
         PromptFormat::MarkedExcerpt => MARKED_EXCERPT_SYSTEM_PROMPT,
         PromptFormat::LabeledSections => LABELED_SECTIONS_SYSTEM_PROMPT,
+        PromptFormat::OnlySnippets => "todo!",
     }
 }
 
@@ -317,7 +318,9 @@ impl<'a> PlannedPrompt<'a> {
             text: &self.request.excerpt,
             text_is_truncated: false,
         };
-        excerpt_file_snippets.push(&excerpt_snippet);
+        if !matches!(self.request.prompt_format, PromptFormat::OnlySnippets) {
+            excerpt_file_snippets.push(&excerpt_snippet);
+        }
         file_snippets.push((&self.request.excerpt_path, excerpt_file_snippets, true));
 
         let mut excerpt_file_insertions = match self.request.prompt_format {
@@ -343,6 +346,7 @@ impl<'a> PlannedPrompt<'a> {
                 self.request.excerpt_range.start + self.request.cursor_offset,
                 CURSOR_MARKER,
             )],
+            PromptFormat::OnlySnippets => vec![],
         };
 
         let mut prompt = String::new();
@@ -436,7 +440,7 @@ impl<'a> PlannedPrompt<'a> {
                 let section_index = section_ranges.len();
 
                 match self.request.prompt_format {
-                    PromptFormat::MarkedExcerpt => {
+                    PromptFormat::MarkedExcerpt | PromptFormat::OnlySnippets => {
                         if range.start > 0 {
                             output.push_str("…\n");
                         }

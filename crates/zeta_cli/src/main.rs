@@ -87,6 +87,7 @@ enum PromptFormat {
     #[default]
     MarkedExcerpt,
     LabeledSections,
+    OnlySnippets,
 }
 
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
@@ -94,6 +95,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
         match self {
             Self::MarkedExcerpt => predict_edits_v3::PromptFormat::MarkedExcerpt,
             Self::LabeledSections => predict_edits_v3::PromptFormat::LabeledSections,
+            Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
         }
     }
 }

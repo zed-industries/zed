@@ -48,6 +48,7 @@ pub enum PromptFormat {
     #[default]
     MarkedExcerpt,
     LabeledSections,
+    OnlySnippets,
 }
 
 impl PromptFormat {
@@ -61,6 +62,7 @@ impl std::fmt::Display for PromptFormat {
         match self {
             PromptFormat::MarkedExcerpt => write!(f, "Marked Excerpt"),
             PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
+            PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
         }
     }
 }
