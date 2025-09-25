@@ -163,7 +163,7 @@ pub struct SettingsWindow {
     list_handle: UniformListScrollHandle,
 }
 
-#[derive(Debug)]
+#[derive(PartialEq, Debug)]
 struct NavBarEntry {
     title: &'static str,
     is_root: bool,
@@ -280,7 +280,7 @@ impl SettingsWindow {
         this
     }
 
-    fn toggle_navbar_entry(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
+    fn toggle_navbar_entry(&mut self, ix: usize) {
         if self.navbar_entries[ix].is_root {
             let expanded = &mut self.page_for_navbar_index(ix).expanded;
             *expanded = !*expanded;
@@ -290,11 +290,11 @@ impl SettingsWindow {
             if current_page_index == ix {
                 self.navbar_entry = ix;
             }
-            self.build_navbar(cx);
+            self.build_navbar();
         }
     }
 
-    fn build_navbar(&mut self, cx: &mut Context<SettingsWindow>) {
+    fn build_navbar(&mut self) {
         self.navbar_entries = self
             .pages
             .iter()
@@ -316,13 +316,11 @@ impl SettingsWindow {
                 )
             })
             .collect();
-
-        cx.notify();
     }
 
     fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
         self.pages = self.current_file.pages();
-        self.build_navbar(cx);
+        self.build_navbar();
 
         cx.notify();
     }
@@ -380,7 +378,8 @@ impl SettingsWindow {
                                                 )
                                                 .always_show_disclosure_icon(true)
                                                 .on_toggle(cx.listener(move |this, _, _, cx| {
-                                                    this.toggle_navbar_entry(ix, cx);
+                                                    this.toggle_navbar_entry(ix);
+                                                    cx.notify();
                                                 }))
                                             })
                                             .child(
@@ -570,4 +569,180 @@ fn render_toggle_button(
             }
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    impl SettingsWindow {
+        fn navbar(&self) -> &[NavBarEntry] {
+            self.navbar_entries.as_slice()
+        }
+
+        fn navbar_entry(&self) -> usize {
+            self.navbar_entry
+        }
+    }
+
+    fn register_settings(cx: &mut App) {
+        settings::init(cx);
+        theme::init(theme::LoadThemes::JustBase, cx);
+        workspace::init_settings(cx);
+        project::Project::init_settings(cx);
+        language::init(cx);
+        editor::init(cx);
+        menu::init();
+    }
+
+    fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
+        let mut pages: Vec<SettingsPage> = Vec::new();
+        let mut current_page = None;
+        let mut selected_idx = None;
+
+        for (ix, mut line) in input
+            .lines()
+            .map(|line| line.trim())
+            .filter(|line| !line.is_empty())
+            .enumerate()
+        {
+            if line.ends_with("*") {
+                assert!(
+                    selected_idx.is_none(),
+                    "Can only have one selected navbar entry at a time"
+                );
+                selected_idx = Some(ix);
+                line = &line[..line.len() - 1];
+            }
+
+            if line.starts_with("v") || line.starts_with(">") {
+                if let Some(current_page) = current_page.take() {
+                    pages.push(current_page);
+                }
+
+                let expanded = line.starts_with("v");
+
+                current_page = Some(SettingsPage {
+                    title: line.split_once(" ").unwrap().1,
+                    expanded,
+                    items: Vec::default(),
+                });
+            } else if line.starts_with("-") {
+                let Some(current_page) = current_page.as_mut() else {
+                    panic!("Sub entries must be within a page");
+                };
+
+                current_page.items.push(SettingsPageItem::SectionHeader(
+                    line.split_once(" ").unwrap().1,
+                ));
+            } else {
+                panic!(
+                    "Entries must start with one of 'v', '>', or '-'\n line: {}",
+                    line
+                );
+            }
+        }
+
+        if let Some(current_page) = current_page.take() {
+            pages.push(current_page);
+        }
+
+        let mut settings_window = SettingsWindow {
+            files: Vec::default(),
+            current_file: crate::SettingsFile::User,
+            pages,
+            search: cx.new(|cx| Editor::single_line(window, cx)),
+            navbar_entry: selected_idx.unwrap(),
+            navbar_entries: Vec::default(),
+            list_handle: UniformListScrollHandle::default(),
+        };
+
+        settings_window.build_navbar();
+        settings_window
+    }
+
+    #[track_caller]
+    fn check_navbar_toggle(
+        before: &'static str,
+        toggle_idx: usize,
+        after: &'static str,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let mut settings_window = parse(before, window, cx);
+        settings_window.toggle_navbar_entry(toggle_idx);
+
+        let expected_settings_window = parse(after, window, cx);
+
+        assert_eq!(settings_window.navbar(), expected_settings_window.navbar());
+        assert_eq!(
+            settings_window.navbar_entry(),
+            expected_settings_window.navbar_entry()
+        );
+    }
+
+    macro_rules! check_navbar_toggle {
+        ($name:ident, before: $before:expr, toggle_idx: $toggle_idx:expr, after: $after:expr) => {
+            #[gpui::test]
+            fn $name(cx: &mut gpui::TestAppContext) {
+                let window = cx.add_empty_window();
+                window.update(|window, cx| {
+                    register_settings(cx);
+                    check_navbar_toggle($before, $toggle_idx, $after, window, cx);
+                });
+            }
+        };
+    }
+
+    check_navbar_toggle!(
+        basic_open,
+        before: r"
+        v General
+        - General
+        - Privacy*
+        v Project
+        - Project Settings
+        ",
+        toggle_idx: 0,
+        after: r"
+        > General*
+        v Project
+        - Project Settings
+        "
+    );
+
+    check_navbar_toggle!(
+        basic_close,
+        before: r"
+        > General*
+        - General
+        - Privacy
+        v Project
+        - Project Settings
+        ",
+        toggle_idx: 0,
+        after: r"
+        v General*
+        - General
+        - Privacy
+        v Project
+        - Project Settings
+        "
+    );
+
+    check_navbar_toggle!(
+        basic_second_root_entry_close,
+        before: r"
+        > General
+        - General
+        - Privacy
+        v Project
+        - Project Settings*
+        ",
+        toggle_idx: 1,
+        after: r"
+        > General
+        > Project*
+        "
+    );
 }
