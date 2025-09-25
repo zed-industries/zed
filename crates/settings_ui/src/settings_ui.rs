@@ -15,7 +15,7 @@ use ui::{
     ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color,
     FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label, LabelCommon as _,
     LabelSize, ListItem, ParentElement, SharedString, StatefulInteractiveElement as _, Styled,
-    StyledTypography, Switch, h_flex, v_flex,
+    StyledTypography, Switch, Toggleable, h_flex, v_flex,
 };
 
 fn user_settings_data() -> Vec<SettingsPage> {
@@ -280,63 +280,18 @@ impl SettingsWindow {
         this
     }
 
-    fn toggle_navbar_entry_folded(&mut self, index: usize, cx: &mut Context<SettingsWindow>) {
-        let page_index = self.page_index_from_navbar_index(index);
-        if self.pages[page_index].expanded {
-            self.pages[page_index].expanded = false;
-
-            let current_page_index = self.page_index_from_navbar_index(self.current_page);
-            let prev_root = if self.navbar_entries[index].is_root {
-                index
-            } else {
-                index
-                    - self.navbar_entries[..index - 1]
-                        .iter()
-                        .rposition(|entry| entry.is_root)
-                        .unwrap_or(0)
-            };
-
-            let next_root = self.navbar_entries[prev_root + 1..]
-                .iter()
-                .position(|entry| entry.is_root)
-                .map(|pos| pos + prev_root + 1)
-                .unwrap_or(self.navbar_entries.len());
-            self.navbar_entries.splice(prev_root + 1..next_root, []);
-
-            // if currently selected page is a child of the parent page we are folding,
-            // set the current page to the parent page
-            if current_page_index == page_index {
-                self.current_page = prev_root;
-            }
-        } else {
-            self.pages[page_index].expanded = true;
-            self.navbar_entries.splice(
-                index + 1..index + 1,
-                self.pages[page_index]
-                    .section_headers()
-                    .map(|h| NavBarEntry {
-                        title: h,
-                        is_root: false,
-                    }),
-            );
-        }
-        cx.notify();
-    }
-
-
     fn toggle_navbar_entry(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
         if self.navbar_entries[ix].is_root {
-            let expanded =
-                &mut self.page_for_navbar_index(ix).expanded;
+            let expanded = &mut self.page_for_navbar_index(ix).expanded;
             *expanded = !*expanded;
-            let current_page_index =self
-                .page_index_from_navbar_index(self.current_page);
+            let current_page_index = self.page_index_from_navbar_index(self.current_page);
             // if currently selected page is a child of the parent page we are folding,
             // set the current page to the parent page
             if current_page_index == ix {
                 self.current_page = ix;
             }
             self.build_navbar(cx);
+        }
     }
 
     fn build_navbar(&mut self, cx: &mut Context<SettingsWindow>) {
@@ -415,10 +370,17 @@ impl SettingsWindow {
                                             .selectable(true)
                                             .indent_step_size(px(10.))
                                             .indent_level(if entry.is_root { 1 } else { 3 })
-                                            .toggle(!entry.is_root)
-                                            .on_toggle(cx.listener(move |this, _, _, cx| {
-                                                this.toggle_navbar_entry_folded(ix, cx);
-                                            }))
+                                            .when(entry.is_root, |item| {
+                                                item.toggle(
+                                                    this.pages
+                                                        [this.page_index_from_navbar_index(ix)]
+                                                    .expanded,
+                                                )
+                                                .always_show_disclosure_icon(true)
+                                                .on_toggle(cx.listener(move |this, _, _, cx| {
+                                                    this.toggle_navbar_entry(ix, cx);
+                                                }))
+                                            })
                                             .child(
                                                 div().text_ui(cx).w_full().child(entry.title).when(
                                                     this.is_page_selected(ix),
