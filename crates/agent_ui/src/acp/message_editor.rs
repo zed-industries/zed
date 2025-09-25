@@ -108,11 +108,6 @@ impl MessageEditor {
             available_commands.clone(),
         ));
         let mention_set = MentionSet::default();
-        // TODO: fix mentions when remoting with mixed path styles.
-        let host_and_guest_paths_differ = project
-            .read(cx)
-            .remote_client()
-            .is_some_and(|client| client.read(cx).path_style() != PathStyle::local());
         let editor = cx.new(|cx| {
             let buffer = cx.new(|cx| Buffer::local("", cx).with_language(Arc::new(language), cx));
             let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
@@ -122,9 +117,7 @@ impl MessageEditor {
             editor.set_show_indent_guides(false, cx);
             editor.set_soft_wrap();
             editor.set_use_modal_editing(true);
-            if !host_and_guest_paths_differ {
-                editor.set_completion_provider(Some(completion_provider.clone()));
-            }
+            editor.set_completion_provider(Some(completion_provider.clone()));
             editor.set_context_menu_options(ContextMenuOptions {
                 min_entries_visible: 12,
                 max_entries_visible: 12,
