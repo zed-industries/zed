@@ -52,7 +52,7 @@ impl<'a> MatchCandidate for PathMatchCandidate<'a> {
     }
 
     fn candidate_chars(&self) -> impl Iterator<Item = char> {
-        self.path.as_str().chars()
+        self.path.as_unix_str().chars()
     }
 }
 
@@ -184,8 +184,11 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                             let candidates = candidate_set.candidates(start).take(end - start);
 
                             let worktree_id = candidate_set.id();
-                            let mut prefix =
-                                candidate_set.prefix().as_str().chars().collect::<Vec<_>>();
+                            let mut prefix = candidate_set
+                                .prefix()
+                                .as_unix_str()
+                                .chars()
+                                .collect::<Vec<_>>();
                             if !candidate_set.root_is_file() && !prefix.is_empty() {
                                 prefix.push('/');
                             }

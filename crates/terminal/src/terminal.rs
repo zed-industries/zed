@@ -26,6 +26,7 @@ use alacritty_terminal::{
     },
 };
 use anyhow::{Context as _, Result, bail};
+use log::trace;
 
 use futures::{
     FutureExt,
@@ -865,6 +866,7 @@ impl Terminal {
     ) {
         match event {
             &InternalEvent::Resize(mut new_bounds) => {
+                trace!("Resizing: new_bounds={new_bounds:?}");
                 new_bounds.bounds.size.height =
                     cmp::max(new_bounds.line_height, new_bounds.height());
                 new_bounds.bounds.size.width = cmp::max(new_bounds.cell_width, new_bounds.width());
@@ -876,6 +878,7 @@ impl Terminal {
                 term.resize(new_bounds);
             }
             InternalEvent::Clear => {
+                trace!("Clearing");
                 // Clear back buffer
                 term.clear_screen(ClearMode::Saved);
 
@@ -908,6 +911,7 @@ impl Terminal {
                 cx.emit(Event::Wakeup);
             }
             InternalEvent::Scroll(scroll) => {
+                trace!("Scrolling: scroll={scroll:?}");
                 term.scroll_display(*scroll);
                 self.refresh_hovered_word(window);
 
@@ -949,6 +953,7 @@ impl Terminal {
                 }
             }
             InternalEvent::SetSelection(selection) => {
+                trace!("Setting selection: selection={selection:?}");
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
 
                 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -962,6 +967,7 @@ impl Terminal {
                 cx.emit(Event::SelectionsChanged)
             }
             InternalEvent::UpdateSelection(position) => {
+                trace!("Updating selection: position={position:?}");
                 if let Some(mut selection) = term.selection.take() {
                     let (point, side) = grid_point_and_side(
                         *position,
@@ -983,6 +989,7 @@ impl Terminal {
             }
 
             InternalEvent::Copy(keep_selection) => {
+                trace!("Copying selection: keep_selection={keep_selection:?}");
                 if let Some(txt) = term.selection_to_string() {
                     cx.write_to_clipboard(ClipboardItem::new_string(txt));
                     if !keep_selection.unwrap_or_else(|| {
@@ -994,21 +1001,26 @@ impl Terminal {
                 }
             }
             InternalEvent::ScrollToAlacPoint(point) => {
+                trace!("Scrolling to point: point={point:?}");
                 term.scroll_to_point(*point);
                 self.refresh_hovered_word(window);
             }
             InternalEvent::MoveViCursorToAlacPoint(point) => {
+                trace!("Move vi cursor to point: point={point:?}");
                 term.vi_goto_point(*point);
                 self.refresh_hovered_word(window);
             }
             InternalEvent::ToggleViMode => {
+                trace!("Toggling vi mode");
                 self.vi_mode_enabled = !self.vi_mode_enabled;
                 term.toggle_vi_mode();
             }
             InternalEvent::ViMotion(motion) => {
+                trace!("Performing vi motion: motion={motion:?}");
                 term.vi_motion(*motion);
             }
             InternalEvent::FindHyperlink(position, open) => {
+                trace!("Finding hyperlink at position: position={position:?}, open={open:?}");
                 let prev_hovered_word = self.last_content.last_hovered_word.take();
 
                 let point = grid_point(

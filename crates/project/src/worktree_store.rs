@@ -161,9 +161,9 @@ impl WorktreeStore {
         for tree in self.worktrees() {
             let path_style = tree.read(cx).path_style();
             if let Ok(relative_path) = abs_path.as_ref().strip_prefix(tree.read(cx).abs_path())
-                && let Ok(relative_path) = RelPath::from_std_path(relative_path, path_style)
+                && let Ok(relative_path) = RelPath::new(relative_path, path_style)
             {
-                return Some((tree.clone(), relative_path));
+                return Some((tree.clone(), relative_path.into_arc()));
             }
         }
         None
@@ -1025,9 +1025,9 @@ impl WorktreeStore {
                     continue;
                 }
                 let relative_path = file.strip_prefix(snapshot.abs_path())?;
-                let relative_path = RelPath::from_std_path(&relative_path, snapshot.path_style())
+                let relative_path = RelPath::new(&relative_path, snapshot.path_style())
                     .context("getting relative path")?;
-                results.push((relative_path, !metadata.is_dir))
+                results.push((relative_path.into_arc(), !metadata.is_dir))
             }
             results.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
             for (path, is_file) in results {
@@ -1052,7 +1052,7 @@ impl WorktreeStore {
                             worktree_root: snapshot.abs_path().clone(),
                             path: ProjectPath {
                                 worktree_id: snapshot.id(),
-                                path,
+                                path: path.into_arc(),
                             },
                         })
                         .await?;

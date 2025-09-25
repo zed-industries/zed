@@ -12,6 +12,7 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::io::prelude::*;
 use std::process::{ExitStatus, Stdio};
@@ -719,7 +720,7 @@ impl GitRepository for RealGitRepository {
             let mut newline = [b'\0'];
             for (path, status_code) in changes {
                 // git-show outputs `/`-delimited paths even on Windows.
-                let Ok(rel_path) = RelPath::new(path) else {
+                let Some(rel_path) = RelPath::unix(path).log_err() else {
                     continue;
                 };
 
@@ -828,7 +829,7 @@ impl GitRepository for RealGitRepository {
                 .current_dir(&working_directory?)
                 .envs(env.iter())
                 .args(["checkout", &commit, "--"])
-                .args(paths.iter().map(|path| path.as_str()))
+                .args(paths.iter().map(|path| path.as_unix_str()))
                 .output()
                 .await?;
             anyhow::ensure!(
@@ -920,7 +921,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory)
                         .envs(env.iter())
                         .args(["update-index", "--add", "--cacheinfo", "100644", sha])
-                        .arg(path.as_str())
+                        .arg(path.as_unix_str())
                         .output()
                         .await?;
 
@@ -935,7 +936,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory)
                         .envs(env.iter())
                         .args(["update-index", "--force-remove"])
-                        .arg(path.as_str())
+                        .arg(path.as_unix_str())
                         .output()
                         .await?;
                     anyhow::ensure!(
@@ -1253,7 +1254,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory?)
                         .envs(env.iter())
                         .args(["update-index", "--add", "--remove", "--"])
-                        .args(paths.iter().map(|p| p.as_str()))
+                        .args(paths.iter().map(|p| p.as_unix_str()))
                         .output()
                         .await?;
                     anyhow::ensure!(
@@ -1282,7 +1283,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory?)
                         .envs(env.iter())
                         .args(["reset", "--quiet", "--"])
-                        .args(paths.iter().map(|p| p.as_ref()))
+                        .args(paths.iter().map(|p| p.as_std_path()))
                         .output()
                         .await?;
 
@@ -1311,7 +1312,7 @@ impl GitRepository for RealGitRepository {
                     .args(["stash", "push", "--quiet"])
                     .arg("--include-untracked");
 
-                cmd.args(paths.iter().map(|p| p.as_ref()));
+                cmd.args(paths.iter().map(|p| p.as_unix_str()));
 
                 let output = cmd.output().await?;
 
@@ -1817,7 +1818,7 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         if path_prefix.is_empty() {
             Path::new(".").into()
         } else {
-            path_prefix.as_os_str().into()
+            path_prefix.as_std_path().into()
         }
     }));
     args
@@ -2073,7 +2074,7 @@ pub struct RepoPath(pub Arc<RelPath>);
 
 impl RepoPath {
     pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
-        let rel_path = RelPath::new(s)?;
+        let rel_path = RelPath::unix(s.as_ref())?;
         Ok(rel_path.into())
     }
 
@@ -2083,19 +2084,25 @@ impl RepoPath {
     }
 
     pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Self> {
-        let rel_path = RelPath::from_std_path(path, path_style)?;
-        Ok(rel_path.into())
+        let rel_path = RelPath::new(path, path_style)?;
+        Ok(Self(rel_path.as_ref().into()))
     }
 }
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
-    RepoPath(RelPath::new(s).unwrap().into())
+    RepoPath(RelPath::unix(s.as_ref()).unwrap().into())
 }
 
 impl From<&RelPath> for RepoPath {
     fn from(value: &RelPath) -> Self {
         RepoPath(value.into())
+    }
+}
+
+impl<'a> From<Cow<'a, RelPath>> for RepoPath {
+    fn from(value: Cow<'a, RelPath>) -> Self {
+        value.as_ref().into()
     }
 }
 
@@ -2119,11 +2126,11 @@ impl std::ops::Deref for RepoPath {
     }
 }
 
-impl AsRef<Path> for RepoPath {
-    fn as_ref(&self) -> &Path {
-        RelPath::as_ref(&self.0)
-    }
-}
+// impl AsRef<Path> for RepoPath {
+//     fn as_ref(&self) -> &Path {
+//         RelPath::as_ref(&self.0)
+//     }
+// }
 
 #[derive(Debug)]
 pub struct RepoPathDescendants<'a>(pub &'a RepoPath);

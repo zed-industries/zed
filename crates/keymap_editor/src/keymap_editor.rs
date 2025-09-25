@@ -1569,7 +1569,7 @@ impl Render for KeymapEditor {
                         h_flex()
                             .gap_2()
                             .child(
-                                div()
+                                h_flex()
                                     .key_context({
                                         let mut context = KeyContext::new_with_defaults();
                                         context.add("BufferSearchBar");

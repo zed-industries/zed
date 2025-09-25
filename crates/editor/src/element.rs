@@ -1371,7 +1371,7 @@ impl EditorElement {
 
                     let layout = SelectionLayout::new(
                         selection,
-                        editor.selections.line_mode,
+                        editor.selections.line_mode(),
                         editor.cursor_shape,
                         &snapshot.display_snapshot,
                         is_newest,
@@ -3149,7 +3149,7 @@ impl EditorElement {
                 let newest = editor.selections.newest::<Point>(cx);
                 SelectionLayout::new(
                     newest,
-                    editor.selections.line_mode,
+                    editor.selections.line_mode(),
                     editor.cursor_shape,
                     &snapshot.display_snapshot,
                     true,
@@ -3782,13 +3782,17 @@ impl EditorElement {
         let file = for_excerpt.buffer.file();
         let can_open_excerpts = Editor::can_open_excerpts_in_file(file);
         let path_style = file.map(|file| file.path_style(cx));
-        let relative_path = for_excerpt.buffer.resolve_file_path(cx, include_root);
-        let filename = relative_path
-            .as_ref()
-            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
-        let parent_path = relative_path.as_ref().and_then(|path| {
-            Some(path.parent()?.to_string_lossy().to_string() + path_style?.separator())
-        });
+        let relative_path = for_excerpt.buffer.resolve_file_path(include_root, cx);
+        let (parent_path, filename) = if let Some(path) = &relative_path {
+            if let Some(path_style) = path_style {
+                let (dir, file_name) = path_style.split(path);
+                (dir.map(|dir| dir.to_owned()), Some(file_name.to_owned()))
+            } else {
+                (None, Some(path.clone()))
+            }
+        } else {
+            (None, None)
+        };
         let focus_handle = editor.focus_handle(cx);
         let colors = cx.theme().colors();
 

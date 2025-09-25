@@ -1425,7 +1425,7 @@ impl ProjectPanel {
             }
             let trimmed_filename = trimmed_filename.trim_start_matches('/');
 
-            let Ok(filename) = RelPath::new(trimmed_filename) else {
+            let Ok(filename) = RelPath::unix(trimmed_filename) else {
                 edit_state.validation_state = ValidationState::Warning(
                     "File or directory name contains leading or trailing whitespace.".to_string(),
                 );
@@ -1460,7 +1460,7 @@ impl ProjectPanel {
                 if already_exists {
                     edit_state.validation_state = ValidationState::Error(format!(
                         "File or directory '{}' already exists at location. Please choose a different name.",
-                        filename.as_str()
+                        filename.as_unix_str()
                     ));
                     cx.notify();
                     return;
@@ -1495,7 +1495,7 @@ impl ProjectPanel {
         } else {
             filename.trim_start_matches('/')
         };
-        let filename = RelPath::from_std_path(filename.as_ref(), path_style).ok()?;
+        let filename = RelPath::new(filename.as_ref(), path_style).ok()?.into_arc();
 
         edit_state.is_dir =
             edit_state.is_dir || (edit_state.is_new_entry() && filename_indicates_dir);
@@ -2438,7 +2438,7 @@ impl ProjectPanel {
             .path
             .file_name()?
             .to_string();
-        new_path.push(RelPath::new(&clipboard_entry_file_name).unwrap());
+        new_path.push(RelPath::unix(&clipboard_entry_file_name).unwrap());
         let extension = new_path.extension().map(|s| s.to_string());
         let file_name_without_extension = new_path.file_stem()?.to_string();
         let file_name_len = file_name_without_extension.len();
@@ -2466,7 +2466,7 @@ impl ProjectPanel {
                     new_file_name.push_str(extension);
                 }
 
-                new_path.push(RelPath::new(&new_file_name).unwrap());
+                new_path.push(RelPath::unix(&new_file_name).unwrap());
 
                 disambiguation_range = Some(file_name_len..(file_name_len + disambiguation_len));
                 ix += 1;
@@ -2839,7 +2839,7 @@ impl ProjectPanel {
             }
 
             let mut new_path = destination_path.to_rel_path_buf();
-            new_path.push(RelPath::new(source_path.path.file_name()?).unwrap());
+            new_path.push(RelPath::unix(source_path.path.file_name()?).unwrap());
             if new_path.as_rel_path() != source_path.path.as_ref() {
                 let task = project.rename_entry(
                     entry_to_move,
@@ -3007,7 +3007,7 @@ impl ProjectPanel {
             entry: Entry {
                 id: NEW_ENTRY_ID,
                 kind: new_entry_kind,
-                path: parent_entry.path.join(RelPath::new("\0").unwrap()),
+                path: parent_entry.path.join(RelPath::unix("\0").unwrap()),
                 inode: 0,
                 mtime: parent_entry.mtime,
                 size: parent_entry.size,
@@ -3185,7 +3185,7 @@ impl ProjectPanel {
                                     entry.path.strip_prefix(root_folded_entry).ok().and_then(
                                         |suffix| {
                                             Some(
-                                                RelPath::new(root_folded_entry.file_name()?)
+                                                RelPath::unix(root_folded_entry.file_name()?)
                                                     .unwrap()
                                                     .join(suffix),
                                             )
@@ -3196,11 +3196,11 @@ impl ProjectPanel {
                                     entry
                                         .path
                                         .file_name()
-                                        .map(|file_name| RelPath::new(file_name).unwrap().into())
+                                        .map(|file_name| RelPath::unix(file_name).unwrap().into())
                                 })
                                 .unwrap_or_else(|| entry.path.clone());
                         let depth = path.components().count();
-                        (depth, path.as_str().chars().count())
+                        (depth, path.as_unix_str().chars().count())
                     };
                 let width_estimate =
                     item_width_estimate(depth, chars, entry.canonical_path.is_some());
@@ -3337,7 +3337,7 @@ impl ProjectPanel {
             if let Some(name) = path.file_name()
                 && let Some(name) = name.to_str()
             {
-                let target_path = target_directory.join(RelPath::new(name).unwrap());
+                let target_path = target_directory.join(RelPath::unix(name).unwrap());
                 if worktree.read(cx).entry_for_path(&target_path).is_some() {
                     paths_to_replace.push((name.to_string(), path.clone()));
                 }
@@ -3650,7 +3650,7 @@ impl ProjectPanel {
                                     }
                                 } else {
                                     details.filename.clear();
-                                    details.filename.push_str(processing_filename.as_str());
+                                    details.filename.push_str(processing_filename.as_unix_str());
                                 }
                             } else {
                                 if edit_state.is_new_entry() {
@@ -4019,7 +4019,7 @@ impl ProjectPanel {
             .path_for_entry(drag_state.active_selection.entry_id, cx)
         {
             if let Some(parent_path) = entry_path.path.parent() {
-                if !parent_path.as_os_str().is_empty() {
+                if !parent_path.is_empty() {
                     return true;
                 }
             }
@@ -4784,7 +4784,7 @@ impl ProjectPanel {
                 .path
                 .file_name()
                 .map(|name| name.to_string())
-                .unwrap_or_else(|| root_name.as_str().to_string())
+                .unwrap_or_else(|| root_name.as_unix_str().to_string())
         };
 
         let selection = SelectedEntry {

@@ -159,7 +159,7 @@ pub struct FileContextHandle {
 #[derive(Debug, Clone)]
 pub struct FileContext {
     pub handle: FileContextHandle,
-    pub full_path: Arc<Path>,
+    pub full_path: String,
     pub text: SharedString,
     pub is_outline: bool,
 }
@@ -187,7 +187,7 @@ impl FileContextHandle {
             log::error!("file context missing path");
             return Task::ready(None);
         };
-        let full_path: Arc<Path> = file.full_path(cx).into();
+        let full_path = file.full_path(cx).to_string_lossy().to_string();
         let rope = buffer_ref.as_rope().clone();
         let buffer = self.buffer.clone();
 
@@ -236,7 +236,7 @@ pub struct DirectoryContextHandle {
 #[derive(Debug, Clone)]
 pub struct DirectoryContext {
     pub handle: DirectoryContextHandle,
-    pub full_path: Arc<Path>,
+    pub full_path: String,
     pub descendants: Vec<DirectoryContextDescendant>,
 }
 
@@ -274,13 +274,16 @@ impl DirectoryContextHandle {
         }
 
         let directory_path = entry.path.clone();
-        let directory_full_path = worktree_ref.full_path(&directory_path).into();
+        let directory_full_path = worktree_ref
+            .full_path(&directory_path)
+            .to_string_lossy()
+            .to_string();
 
         let file_paths = collect_files_in_path(worktree_ref, &directory_path);
         let descendants_future = future::join_all(file_paths.into_iter().map(|path| {
             let worktree_ref = worktree.read(cx);
             let worktree_id = worktree_ref.id();
-            let full_path = worktree_ref.full_path(&path);
+            let full_path = worktree_ref.full_path(&path).to_string_lossy().to_string();
 
             let rel_path = path
                 .strip_prefix(&directory_path)
@@ -361,7 +364,7 @@ pub struct SymbolContextHandle {
 #[derive(Debug, Clone)]
 pub struct SymbolContext {
     pub handle: SymbolContextHandle,
-    pub full_path: Arc<Path>,
+    pub full_path: String,
     pub line_range: Range<Point>,
     pub text: SharedString,
 }
@@ -400,7 +403,7 @@ impl SymbolContextHandle {
             log::error!("symbol context's file has no path");
             return Task::ready(None);
         };
-        let full_path = file.full_path(cx).into();
+        let full_path = file.full_path(cx).to_string_lossy().to_string();
         let line_range = self.enclosing_range.to_point(&buffer_ref.snapshot());
         let text = self.text(cx);
         let buffer = self.buffer.clone();
@@ -434,7 +437,7 @@ pub struct SelectionContextHandle {
 #[derive(Debug, Clone)]
 pub struct SelectionContext {
     pub handle: SelectionContextHandle,
-    pub full_path: Arc<Path>,
+    pub full_path: String,
     pub line_range: Range<Point>,
     pub text: SharedString,
 }
@@ -473,7 +476,7 @@ impl SelectionContextHandle {
         let text = self.text(cx);
         let buffer = self.buffer.clone();
         let context = AgentContext::Selection(SelectionContext {
-            full_path: full_path.into(),
+            full_path: full_path.to_string_lossy().to_string(),
             line_range: self.line_range(cx),
             text,
             handle: self,
@@ -703,7 +706,7 @@ impl Display for RulesContext {
 #[derive(Debug, Clone)]
 pub struct ImageContext {
     pub project_path: Option<ProjectPath>,
-    pub full_path: Option<Arc<Path>>,
+    pub full_path: Option<String>,
     pub original_image: Arc<gpui::Image>,
     // TODO: handle this elsewhere and remove `ignore-interior-mutability` opt-out in clippy.toml
     // needed due to a false positive of `clippy::mutable_key_type`.
@@ -983,14 +986,17 @@ fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<Arc<RelPath
     files
 }
 
-fn codeblock_tag(full_path: &Path, line_range: Option<Range<Point>>) -> String {
+fn codeblock_tag(full_path: &str, line_range: Option<Range<Point>>) -> String {
     let mut result = String::new();
 
-    if let Some(extension) = full_path.extension().and_then(|ext| ext.to_str()) {
+    if let Some(extension) = Path::new(full_path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+    {
         let _ = write!(result, "{} ", extension);
     }
 
-    let _ = write!(result, "{}", full_path.display());
+    let _ = write!(result, "{}", full_path);
 
     if let Some(range) = line_range {
         if range.start.row == range.end.row {

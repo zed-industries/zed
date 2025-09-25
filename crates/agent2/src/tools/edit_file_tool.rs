@@ -541,7 +541,7 @@ fn resolve_path(
                 .path
                 .file_name()
                 .and_then(|file_name| file_name.to_str())
-                .and_then(|file_name| RelPath::new(file_name).ok())
+                .and_then(|file_name| RelPath::unix(file_name).ok())
                 .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
@@ -565,7 +565,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -614,13 +614,13 @@ mod tests {
         let mode = &EditFileMode::Create;
 
         let result = test_resolve_path(mode, "root/new.txt", cx);
-        assert_resolved_path_eq(result.await, "new.txt");
+        assert_resolved_path_eq(result.await, rel_path("new.txt"));
 
         let result = test_resolve_path(mode, "new.txt", cx);
-        assert_resolved_path_eq(result.await, "new.txt");
+        assert_resolved_path_eq(result.await, rel_path("new.txt"));
 
         let result = test_resolve_path(mode, "dir/new.txt", cx);
-        assert_resolved_path_eq(result.await, "dir/new.txt");
+        assert_resolved_path_eq(result.await, rel_path("dir/new.txt"));
 
         let result = test_resolve_path(mode, "root/dir/subdir/existing.txt", cx);
         assert_eq!(
@@ -642,10 +642,10 @@ mod tests {
         let path_with_root = "root/dir/subdir/existing.txt";
         let path_without_root = "dir/subdir/existing.txt";
         let result = test_resolve_path(mode, path_with_root, cx);
-        assert_resolved_path_eq(result.await, path_without_root);
+        assert_resolved_path_eq(result.await, rel_path(path_without_root));
 
         let result = test_resolve_path(mode, path_without_root, cx);
-        assert_resolved_path_eq(result.await, path_without_root);
+        assert_resolved_path_eq(result.await, rel_path(path_without_root));
 
         let result = test_resolve_path(mode, "root/nonexistent.txt", cx);
         assert_eq!(
@@ -691,10 +691,9 @@ mod tests {
     }
 
     #[track_caller]
-    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
+    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &RelPath) {
         let actual = path.expect("Should return valid path").path;
-        let actual = actual.as_str();
-        assert_eq!(actual, expected);
+        assert_eq!(actual.as_ref(), expected);
     }
 
     #[gpui::test]

@@ -1780,20 +1780,26 @@ impl AcpThread {
         limit: Option<u32>,
         reuse_shared_snapshot: bool,
         cx: &mut Context<Self>,
-    ) -> Task<Result<String>> {
+    ) -> Task<Result<String, acp::Error>> {
         // Args are 1-based, move to 0-based
         let line = line.unwrap_or_default().saturating_sub(1);
         let limit = limit.unwrap_or(u32::MAX);
         let project = self.project.clone();
         let action_log = self.action_log.clone();
         cx.spawn(async move |this, cx| {
-            let load = project.update(cx, |project, cx| {
-                let path = project
-                    .project_path_for_absolute_path(&path, cx)
-                    .context("invalid path")?;
-                anyhow::Ok(project.open_buffer(path, cx))
-            });
-            let buffer = load??.await?;
+            let load = project
+                .update(cx, |project, cx| {
+                    let path = project
+                        .project_path_for_absolute_path(&path, cx)
+                        .ok_or_else(|| {
+                            acp::Error::resource_not_found(Some(path.display().to_string()))
+                        })?;
+                    Ok(project.open_buffer(path, cx))
+                })
+                .map_err(|e| acp::Error::internal_error().with_data(e.to_string()))
+                .flatten()?;
+
+            let buffer = load.await?;
 
             let snapshot = if reuse_shared_snapshot {
                 this.read_with(cx, |this, _| {
@@ -1820,15 +1826,17 @@ impl AcpThread {
             };
 
             let max_point = snapshot.max_point();
-            if line >= max_point.row {
-                anyhow::bail!(
+            let start_position = Point::new(line, 0);
+
+            if start_position > max_point {
+                return Err(acp::Error::invalid_params().with_data(format!(
                     "Attempting to read beyond the end of the file, line {}:{}",
                     max_point.row + 1,
                     max_point.column
-                );
+                )));
             }
 
-            let start = snapshot.anchor_before(Point::new(line, 0));
+            let start = snapshot.anchor_before(start_position);
             let end = snapshot.anchor_before(Point::new(line.saturating_add(limit), 0));
 
             project.update(cx, |project, cx| {
@@ -2452,6 +2460,81 @@ mod tests {
         // Invalid
         let err = thread
             .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(6), Some(2), false, cx)
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Invalid params: \"Attempting to read beyond the end of the file, line 5:0\""
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reading_empty_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": ""})).await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .await
+            .unwrap();
+
+        // Whole file
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "");
+
+        // Only start line
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(1), None, false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "");
+
+        // Only limit
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, Some(2), false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "");
+
+        // Range
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(1), Some(1), false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "");
+
+        // Invalid
+        let err = thread
+            .update(cx, |thread, cx| {
                 thread.read_text_file(path!("/tmp/foo").into(), Some(5), Some(2), false, cx)
             })
             .await
@@ -2459,8 +2542,39 @@ mod tests {
 
         assert_eq!(
             err.to_string(),
-            "Attempting to read beyond the end of the file, line 5:0"
+            "Invalid params: \"Attempting to read beyond the end of the file, line 1:0\""
         );
+    }
+    #[gpui::test]
+    async fn test_reading_non_existing_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({})).await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .await
+            .unwrap();
+
+        // Out of project file
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/foo").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code, acp::ErrorCode::RESOURCE_NOT_FOUND.code);
     }
 
     #[gpui::test]

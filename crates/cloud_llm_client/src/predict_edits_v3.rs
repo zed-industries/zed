@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use strum::EnumIter;
 use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
@@ -42,14 +43,33 @@ pub struct PredictEditsRequest {
     pub prompt_format: PromptFormat,
 }
 
-#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum PromptFormat {
     #[default]
     MarkedExcerpt,
     LabeledSections,
+    /// Prompt format intended for use via zeta_cli
+    OnlySnippets,
+}
+
+impl PromptFormat {
+    pub fn iter() -> impl Iterator<Item = Self> {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
+}
+
+impl std::fmt::Display for PromptFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PromptFormat::MarkedExcerpt => write!(f, "Marked Excerpt"),
+            PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
+            PromptFormat::OnlySnippets => write!(f, "Only Snippets"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(tag = "event")]
 pub enum Event {
     BufferChange {

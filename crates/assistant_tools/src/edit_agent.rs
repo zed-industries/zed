@@ -26,13 +26,13 @@ use language_model::{
 use project::{AgentLocation, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::{cmp, iter, mem, ops::Range, path::PathBuf, pin::Pin, sync::Arc, task::Poll};
+use std::{cmp, iter, mem, ops::Range, pin::Pin, sync::Arc, task::Poll};
 use streaming_diff::{CharOperation, StreamingDiff};
 use streaming_fuzzy_matcher::StreamingFuzzyMatcher;
 
 #[derive(Serialize)]
 struct CreateFilePromptTemplate {
-    path: Option<PathBuf>,
+    path: Option<String>,
     edit_description: String,
 }
 
@@ -42,7 +42,7 @@ impl Template for CreateFilePromptTemplate {
 
 #[derive(Serialize)]
 struct EditFileXmlPromptTemplate {
-    path: Option<PathBuf>,
+    path: Option<String>,
     edit_description: String,
 }
 
@@ -52,7 +52,7 @@ impl Template for EditFileXmlPromptTemplate {
 
 #[derive(Serialize)]
 struct EditFileDiffFencedPromptTemplate {
-    path: Option<PathBuf>,
+    path: Option<String>,
     edit_description: String,
 }
 
@@ -115,7 +115,7 @@ impl EditAgent {
         let conversation = conversation.clone();
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-            let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
+            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx))?;
             let prompt = CreateFilePromptTemplate {
                 path,
                 edit_description,
@@ -229,7 +229,7 @@ impl EditAgent {
         let edit_format = self.edit_format;
         let output = cx.spawn(async move |cx| {
             let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
-            let path = cx.update(|cx| snapshot.resolve_file_path(cx, true))?;
+            let path = cx.update(|cx| snapshot.resolve_file_path(true, cx))?;
             let prompt = match edit_format {
                 EditFormat::XmlTags => EditFileXmlPromptTemplate {
                     path,
