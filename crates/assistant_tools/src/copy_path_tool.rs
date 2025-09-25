@@ -96,9 +96,7 @@ impl Tool for CopyPathTool {
                 .and_then(|project_path| project.entry_for_path(&project_path, cx))
             {
                 Some(entity) => match project.find_project_path(&input.destination_path, cx) {
-                    Some(project_path) => {
-                        project.copy_entry(entity.id, None, project_path.path, cx)
-                    }
+                    Some(project_path) => project.copy_entry(entity.id, project_path, cx),
                     None => Task::ready(Err(anyhow!(
                         "Destination path {} was outside the project.",
                         input.destination_path

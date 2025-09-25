@@ -24,7 +24,7 @@ use std::{
     sync::Arc,
 };
 use task::{DebugScenario, TcpArgumentsTemplate, ZedDebugConfig};
-use util::archive::extract_zip;
+use util::{archive::extract_zip, rel_path::RelPath};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DapStatus {
@@ -44,7 +44,7 @@ pub trait DapDelegate: Send + Sync + 'static {
     fn fs(&self) -> Arc<dyn Fs>;
     fn output_to_console(&self, msg: String);
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
-    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
+    async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 

@@ -17,10 +17,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::stream::StreamExt as _;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use ui::SharedString;
 use util::ResultExt;
+use util::rel_path::RelPath;
 
 const DEFAULT_UI_TEXT: &str = "Editing file";
 
@@ -148,12 +150,11 @@ impl EditFileTool {
 
         // If any path component matches the local settings folder, then this could affect
         // the editor in ways beyond the project source, so prompt.
-        let local_settings_folder = paths::local_settings_folder_relative_path();
+        let local_settings_folder = paths::local_settings_folder_name();
         let path = Path::new(&input.path);
-        if path
-            .components()
-            .any(|component| component.as_os_str() == local_settings_folder.as_os_str())
-        {
+        if path.components().any(|component| {
+            component.as_os_str() == <_ as AsRef<OsStr>>::as_ref(&local_settings_folder)
+        }) {
             return event_stream.authorize(
                 format!("{} (local settings)", input.display_description),
                 cx,
@@ -162,6 +163,7 @@ impl EditFileTool {
 
         // It's also possible that the global config dir is configured to be inside the project,
         // so check for that edge case too.
+        // TODO this is broken when remoting
         if let Ok(canonical_path) = std::fs::canonicalize(&input.path)
             && canonical_path.starts_with(paths::config_dir())
         {
@@ -216,9 +218,7 @@ impl AgentTool for EditFileTool {
                         .read(cx)
                         .short_full_path_for_project_path(&project_path, cx)
                 })
-                .unwrap_or(Path::new(&input.path).into())
-                .to_string_lossy()
-                .to_string()
+                .unwrap_or(input.path.to_string_lossy().to_string())
                 .into(),
             Err(raw_input) => {
                 if let Some(input) =
@@ -235,9 +235,7 @@ impl AgentTool for EditFileTool {
                                     .read(cx)
                                     .short_full_path_for_project_path(&project_path, cx)
                             })
-                            .unwrap_or(Path::new(&input.path).into())
-                            .to_string_lossy()
-                            .to_string()
+                            .unwrap_or(input.path)
                             .into();
                     }
 
@@ -478,7 +476,7 @@ impl AgentTool for EditFileTool {
     ) -> Result<()> {
         event_stream.update_diff(cx.new(|cx| {
             Diff::finalized(
-                output.input_path,
+                output.input_path.to_string_lossy().to_string(),
                 Some(output.old_text.to_string()),
                 output.new_text,
                 self.language_registry.clone(),
@@ -542,10 +540,12 @@ fn resolve_path(
             let file_name = input
                 .path
                 .file_name()
+                .and_then(|file_name| file_name.to_str())
+                .and_then(|file_name| RelPath::unix(file_name).ok())
                 .context("Can't create file: invalid filename")?;
 
             let new_file_path = parent_project_path.map(|parent| ProjectPath {
-                path: Arc::from(parent.path.join(file_name)),
+                path: parent.path.join(file_name),
                 ..parent
             });
 
@@ -565,7 +565,7 @@ mod tests {
     use prompt_store::ProjectContext;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     #[gpui::test]
     async fn test_edit_nonexistent_file(cx: &mut TestAppContext) {
@@ -614,13 +614,13 @@ mod tests {
         let mode = &EditFileMode::Create;
 
         let result = test_resolve_path(mode, "root/new.txt", cx);
-        assert_resolved_path_eq(result.await, "new.txt");
+        assert_resolved_path_eq(result.await, rel_path("new.txt"));
 
         let result = test_resolve_path(mode, "new.txt", cx);
-        assert_resolved_path_eq(result.await, "new.txt");
+        assert_resolved_path_eq(result.await, rel_path("new.txt"));
 
         let result = test_resolve_path(mode, "dir/new.txt", cx);
-        assert_resolved_path_eq(result.await, "dir/new.txt");
+        assert_resolved_path_eq(result.await, rel_path("dir/new.txt"));
 
         let result = test_resolve_path(mode, "root/dir/subdir/existing.txt", cx);
         assert_eq!(
@@ -642,10 +642,10 @@ mod tests {
         let path_with_root = "root/dir/subdir/existing.txt";
         let path_without_root = "dir/subdir/existing.txt";
         let result = test_resolve_path(mode, path_with_root, cx);
-        assert_resolved_path_eq(result.await, path_without_root);
+        assert_resolved_path_eq(result.await, rel_path(path_without_root));
 
         let result = test_resolve_path(mode, path_without_root, cx);
-        assert_resolved_path_eq(result.await, path_without_root);
+        assert_resolved_path_eq(result.await, rel_path(path_without_root));
 
         let result = test_resolve_path(mode, "root/nonexistent.txt", cx);
         assert_eq!(
@@ -690,14 +690,10 @@ mod tests {
         cx.update(|cx| resolve_path(&input, project, cx))
     }
 
-    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &str) {
-        let actual = path
-            .expect("Should return valid path")
-            .path
-            .to_str()
-            .unwrap()
-            .replace("\\", "/"); // Naive Windows paths normalization
-        assert_eq!(actual, expected);
+    #[track_caller]
+    fn assert_resolved_path_eq(path: anyhow::Result<ProjectPath>, expected: &RelPath) {
+        let actual = path.expect("Should return valid path").path;
+        assert_eq!(actual.as_ref(), expected);
     }
 
     #[gpui::test]
@@ -1408,8 +1404,8 @@ mod tests {
             // Parent directory references - find_project_path resolves these
             (
                 "project/../other",
-                false,
-                "Path with .. is resolved by find_project_path",
+                true,
+                "Path with .. that goes outside of root directory",
             ),
             (
                 "project/./src/file.rs",
@@ -1437,16 +1433,18 @@ mod tests {
                 )
             });
 
+            cx.run_until_parked();
+
             if should_confirm {
                 stream_rx.expect_authorization().await;
             } else {
-                auth.await.unwrap();
                 assert!(
                     stream_rx.try_next().is_err(),
                     "Failed for case: {} - path: {} - expected no confirmation but got one",
                     description,
                     path
                 );
+                auth.await.unwrap();
             }
         }
     }

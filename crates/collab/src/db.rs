@@ -34,6 +34,7 @@ use std::{
 };
 use time::PrimitiveDateTime;
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use util::paths::PathStyle;
 use worktree_settings_file::LocalSettingsKind;
 
 #[cfg(test)]
@@ -598,6 +599,7 @@ pub struct Project {
     pub worktrees: BTreeMap<u64, Worktree>,
     pub repositories: Vec<proto::UpdateRepository>,
     pub language_servers: Vec<LanguageServer>,
+    pub path_style: PathStyle,
 }
 
 pub struct ProjectCollaborator {

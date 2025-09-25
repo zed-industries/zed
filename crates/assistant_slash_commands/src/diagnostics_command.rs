@@ -13,12 +13,12 @@ use project::{DiagnosticSummary, PathMatchCandidateSet, Project};
 use rope::Point;
 use std::{
     fmt::Write,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{Arc, atomic::AtomicBool},
 };
 use ui::prelude::*;
-use util::ResultExt;
-use util::paths::PathMatcher;
+use util::paths::{PathMatcher, PathStyle};
+use util::{ResultExt, rel_path::RelPath};
 use workspace::Workspace;
 
 use crate::create_label_for_command;
@@ -36,7 +36,7 @@ impl DiagnosticsSlashCommand {
         if query.is_empty() {
             let workspace = workspace.read(cx);
             let entries = workspace.recent_navigation_history(Some(10), cx);
-            let path_prefix: Arc<str> = Arc::default();
+            let path_prefix: Arc<RelPath> = RelPath::empty().into();
             Task::ready(
                 entries
                     .into_iter()
@@ -125,6 +125,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
+        let path_style = workspace.read(cx).project().read(cx).path_style(cx);
         let query = arguments.last().cloned().unwrap_or_default();
 
         let paths = self.search_paths(query.clone(), cancellation_flag.clone(), &workspace, cx);
@@ -134,11 +135,11 @@ impl SlashCommand for DiagnosticsSlashCommand {
                 .await
                 .into_iter()
                 .map(|path_match| {
-                    format!(
-                        "{}{}",
-                        path_match.path_prefix,
-                        path_match.path.to_string_lossy()
-                    )
+                    path_match
+                        .path_prefix
+                        .join(&path_match.path)
+                        .display(path_style)
+                        .to_string()
                 })
                 .collect();
 
@@ -183,9 +184,11 @@ impl SlashCommand for DiagnosticsSlashCommand {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
-        let options = Options::parse(arguments);
+        let project = workspace.read(cx).project();
+        let path_style = project.read(cx).path_style(cx);
+        let options = Options::parse(arguments, path_style);
 
-        let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
+        let task = collect_diagnostics(project.clone(), options, cx);
 
         window.spawn(cx, async move |_| {
             task.await?
@@ -204,14 +207,14 @@ struct Options {
 const INCLUDE_WARNINGS_ARGUMENT: &str = "--include-warnings";
 
 impl Options {
-    fn parse(arguments: &[String]) -> Self {
+    fn parse(arguments: &[String], path_style: PathStyle) -> Self {
         let mut include_warnings = false;
         let mut path_matcher = None;
         for arg in arguments {
             if arg == INCLUDE_WARNINGS_ARGUMENT {
                 include_warnings = true;
             } else {
-                path_matcher = PathMatcher::new(&[arg.to_owned()]).log_err();
+                path_matcher = PathMatcher::new(&[arg.to_owned()], path_style).log_err();
             }
         }
         Self {
@@ -237,21 +240,15 @@ fn collect_diagnostics(
         None
     };
 
+    let path_style = project.read(cx).path_style(cx);
     let glob_is_exact_file_match = if let Some(path) = options
         .path_matcher
         .as_ref()
         .and_then(|pm| pm.sources().first())
     {
-        PathBuf::try_from(path)
-            .ok()
-            .and_then(|path| {
-                project.read(cx).worktrees(cx).find_map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    let worktree_root_path = Path::new(worktree.root_name());
-                    let relative_path = path.strip_prefix(worktree_root_path).ok()?;
-                    worktree.absolutize(relative_path).ok()
-                })
-            })
+        project
+            .read(cx)
+            .find_project_path(Path::new(path), cx)
             .is_some()
     } else {
         false
@@ -263,9 +260,8 @@ fn collect_diagnostics(
         .diagnostic_summaries(false, cx)
         .flat_map(|(path, _, summary)| {
             let worktree = project.read(cx).worktree_for_id(path.worktree_id, cx)?;
-            let mut path_buf = PathBuf::from(worktree.read(cx).root_name());
-            path_buf.push(&path.path);
-            Some((path, path_buf, summary))
+            let full_path = worktree.read(cx).root_name().join(&path.path);
+            Some((path, full_path, summary))
         })
         .collect();
 
@@ -281,7 +277,7 @@ fn collect_diagnostics(
         let mut project_summary = DiagnosticSummary::default();
         for (project_path, path, summary) in diagnostic_summaries {
             if let Some(path_matcher) = &options.path_matcher
-                && !path_matcher.is_match(&path)
+                && !path_matcher.is_match(&path.as_std_path())
             {
                 continue;
             }
@@ -294,7 +290,7 @@ fn collect_diagnostics(
             }
 
             let last_end = output.text.len();
-            let file_path = path.to_string_lossy().to_string();
+            let file_path = path.display(path_style).to_string();
             if !glob_is_exact_file_match {
                 writeln!(&mut output.text, "{file_path}").unwrap();
             }

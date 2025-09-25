@@ -21,6 +21,14 @@ impl HighlightedLabel {
             highlight_indices,
         }
     }
+
+    pub fn text(&self) -> &str {
+        self.label.as_str()
+    }
+
+    pub fn highlight_indices(&self) -> &[usize] {
+        &self.highlight_indices
+    }
 }
 
 impl LabelCommon for HighlightedLabel {

@@ -230,9 +230,10 @@ collections = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 http_client = { workspace = true, features = ["test-support"] }
 lyon = { version = "1.0", features = ["extra"] }
+pretty_assertions.workspace = true
 rand.workspace = true
-unicode-segmentation.workspace = true
 reqwest_client = { workspace = true, features = ["test-support"] }
+unicode-segmentation.workspace = true
 util = { workspace = true, features = ["test-support"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]

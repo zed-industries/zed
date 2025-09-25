@@ -82,12 +82,12 @@ impl AgentTool for ReadFileTool {
         {
             match (input.start_line, input.end_line) {
                 (Some(start), Some(end)) => {
-                    format!("Read file `{}` (lines {}-{})", path.display(), start, end,)
+                    format!("Read file `{path}` (lines {}-{})", start, end,)
                 }
                 (Some(start), None) => {
-                    format!("Read file `{}` (from line {})", path.display(), start)
+                    format!("Read file `{path}` (from line {})", start)
                 }
-                _ => format!("Read file `{}`", path.display()),
+                _ => format!("Read file `{path}`"),
             }
             .into()
         } else {

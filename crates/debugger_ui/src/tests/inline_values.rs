@@ -7,7 +7,7 @@ use language::{Language, LanguageConfig, LanguageMatcher, tree_sitter_python, tr
 use project::{FakeFs, Project};
 use serde_json::json;
 use unindent::Unindent as _;
-use util::path;
+use util::{path, rel_path::rel_path};
 
 use crate::{
     debugger_panel::DebugPanel,
@@ -215,7 +215,7 @@ fn main() {
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();
@@ -1584,7 +1584,7 @@ def process_data(untyped_param, typed_param: int, another_typed: str):
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.py"), cx)
+            project.open_buffer((worktree_id, rel_path("main.py")), cx)
         })
         .await
         .unwrap();
@@ -2082,7 +2082,7 @@ async fn test_inline_values_util(
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, "main.rs"), cx)
+            project.open_buffer((worktree_id, rel_path("main.rs")), cx)
         })
         .await
         .unwrap();

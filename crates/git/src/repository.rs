@@ -12,12 +12,10 @@ use parking_lot::Mutex;
 use rope::Rope;
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::borrow::{Borrow, Cow};
+use std::borrow::Cow;
 use std::ffi::{OsStr, OsString};
 use std::io::prelude::*;
-use std::path::Component;
 use std::process::{ExitStatus, Stdio};
-use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
     future,
@@ -28,6 +26,8 @@ use std::{
 use sum_tree::MapSeekTarget;
 use thiserror::Error;
 use util::command::{new_smol_command, new_std_command};
+use util::paths::PathStyle;
+use util::rel_path::RelPath;
 use util::{ResultExt, paths};
 use uuid::Uuid;
 
@@ -719,16 +719,21 @@ impl GitRepository for RealGitRepository {
             let mut info_line = String::new();
             let mut newline = [b'\0'];
             for (path, status_code) in changes {
+                // git-show outputs `/`-delimited paths even on Windows.
+                let Some(rel_path) = RelPath::unix(path).log_err() else {
+                    continue;
+                };
+
                 match status_code {
                     StatusCode::Modified => {
-                        writeln!(&mut stdin, "{commit}:{}", path.display())?;
-                        writeln!(&mut stdin, "{parent_sha}:{}", path.display())?;
+                        writeln!(&mut stdin, "{commit}:{path}")?;
+                        writeln!(&mut stdin, "{parent_sha}:{path}")?;
                     }
                     StatusCode::Added => {
-                        writeln!(&mut stdin, "{commit}:{}", path.display())?;
+                        writeln!(&mut stdin, "{commit}:{path}")?;
                     }
                     StatusCode::Deleted => {
-                        writeln!(&mut stdin, "{parent_sha}:{}", path.display())?;
+                        writeln!(&mut stdin, "{parent_sha}:{path}")?;
                     }
                     _ => continue,
                 }
@@ -766,7 +771,7 @@ impl GitRepository for RealGitRepository {
                 }
 
                 files.push(CommitFile {
-                    path: path.into(),
+                    path: rel_path.into(),
                     old_text,
                     new_text,
                 })
@@ -824,7 +829,7 @@ impl GitRepository for RealGitRepository {
                 .current_dir(&working_directory?)
                 .envs(env.iter())
                 .args(["checkout", &commit, "--"])
-                .args(paths.iter().map(|path| path.as_ref()))
+                .args(paths.iter().map(|path| path.as_unix_str()))
                 .output()
                 .await?;
             anyhow::ensure!(
@@ -846,13 +851,11 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 fn logic(repo: &git2::Repository, path: &RepoPath) -> Result<Option<String>> {
                     // This check is required because index.get_path() unwraps internally :(
-                    check_path_to_repo_path_errors(path)?;
-
                     let mut index = repo.index()?;
                     index.read(false)?;
 
                     const STAGE_NORMAL: i32 = 0;
-                    let oid = match index.get_path(path, STAGE_NORMAL) {
+                    let oid = match index.get_path(path.as_std_path(), STAGE_NORMAL) {
                         Some(entry) if entry.mode != GIT_MODE_SYMLINK => entry.id,
                         _ => return Ok(None),
                     };
@@ -876,7 +879,7 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let repo = repo.lock();
                 let head = repo.head().ok()?.peel_to_tree().log_err()?;
-                let entry = head.get_path(&path).ok()?;
+                let entry = head.get_path(path.as_std_path()).ok()?;
                 if entry.filemode() == i32::from(git2::FileMode::Link) {
                     return None;
                 }
@@ -918,7 +921,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory)
                         .envs(env.iter())
                         .args(["update-index", "--add", "--cacheinfo", "100644", sha])
-                        .arg(path.to_unix_style())
+                        .arg(path.as_unix_str())
                         .output()
                         .await?;
 
@@ -933,7 +936,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory)
                         .envs(env.iter())
                         .args(["update-index", "--force-remove"])
-                        .arg(path.to_unix_style())
+                        .arg(path.as_unix_str())
                         .output()
                         .await?;
                     anyhow::ensure!(
@@ -1251,7 +1254,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory?)
                         .envs(env.iter())
                         .args(["update-index", "--add", "--remove", "--"])
-                        .args(paths.iter().map(|p| p.to_unix_style()))
+                        .args(paths.iter().map(|p| p.as_unix_str()))
                         .output()
                         .await?;
                     anyhow::ensure!(
@@ -1280,7 +1283,7 @@ impl GitRepository for RealGitRepository {
                         .current_dir(&working_directory?)
                         .envs(env.iter())
                         .args(["reset", "--quiet", "--"])
-                        .args(paths.iter().map(|p| p.as_ref()))
+                        .args(paths.iter().map(|p| p.as_std_path()))
                         .output()
                         .await?;
 
@@ -1309,7 +1312,7 @@ impl GitRepository for RealGitRepository {
                     .args(["stash", "push", "--quiet"])
                     .arg("--include-untracked");
 
-                cmd.args(paths.iter().map(|p| p.as_ref()));
+                cmd.args(paths.iter().map(|p| p.as_unix_str()));
 
                 let output = cmd.output().await?;
 
@@ -1812,10 +1815,10 @@ fn git_status_args(path_prefixes: &[RepoPath]) -> Vec<OsString> {
         OsString::from("-z"),
     ];
     args.extend(path_prefixes.iter().map(|path_prefix| {
-        if path_prefix.0.as_ref() == Path::new("") {
+        if path_prefix.is_empty() {
             Path::new(".").into()
         } else {
-            path_prefix.as_os_str().into()
+            path_prefix.as_std_path().into()
         }
     }));
     args
@@ -2066,99 +2069,71 @@ async fn run_askpass_command(
     }
 }
 
-pub static WORK_DIRECTORY_REPO_PATH: LazyLock<RepoPath> =
-    LazyLock::new(|| RepoPath(Path::new("").into()));
-
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(pub Arc<Path>);
+pub struct RepoPath(pub Arc<RelPath>);
 
 impl RepoPath {
-    pub fn new(path: PathBuf) -> Self {
-        debug_assert!(path.is_relative(), "Repo paths must be relative");
-
-        RepoPath(path.into())
+    pub fn new<S: AsRef<str> + ?Sized>(s: &S) -> Result<Self> {
+        let rel_path = RelPath::unix(s.as_ref())?;
+        Ok(rel_path.into())
     }
 
-    pub fn from_str(path: &str) -> Self {
-        let path = Path::new(path);
-        debug_assert!(path.is_relative(), "Repo paths must be relative");
-
-        RepoPath(path.into())
+    pub fn from_proto(proto: &str) -> Result<Self> {
+        let rel_path = RelPath::from_proto(proto)?;
+        Ok(rel_path.into())
     }
 
-    pub fn to_unix_style(&self) -> Cow<'_, OsStr> {
-        #[cfg(target_os = "windows")]
-        {
-            use std::ffi::OsString;
-
-            let path = self.0.as_os_str().to_string_lossy().replace("\\", "/");
-            Cow::Owned(OsString::from(path))
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            Cow::Borrowed(self.0.as_os_str())
-        }
+    pub fn from_std_path(path: &Path, path_style: PathStyle) -> Result<Self> {
+        let rel_path = RelPath::new(path, path_style)?;
+        Ok(Self(rel_path.as_ref().into()))
     }
 }
 
-impl std::fmt::Display for RepoPath {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.to_string_lossy().fmt(f)
+#[cfg(any(test, feature = "test-support"))]
+pub fn repo_path<S: AsRef<str> + ?Sized>(s: &S) -> RepoPath {
+    RepoPath(RelPath::unix(s.as_ref()).unwrap().into())
+}
+
+impl From<&RelPath> for RepoPath {
+    fn from(value: &RelPath) -> Self {
+        RepoPath(value.into())
     }
 }
 
-impl From<&Path> for RepoPath {
-    fn from(value: &Path) -> Self {
-        RepoPath::new(value.into())
+impl<'a> From<Cow<'a, RelPath>> for RepoPath {
+    fn from(value: Cow<'a, RelPath>) -> Self {
+        value.as_ref().into()
     }
 }
 
-impl From<Arc<Path>> for RepoPath {
-    fn from(value: Arc<Path>) -> Self {
+impl From<Arc<RelPath>> for RepoPath {
+    fn from(value: Arc<RelPath>) -> Self {
         RepoPath(value)
-    }
-}
-
-impl From<PathBuf> for RepoPath {
-    fn from(value: PathBuf) -> Self {
-        RepoPath::new(value)
-    }
-}
-
-impl From<&str> for RepoPath {
-    fn from(value: &str) -> Self {
-        Self::from_str(value)
     }
 }
 
 impl Default for RepoPath {
     fn default() -> Self {
-        RepoPath(Path::new("").into())
-    }
-}
-
-impl AsRef<Path> for RepoPath {
-    fn as_ref(&self) -> &Path {
-        self.0.as_ref()
+        RepoPath(RelPath::empty().into())
     }
 }
 
 impl std::ops::Deref for RepoPath {
-    type Target = Path;
+    type Target = RelPath;
 
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl Borrow<Path> for RepoPath {
-    fn borrow(&self) -> &Path {
-        self.0.as_ref()
-    }
-}
+// impl AsRef<Path> for RepoPath {
+//     fn as_ref(&self) -> &Path {
+//         RelPath::as_ref(&self.0)
+//     }
+// }
 
 #[derive(Debug)]
-pub struct RepoPathDescendants<'a>(pub &'a Path);
+pub struct RepoPathDescendants<'a>(pub &'a RepoPath);
 
 impl MapSeekTarget<RepoPath> for RepoPathDescendants<'_> {
     fn cmp_cursor(&self, key: &RepoPath) -> Ordering {
@@ -2244,35 +2219,6 @@ fn parse_upstream_track(upstream_track: &str) -> Result<UpstreamTracking> {
     }))
 }
 
-fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
-    match relative_file_path.components().next() {
-        None => anyhow::bail!("repo path should not be empty"),
-        Some(Component::Prefix(_)) => anyhow::bail!(
-            "repo path `{}` should be relative, not a windows prefix",
-            relative_file_path.to_string_lossy()
-        ),
-        Some(Component::RootDir) => {
-            anyhow::bail!(
-                "repo path `{}` should be relative",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        Some(Component::CurDir) => {
-            anyhow::bail!(
-                "repo path `{}` should not start with `.`",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        Some(Component::ParentDir) => {
-            anyhow::bail!(
-                "repo path `{}` should not start with `..`",
-                relative_file_path.to_string_lossy()
-            )
-        }
-        _ => Ok(()),
-    }
-}
-
 fn checkpoint_author_envs() -> HashMap<String, String> {
     HashMap::from_iter([
         ("GIT_AUTHOR_NAME".to_string(), "Zed".to_string()),
@@ -2299,12 +2245,9 @@ mod tests {
 
         let repo =
             RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
-        repo.stage_paths(
-            vec![RepoPath::from_str("file")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
         repo.commit(
             "Initial commit".into(),
             None,
@@ -2328,12 +2271,9 @@ mod tests {
         smol::fs::write(&file_path, "modified after checkpoint")
             .await
             .unwrap();
-        repo.stage_paths(
-            vec![RepoPath::from_str("file")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
+        repo.stage_paths(vec![repo_path("file")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
         repo.commit(
             "Commit after checkpoint".into(),
             None,
@@ -2466,12 +2406,9 @@ mod tests {
             RealGitRepository::new(&repo_dir.path().join(".git"), None, cx.executor()).unwrap();
 
         // initial commit
-        repo.stage_paths(
-            vec![RepoPath::from_str("main.rs")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
+        repo.stage_paths(vec![repo_path("main.rs")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
         repo.commit(
             "Initial commit".into(),
             None,

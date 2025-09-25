@@ -399,7 +399,7 @@ mod tests {
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::{AppState, Workspace};
 
     use crate::task_contexts;
@@ -479,8 +479,9 @@ mod tests {
 
         let buffer1 = workspace
             .update(cx, |this, cx| {
-                this.project()
-                    .update(cx, |this, cx| this.open_buffer((worktree_id, "a.ts"), cx))
+                this.project().update(cx, |this, cx| {
+                    this.open_buffer((worktree_id, rel_path("a.ts")), cx)
+                })
             })
             .await
             .unwrap();
@@ -493,7 +494,7 @@ mod tests {
         let buffer2 = workspace
             .update(cx, |this, cx| {
                 this.project().update(cx, |this, cx| {
-                    this.open_buffer((worktree_id, "rust/b.rs"), cx)
+                    this.open_buffer((worktree_id, rel_path("rust/b.rs")), cx)
                 })
             })
             .await

@@ -596,7 +596,7 @@ impl RenderOnce for ButtonLike {
                 ButtonSize::Default | ButtonSize::Compact => {
                     this.px(DynamicSpacing::Base04.rems(cx))
                 }
-                ButtonSize::None => this,
+                ButtonSize::None => this.px_px(),
             })
             .border_color(style.enabled(self.layer, cx).border_color)
             .bg(style.enabled(self.layer, cx).background)
