@@ -31,6 +31,8 @@ pub struct PathMatch {
     pub distance_to_relative_ancestor: usize,
 }
 
+// This has only one implementation. It's here to invert dependencies so fuzzy
+// does not need to depend on project. Though we also use it to make testing easier.
 pub trait PathMatchCandidateSet<'a>: Send + Sync {
     type Candidates: Iterator<Item = PathMatchCandidate<'a>>;
     fn id(&self) -> usize;
@@ -161,7 +163,6 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
     // This runs num_cpu parallel searches. Each search is going through all candidate sets
     // Each parallel search goes through one segment of the every candidate set. The segments are
     // not overlapping.
-
     executor
         .scoped(|scope| {
             for (segment_idx, (results, matcher)) in segment_results
@@ -262,12 +263,104 @@ fn distance_between_paths(path: &RelPath, relative_to: &RelPath) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use util::rel_path::RelPath;
+    use std::{
+        iter,
+        sync::{Arc, atomic::AtomicBool},
+    };
+
+    use gpui::TestAppContext;
+    use util::{paths::PathStyle, rel_path::RelPath};
+    use util_macros::perf;
+
+    use crate::{CharBag, PathMatchCandidate, PathMatchCandidateSet};
 
     use super::distance_between_paths;
 
     #[test]
     fn test_distance_between_paths_empty() {
         distance_between_paths(RelPath::empty(), RelPath::empty());
+    }
+
+    struct TestCandidateSet<'a> {
+        prefix: Arc<RelPath>,
+        candidates: Vec<PathMatchCandidate<'a>>,
+        path_style: PathStyle,
+    }
+
+    impl<'a> PathMatchCandidateSet<'a> for TestCandidateSet<'a> {
+        type Candidates = std::vec::IntoIter<PathMatchCandidate<'a>>;
+
+        fn id(&self) -> usize {
+            0
+        }
+        fn len(&self) -> usize {
+            self.candidates.len()
+        }
+        fn is_empty(&self) -> bool {
+            self.candidates.is_empty()
+        }
+        fn root_is_file(&self) -> bool {
+            true // TODO: swap this
+        }
+        fn prefix(&self) -> Arc<RelPath> {
+            self.prefix.clone()
+        }
+        fn candidates(&self, start: usize) -> Self::Candidates {
+            self.candidates[start..].iter().cloned()
+        }
+        fn path_style(&self) -> PathStyle {
+            self.path_style
+        }
+    }
+
+    #[perf]
+    #[gpui::test]
+    async fn test_path_matcher(cx: &mut TestAppContext) {
+        let mut candidates = [
+            "blue", "red", "purple", "pink", "green", "yellow", "magenta", "orange", "ocean",
+            "navy", "brown",
+        ];
+        let set = TestCandidateSet {
+            prefix: RelPath::new("a/b").unwrap(),
+            candidates,
+                .take(1_000_000)
+                .collect::<Vec<&str>>()
+                .into_iter()
+                .map(|s| PathMatchCandidate {
+                    is_dir: false,
+                    path: RelPath::new(s).unwrap().into(),
+                    char_bag: CharBag::from_iter(s.to_lowercase().chars()),
+                })
+                .collect(),
+            path_style: PathStyle::Windows,
+        };
+        let candidate_sets = vec![set];
+
+        let cancellation_flag = AtomicBool::new(false);
+        let executor = cx.background_executor.clone();
+        let query = "bl";
+        let matches = cx
+            .foreground_executor
+            .spawn(async move {
+                super::match_path_sets(
+                    candidate_sets.as_slice(),
+                    query,
+                    &None,
+                    false,
+                    100,
+                    &cancellation_flag,
+                    executor,
+                )
+                .await
+            })
+            .await;
+
+        assert!(
+            matches
+                .iter()
+                .map(|s| s.path.as_str())
+                .collect::<Vec<_>>()
+                .contains(&"blue"),
+        );
     }
 }
