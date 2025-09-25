@@ -16,6 +16,18 @@ pub struct EditPrediction {
     pub edit_preview: EditPreview,
 }
 
+impl std::fmt::Debug for EditPrediction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EditPrediction")
+            .field("id", &self.id)
+            .field("path", &self.path)
+            .field("edits", &self.edits)
+            .field("snapshot", &"<snapshot>")
+            .field("edit_preview", &"<preview>")
+            .finish()
+    }
+}
+
 impl EditPrediction {
     pub fn interpolate(
         &self,

@@ -131,6 +131,7 @@ impl CurrentEditPrediction {
 }
 
 /// A prediction from the perspective of a buffer.
+#[derive(Debug)]
 enum BufferEditPrediction<'a> {
     Local {
         prediction: &'a EditPrediction,
@@ -402,7 +403,7 @@ impl Zeta {
         };
     }
 
-    fn refresh_prediction(
+    pub fn refresh_prediction(
         &mut self,
         project: &Entity<Project>,
         buffer: &Entity<Buffer>,
@@ -443,8 +444,7 @@ impl Zeta {
         })
     }
 
-    // todo! make private, debug view should call refresh
-    pub fn request_prediction(
+    fn request_prediction(
         &mut self,
         project: &Entity<Project>,
         buffer: &Entity<Buffer>,
@@ -998,13 +998,113 @@ mod tests {
     };
     use indoc::indoc;
     use language::{LanguageServerId, OffsetRangeExt as _};
+    use pretty_assertions::{assert_eq, assert_matches};
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
     use util::path;
     use uuid::Uuid;
 
-    use crate::Zeta;
+    use crate::{BufferEditPrediction, Zeta};
+
+    #[gpui::test]
+    async fn test_current_state(cx: &mut TestAppContext) {
+        let (zeta, mut req_rx) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "1.txt": "Hello!\nHow\nBye",
+                "2.txt": "Hola!\nComo\nAdios"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.register_project(&project, cx);
+        });
+
+        let buffer1 = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/1.txt"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let snapshot1 = buffer1.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot1.anchor_before(language::Point::new(1, 3));
+
+        // Prediction for current file
+
+        let prediction_task = zeta.update(cx, |zeta, cx| {
+            zeta.refresh_prediction(&project, &buffer1, position, cx)
+        });
+        let (_request, respond_tx) = req_rx.next().await.unwrap();
+        respond_tx
+            .send(predict_edits_v3::PredictEditsResponse {
+                request_id: Uuid::new_v4(),
+                edits: vec![predict_edits_v3::Edit {
+                    path: Path::new(path!("root/1.txt")).into(),
+                    range: 0..snapshot1.len(),
+                    content: "Hello!\nHow are you?\nBye".into(),
+                }],
+                debug_info: None,
+            })
+            .unwrap();
+        prediction_task.await.unwrap();
+
+        zeta.read_with(cx, |zeta, cx| {
+            let prediction = zeta
+                .current_prediction_for_buffer(&buffer1, &project, cx)
+                .unwrap();
+            assert_matches!(prediction, BufferEditPrediction::Local { .. });
+        });
+
+        // Prediction for another file
+
+        let prediction_task = zeta.update(cx, |zeta, cx| {
+            zeta.refresh_prediction(&project, &buffer1, position, cx)
+        });
+        let (_request, respond_tx) = req_rx.next().await.unwrap();
+        respond_tx
+            .send(predict_edits_v3::PredictEditsResponse {
+                request_id: Uuid::new_v4(),
+                edits: vec![predict_edits_v3::Edit {
+                    path: Path::new(path!("root/2.txt")).into(),
+                    range: 0..snapshot1.len(),
+                    content: "Hola!\nComo estas?\nAdios".into(),
+                }],
+                debug_info: None,
+            })
+            .unwrap();
+        prediction_task.await.unwrap();
+
+        zeta.read_with(cx, |zeta, cx| {
+            let prediction = zeta
+                .current_prediction_for_buffer(&buffer1, &project, cx)
+                .unwrap();
+            assert_matches!(
+                prediction,
+                BufferEditPrediction::Jump { path, .. } if path.as_ref() == Path::new(path!("root/2.txt"))
+            );
+        });
+
+        let buffer2 = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/2.txt"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+
+        zeta.read_with(cx, |zeta, cx| {
+            let prediction = zeta
+                .current_prediction_for_buffer(&buffer2, &project, cx)
+                .unwrap();
+            assert_matches!(prediction, BufferEditPrediction::Local { .. });
+        });
+    }
 
     #[gpui::test]
     async fn test_simple_request(cx: &mut TestAppContext) {
@@ -1285,6 +1385,7 @@ mod tests {
 
             let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
             let zeta = Zeta::global(&client, &user_store, cx);
+
             (zeta, req_rx)
         })
     }

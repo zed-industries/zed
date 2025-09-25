@@ -110,10 +110,10 @@ impl EditPredictionProvider for ZetaEditPredictionProvider {
         }
 
         if let Some(current) = zeta.current_prediction_for_buffer(&buffer, &self.project, cx)
+            // todo! is it correct to refresh when we had a jump?
             && let Some(local) = current.as_local()
             && local.interpolate(buffer.read(cx)).is_some()
         {
-            // todo! should we always refresh when it's a jump?
             return;
         }
 
