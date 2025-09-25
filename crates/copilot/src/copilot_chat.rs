@@ -799,13 +799,13 @@ async fn stream_completion(
                             }
                             ChatMessageContent::Multipart(parts) => {
                                 parts.iter().map(|part| match part {
-                                    ChatMessagePart::Text(text) => json!({
+                                    ChatMessagePart::Text { text } => json!({
                                         "type": "input_text",
                                         "text": text.clone()
                                     }),
-                                    ChatMessagePart::Image { image_url, .. } => json!({
+                                    ChatMessagePart::Image { image_url } => json!({
                                         "type": "input_image",
-                                        "image_url": image_url.clone()
+                                        "image_url": image_url.url.clone()
                                     }),
                                 }).collect()
                             }
@@ -816,20 +816,38 @@ async fn stream_completion(
                         }))
                     }
                     ChatMessage::Assistant { content, .. } => {
+                        let text = match content {
+                            ChatMessageContent::Plain(text) => text.clone(),
+                            ChatMessageContent::Multipart(parts) => {
+                                parts.iter().filter_map(|part| match part {
+                                    ChatMessagePart::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                }).collect::<Vec<_>>().join(" ")
+                            }
+                        };
                         Some(json!({
                             "role": "assistant",
                             "content": [json!({
                                 "type": "input_text",
-                                "text": content.to_string()
+                                "text": text
                             })]
                         }))
                     }
                     ChatMessage::Tool { content, .. } => {
+                        let text = match content {
+                            ChatMessageContent::Plain(text) => text.clone(),
+                            ChatMessageContent::Multipart(parts) => {
+                                parts.iter().filter_map(|part| match part {
+                                    ChatMessagePart::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                }).collect::<Vec<_>>().join(" ")
+                            }
+                        };
                         Some(json!({
                             "role": "tool",
                             "content": [json!({
                                 "type": "input_text",
-                                "text": content.to_string()
+                                "text": text
                             })]
                         }))
                     }
@@ -841,9 +859,42 @@ async fn stream_completion(
             let input_text = request.messages.iter()
                 .filter_map(|msg| match msg {
                     ChatMessage::System { .. } => None, // Skip system messages
-                    ChatMessage::User { content } => Some(content.to_string()),
-                    ChatMessage::Assistant { content, .. } => Some(format!("Assistant: {}", content.to_string())),
-                    ChatMessage::Tool { content, .. } => Some(format!("Tool: {}", content.to_string())),
+                    ChatMessage::User { content } => {
+                        let text = match content {
+                            ChatMessageContent::Plain(text) => text.clone(),
+                            ChatMessageContent::Multipart(parts) => {
+                                parts.iter().filter_map(|part| match part {
+                                    ChatMessagePart::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                }).collect::<Vec<_>>().join(" ")
+                            }
+                        };
+                        Some(text)
+                    },
+                    ChatMessage::Assistant { content, .. } => {
+                        let text = match content {
+                            ChatMessageContent::Plain(text) => text.clone(),
+                            ChatMessageContent::Multipart(parts) => {
+                                parts.iter().filter_map(|part| match part {
+                                    ChatMessagePart::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                }).collect::<Vec<_>>().join(" ")
+                            }
+                        };
+                        Some(format!("Assistant: {}", text))
+                    },
+                    ChatMessage::Tool { content, .. } => {
+                        let text = match content {
+                            ChatMessageContent::Plain(text) => text.clone(),
+                            ChatMessageContent::Multipart(parts) => {
+                                parts.iter().filter_map(|part| match part {
+                                    ChatMessagePart::Text { text } => Some(text.as_str()),
+                                    _ => None,
+                                }).collect::<Vec<_>>().join(" ")
+                            }
+                        };
+                        Some(format!("Tool: {}", text))
+                    },
                 })
                 .collect::<Vec<_>>()
                 .join("\n\n");
