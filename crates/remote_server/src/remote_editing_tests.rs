@@ -849,6 +849,8 @@ async fn test_remote_resolve_path_in_buffer(
 
     let worktree2_id = cx.update(|cx| worktree2.read(cx).id());
 
+    cx.run_until_parked();
+
     let buffer2 = project
         .update(cx, |project, cx| {
             project.open_buffer((worktree2_id, rel_path("src/lib.rs")), cx)
