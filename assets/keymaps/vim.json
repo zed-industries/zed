@@ -413,6 +413,12 @@
     }
   },
   {
+    "context": "(vim_mode == normal || vim_mode == helix_normal) && !menu && vim_search_active == true",
+    "bindings": {
+      "escape": "vim::Cancel"
+    }
+  },
+  {
     "context": "vim_mode == helix_normal && !menu",
     "bindings": {
       "i": "vim::HelixInsert",
