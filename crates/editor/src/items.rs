@@ -190,7 +190,7 @@ impl FollowableItem for Editor {
             self.buffer.update(cx, |buffer, cx| {
                 buffer.set_active_selections(
                     &self.selections.disjoint_anchors_arc(),
-                    self.selections.line_mode,
+                    self.selections.line_mode(),
                     self.cursor_shape,
                     cx,
                 );

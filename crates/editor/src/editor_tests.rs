@@ -5370,8 +5370,8 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
         «HeLlO, wOrLD!ˇ»
     "});
 
-    // Test selections with `line_mode = true`.
-    cx.update_editor(|editor, _window, _cx| editor.selections.line_mode = true);
+    // Test selections with `line_mode() = true`.
+    cx.update_editor(|editor, _window, _cx| editor.selections.set_line_mode(true));
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over

@@ -666,9 +666,7 @@ pub(crate) fn find_url(
 ) -> Option<(Range<text::Anchor>, String)> {
     const LIMIT: usize = 2048;
 
-    let Ok(snapshot) = buffer.read_with(&cx, |buffer, _| buffer.snapshot()) else {
-        return None;
-    };
+    let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot()).ok()?;
 
     let offset = position.to_offset(&snapshot);
     let mut token_start = offset;
