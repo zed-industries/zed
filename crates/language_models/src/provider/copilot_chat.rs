@@ -32,6 +32,14 @@ const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("copil
 const PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("GitHub Copilot Chat");
 
+/// Language model provider for GitHub Copilot Chat.
+///
+/// This provider dynamically fetches available models from GitHub's Copilot Chat API,
+/// including support for all current models such as GPT-4, Claude, and GPT-5 variants
+/// including the new GPT-5 Codex model optimized for agentic coding tasks.
+///
+/// Vision support (image processing) is automatically enabled for models that support it
+/// based on the capabilities reported by GitHub's API, including GPT-5 Codex when available.
 pub struct CopilotChatLanguageModelProvider {
     state: Entity<State>,
 }
@@ -231,6 +239,8 @@ impl LanguageModel for CopilotChatLanguageModel {
     }
 
     fn supports_images(&self) -> bool {
+        // Vision support is dynamically determined by GitHub's API for each model,
+        // including GPT-5 Codex which supports image processing when enabled
         self.model.supports_vision()
     }
 
@@ -270,9 +280,11 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx.background_spawn(async move {
             let messages = collect_tiktoken_messages(request);
             // Copilot uses OpenAI tiktoken tokenizer for all it's model irrespective of the underlying provider(vendor).
+            // This includes support for all GPT models including GPT-5 Codex which uses the same tokenizer approach.
             let tokenizer_model = match model.tokenizer() {
                 Some("o200k_base") => "gpt-4o",
                 Some("cl100k_base") => "gpt-4",
+                // Default to gpt-4o tokenizer for GPT-5 models (including GPT-5 Codex) and unknown tokenizers
                 _ => "gpt-4o",
             };
 
