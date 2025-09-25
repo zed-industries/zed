@@ -1,4 +1,4 @@
-use std::{borrow::Cow, sync::Mutex};
+use std::sync::Mutex;
 
 pub static MATCHERS: Mutex<Vec<nucleo::Matcher>> = Mutex::new(Vec::new());
 pub fn get_matcher(config: nucleo::Config) -> nucleo::Matcher {
