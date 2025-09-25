@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use client::{Client, UserStore, zed_urls};
 use cloud_llm_client::{Plan, PlanV1, PlanV2};
-use feature_flags::{BillingV2FeatureFlag, FeatureFlagAppExt};
 use gpui::{AnyElement, App, Entity, IntoElement, RenderOnce, Window};
 use ui::{CommonAnimationExt, Divider, Vector, VectorName, prelude::*};
 
@@ -50,9 +49,7 @@ impl AiUpsellCard {
 
 impl RenderOnce for AiUpsellCard {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let is_v2_plan = self
-            .user_plan
-            .map_or(cx.has_flag::<BillingV2FeatureFlag>(), |plan| plan.is_v2());
+        let is_v2_plan = self.user_plan.map_or(true, |plan| plan.is_v2());
 
         let pro_section = v_flex()
             .flex_grow()
@@ -175,7 +172,7 @@ impl RenderOnce for AiUpsellCard {
                     .child(Label::new("Try Zed AI").size(LabelSize::Large))
                     .map(|this| {
                         if self.account_too_young {
-                            this.child(YoungAccountBanner::new(is_v2_plan)).child(
+                            this.child(YoungAccountBanner).child(
                                 v_flex()
                                     .mt_2()
                                     .gap_1()
