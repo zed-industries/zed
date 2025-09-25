@@ -79,7 +79,7 @@ impl SchemaStore {
         workspace::with_active_or_new_workspace(cx, |_workspace, window, cx| {
             cx.spawn_in(window, async move |workspace, cx| {
                 let res = async move {
-                    let json = app_state.languages.language_for_name("JSON").await.ok();
+                    let json = app_state.languages.language_for_name("JSONC").await.ok();
                     let json_schema_content =
                         resolve_schema_request_inner(&app_state.languages, &schema_path, cx)?;
                     let json_schema_content = serde_json::to_string_pretty(&json_schema_content)
@@ -96,6 +96,11 @@ impl SchemaStore {
                         buffer.update(cx, |buffer, cx| {
                             buffer.set_language(json, cx);
                             buffer.edit([(0..0, json_schema_content)], None, cx);
+                            buffer.edit(
+                                [(0..0, format!("// {} JSON Schema\n", schema_path))],
+                                None,
+                                cx,
+                            );
                         });
 
                         workspace.add_item_to_active_pane(
