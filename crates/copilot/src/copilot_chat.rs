@@ -42,8 +42,13 @@ impl CopilotChatConfiguration {
         }
     }
 
-    pub fn api_url_from_endpoint(&self, endpoint: &str) -> String {
-        format!("{}/chat/completions", endpoint)
+    pub fn api_url_from_endpoint(&self, endpoint: &str, model: &str) -> String {
+        // GPT-5 Codex uses the Responses API instead of Chat Completions API
+        if model == "gpt-5-codex" {
+            format!("{}/responses", endpoint)
+        } else {
+            format!("{}/chat/completions", endpoint)
+        }
     }
 
     pub fn models_url_from_endpoint(&self, endpoint: &str) -> String {
@@ -585,7 +590,7 @@ impl CopilotChat {
             }
         };
 
-        let api_url = configuration.api_url_from_endpoint(&token.api_endpoint);
+        let api_url = configuration.api_url_from_endpoint(&token.api_endpoint, &request.model);
         stream_completion(
             client.clone(),
             token.api_key,
