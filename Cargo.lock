@@ -8706,7 +8706,6 @@ dependencies = [
  "settings",
  "smol",
  "strum 0.27.1",
- "theme",
  "thiserror 2.0.12",
  "tiktoken-rs",
  "tokio",
