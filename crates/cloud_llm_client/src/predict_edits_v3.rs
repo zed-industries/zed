@@ -48,6 +48,7 @@ pub enum PromptFormat {
     #[default]
     MarkedExcerpt,
     LabeledSections,
+    /// Prompt format intended for use via zeta_cli
     OnlySnippets,
 }
 

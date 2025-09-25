@@ -54,7 +54,8 @@ pub fn system_prompt(format: PromptFormat) -> &'static str {
     match format {
         PromptFormat::MarkedExcerpt => MARKED_EXCERPT_SYSTEM_PROMPT,
         PromptFormat::LabeledSections => LABELED_SECTIONS_SYSTEM_PROMPT,
-        PromptFormat::OnlySnippets => "todo!",
+        // only intended for use via zeta_cli
+        PromptFormat::OnlySnippets => "",
     }
 }
 

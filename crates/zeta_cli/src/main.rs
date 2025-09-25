@@ -275,7 +275,6 @@ async fn get_context(
                         .await?;
 
                     let planned_prompt = cloud_zeta2_prompt::PlannedPrompt::populate(&request)?;
-                    // TODO: Output the section label ranges
                     let prompt_string = planned_prompt.to_prompt_string()?.0;
                     match zeta2_args.output_format {
                         OutputFormat::Prompt => anyhow::Ok(prompt_string),
