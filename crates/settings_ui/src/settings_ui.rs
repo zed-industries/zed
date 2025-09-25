@@ -1,11 +1,12 @@
 //! # settings_ui
-use std::{rc::Rc, sync::Arc};
+use std::{ops::Range, rc::Rc, sync::Arc};
 
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, IntoElement, ReadGlobal as _, Render, Window,
-    WindowHandle, WindowOptions, actions, div, px, size,
+    App, AppContext as _, Context, Div, Entity, IntoElement, ReadGlobal as _, Render, UniformList,
+    UniformListScrollHandle, Window, WindowHandle, WindowOptions, actions, div, px, size,
+    uniform_list,
 };
 use project::WorktreeId;
 use settings::{SettingsContent, SettingsStore};
@@ -13,16 +14,17 @@ use std::path::Path;
 use ui::{
     ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color,
     FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label, LabelCommon as _,
-    LabelSize, ParentElement, SharedString, StatefulInteractiveElement as _, Styled, Switch,
-    v_flex,
+    LabelSize, ListItem, ParentElement, SharedString, StatefulInteractiveElement as _, Styled,
+    StyledTypography, Switch,
 };
 
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
         SettingsPage {
             title: "General Page",
+            expanded: true,
             items: vec![
-                SettingsPageItem::SectionHeader("General Section"),
+                SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
@@ -47,10 +49,12 @@ fn user_settings_data() -> Vec<SettingsPage> {
                         )
                     }),
                 }),
+                SettingsPageItem::SectionHeader("Privacy"),
             ],
         },
         SettingsPage {
             title: "Project",
+            expanded: true,
             items: vec![
                 SettingsPageItem::SectionHeader("Worktree Settings Content"),
                 SettingsPageItem::SettingItem(SettingItem {
@@ -74,6 +78,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
 fn project_settings_data() -> Vec<SettingsPage> {
     vec![SettingsPage {
         title: "Project",
+        expanded: true,
         items: vec![
             SettingsPageItem::SectionHeader("Worktree Settings Content"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -154,12 +159,30 @@ pub struct SettingsWindow {
     pages: Vec<SettingsPage>,
     search: Entity<Editor>,
     current_page: usize, // Index into pages - should probably be (usize, Option<usize>) for section + page
+    navbar_entries: Vec<NavBarEntry>,
+    list_handle: UniformListScrollHandle,
+}
+
+#[derive(Debug)]
+struct NavBarEntry {
+    title: &'static str,
+    is_root: bool,
 }
 
 #[derive(Clone)]
 struct SettingsPage {
     title: &'static str,
+    expanded: bool,
     items: Vec<SettingsPageItem>,
+}
+
+impl SettingsPage {
+    fn section_headers(&self) -> impl Iterator<Item = &'static str> {
+        self.items.iter().filter_map(|item| match item {
+            SettingsPageItem::SectionHeader(header) => Some(*header),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -243,7 +266,9 @@ impl SettingsWindow {
             ],
             current_file: current_file,
             pages: vec![],
+            navbar_entries: vec![],
             current_page: 0,
+            list_handle: UniformListScrollHandle::default(),
             search,
         };
         cx.observe_global_in::<SettingsStore>(window, move |_, _, cx| {
@@ -251,17 +276,67 @@ impl SettingsWindow {
         })
         .detach();
 
-        this.build_ui();
+        this.build_ui(cx);
         this
     }
 
-    fn build_ui(&mut self) {
-        self.pages = self.current_file.pages();
+    // fn toggle_navbar_entry_folded(&mut self, index: usize, cx: &mut Context<SettingsWindow>) {
+    //     let page = self.page_for_navbar_index(index);
+    //     if page.expanded {
+    //         let next_root = index
+    //             + 1
+    //             + self.navbar_entries[index + 1..]
+    //                 .iter()
+    //                 .position(|entry| entry.is_root)
+    //                 .expect("cant fold child pages");
+    //         self.navbar_entries.splice(index + 1..next_root, []);
+    //     } else {
+    //         self.navbar_entries.splice(
+    //             index + 1..index + 2,
+    //             page.section_headers().map(|h| NavBarEntry {
+    //                 title: h,
+    //                 is_root: false,
+    //             }),
+    //         );
+    //     }
+    // }
+
+    fn build_navbar(&mut self, cx: &mut Context<SettingsWindow>) {
+        self.navbar_entries = self
+            .pages
+            .iter()
+            .flat_map(|page| {
+                std::iter::once(NavBarEntry {
+                    title: page.title,
+                    is_root: true,
+                })
+                .chain(
+                    page.expanded
+                        .then(|| {
+                            page.section_headers().map(|h| NavBarEntry {
+                                title: h,
+                                is_root: false,
+                            })
+                        })
+                        .into_iter()
+                        .flatten(),
+                )
+            })
+            .collect();
+
+        cx.notify();
     }
 
-    fn change_file(&mut self, ix: usize) {
+    fn build_ui(&mut self, cx: &mut Context<SettingsWindow>) {
+        self.pages = self.current_file.pages();
+        self.build_navbar(cx);
+
+        cx.notify();
+    }
+
+    fn change_file(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
         self.current_file = self.files[ix].clone();
-        self.build_ui();
+        self.build_ui(cx);
     }
 
     fn render_files(&self, _window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
@@ -271,7 +346,7 @@ impl SettingsWindow {
             .gap_1()
             .children(self.files.iter().enumerate().map(|(ix, file)| {
                 Button::new(ix, file.name())
-                    .on_click(cx.listener(move |this, _, _window, _cx| this.change_file(ix)))
+                    .on_click(cx.listener(move |this, _, _window, cx| this.change_file(ix, cx)))
             }))
     }
 
@@ -281,31 +356,61 @@ impl SettingsWindow {
             .child(self.search.clone())
     }
 
-    fn render_nav(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> Div {
-        let mut nav = v_flex()
-            .p_4()
-            .gap_2()
-            .child(div().h_10()) // Files spacer;
-            .child(self.render_search(window, cx));
+    fn render_nav(&self, window: &mut Window, cx: &mut Context<SettingsWindow>) -> UniformList {
+        uniform_list(
+            "settings-ui-nav-bar",
+            self.navbar_entries.len(),
+            cx.processor(|this, range: Range<usize>, _, cx| {
+                range
+                    .into_iter()
+                    .map(|ix| {
+                        let entry = &this.navbar_entries[ix];
 
-        for (ix, page) in self.pages.iter().enumerate() {
-            nav = nav.child(
-                div()
-                    .id(page.title)
-                    .child(
-                        Label::new(page.title)
-                            .size(LabelSize::Large)
-                            .when(self.is_page_selected(ix), |this| {
-                                this.color(Color::Selected)
-                            }),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.current_page = ix;
-                        cx.notify();
-                    })),
-            );
-        }
-        nav
+                        div()
+                            .id(("settings-ui-section", ix))
+                            .child(
+                                ListItem::new(("settings-ui-navbar-entry", ix))
+                                    .selectable(true)
+                                    .indent_step_size(px(10.))
+                                    .indent_level(if entry.is_root { 1 } else { 3 })
+                                    .toggle(!entry.is_root)
+                                    .on_toggle(cx.listener(move |this, _, _, cx| {
+                                        if this.navbar_entries[ix].is_root {
+                                            let expanded =
+                                                &mut this.page_for_navbar_index(ix).expanded;
+                                            *expanded = !*expanded;
+                                            let current_page_index = this
+                                                .page_index_from_navbar_index(this.current_page);
+                                            // if currently selected page is a child of the parent page we are folding,
+                                            // set the current page to the parent page
+                                            if current_page_index == ix {
+                                                this.current_page = ix;
+                                            }
+                                            this.build_navbar(cx);
+                                        }
+                                    }))
+                                    .child(
+                                        div()
+                                            .text_ui(cx)
+                                            .w_full()
+                                            .child(entry.title)
+                                            .when(this.is_page_selected(ix), |this| {
+                                                this.text_color(Color::Selected.color(cx))
+                                            }),
+                                    ),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.current_page = ix;
+                                cx.notify();
+                            }))
+                    })
+                    .collect()
+            }),
+        )
+        .track_scroll(self.list_handle.clone())
+        .gap_1_5()
+        .size_full()
+        .flex_grow()
     }
 
     fn render_page(
@@ -321,7 +426,21 @@ impl SettingsWindow {
     }
 
     fn current_page(&self) -> &SettingsPage {
-        &self.pages[self.current_page]
+        &self.pages[self.page_index_from_navbar_index(self.current_page)]
+    }
+
+    fn page_index_from_navbar_index(&self, index: usize) -> usize {
+        self.navbar_entries
+            .iter()
+            .take(index + 1)
+            .map(|entry| entry.is_root as usize)
+            .sum::<usize>()
+            - 1
+    }
+
+    fn page_for_navbar_index(&mut self, index: usize) -> &mut SettingsPage {
+        let index = self.page_index_from_navbar_index(index);
+        &mut self.pages[index]
     }
 
     fn is_page_selected(&self, ix: usize) -> bool {
@@ -337,7 +456,7 @@ impl Render for SettingsWindow {
             .flex()
             .flex_row()
             .text_color(cx.theme().colors().text)
-            .child(self.render_nav(window, cx).w(px(300.0)))
+            .child(self.render_nav(window, cx).w(px(300.0)).debug())
             .child(self.render_page(self.current_page(), window, cx).w_full())
     }
 }
