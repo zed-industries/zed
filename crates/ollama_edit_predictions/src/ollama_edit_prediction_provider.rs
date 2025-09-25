@@ -440,6 +440,7 @@ mod tests {
     use super::*;
 
     use gpui::{AppContext, TestAppContext};
+    use http_client::{AsyncBody, FakeHttpClient, Response};
     use language_model::LanguageModelProvider;
 
     use client;
@@ -495,12 +496,28 @@ mod tests {
     async fn test_model_discovery(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-
         let empty_response = serde_json::json!({"models": []});
-        fake_http_client.set_response("/api/tags", empty_response.to_string());
+        let fake_http_client = FakeHttpClient::create({
+            let empty_response = empty_response.to_string();
+            move |req| {
+                let response_body = empty_response.clone();
+                async move {
+                    match req.uri().path() {
+                        "/api/tags" => Ok(Response::builder()
+                            .status(200)
+                            .header("content-type", "application/json")
+                            .body(AsyncBody::from(response_body))
+                            .unwrap()),
+                        _ => Err(anyhow::anyhow!(
+                            "No mock response set for {}",
+                            req.uri().path()
+                        )),
+                    }
+                }
+            }
+        });
 
-        let language_provider = cx.update(|cx| {
+        let _language_provider = cx.update(|cx| {
             let provider =
                 cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
             OllamaLanguageModelProvider::set_global(provider.clone(), cx);
@@ -565,13 +582,43 @@ mod tests {
             ]
         });
 
-        fake_http_client.set_response("/api/tags", models_response.to_string());
-
         let capabilities = serde_json::json!({
             "capabilities": ["tools", "thinking"]
         });
 
-        fake_http_client.set_response("/api/show", capabilities.to_string());
+        let fake_http_client = FakeHttpClient::create({
+            let models_response = models_response.to_string();
+            let capabilities_response = capabilities.to_string();
+            move |req| {
+                let models_response = models_response.clone();
+                let capabilities_response = capabilities_response.clone();
+                async move {
+                    match req.uri().path() {
+                        "/api/tags" => Ok(Response::builder()
+                            .status(200)
+                            .header("content-type", "application/json")
+                            .body(AsyncBody::from(models_response))
+                            .unwrap()),
+                        "/api/show" => Ok(Response::builder()
+                            .status(200)
+                            .header("content-type", "application/json")
+                            .body(AsyncBody::from(capabilities_response))
+                            .unwrap()),
+                        _ => Err(anyhow::anyhow!(
+                            "No mock response set for {}",
+                            req.uri().path()
+                        )),
+                    }
+                }
+            }
+        });
+
+        let language_provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider.clone(), cx);
+            provider
+        });
 
         language_provider.update(cx, |provider, cx| {
             provider.authenticate(cx).detach();
@@ -600,8 +647,10 @@ mod tests {
     async fn test_model_discovery_api_failure(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-        fake_http_client.set_error("Connection refused");
+        let fake_http_client =
+            FakeHttpClient::create(
+                |_req| async move { Err(anyhow::anyhow!("Connection refused")) },
+            );
 
         let _provider = cx.update(|cx| {
             let provider =
@@ -634,8 +683,32 @@ mod tests {
             buffer.anchor_before(11) // Position in the middle of the function
         });
 
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-        fake_http_client.set_generate_response("println!(\"Hello\");");
+        let fake_http_client = FakeHttpClient::create(move |req| async move {
+            match req.uri().path() {
+                "/api/generate" => {
+                    let response = serde_json::json!({
+                        "response": "println!(\"Hello\");",
+                        "done": true,
+                        "context": [],
+                        "total_duration": 1000000_u64,
+                        "load_duration": 1000000_u64,
+                        "prompt_eval_count": 10,
+                        "prompt_eval_duration": 1000000_u64,
+                        "eval_count": 20,
+                        "eval_duration": 1000000_u64
+                    });
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(AsyncBody::from(response.to_string()))
+                        .unwrap())
+                }
+                _ => Err(anyhow::anyhow!(
+                    "No mock response set for {}",
+                    req.uri().path()
+                )),
+            }
+        });
 
         let _provider = cx.update(|cx| {
             let provider =
@@ -691,7 +764,38 @@ mod tests {
             buffer.anchor_after(16) // After "vec"
         });
 
-        fake_http_client.set_generate_response("vec![1, 2, 3]");
+        let fake_http_client = FakeHttpClient::create(move |req| async move {
+            match req.uri().path() {
+                "/api/generate" => {
+                    let response = serde_json::json!({
+                        "response": "vec![1, 2, 3]",
+                        "done": true,
+                        "context": [],
+                        "total_duration": 1000000_u64,
+                        "load_duration": 1000000_u64,
+                        "prompt_eval_count": 10,
+                        "prompt_eval_duration": 1000000_u64,
+                        "eval_count": 20,
+                        "eval_duration": 1000000_u64
+                    });
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(AsyncBody::from(response.to_string()))
+                        .unwrap())
+                }
+                _ => Err(anyhow::anyhow!(
+                    "No mock response set for {}",
+                    req.uri().path()
+                )),
+            }
+        });
+
+        let _provider = cx.update(|cx| {
+            let provider =
+                cx.new(|cx| OllamaLanguageModelProvider::new(fake_http_client.clone(), cx));
+            OllamaLanguageModelProvider::set_global(provider, cx);
+        });
 
         provider.update(cx, |provider, cx| {
             provider.refresh(None, buffer.clone(), cursor_position, false, cx);
@@ -715,13 +819,28 @@ mod tests {
     async fn test_api_settings_retrieval(cx: &mut TestAppContext) {
         init_test(cx);
 
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-
-        fake_http_client.set_response("/api/tags", serde_json::json!({"models": []}).to_string());
-        fake_http_client.set_response(
-            "/api/show",
-            serde_json::json!({"capabilities": []}).to_string(),
-        );
+        let fake_http_client = FakeHttpClient::create(move |req| async move {
+            match req.uri().path() {
+                "/api/tags" => Ok(Response::builder()
+                    .status(200)
+                    .header("content-type", "application/json")
+                    .body(AsyncBody::from(
+                        serde_json::json!({"models": []}).to_string(),
+                    ))
+                    .unwrap()),
+                "/api/show" => Ok(Response::builder()
+                    .status(200)
+                    .header("content-type", "application/json")
+                    .body(AsyncBody::from(
+                        serde_json::json!({"capabilities": []}).to_string(),
+                    ))
+                    .unwrap()),
+                _ => Err(anyhow::anyhow!(
+                    "No mock response set for {}",
+                    req.uri().path()
+                )),
+            }
+        });
 
         let provider = cx.update(|cx| {
             let provider =
@@ -766,8 +885,32 @@ mod tests {
 
         let mut editor_cx = editor::test::editor_test_context::EditorTestContext::new(cx).await;
 
-        let fake_http_client = Arc::new(ollama::fake::FakeHttpClient::new());
-        fake_http_client.set_generate_response("hello world");
+        let fake_http_client = FakeHttpClient::create(move |req| async move {
+            match req.uri().path() {
+                "/api/generate" => {
+                    let response = serde_json::json!({
+                        "response": "hello world",
+                        "done": true,
+                        "context": [],
+                        "total_duration": 1000000_u64,
+                        "load_duration": 1000000_u64,
+                        "prompt_eval_count": 10,
+                        "prompt_eval_duration": 1000000_u64,
+                        "eval_count": 20,
+                        "eval_duration": 1000000_u64
+                    });
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("content-type", "application/json")
+                        .body(AsyncBody::from(response.to_string()))
+                        .unwrap())
+                }
+                _ => Err(anyhow::anyhow!(
+                    "No mock response set for {}",
+                    req.uri().path()
+                )),
+            }
+        });
 
         let _provider = cx.update(|cx| {
             let provider =
