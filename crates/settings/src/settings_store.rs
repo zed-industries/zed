@@ -439,34 +439,6 @@ impl SettingsStore {
         return rx;
     }
 
-    pub fn update_settings_file_at_path(
-        &self,
-        fs: Arc<dyn Fs>,
-        path: &[impl AsRef<str>],
-        new_value: serde_json::Value,
-    ) -> oneshot::Receiver<Result<()>> {
-        let key_path = path
-            .into_iter()
-            .map(AsRef::as_ref)
-            .map(SharedString::new)
-            .collect::<Vec<_>>();
-        let update = move |mut old_text: String, cx: AsyncApp| {
-            cx.read_global(|store: &SettingsStore, _cx| {
-                // todo(settings_ui) use `update_value_in_json_text` for merging new and old objects with comment preservation, needs old value though...
-                let (range, replacement) = replace_value_in_json_text(
-                    &old_text,
-                    key_path.as_slice(),
-                    store.json_tab_size(),
-                    Some(&new_value),
-                    None,
-                );
-                old_text.replace_range(range, &replacement);
-                old_text
-            })
-        };
-        self.update_settings_file_inner(fs, update)
-    }
-
     pub fn update_settings_file(
         &self,
         fs: Arc<dyn Fs>,
