@@ -343,6 +343,69 @@ pub struct ResponseEvent {
     pub usage: Option<Usage>,
 }
 
+// Response structure for Responses API (used by GPT-5 Codex)
+#[derive(Deserialize, Debug)]
+pub struct ResponsesApiEvent {
+    pub output: Vec<ResponsesApiOutput>,
+    pub id: String,
+    pub usage: Option<Usage>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ResponsesApiOutput {
+    #[serde(rename = "type")]
+    pub output_type: String,
+    pub role: String,
+    pub content: Vec<ResponsesApiContent>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ResponsesApiContent {
+    #[serde(rename = "type")]
+    pub content_type: String,
+    pub text: Option<String>,
+}
+
+impl From<ResponsesApiEvent> for ResponseEvent {
+    fn from(responses_event: ResponsesApiEvent) -> Self {
+        let choices = responses_event.output.into_iter().enumerate().map(|(index, output)| {
+            let content = output.content.iter()
+                .filter_map(|c| c.text.as_ref())
+                .collect::<Vec<_>>()
+                .join("");
+
+            ResponseChoice {
+                index,
+                finish_reason: Some("stop".to_string()),
+                delta: Some(ResponseDelta {
+                    content: if content.is_empty() { None } else { Some(content.clone()) },
+                    role: Some(match output.role.as_str() {
+                        "assistant" => Role::Assistant,
+                        "user" => Role::User,
+                        _ => Role::Assistant,
+                    }),
+                    tool_calls: vec![],
+                }),
+                message: Some(ResponseDelta {
+                    content: if content.is_empty() { None } else { Some(content) },
+                    role: Some(match output.role.as_str() {
+                        "assistant" => Role::Assistant,
+                        "user" => Role::User,
+                        _ => Role::Assistant,
+                    }),
+                    tool_calls: vec![],
+                }),
+            }
+        }).collect();
+
+        ResponseEvent {
+            choices,
+            id: responses_event.id,
+            usage: responses_event.usage,
+        }
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub struct Usage {
     pub completion_tokens: u64,
@@ -947,15 +1010,32 @@ async fn stream_completion(
                             return None;
                         }
 
-                        match serde_json::from_str::<ResponseEvent>(line) {
-                            Ok(response) => {
-                                if response.choices.is_empty() {
-                                    None
-                                } else {
-                                    Some(Ok(response))
+                        // Try parsing with appropriate format based on model
+                        if request.model == "gpt-5-codex" {
+                            // Parse Responses API format
+                            match serde_json::from_str::<ResponsesApiEvent>(line) {
+                                Ok(responses_event) => {
+                                    let response: ResponseEvent = responses_event.into();
+                                    if response.choices.is_empty() {
+                                        None
+                                    } else {
+                                        Some(Ok(response))
+                                    }
                                 }
+                                Err(error) => Some(Err(anyhow!(error))),
                             }
-                            Err(error) => Some(Err(anyhow!(error))),
+                        } else {
+                            // Parse Chat Completions API format
+                            match serde_json::from_str::<ResponseEvent>(line) {
+                                Ok(response) => {
+                                    if response.choices.is_empty() {
+                                        None
+                                    } else {
+                                        Some(Ok(response))
+                                    }
+                                }
+                                Err(error) => Some(Err(anyhow!(error))),
+                            }
                         }
                     }
                     Err(error) => Some(Err(anyhow!(error))),
@@ -966,7 +1046,16 @@ async fn stream_completion(
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
-        let response: ResponseEvent = serde_json::from_str(body_str)?;
+
+        // Parse response based on model type
+        let response: ResponseEvent = if request.model == "gpt-5-codex" {
+            // Parse Responses API format and convert to ResponseEvent
+            let responses_event: ResponsesApiEvent = serde_json::from_str(body_str)?;
+            responses_event.into()
+        } else {
+            // Parse Chat Completions API format directly
+            serde_json::from_str(body_str)?
+        };
 
         Ok(futures::stream::once(async move { Ok(response) }).boxed())
     }
