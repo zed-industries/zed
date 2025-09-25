@@ -1315,8 +1315,8 @@ impl PickerDelegate for FileFinderDelegate {
         let raw_query = raw_query.trim();
 
         let raw_query = match &raw_query.get(0..2) {
-            Some(".\\") | Some("./") => &raw_query[2..],
-            Some("a\\") | Some("a/") => {
+            Some(".\\" | "./") => &raw_query[2..],
+            Some(prefix @ ("a\\" | "a/" | "b\\" | "b/")) => {
                 if self
                     .workspace
                     .upgrade()
@@ -1325,25 +1325,7 @@ impl PickerDelegate for FileFinderDelegate {
                     .all(|worktree| {
                         worktree
                             .read(cx)
-                            .entry_for_path(RelPath::new("a").unwrap())
-                            .is_none_or(|entry| !entry.is_dir())
-                    })
-                {
-                    &raw_query[2..]
-                } else {
-                    raw_query
-                }
-            }
-            Some("b\\") | Some("b/") => {
-                if self
-                    .workspace
-                    .upgrade()
-                    .into_iter()
-                    .flat_map(|workspace| workspace.read(cx).worktrees(cx))
-                    .all(|worktree| {
-                        worktree
-                            .read(cx)
-                            .entry_for_path(RelPath::new("b").unwrap())
+                            .entry_for_path(RelPath::new(prefix.split_at(1).0).unwrap())
                             .is_none_or(|entry| !entry.is_dir())
                     })
                 {
