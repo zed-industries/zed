@@ -56,7 +56,7 @@ This is mostly a formality on Wednesday's minor update releases, but can be bene
 
 1. Send the stable release notes email.
 
-  - The email broadcast will already be built as a draft in [Kit](https://kit.com)
+   - The email broadcast will already be built as a draft in [Kit](https://kit.com).
 
 1. Build social media posts based on the popular items in preview.
 
