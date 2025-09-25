@@ -22,7 +22,7 @@ fn user_settings_data() -> Vec<SettingsPage> {
         SettingsPage {
             title: "General Page",
             items: vec![
-                SettingsPageItem::SectionHeader("General Section"),
+                SettingsPageItem::SectionHeader("General"),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
@@ -53,6 +53,21 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     render: |file, window, cx| {
                         render_text_field("project_name", file, window, cx, |settings_content| {
                             &mut settings_content.project.worktree.project_name
+                        })
+                    },
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "AI",
+            items: vec![
+                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Disable AI",
+                    description: "Whether to disable all AI features in Zed",
+                    render: |file, _, cx| {
+                        render_toggle_button("disable_AI", file, cx, |settings_content| {
+                            &mut settings_content.disable_ai
                         })
                     },
                 }),
@@ -427,11 +442,11 @@ fn render_text_field(
         .into_any_element()
 }
 
-fn render_toggle_button(
+fn render_toggle_button<B: Into<bool> + From<bool> + Copy + Send + 'static>(
     id: &'static str,
     _: SettingsFile,
     cx: &mut App,
-    get_value: fn(&mut SettingsContent) -> &mut Option<bool>,
+    get_value: fn(&mut SettingsContent) -> &mut Option<B>,
 ) -> AnyElement {
     // TODO: in settings window state
     let store = SettingsStore::global(cx);
@@ -444,17 +459,23 @@ fn render_toggle_button(
         .unwrap_or_default()
         .content;
 
-    let toggle_state =
-        if get_value(&mut user_settings).unwrap_or_else(|| get_value(&mut defaults).unwrap()) {
-            ui::ToggleState::Selected
-        } else {
-            ui::ToggleState::Unselected
-        };
+    let toggle_state = if get_value(&mut user_settings)
+        .unwrap_or_else(|| get_value(&mut defaults).unwrap())
+        .into()
+    {
+        ui::ToggleState::Selected
+    } else {
+        ui::ToggleState::Unselected
+    };
 
     Switch::new(id, toggle_state)
         .on_click({
             move |state, _window, cx| {
-                write_setting_value(get_value, Some(*state == ui::ToggleState::Selected), cx);
+                write_setting_value(
+                    get_value,
+                    Some((*state == ui::ToggleState::Selected).into()),
+                    cx,
+                );
             }
         })
         .into_any_element()
