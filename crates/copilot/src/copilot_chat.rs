@@ -371,6 +371,7 @@ impl From<ResponsesApiEvent> for ResponseEvent {
         let choices = responses_event.output.into_iter().enumerate().map(|(index, output)| {
             let content = output.content.iter()
                 .filter_map(|c| c.text.as_ref())
+                .cloned()
                 .collect::<Vec<_>>()
                 .join("");
 
@@ -999,10 +1000,11 @@ async fn stream_completion(
     }
 
     if is_streaming {
+        let model = request.model.clone(); // Store model for use in async closure
         let reader = BufReader::new(response.into_body());
         Ok(reader
             .lines()
-            .filter_map(|line| async move {
+            .filter_map(move |line| async move {
                 match line {
                     Ok(line) => {
                         let line = line.strip_prefix("data: ")?;
@@ -1011,7 +1013,7 @@ async fn stream_completion(
                         }
 
                         // Try parsing with appropriate format based on model
-                        if request.model == "gpt-5-codex" {
+                        if model == "gpt-5-codex" {
                             // Parse Responses API format
                             match serde_json::from_str::<ResponsesApiEvent>(line) {
                                 Ok(responses_event) => {
