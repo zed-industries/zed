@@ -558,7 +558,6 @@ impl SshRemoteConnection {
                     .run_command(
                         "wget",
                         &[
-                            "--method=GET",
                             "--header=Content-Type: application/json",
                             "--body-data",
                             body,
