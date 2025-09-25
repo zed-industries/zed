@@ -48,7 +48,7 @@ use std::{
 use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
-use util::{ResultExt, debug_panic, paths::PathStyle, rel_path::RelPath};
+use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
