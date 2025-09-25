@@ -4558,7 +4558,6 @@ impl RenderOnce for PanelRepoFooter {
         };
 
         let repo_selector_trigger = Button::new("repo-selector", truncated_repo_name)
-            .style(ButtonStyle::Transparent)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
             .color(Color::Muted);
@@ -4579,7 +4578,6 @@ impl RenderOnce for PanelRepoFooter {
             .into_any_element();
 
         let branch_selector_button = Button::new("branch-selector", truncated_branch_name)
-            .style(ButtonStyle::Transparent)
             .size(ButtonSize::None)
             .label_size(LabelSize::Small)
             .truncate(true)
@@ -4604,35 +4602,31 @@ impl RenderOnce for PanelRepoFooter {
             });
 
         h_flex()
+            .h(px(36.))
             .w_full()
             .px_2()
-            .h(px(36.))
-            .items_center()
             .justify_between()
             .gap_1()
             .child(
                 h_flex()
                     .flex_1()
                     .overflow_hidden()
-                    .items_center()
+                    .gap_px()
                     .child(
-                        div().child(
-                            Icon::new(IconName::GitBranchAlt)
-                                .size(IconSize::Small)
-                                .color(if single_repo {
-                                    Color::Disabled
-                                } else {
-                                    Color::Muted
-                                }),
-                        ),
+                        Icon::new(IconName::GitBranchAlt)
+                            .size(IconSize::Small)
+                            .color(if single_repo {
+                                Color::Disabled
+                            } else {
+                                Color::Muted
+                            }),
                     )
                     .child(repo_selector)
                     .when(show_separator, |this| {
                         this.child(
                             div()
-                                .text_color(cx.theme().colors().icon_muted)
                                 .text_sm()
-                                .mx_px()
+                                .text_color(cx.theme().colors().icon_muted.opacity(0.5))
                                 .child("/"),
                         )
                     })
