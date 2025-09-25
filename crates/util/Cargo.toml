@@ -21,6 +21,7 @@ async-fs.workspace = true
 async_zip.workspace = true
 collections.workspace = true
 dirs.workspace = true
+dunce = "1.0"
 futures-lite.workspace = true
 futures.workspace = true
 git2 = { workspace = true, optional = true }
@@ -50,7 +51,6 @@ nix = { workspace = true, features = ["user"] }
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"
-dunce = "1.0"
 
 [dev-dependencies]
 git2.workspace = true

@@ -1,5 +1,5 @@
 //! # settings_ui
-use std::{ops::Range, rc::Rc, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 use editor::Editor;
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _};
@@ -10,13 +10,13 @@ use gpui::{
 };
 use project::WorktreeId;
 use settings::{SettingsContent, SettingsStore};
-use std::path::Path;
 use ui::{
-    ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color,
-    FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label, LabelCommon as _,
-    LabelSize, ListItem, ParentElement, SharedString, StatefulInteractiveElement as _, Styled,
-    StyledTypography, Switch, h_flex, v_flex,
+    ActiveTheme as _, AnyElement, BorrowAppContext as _, Button, Clickable as _, Color, Divider,
+    DropdownMenu, FluentBuilder as _, Icon, IconName, InteractiveElement as _, Label,
+    LabelCommon as _, LabelSize, ListItem, ParentElement, SharedString,
+    StatefulInteractiveElement as _, Styled, StyledTypography, Switch, h_flex, v_flex,
 };
+use util::{paths::PathStyle, rel_path::RelPath};
 
 fn user_settings_data() -> Vec<SettingsPage> {
     vec![
@@ -28,26 +28,20 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
-                    render: Rc::new(|_, cx| {
-                        render_toggle_button(
-                            "confirm_quit",
-                            SettingsFile::User,
-                            cx,
-                            |settings_content| &mut settings_content.workspace.confirm_quit,
-                        )
-                    }),
+                    render: |file, _, cx| {
+                        render_toggle_button("confirm_quit", file, cx, |settings_content| {
+                            &mut settings_content.workspace.confirm_quit
+                        })
+                    },
                 }),
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Auto Update",
                     description: "Automatically update Zed (may be ignored on Linux if installed through a package manager)",
-                    render: Rc::new(|_, cx| {
-                        render_toggle_button(
-                            "Auto Update",
-                            SettingsFile::User,
-                            cx,
-                            |settings_content| &mut settings_content.auto_update,
-                        )
-                    }),
+                    render: |file, _, cx| {
+                        render_toggle_button("Auto Update", file, cx, |settings_content| {
+                            &mut settings_content.auto_update
+                        })
+                    },
                 }),
                 SettingsPageItem::SectionHeader("Privacy"),
             ],
@@ -60,15 +54,47 @@ fn user_settings_data() -> Vec<SettingsPage> {
                 SettingsPageItem::SettingItem(SettingItem {
                     title: "Project Name",
                     description: "The displayed name of this project. If not set, the root directory name",
-                    render: Rc::new(|window, cx| {
-                        render_text_field(
-                            "project_name",
-                            SettingsFile::User,
+                    render: |file, window, cx| {
+                        render_text_field("project_name", file, window, cx, |settings_content| {
+                            &mut settings_content.project.worktree.project_name
+                        })
+                    },
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "AI",
+            expanded: true,
+            items: vec![
+                SettingsPageItem::SectionHeader("General"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Disable AI",
+                    description: "Whether to disable all AI features in Zed",
+                    render: |file, _, cx| {
+                        render_toggle_button("disable_AI", file, cx, |settings_content| {
+                            &mut settings_content.disable_ai
+                        })
+                    },
+                }),
+            ],
+        },
+        SettingsPage {
+            title: "Appearance & Behavior",
+            expanded: true,
+            items: vec![
+                SettingsPageItem::SectionHeader("Cursor"),
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Cursor Shape",
+                    description: "Cursor shape for the editor",
+                    render: |file, window, cx| {
+                        render_dropdown::<settings::CursorShape>(
+                            "cursor_shape",
+                            file,
                             window,
                             cx,
-                            |settings_content| &mut settings_content.project.worktree.project_name,
+                            |settings_content| &mut settings_content.editor.cursor_shape,
                         )
-                    }),
+                    },
                 }),
             ],
         },
@@ -84,18 +110,11 @@ fn project_settings_data() -> Vec<SettingsPage> {
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Project Name",
                 description: " The displayed name of this project. If not set, the root directory name",
-                render: Rc::new(|window, cx| {
-                    render_text_field(
-                        "project_name",
-                        SettingsFile::Local((
-                            WorktreeId::from_usize(0),
-                            Arc::from(Path::new("TODO: actually pass through file")),
-                        )),
-                        window,
-                        cx,
-                        |settings_content| &mut settings_content.project.worktree.project_name,
-                    )
-                }),
+                render: |file, window, cx| {
+                    render_text_field("project_name", file, window, cx, |settings_content| {
+                        &mut settings_content.project.worktree.project_name
+                    })
+                },
             }),
         ],
     }]
@@ -192,15 +211,32 @@ enum SettingsPageItem {
 }
 
 impl SettingsPageItem {
-    fn render(&self, window: &mut Window, cx: &mut App) -> AnyElement {
+    fn render(&self, file: SettingsFile, window: &mut Window, cx: &mut App) -> AnyElement {
         match self {
-            SettingsPageItem::SectionHeader(header) => Label::new(SharedString::new_static(header))
-                .size(LabelSize::Large)
+            SettingsPageItem::SectionHeader(header) => div()
+                .w_full()
+                .child(Label::new(SharedString::new_static(header)).size(LabelSize::Large))
+                .child(Divider::horizontal().color(ui::DividerColor::BorderVariant))
                 .into_any_element(),
             SettingsPageItem::SettingItem(setting_item) => div()
-                .child(setting_item.title)
-                .child(setting_item.description)
-                .child((setting_item.render)(window, cx))
+                .child(
+                    Label::new(SharedString::new_static(setting_item.title))
+                        .size(LabelSize::Default),
+                )
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .child(
+                            div()
+                                .child(
+                                    Label::new(SharedString::new_static(setting_item.description))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .max_w_1_2(),
+                        )
+                        .child((setting_item.render)(file, window, cx)),
+                )
                 .into_any_element(),
         }
     }
@@ -219,15 +255,15 @@ impl SettingsPageItem {
 struct SettingItem {
     title: &'static str,
     description: &'static str,
-    render: std::rc::Rc<dyn Fn(&mut Window, &mut App) -> AnyElement>,
+    render: fn(file: SettingsFile, &mut Window, &mut App) -> AnyElement,
 }
 
 #[allow(unused)]
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 enum SettingsFile {
-    User,                           // Uses all settings.
-    Local((WorktreeId, Arc<Path>)), // Has a special name, and special set of settings
-    Server(&'static str),           // Uses a special name, and the user settings
+    User,                              // Uses all settings.
+    Local((WorktreeId, Arc<RelPath>)), // Has a special name, and special set of settings
+    Server(&'static str),              // Uses a special name, and the user settings
 }
 
 impl SettingsFile {
@@ -239,11 +275,14 @@ impl SettingsFile {
         }
     }
 
-    fn name(&self) -> String {
+    fn name(&self) -> SharedString {
         match self {
-            SettingsFile::User => "User".to_string(),
-            SettingsFile::Local((_, path)) => format!("Local ({})", path.display()),
-            SettingsFile::Server(file) => format!("Server ({})", file),
+            SettingsFile::User => SharedString::new_static("User"),
+            // TODO is PathStyle::local() ever not appropriate?
+            SettingsFile::Local((_, path)) => {
+                format!("Local ({})", path.display(PathStyle::local())).into()
+            }
+            SettingsFile::Server(file) => format!("Server ({})", file).into(),
         }
     }
 }
@@ -257,13 +296,7 @@ impl SettingsWindow {
             editor
         });
         let mut this = Self {
-            files: vec![
-                SettingsFile::User,
-                SettingsFile::Local((
-                    WorktreeId::from_usize(0),
-                    Arc::from(Path::new("/my-project/")),
-                )),
-            ],
+            files: vec![],
             current_file: current_file,
             pages: vec![],
             navbar_entries: vec![],
@@ -271,10 +304,12 @@ impl SettingsWindow {
             list_handle: UniformListScrollHandle::default(),
             search,
         };
-        cx.observe_global_in::<SettingsStore>(window, move |_, _, cx| {
+        cx.observe_global_in::<SettingsStore>(window, move |this, _, cx| {
+            this.fetch_files(cx);
             cx.notify();
         })
         .detach();
+        this.fetch_files(cx);
 
         this.build_ui(cx);
         this
@@ -325,7 +360,36 @@ impl SettingsWindow {
         cx.notify();
     }
 
+    fn fetch_files(&mut self, cx: &mut Context<SettingsWindow>) {
+        let settings_store = cx.global::<SettingsStore>();
+        let mut ui_files = vec![];
+        let all_files = settings_store.get_all_files();
+        for file in all_files {
+            let settings_ui_file = match file {
+                settings::SettingsFile::User => SettingsFile::User,
+                settings::SettingsFile::Global => continue,
+                settings::SettingsFile::Extension => continue,
+                settings::SettingsFile::Server => SettingsFile::Server("todo: server name"),
+                settings::SettingsFile::Default => continue,
+                settings::SettingsFile::Local(location) => SettingsFile::Local(location),
+            };
+            ui_files.push(settings_ui_file);
+        }
+        ui_files.reverse();
+        if !ui_files.contains(&self.current_file) {
+            self.change_file(0, cx);
+        }
+        self.files = ui_files;
+    }
+
     fn change_file(&mut self, ix: usize, cx: &mut Context<SettingsWindow>) {
+        if ix >= self.files.len() {
+            self.current_file = SettingsFile::User;
+            return;
+        }
+        if self.files[ix] == self.current_file {
+            return;
+        }
         self.current_file = self.files[ix].clone();
         self.build_ui(cx);
     }
@@ -351,6 +415,7 @@ impl SettingsWindow {
         v_flex()
             .bg(cx.theme().colors().panel_background)
             .p_3()
+            .child(div().h_10()) // Files spacer;
             .child(self.render_search(window, cx).pb_1())
             .gap_3()
             .child(
@@ -426,10 +491,11 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<SettingsWindow>,
     ) -> Div {
-        div()
-            .child(self.render_files(window, cx))
-            .child(Label::new(page.title))
-            .children(page.items.iter().map(|item| item.render(window, cx)))
+        v_flex().gap_4().py_4().children(
+            page.items
+                .iter()
+                .map(|item| item.render(self.current_file.clone(), window, cx)),
+        )
     }
 
     fn current_page(&self) -> &SettingsPage {
@@ -464,7 +530,16 @@ impl Render for SettingsWindow {
             .flex_row()
             .text_color(cx.theme().colors().text)
             .child(self.render_nav(window, cx).w(px(300.0)))
-            .child(self.render_page(self.current_page(), window, cx).w_full())
+            .child(Divider::vertical().color(ui::DividerColor::BorderVariant))
+            .child(
+                v_flex()
+                    .bg(cx.theme().colors().editor_background)
+                    .px_6()
+                    .py_2()
+                    .child(self.render_files(window, cx))
+                    .child(self.render_page(self.current_page(), window, cx))
+                    .w_full(),
+            )
     }
 }
 
@@ -538,11 +613,11 @@ fn render_text_field(
         .into_any_element()
 }
 
-fn render_toggle_button(
+fn render_toggle_button<B: Into<bool> + From<bool> + Copy + Send + 'static>(
     id: &'static str,
     _: SettingsFile,
     cx: &mut App,
-    get_value: fn(&mut SettingsContent) -> &mut Option<bool>,
+    get_value: fn(&mut SettingsContent) -> &mut Option<B>,
 ) -> AnyElement {
     // TODO: in settings window state
     let store = SettingsStore::global(cx);
@@ -555,20 +630,80 @@ fn render_toggle_button(
         .unwrap_or_default()
         .content;
 
-    let toggle_state =
-        if get_value(&mut user_settings).unwrap_or_else(|| get_value(&mut defaults).unwrap()) {
-            ui::ToggleState::Selected
-        } else {
-            ui::ToggleState::Unselected
-        };
+    let toggle_state = if get_value(&mut user_settings)
+        .unwrap_or_else(|| get_value(&mut defaults).unwrap())
+        .into()
+    {
+        ui::ToggleState::Selected
+    } else {
+        ui::ToggleState::Unselected
+    };
 
     Switch::new(id, toggle_state)
         .on_click({
             move |state, _window, cx| {
-                write_setting_value(get_value, Some(*state == ui::ToggleState::Selected), cx);
+                write_setting_value(
+                    get_value,
+                    Some((*state == ui::ToggleState::Selected).into()),
+                    cx,
+                );
             }
         })
         .into_any_element()
+}
+
+fn render_dropdown<T>(
+    id: &'static str,
+    _: SettingsFile,
+    window: &mut Window,
+    cx: &mut App,
+    get_value: fn(&mut SettingsContent) -> &mut Option<T>,
+) -> AnyElement
+where
+    T: strum::VariantArray + strum::VariantNames + Copy + PartialEq + Send + 'static,
+{
+    let variants = || -> &'static [T] { <T as strum::VariantArray>::VARIANTS };
+    let labels = || -> &'static [&'static str] { <T as strum::VariantNames>::VARIANTS };
+
+    let store = SettingsStore::global(cx);
+    let mut defaults = store.raw_default_settings().clone();
+    let mut user_settings = store
+        .raw_user_settings()
+        .cloned()
+        .unwrap_or_default()
+        .content;
+
+    let current_value =
+        get_value(&mut user_settings).unwrap_or_else(|| get_value(&mut defaults).unwrap());
+    let current_value_label =
+        labels()[variants().iter().position(|v| *v == current_value).unwrap()];
+
+    DropdownMenu::new(
+        id,
+        current_value_label,
+        ui::ContextMenu::build(window, cx, move |mut menu, _, _| {
+            for (value, label) in variants()
+                .into_iter()
+                .copied()
+                .zip(labels().into_iter().copied())
+            {
+                menu = menu.toggleable_entry(
+                    label,
+                    value == current_value,
+                    ui::IconPosition::Start,
+                    None,
+                    move |_, cx| {
+                        if value == current_value {
+                            return;
+                        }
+                        write_setting_value(get_value, Some(value), cx);
+                    },
+                );
+            }
+            menu
+        }),
+    )
+    .into_any_element()
 }
 
 #[cfg(test)]

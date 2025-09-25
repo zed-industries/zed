@@ -6,9 +6,9 @@ use gpui::{
 };
 use ordered_float::OrderedFloat;
 use picker::{Picker, PickerDelegate};
-use project::{Project, Symbol};
+use project::{Project, Symbol, lsp_store::SymbolLocation};
 use settings::Settings;
-use std::{borrow::Cow, cmp::Reverse, sync::Arc};
+use std::{cmp::Reverse, sync::Arc};
 use theme::{ActiveTheme, ThemeSettings};
 use util::ResultExt;
 use workspace::{
@@ -195,9 +195,13 @@ impl PickerDelegate for ProjectSymbolsDelegate {
                             StringMatchCandidate::new(id, symbol.label.filter_text())
                         })
                         .partition(|candidate| {
-                            project
-                                .entry_for_path(&symbols[candidate.id].path, cx)
-                                .is_some_and(|e| !e.is_ignored)
+                            if let SymbolLocation::InProject(path) = &symbols[candidate.id].path {
+                                project
+                                    .entry_for_path(path, cx)
+                                    .is_some_and(|e| !e.is_ignored)
+                            } else {
+                                false
+                            }
                         });
 
                     delegate.visible_match_candidates = visible_match_candidates;
@@ -217,22 +221,27 @@ impl PickerDelegate for ProjectSymbolsDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let path_style = self.project.read(cx).path_style(cx);
         let string_match = &self.matches.get(ix)?;
         let symbol = &self.symbols.get(string_match.candidate_id)?;
         let syntax_runs = styled_runs_for_code_label(&symbol.label, cx.theme().syntax());
 
-        let mut path = symbol.path.path.to_string_lossy();
-        if self.show_worktree_root_name {
-            let project = self.project.read(cx);
-            if let Some(worktree) = project.worktree_for_id(symbol.path.worktree_id, cx) {
-                path = Cow::Owned(format!(
-                    "{}{}{}",
-                    worktree.read(cx).root_name(),
-                    std::path::MAIN_SEPARATOR,
-                    path.as_ref()
-                ));
+        let path = match &symbol.path {
+            SymbolLocation::InProject(project_path) => {
+                let project = self.project.read(cx);
+                let mut path = project_path.path.clone();
+                if self.show_worktree_root_name
+                    && let Some(worktree) = project.worktree_for_id(project_path.worktree_id, cx)
+                {
+                    path = worktree.read(cx).root_name().join(&path);
+                }
+                path.display(path_style).into_owned().into()
             }
-        }
+            SymbolLocation::OutsideProject {
+                abs_path,
+                signature: _,
+            } => abs_path.to_string_lossy(),
+        };
         let label = symbol.label.text.clone();
         let path = path.to_string();
 

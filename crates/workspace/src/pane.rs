@@ -50,7 +50,7 @@ use ui::{
     PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip, prelude::*,
     right_click_menu,
 };
-use util::{ResultExt, debug_panic, maybe, truncate_and_remove_front};
+use util::{ResultExt, debug_panic, maybe, paths::PathStyle, truncate_and_remove_front};
 
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1652,11 +1652,9 @@ impl Pane {
                 if !project_item.is_dirty() {
                     return;
                 }
-                let filename = project_item.project_path(cx).and_then(|path| {
-                    path.path
-                        .file_name()
-                        .and_then(|name| name.to_str().map(ToOwned::to_owned))
-                });
+                let filename = project_item
+                    .project_path(cx)
+                    .and_then(|path| path.path.file_name().map(ToOwned::to_owned));
                 file_names.insert(filename.unwrap_or("untitled".to_string()));
             });
         }
@@ -1965,9 +1963,10 @@ impl Pane {
 
         const DELETED_MESSAGE: &str = "This file has been deleted on disk since you started editing it. Do you want to recreate it?";
 
+        let path_style = project.read_with(cx, |project, cx| project.path_style(cx))?;
         if save_intent == SaveIntent::Skip {
             return Ok(true);
-        }
+        };
         let Some(item_ix) = pane
             .read_with(cx, |pane, _| pane.index_for_item(item))
             .ok()
@@ -2090,7 +2089,7 @@ impl Pane {
                     let answer_task = pane.update_in(cx, |pane, window, cx| {
                         if pane.save_modals_spawned.insert(item_id) {
                             pane.activate_item(item_ix, true, true, window, cx);
-                            let prompt = dirty_message_for(item.project_path(cx));
+                            let prompt = dirty_message_for(item.project_path(cx), path_style);
                             Some(window.prompt(
                                 PromptLevel::Warning,
                                 &prompt,
@@ -2184,7 +2183,7 @@ impl Pane {
                     let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id())?;
                     let new_path = ProjectPath {
                         worktree_id,
-                        path: path.into(),
+                        path: path,
                     };
 
                     pane.update_in(cx, |pane, window, cx| {
@@ -2321,10 +2320,10 @@ impl Pane {
             .worktree_for_entry(entry, cx)?
             .read(cx);
         let entry = worktree.entry_for_id(entry)?;
-        match &entry.canonical_path {
-            Some(canonical_path) => Some(canonical_path.to_path_buf()),
-            None => worktree.absolutize(&entry.path).ok(),
-        }
+        Some(match &entry.canonical_path {
+            Some(canonical_path) => canonical_path.to_path_buf(),
+            None => worktree.absolutize(&entry.path),
+        })
     }
 
     pub fn icon_color(selected: bool) -> Color {
@@ -2875,9 +2874,14 @@ impl Pane {
                                     menu.entry(
                                         "Copy Relative Path",
                                         Some(Box::new(zed_actions::workspace::CopyRelativePath)),
-                                        window.handler_for(&pane, move |_, _, cx| {
+                                        window.handler_for(&pane, move |this, _, cx| {
+                                            let Some(project) = this.project.upgrade() else {
+                                                return;
+                                            };
+                                            let path_style = project
+                                                .update(cx, |project, cx| project.path_style(cx));
                                             cx.write_to_clipboard(ClipboardItem::new_string(
-                                                relative_path.to_string_lossy().to_string(),
+                                                relative_path.display(path_style).to_string(),
                                             ));
                                         }),
                                     )
@@ -4007,16 +4011,15 @@ impl NavHistoryState {
     }
 }
 
-fn dirty_message_for(buffer_path: Option<ProjectPath>) -> String {
+fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) -> String {
     let path = buffer_path
         .as_ref()
         .and_then(|p| {
-            p.path
-                .to_str()
-                .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            let path = p.path.display(path_style);
+            if path.is_empty() { None } else { Some(path) }
         })
-        .unwrap_or("This buffer");
-    let path = truncate_and_remove_front(path, 80);
+        .unwrap_or("This buffer".into());
+    let path = truncate_and_remove_front(&path, 80);
     format!("{path} contains unsaved edits. Do you want to save it?")
 }
 

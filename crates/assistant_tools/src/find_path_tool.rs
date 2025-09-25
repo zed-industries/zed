@@ -161,10 +161,13 @@ impl Tool for FindPathTool {
 }
 
 fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Result<Vec<PathBuf>>> {
-    let path_matcher = match PathMatcher::new([
-        // Sometimes models try to search for "". In this case, return all paths in the project.
-        if glob.is_empty() { "*" } else { glob },
-    ]) {
+    let path_matcher = match PathMatcher::new(
+        [
+            // Sometimes models try to search for "". In this case, return all paths in the project.
+            if glob.is_empty() { "*" } else { glob },
+        ],
+        project.read(cx).path_style(cx),
+    ) {
         Ok(matcher) => matcher,
         Err(err) => return Task::ready(Err(anyhow!("Invalid glob: {err}"))),
     };
@@ -178,10 +181,15 @@ fn search_paths(glob: &str, project: Entity<Project>, cx: &mut App) -> Task<Resu
         Ok(snapshots
             .iter()
             .flat_map(|snapshot| {
-                let root_name = PathBuf::from(snapshot.root_name());
                 snapshot
                     .entries(false, 0)
-                    .map(move |entry| root_name.join(&entry.path))
+                    .map(move |entry| {
+                        snapshot
+                            .root_name()
+                            .join(&entry.path)
+                            .as_std_path()
+                            .to_path_buf()
+                    })
                     .filter(|path| path_matcher.is_match(&path))
             })
             .collect())

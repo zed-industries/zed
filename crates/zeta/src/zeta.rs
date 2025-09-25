@@ -51,6 +51,7 @@ use std::{
 use telemetry_events::EditPredictionRating;
 use thiserror::Error;
 use util::ResultExt;
+use util::rel_path::RelPath;
 use uuid::Uuid;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 use worktree::Worktree;
@@ -1180,11 +1181,11 @@ impl Event {
                 let old_path = old_snapshot
                     .file()
                     .map(|f| f.path().as_ref())
-                    .unwrap_or(Path::new("untitled"));
+                    .unwrap_or(RelPath::new("untitled").unwrap());
                 let new_path = new_snapshot
                     .file()
                     .map(|f| f.path().as_ref())
-                    .unwrap_or(Path::new("untitled"));
+                    .unwrap_or(RelPath::new("untitled").unwrap());
                 if old_path != new_path {
                     writeln!(prompt, "User renamed {:?} to {:?}\n", old_path, new_path).unwrap();
                 }
@@ -1631,7 +1632,7 @@ mod tests {
     use parking_lot::Mutex;
     use serde_json::json;
     use settings::SettingsStore;
-    use util::path;
+    use util::{path, rel_path::rel_path};
 
     use super::*;
 
@@ -2026,7 +2027,7 @@ mod tests {
                     .worktree_for_root_name("closed_source_worktree", cx)
                     .unwrap();
                 worktree2.update(cx, |worktree2, cx| {
-                    worktree2.load_file(Path::new("main.rs"), cx)
+                    worktree2.load_file(rel_path("main.rs"), cx)
                 })
             })
             .await

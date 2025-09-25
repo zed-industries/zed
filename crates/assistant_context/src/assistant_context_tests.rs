@@ -1329,13 +1329,12 @@ fn setup_context_editor_with_fake_model(
     cx.update(|cx| {
         init_test(cx);
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
-            registry.set_default_model(
-                Some(ConfiguredModel {
-                    provider: fake_provider.clone(),
-                    model: fake_model.clone(),
-                }),
-                cx,
-            )
+            let configured_model = ConfiguredModel {
+                provider: fake_provider.clone(),
+                model: fake_model.clone(),
+            };
+            registry.set_default_model(Some(configured_model.clone()), cx);
+            registry.set_thread_summary_model(Some(configured_model), cx);
         })
     });
 

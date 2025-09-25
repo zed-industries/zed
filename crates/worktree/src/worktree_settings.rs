@@ -3,7 +3,11 @@ use std::path::Path;
 use anyhow::Context as _;
 use gpui::App;
 use settings::{Settings, SettingsContent};
-use util::{ResultExt, paths::PathMatcher};
+use util::{
+    ResultExt,
+    paths::{PathMatcher, PathStyle},
+    rel_path::RelPath,
+};
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct WorktreeSettings {
@@ -14,19 +18,19 @@ pub struct WorktreeSettings {
 }
 
 impl WorktreeSettings {
-    pub fn is_path_private(&self, path: &Path) -> bool {
+    pub fn is_path_private(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.private_files.is_match(ancestor))
+            .any(|ancestor| self.private_files.is_match(ancestor.as_std_path()))
     }
 
-    pub fn is_path_excluded(&self, path: &Path) -> bool {
+    pub fn is_path_excluded(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_exclusions.is_match(&ancestor))
+            .any(|ancestor| self.file_scan_exclusions.is_match(ancestor.as_std_path()))
     }
 
-    pub fn is_path_always_included(&self, path: &Path) -> bool {
+    pub fn is_path_always_included(&self, path: &RelPath) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_inclusions.is_match(&ancestor))
+            .any(|ancestor| self.file_scan_inclusions.is_match(ancestor.as_std_path()))
     }
 }
 
@@ -90,5 +94,6 @@ impl Settings for WorktreeSettings {
 
 fn path_matchers(mut values: Vec<String>, context: &'static str) -> anyhow::Result<PathMatcher> {
     values.sort();
-    PathMatcher::new(values).with_context(|| format!("Failed to parse globs from {}", context))
+    PathMatcher::new(values, PathStyle::local())
+        .with_context(|| format!("Failed to parse globs from {}", context))
 }

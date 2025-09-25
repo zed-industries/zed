@@ -4,10 +4,10 @@ use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrevious};
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_matches};
 use project::{FS_WATCH_LATENCY, RemoveOptions};
 use serde_json::json;
-use util::path;
+use util::{path, rel_path::rel_path};
 use workspace::{AppState, CloseActiveItem, OpenOptions, ToggleFileFinder, Workspace};
 
 #[ctor::ctor]
@@ -77,8 +77,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 0.5,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("b0.5")),
-            path_prefix: Arc::default(),
+            path: rel_path("b0.5").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -86,8 +86,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("c1.0")),
-            path_prefix: Arc::default(),
+            path: rel_path("c1.0").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -95,8 +95,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("a1.0")),
-            path_prefix: Arc::default(),
+            path: rel_path("a1.0").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -104,8 +104,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 0.5,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("a0.5")),
-            path_prefix: Arc::default(),
+            path: rel_path("a0.5").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -113,8 +113,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
             score: 1.0,
             positions: Vec::new(),
             worktree_id: 0,
-            path: Arc::from(Path::new("b1.0")),
-            path_prefix: Arc::default(),
+            path: rel_path("b1.0").into(),
+            path_prefix: rel_path("").into(),
             distance_to_relative_ancestor: 0,
             is_dir: false,
         }),
@@ -128,8 +128,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("a1.0")),
-                path_prefix: Arc::default(),
+                path: rel_path("a1.0").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -137,8 +137,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("b1.0")),
-                path_prefix: Arc::default(),
+                path: rel_path("b1.0").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -146,8 +146,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 1.0,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("c1.0")),
-                path_prefix: Arc::default(),
+                path: rel_path("c1.0").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -155,8 +155,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 0.5,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("a0.5")),
-                path_prefix: Arc::default(),
+                path: rel_path("a0.5").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -164,8 +164,8 @@ fn test_custom_project_search_ordering_in_file_finder() {
                 score: 0.5,
                 positions: Vec::new(),
                 worktree_id: 0,
-                path: Arc::from(Path::new("b0.5")),
-                path_prefix: Arc::default(),
+                path: rel_path("b0.5").into(),
+                path_prefix: rel_path("").into(),
                 distance_to_relative_ancestor: 0,
                 is_dir: false,
             }),
@@ -366,7 +366,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         assert_eq!(
             collect_search_matches(picker).search_paths_only(),
-            vec![PathBuf::from("a/b/file2.txt")],
+            vec![rel_path("a/b/file2.txt").into()],
             "Matching abs path should be the only match"
         )
     });
@@ -388,7 +388,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
     picker.update(cx, |picker, _| {
         assert_eq!(
             collect_search_matches(picker).search_paths_only(),
-            Vec::<PathBuf>::new(),
+            Vec::new(),
             "Mismatching abs path should produce no matches"
         )
     });
@@ -421,7 +421,7 @@ async fn test_complex_path(cx: &mut TestAppContext) {
         assert_eq!(picker.delegate.matches.len(), 2);
         assert_eq!(
             collect_search_matches(picker).search_paths_only(),
-            vec![PathBuf::from("其他/S数据表格/task.xlsx")],
+            vec![rel_path("其他/S数据表格/task.xlsx").into()],
         )
     });
     cx.dispatch_action(Confirm);
@@ -713,13 +713,13 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         assert_eq!(
             matches.search,
             vec![
-                PathBuf::from("ignored-root/hi"),
-                PathBuf::from("tracked-root/hi"),
-                PathBuf::from("ignored-root/hiccup"),
-                PathBuf::from("tracked-root/hiccup"),
-                PathBuf::from("ignored-root/height"),
-                PathBuf::from("ignored-root/happiness"),
-                PathBuf::from("tracked-root/happiness"),
+                rel_path("ignored-root/hi").into(),
+                rel_path("tracked-root/hi").into(),
+                rel_path("ignored-root/hiccup").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("ignored-root/height").into(),
+                rel_path("ignored-root/happiness").into(),
+                rel_path("tracked-root/happiness").into(),
             ],
             "All ignored files that were indexed are found for default ignored mode"
         );
@@ -738,14 +738,14 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         assert_eq!(
             matches.search,
             vec![
-                PathBuf::from("ignored-root/hi"),
-                PathBuf::from("tracked-root/hi"),
-                PathBuf::from("ignored-root/hiccup"),
-                PathBuf::from("tracked-root/hiccup"),
-                PathBuf::from("ignored-root/height"),
-                PathBuf::from("tracked-root/height"),
-                PathBuf::from("ignored-root/happiness"),
-                PathBuf::from("tracked-root/happiness"),
+                rel_path("ignored-root/hi").into(),
+                rel_path("tracked-root/hi").into(),
+                rel_path("ignored-root/hiccup").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("ignored-root/height").into(),
+                rel_path("tracked-root/height").into(),
+                rel_path("ignored-root/happiness").into(),
+                rel_path("tracked-root/happiness").into(),
             ],
             "All ignored files should be found, for the toggled on ignored mode"
         );
@@ -765,9 +765,9 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         assert_eq!(
             matches.search,
             vec![
-                PathBuf::from("tracked-root/hi"),
-                PathBuf::from("tracked-root/hiccup"),
-                PathBuf::from("tracked-root/happiness"),
+                rel_path("tracked-root/hi").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("tracked-root/happiness").into(),
             ],
             "Only non-ignored files should be found for the turned off ignored mode"
         );
@@ -812,13 +812,13 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         assert_eq!(
             matches.search,
             vec![
-                PathBuf::from("ignored-root/hi"),
-                PathBuf::from("tracked-root/hi"),
-                PathBuf::from("ignored-root/hiccup"),
-                PathBuf::from("tracked-root/hiccup"),
-                PathBuf::from("ignored-root/height"),
-                PathBuf::from("ignored-root/happiness"),
-                PathBuf::from("tracked-root/happiness"),
+                rel_path("ignored-root/hi").into(),
+                rel_path("tracked-root/hi").into(),
+                rel_path("ignored-root/hiccup").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("ignored-root/height").into(),
+                rel_path("ignored-root/happiness").into(),
+                rel_path("tracked-root/happiness").into(),
             ],
             "Only for the worktree with the ignored root, all indexed ignored files are found in the auto ignored mode"
         );
@@ -838,16 +838,16 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         assert_eq!(
             matches.search,
             vec![
-                PathBuf::from("ignored-root/hi"),
-                PathBuf::from("tracked-root/hi"),
-                PathBuf::from("ignored-root/hiccup"),
-                PathBuf::from("tracked-root/hiccup"),
-                PathBuf::from("ignored-root/height"),
-                PathBuf::from("tracked-root/height"),
-                PathBuf::from("tracked-root/heights/height_1"),
-                PathBuf::from("tracked-root/heights/height_2"),
-                PathBuf::from("ignored-root/happiness"),
-                PathBuf::from("tracked-root/happiness"),
+                rel_path("ignored-root/hi").into(),
+                rel_path("tracked-root/hi").into(),
+                rel_path("ignored-root/hiccup").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("ignored-root/height").into(),
+                rel_path("tracked-root/height").into(),
+                rel_path("tracked-root/heights/height_1").into(),
+                rel_path("tracked-root/heights/height_2").into(),
+                rel_path("ignored-root/happiness").into(),
+                rel_path("tracked-root/happiness").into(),
             ],
             "All ignored files that were indexed are found in the turned on ignored mode"
         );
@@ -867,9 +867,9 @@ async fn test_ignored_root(cx: &mut TestAppContext) {
         assert_eq!(
             matches.search,
             vec![
-                PathBuf::from("tracked-root/hi"),
-                PathBuf::from("tracked-root/hiccup"),
-                PathBuf::from("tracked-root/happiness"),
+                rel_path("tracked-root/hi").into(),
+                rel_path("tracked-root/hiccup").into(),
+                rel_path("tracked-root/happiness").into(),
             ],
             "Only non-ignored files should be found for the turned off ignored mode"
         );
@@ -910,7 +910,7 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
         assert_eq!(matches.len(), 1);
 
         let (file_name, file_name_positions, full_path, full_path_positions) =
-            delegate.labels_for_path_match(&matches[0]);
+            delegate.labels_for_path_match(&matches[0], PathStyle::local());
         assert_eq!(file_name, "the-file");
         assert_eq!(file_name_positions, &[0, 1, 4]);
         assert_eq!(full_path, "");
@@ -968,7 +968,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
 
     let b_path = ProjectPath {
         worktree_id: worktree_id2,
-        path: Arc::from(Path::new(path!("the-parent-dirb/fileb"))),
+        path: rel_path("the-parent-dirb/fileb").into(),
     };
     workspace
         .update_in(cx, |workspace, window, cx| {
@@ -1001,7 +1001,7 @@ async fn test_create_file_for_multiple_worktrees(cx: &mut TestAppContext) {
             project_path,
             Some(ProjectPath {
                 worktree_id: worktree_id2,
-                path: Arc::from(Path::new(path!("the-parent-dirb/filec")))
+                path: rel_path("the-parent-dirb/filec").into()
             })
         );
     });
@@ -1038,10 +1038,7 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     let (_worktree_id1, worktree_id2) = cx.read(|cx| {
         let worktrees = workspace.read(cx).worktrees(cx).collect::<Vec<_>>();
-        (
-            WorktreeId::from_usize(worktrees[0].entity_id().as_u64() as usize),
-            WorktreeId::from_usize(worktrees[1].entity_id().as_u64() as usize),
-        )
+        (worktrees[0].read(cx).id(), worktrees[1].read(cx).id())
     });
 
     let finder = open_file_picker(&workspace, cx);
@@ -1065,7 +1062,7 @@ async fn test_create_file_no_focused_with_multiple_worktrees(cx: &mut TestAppCon
             project_path,
             Some(ProjectPath {
                 worktree_id: worktree_id2,
-                path: Arc::from(Path::new("filec"))
+                path: rel_path("filec").into()
             })
         );
     });
@@ -1103,7 +1100,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
     // so that one should be sorted earlier
     let b_path = ProjectPath {
         worktree_id,
-        path: Arc::from(Path::new("dir2/b.txt")),
+        path: rel_path("dir2/b.txt").into(),
     };
     workspace
         .update_in(cx, |workspace, window, cx| {
@@ -1121,8 +1118,8 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
 
     finder.update(cx, |picker, _| {
         let matches = collect_search_matches(picker).search_paths_only();
-        assert_eq!(matches[0].as_path(), Path::new("dir2/a.txt"));
-        assert_eq!(matches[1].as_path(), Path::new("dir1/a.txt"));
+        assert_eq!(matches[0].as_ref(), rel_path("dir2/a.txt"));
+        assert_eq!(matches[1].as_ref(), rel_path("dir1/a.txt"));
     });
 }
 
@@ -1207,9 +1204,9 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
         vec![FoundPath::new(
             ProjectPath {
                 worktree_id,
-                path: Arc::from(Path::new("test/first.rs")),
+                path: rel_path("test/first.rs").into(),
             },
-            Some(PathBuf::from(path!("/src/test/first.rs")))
+            PathBuf::from(path!("/src/test/first.rs"))
         )],
         "Should show 1st opened item in the history when opening the 2nd item"
     );
@@ -1222,16 +1219,16 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
+                    path: rel_path("test/second.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/second.rs")))
+                PathBuf::from(path!("/src/test/second.rs"))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/first.rs")))
+                PathBuf::from(path!("/src/test/first.rs"))
             ),
         ],
         "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
@@ -1246,23 +1243,23 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/third.rs")),
+                    path: rel_path("test/third.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/third.rs")))
+                PathBuf::from(path!("/src/test/third.rs"))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
+                    path: rel_path("test/second.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/second.rs")))
+                PathBuf::from(path!("/src/test/second.rs"))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/first.rs")))
+                PathBuf::from(path!("/src/test/first.rs"))
             ),
         ],
         "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
@@ -1277,28 +1274,84 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
+                    path: rel_path("test/second.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/second.rs")))
+                PathBuf::from(path!("/src/test/second.rs"))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/third.rs")),
+                    path: rel_path("test/third.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/third.rs")))
+                PathBuf::from(path!("/src/test/third.rs"))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/first.rs")))
+                PathBuf::from(path!("/src/test/first.rs"))
             ),
         ],
         "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
     2nd item, as the last opened, 3rd item should go next as it was opened right before."
     );
+}
+
+#[gpui::test]
+async fn test_history_match_positions(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/src"),
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/src").as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+    workspace.update_in(cx, |_workspace, window, cx| window.focused(cx));
+
+    open_close_queried_buffer("efir", 1, "first.rs", &workspace, cx).await;
+    let history = open_close_queried_buffer("second", 1, "second.rs", &workspace, cx).await;
+    assert_eq!(history.len(), 1);
+
+    let picker = open_file_picker(&workspace, cx);
+    cx.simulate_input("fir");
+    picker.update_in(cx, |finder, window, cx| {
+        let matches = &finder.delegate.matches.matches;
+        assert_matches!(
+            matches.as_slice(),
+            [Match::History { .. }, Match::CreateNew { .. }]
+        );
+        assert_eq!(
+            matches[0].panel_match().unwrap().0.path.as_ref(),
+            rel_path("test/first.rs")
+        );
+        assert_eq!(matches[0].panel_match().unwrap().0.positions, &[5, 6, 7]);
+
+        let (file_label, path_label) =
+            finder
+                .delegate
+                .labels_for_match(&finder.delegate.matches.matches[0], window, cx);
+        assert_eq!(file_label.text(), "first.rs");
+        assert_eq!(file_label.highlight_indices(), &[0, 1, 2]);
+        assert_eq!(
+            path_label.text(),
+            format!("test{}", PathStyle::local().separator())
+        );
+        assert_eq!(path_label.highlight_indices(), &[] as &[usize]);
+    });
 }
 
 #[gpui::test]
@@ -1392,9 +1445,9 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         vec![FoundPath::new(
             ProjectPath {
                 worktree_id: external_worktree_id,
-                path: Arc::from(Path::new("")),
+                path: rel_path("").into(),
             },
-            Some(PathBuf::from(path!("/external-src/test/third.rs")))
+            PathBuf::from(path!("/external-src/test/third.rs"))
         )],
         "Should show external file with its full path in the history after it was open"
     );
@@ -1407,16 +1460,16 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/second.rs")),
+                    path: rel_path("test/second.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/second.rs")))
+                PathBuf::from(path!("/src/test/second.rs"))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id: external_worktree_id,
-                    path: Arc::from(Path::new("")),
+                    path: rel_path("").into(),
                 },
-                Some(PathBuf::from(path!("/external-src/test/third.rs")))
+                PathBuf::from(path!("/external-src/test/third.rs"))
             ),
         ],
         "Should keep external file with history updates",
@@ -1529,12 +1582,12 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             assert_eq!(history_match, &FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/first.rs")))
+                PathBuf::from(path!("/src/test/first.rs")),
             ));
             assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query}, it should be present");
-            assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
+            assert_eq!(matches.search.first().unwrap().as_ref(), rel_path("test/fourth.rs"));
         });
 
     let second_query = "fsdasdsa";
@@ -1572,12 +1625,12 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
             assert_eq!(history_match, &FoundPath::new(
                 ProjectPath {
                     worktree_id,
-                    path: Arc::from(Path::new("test/first.rs")),
+                    path: rel_path("test/first.rs").into(),
                 },
-                Some(PathBuf::from(path!("/src/test/first.rs")))
+                PathBuf::from(path!("/src/test/first.rs"))
             ));
             assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
-            assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
+            assert_eq!(matches.search.first().unwrap().as_ref(), rel_path("test/fourth.rs"));
         });
 }
 
@@ -1626,13 +1679,16 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
         let search_matches = collect_search_matches(finder);
         assert_eq!(
             search_matches.history,
-            vec![PathBuf::from("test/1_qw"), PathBuf::from("test/6_qwqwqw"),],
+            vec![
+                rel_path("test/1_qw").into(),
+                rel_path("test/6_qwqwqw").into()
+            ],
         );
         assert_eq!(
             search_matches.search,
             vec![
-                PathBuf::from("test/5_qwqwqw"),
-                PathBuf::from("test/7_qwqwqw"),
+                rel_path("test/5_qwqwqw").into(),
+                rel_path("test/7_qwqwqw").into()
             ],
         );
     });
@@ -2083,10 +2139,10 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
             assert_eq!(
                 search_entries,
                 vec![
-                    PathBuf::from("collab_ui/collab_ui.rs"),
-                    PathBuf::from("collab_ui/first.rs"),
-                    PathBuf::from("collab_ui/third.rs"),
-                    PathBuf::from("collab_ui/second.rs"),
+                    rel_path("collab_ui/collab_ui.rs").into(),
+                    rel_path("collab_ui/first.rs").into(),
+                    rel_path("collab_ui/third.rs").into(),
+                    rel_path("collab_ui/second.rs").into(),
                 ],
                 "Despite all search results having the same directory name, the most matching one should be on top"
             );
@@ -2135,8 +2191,8 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
         assert_eq!(
             collect_search_matches(picker).history,
             vec![
-                PathBuf::from("test/first.rs"),
-                PathBuf::from("test/third.rs"),
+                rel_path("test/first.rs").into(),
+                rel_path("test/third.rs").into(),
             ],
             "Should have all opened files in the history, except the ones that do not exist on disk"
         );
@@ -2766,15 +2822,15 @@ fn active_file_picker(
 
 #[derive(Debug, Default)]
 struct SearchEntries {
-    history: Vec<PathBuf>,
+    history: Vec<Arc<RelPath>>,
     history_found_paths: Vec<FoundPath>,
-    search: Vec<PathBuf>,
+    search: Vec<Arc<RelPath>>,
     search_matches: Vec<PathMatch>,
 }
 
 impl SearchEntries {
     #[track_caller]
-    fn search_paths_only(self) -> Vec<PathBuf> {
+    fn search_paths_only(self) -> Vec<Arc<RelPath>> {
         assert!(
             self.history.is_empty(),
             "Should have no history matches, but got: {:?}",
@@ -2802,20 +2858,15 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
                 path: history_path,
                 panel_match: path_match,
             } => {
-                search_entries.history.push(
-                    path_match
-                        .as_ref()
-                        .map(|path_match| {
-                            Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path)
-                        })
-                        .unwrap_or_else(|| {
-                            history_path
-                                .absolute
-                                .as_deref()
-                                .unwrap_or_else(|| &history_path.project.path)
-                                .to_path_buf()
-                        }),
-                );
+                if let Some(path_match) = path_match.as_ref() {
+                    search_entries
+                        .history
+                        .push(path_match.0.path_prefix.join(&path_match.0.path));
+                } else {
+                    // This occurs when the query is empty and we show history matches
+                    // that are outside the project.
+                    panic!("currently not exercised in tests");
+                }
                 search_entries
                     .history_found_paths
                     .push(history_path.clone());
@@ -2823,7 +2874,7 @@ fn collect_search_matches(picker: &Picker<FileFinderDelegate>) -> SearchEntries 
             Match::Search(path_match) => {
                 search_entries
                     .search
-                    .push(Path::new(path_match.0.path_prefix.as_ref()).join(&path_match.0.path));
+                    .push(path_match.0.path_prefix.join(&path_match.0.path));
                 search_entries.search_matches.push(path_match.0.clone());
             }
             Match::CreateNew(_) => {}
@@ -2858,12 +2909,11 @@ fn assert_match_at_position(
         .get(match_index)
         .unwrap_or_else(|| panic!("Finder has no match for index {match_index}"));
     let match_file_name = match &match_item {
-        Match::History { path, .. } => path.absolute.as_deref().unwrap().file_name(),
+        Match::History { path, .. } => path.absolute.file_name().and_then(|s| s.to_str()),
         Match::Search(path_match) => path_match.0.path.file_name(),
         Match::CreateNew(project_path) => project_path.path.file_name(),
     }
-    .unwrap()
-    .to_string_lossy();
+    .unwrap();
     assert_eq!(match_file_name, expected_file_name);
 }
 
@@ -2901,11 +2951,11 @@ async fn test_filename_precedence(cx: &mut TestAppContext) {
         assert_eq!(
             search_matches,
             vec![
-                PathBuf::from("routes/+layout.svelte"),
-                PathBuf::from("layout/app.css"),
-                PathBuf::from("layout/app.d.ts"),
-                PathBuf::from("layout/app.html"),
-                PathBuf::from("layout/+page.svelte"),
+                rel_path("routes/+layout.svelte").into(),
+                rel_path("layout/app.css").into(),
+                rel_path("layout/app.d.ts").into(),
+                rel_path("layout/app.html").into(),
+                rel_path("layout/+page.svelte").into(),
             ],
             "File with 'layout' in filename should be prioritized over files in 'layout' directory"
         );

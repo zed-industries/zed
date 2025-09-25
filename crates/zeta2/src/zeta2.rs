@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
 use chrono::TimeDelta;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_llm_client::predict_edits_v3::{self, Signature};
+use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
@@ -23,11 +23,12 @@ use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::Project;
 use release_channel::AppVersion;
 use std::collections::{HashMap, VecDeque, hash_map};
-use std::path::PathBuf;
+use std::path::Path;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
+use util::rel_path::RelPathBuf;
 use util::some_or_debug_panic;
 use workspace::notifications::{ErrorMessagePrompt, NotificationId, show_app_notification};
 
@@ -52,6 +53,7 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     excerpt: DEFAULT_EXCERPT_OPTIONS,
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
+    prompt_format: PromptFormat::MarkedExcerpt,
 };
 
 #[derive(Clone)]
@@ -75,6 +77,7 @@ pub struct ZetaOptions {
     pub excerpt: EditPredictionExcerptOptions,
     pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
+    pub prompt_format: predict_edits_v3::PromptFormat,
 }
 
 pub struct PredictionDebugInfo {
@@ -108,6 +111,10 @@ pub enum Event {
 }
 
 impl Zeta {
+    pub fn try_global(cx: &App) -> Option<Entity<Self>> {
+        cx.try_global::<ZetaGlobal>().map(|global| global.0.clone())
+    }
+
     pub fn global(
         client: &Arc<Client>,
         user_store: &Entity<UserStore>,
@@ -160,6 +167,12 @@ impl Zeta {
 
     pub fn set_options(&mut self, options: ZetaOptions) {
         self.options = options;
+    }
+
+    pub fn clear_history(&mut self) {
+        for zeta_project in self.projects.values_mut() {
+            zeta_project.events.clear();
+        }
     }
 
     pub fn usage(&self, cx: &App) -> Option<EditPredictionUsage> {
@@ -308,7 +321,7 @@ impl Zeta {
         });
         let options = self.options.clone();
         let snapshot = buffer.read(cx).snapshot();
-        let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx)) else {
+        let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx).into()) else {
             return Task::ready(Err(anyhow!("No file path for excerpt")));
         };
         let client = self.client.clone();
@@ -332,12 +345,12 @@ impl Zeta {
                             new_snapshot,
                             ..
                         } => {
-                            let path = new_snapshot.file().map(|f| f.path().to_path_buf());
+                            let path = new_snapshot.file().map(|f| f.full_path(cx));
 
                             let old_path = old_snapshot.file().and_then(|f| {
-                                let old_path = f.path().as_ref();
-                                if Some(old_path) != path.as_deref() {
-                                    Some(old_path.to_path_buf())
+                                let old_path = f.full_path(cx);
+                                if Some(&old_path) != path.as_ref() {
+                                    Some(old_path)
                                 } else {
                                     None
                                 }
@@ -400,7 +413,7 @@ impl Zeta {
                     );
 
                 let request = make_cloud_request(
-                    excerpt_path.clone(),
+                    excerpt_path,
                     context,
                     events,
                     // TODO data collection
@@ -412,6 +425,7 @@ impl Zeta {
                     &worktree_snapshots,
                     index_state.as_deref(),
                     Some(options.max_prompt_bytes),
+                    options.prompt_format,
                 );
 
                 let retrieval_time = chrono::Utc::now() - before_retrieval;
@@ -674,7 +688,7 @@ impl Zeta {
             .context("Failed to select excerpt")
             .map(|context| {
                 make_cloud_request(
-                    excerpt_path.clone(),
+                    excerpt_path.into(),
                     context,
                     // TODO pass everything
                     Vec::new(),
@@ -686,6 +700,7 @@ impl Zeta {
                     &worktree_snapshots,
                     index_state.as_deref(),
                     Some(options.max_prompt_bytes),
+                    options.prompt_format,
                 )
             })
         })
@@ -701,7 +716,7 @@ pub struct ZedUpdateRequiredError {
 }
 
 fn make_cloud_request(
-    excerpt_path: PathBuf,
+    excerpt_path: Arc<Path>,
     context: EditPredictionContext,
     events: Vec<predict_edits_v3::Event>,
     can_collect_data: bool,
@@ -712,6 +727,7 @@ fn make_cloud_request(
     worktrees: &Vec<worktree::Snapshot>,
     index_state: Option<&SyntaxIndexState>,
     prompt_max_bytes: Option<usize>,
+    prompt_format: PromptFormat,
 ) -> predict_edits_v3::PredictEditsRequest {
     let mut signatures = Vec::new();
     let mut declaration_to_signature_index = HashMap::default();
@@ -721,7 +737,7 @@ fn make_cloud_request(
         let project_entry_id = snippet.declaration.project_entry_id();
         let Some(path) = worktrees.iter().find_map(|worktree| {
             worktree.entry_for_id(project_entry_id).map(|entry| {
-                let mut full_path = PathBuf::new();
+                let mut full_path = RelPathBuf::new();
                 full_path.push(worktree.root_name());
                 full_path.push(&entry.path);
                 full_path
@@ -743,7 +759,7 @@ fn make_cloud_request(
 
         let (text, text_is_truncated) = snippet.declaration.item_text();
         referenced_declarations.push(predict_edits_v3::ReferencedDeclaration {
-            path,
+            path: path.as_std_path().into(),
             text: text.into(),
             range: snippet.declaration.item_range(),
             text_is_truncated,
@@ -785,6 +801,7 @@ fn make_cloud_request(
         git_info,
         debug_info,
         prompt_max_bytes,
+        prompt_format,
     }
 }
 
@@ -814,4 +831,317 @@ fn add_signature(
     });
     declaration_to_signature_index.insert(declaration_id, signature_index);
     Some(signature_index)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+
+    use client::UserStore;
+    use clock::FakeSystemClock;
+    use cloud_llm_client::predict_edits_v3;
+    use futures::{
+        AsyncReadExt, StreamExt,
+        channel::{mpsc, oneshot},
+    };
+    use gpui::{
+        Entity, TestAppContext,
+        http_client::{FakeHttpClient, Response},
+        prelude::*,
+    };
+    use indoc::indoc;
+    use language::{LanguageServerId, OffsetRangeExt as _};
+    use project::{FakeFs, Project};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use uuid::Uuid;
+
+    use crate::Zeta;
+
+    #[gpui::test]
+    async fn test_simple_request(cx: &mut TestAppContext) {
+        let (zeta, mut req_rx) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md":  "Hello!\nHow\nBye"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+        let prediction_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_prediction(&project, &buffer, position, cx)
+        });
+
+        let (request, respond_tx) = req_rx.next().await.unwrap();
+        assert_eq!(
+            request.excerpt_path.as_ref(),
+            Path::new(path!("root/foo.md"))
+        );
+        assert_eq!(request.cursor_offset, 10);
+
+        respond_tx
+            .send(predict_edits_v3::PredictEditsResponse {
+                request_id: Uuid::new_v4(),
+                edits: vec![predict_edits_v3::Edit {
+                    path: Path::new(path!("root/foo.md")).into(),
+                    range: 0..snapshot.len(),
+                    content: "Hello!\nHow are you?\nBye".into(),
+                }],
+                debug_info: None,
+            })
+            .unwrap();
+
+        let prediction = prediction_task.await.unwrap().unwrap();
+
+        assert_eq!(prediction.edits.len(), 1);
+        assert_eq!(
+            prediction.edits[0].0.to_point(&snapshot).start,
+            language::Point::new(1, 3)
+        );
+        assert_eq!(prediction.edits[0].1, " are you?");
+    }
+
+    #[gpui::test]
+    async fn test_request_events(cx: &mut TestAppContext) {
+        let (zeta, mut req_rx) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md": "Hello!\n\nBye"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+
+        zeta.update(cx, |zeta, cx| {
+            zeta.register_buffer(&buffer, &project, cx);
+        });
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(vec![(7..7, "How")], None, cx);
+        });
+
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+        let prediction_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_prediction(&project, &buffer, position, cx)
+        });
+
+        let (request, respond_tx) = req_rx.next().await.unwrap();
+
+        assert_eq!(request.events.len(), 1);
+        assert_eq!(
+            request.events[0],
+            predict_edits_v3::Event::BufferChange {
+                path: Some(PathBuf::from(path!("root/foo.md"))),
+                old_path: None,
+                diff: indoc! {"
+                        @@ -1,3 +1,3 @@
+                         Hello!
+                        -
+                        +How
+                         Bye
+                    "}
+                .to_string(),
+                predicted: false
+            }
+        );
+
+        respond_tx
+            .send(predict_edits_v3::PredictEditsResponse {
+                request_id: Uuid::new_v4(),
+                edits: vec![predict_edits_v3::Edit {
+                    path: Path::new(path!("root/foo.md")).into(),
+                    range: 0..snapshot.len(),
+                    content: "Hello!\nHow are you?\nBye".into(),
+                }],
+                debug_info: None,
+            })
+            .unwrap();
+
+        let prediction = prediction_task.await.unwrap().unwrap();
+
+        assert_eq!(prediction.edits.len(), 1);
+        assert_eq!(
+            prediction.edits[0].0.to_point(&snapshot).start,
+            language::Point::new(1, 3)
+        );
+        assert_eq!(prediction.edits[0].1, " are you?");
+    }
+
+    #[gpui::test]
+    async fn test_request_diagnostics(cx: &mut TestAppContext) {
+        let (zeta, mut req_rx) = init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "foo.md": "Hello!\nBye"
+            }),
+        )
+        .await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+        let path_to_buffer_uri = lsp::Uri::from_file_path(path!("/root/foo.md")).unwrap();
+        let diagnostic = lsp::Diagnostic {
+            range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
+            severity: Some(lsp::DiagnosticSeverity::ERROR),
+            message: "\"Hello\" deprecated. Use \"Hi\" instead".to_string(),
+            ..Default::default()
+        };
+
+        project.update(cx, |project, cx| {
+            project.lsp_store().update(cx, |lsp_store, cx| {
+                // Create some diagnostics
+                lsp_store
+                    .update_diagnostics(
+                        LanguageServerId(0),
+                        lsp::PublishDiagnosticsParams {
+                            uri: path_to_buffer_uri.clone(),
+                            diagnostics: vec![diagnostic],
+                            version: None,
+                        },
+                        None,
+                        language::DiagnosticSourceKind::Pushed,
+                        &[],
+                        cx,
+                    )
+                    .unwrap();
+            });
+        });
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+                project.open_buffer(path, cx)
+            })
+            .await
+            .unwrap();
+
+        let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+        let position = snapshot.anchor_before(language::Point::new(0, 0));
+
+        let _prediction_task = zeta.update(cx, |zeta, cx| {
+            zeta.request_prediction(&project, &buffer, position, cx)
+        });
+
+        let (request, _respond_tx) = req_rx.next().await.unwrap();
+
+        assert_eq!(request.diagnostic_groups.len(), 1);
+        let value = serde_json::from_str::<serde_json::Value>(request.diagnostic_groups[0].0.get())
+            .unwrap();
+        // We probably don't need all of this. TODO define a specific diagnostic type in predict_edits_v3
+        assert_eq!(
+            value,
+            json!({
+                "entries": [{
+                    "range": {
+                        "start": 8,
+                        "end": 10
+                    },
+                    "diagnostic": {
+                        "source": null,
+                        "code": null,
+                        "code_description": null,
+                        "severity": 1,
+                        "message": "\"Hello\" deprecated. Use \"Hi\" instead",
+                        "markdown": null,
+                        "group_id": 0,
+                        "is_primary": true,
+                        "is_disk_based": false,
+                        "is_unnecessary": false,
+                        "source_kind": "Pushed",
+                        "data": null,
+                        "underline": true
+                    }
+                }],
+                "primary_ix": 0
+            })
+        );
+    }
+
+    fn init_test(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<Zeta>,
+        mpsc::UnboundedReceiver<(
+            predict_edits_v3::PredictEditsRequest,
+            oneshot::Sender<predict_edits_v3::PredictEditsResponse>,
+        )>,
+    ) {
+        cx.update(move |cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+
+            let (req_tx, req_rx) = mpsc::unbounded();
+
+            let http_client = FakeHttpClient::create({
+                move |req| {
+                    let uri = req.uri().path().to_string();
+                    let mut body = req.into_body();
+                    let req_tx = req_tx.clone();
+                    async move {
+                        let resp = match uri.as_str() {
+                            "/client/llm_tokens" => serde_json::to_string(&json!({
+                                "token": "test"
+                            }))
+                            .unwrap(),
+                            "/predict_edits/v3" => {
+                                let mut buf = Vec::new();
+                                body.read_to_end(&mut buf).await.ok();
+                                let req = serde_json::from_slice(&buf).unwrap();
+
+                                let (res_tx, res_rx) = oneshot::channel();
+                                req_tx.unbounded_send((req, res_tx)).unwrap();
+                                serde_json::to_string(&res_rx.await.unwrap()).unwrap()
+                            }
+                            _ => {
+                                panic!("Unexpected path: {}", uri)
+                            }
+                        };
+
+                        Ok(Response::builder().body(resp.into()).unwrap())
+                    }
+                }
+            });
+
+            let client = client::Client::new(Arc::new(FakeSystemClock::new()), http_client, cx);
+            client.cloud_client().set_credentials(1, "test".into());
+
+            language_model::init(client.clone(), cx);
+
+            let user_store = cx.new(|cx| UserStore::new(client.clone(), cx));
+            let zeta = Zeta::global(&client, &user_store, cx);
+            (zeta, req_rx)
+        })
+    }
 }

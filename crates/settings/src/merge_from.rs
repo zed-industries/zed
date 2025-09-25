@@ -49,6 +49,7 @@ merge_from_overwrites!(
     bool,
     f64,
     f32,
+    char,
     std::num::NonZeroUsize,
     std::num::NonZeroU32,
     String,

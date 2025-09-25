@@ -1,0 +1,48 @@
+name: Community Champion Auto Labeler
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+
+jobs:
+  label_community_champion:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if author is a community champion and apply label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const communityChampionBody = `${{ secrets.COMMUNITY_CHAMPIONS }}`;
+
+            const communityChampions = communityChampionBody
+              .split('\n')
+              .map(handle => handle.trim().toLowerCase());
+
+            let author;
+            if (context.eventName === 'issues') {
+              author = context.payload.issue.user.login;
+            } else if (context.eventName === 'pull_request_target') {
+              author = context.payload.pull_request.user.login;
+            }
+
+            if (!author || !communityChampions.includes(author.toLowerCase())) {
+              return;
+            }
+
+            const issueNumber = context.payload.issue?.number || context.payload.pull_request?.number;
+
+            try {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issueNumber,
+                labels: ['community champion']
+              });
+
+              console.log(`Applied 'community champion' label to #${issueNumber} by ${author}`);
+            } catch (error) {
+              console.error(`Failed to apply label: ${error.message}`);
+            }

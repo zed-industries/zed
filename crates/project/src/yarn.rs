@@ -15,7 +15,7 @@ use anyhow::Result;
 use collections::HashMap;
 use fs::Fs;
 use gpui::{App, AppContext as _, Context, Entity, Task};
-use util::{ResultExt, archive::extract_zip};
+use util::{ResultExt, archive::extract_zip, paths::PathStyle, rel_path::RelPath};
 
 pub(crate) struct YarnPathStore {
     temp_dirs: HashMap<Arc<Path>, tempfile::TempDir>,
@@ -63,12 +63,13 @@ impl YarnPathStore {
             fs,
         })
     }
+
     pub(crate) fn process_path(
         &mut self,
         path: &Path,
         protocol: &str,
         cx: &Context<Self>,
-    ) -> Task<Option<(Arc<Path>, Arc<Path>)>> {
+    ) -> Task<Option<(Arc<Path>, Arc<RelPath>)>> {
         let mut is_zip = protocol.eq("zip");
 
         let path: &Path = if let Some(non_zip_part) = path
@@ -112,7 +113,9 @@ impl YarnPathStore {
                     new_path
                 };
                 // Rebase zip-path onto new temp path.
-                let as_relative = path.strip_prefix(zip_file).ok()?.into();
+                let as_relative =
+                    RelPath::from_std_path(path.strip_prefix(zip_file).ok()?, PathStyle::local())
+                        .ok()?;
                 Some((zip_root.into(), as_relative))
             })
         } else {

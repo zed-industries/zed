@@ -16,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
+use util::rel_path::RelPath;
 use util::{archive::extract_zip, fs::make_file_executable, maybe};
 use wasmtime::component::{Linker, Resource};
 
@@ -421,12 +422,12 @@ impl ExtensionImports for WasmState {
     ) -> wasmtime::Result<Result<String, String>> {
         self.on_main_thread(|cx| {
             async move {
-                let location = location
-                    .as_ref()
-                    .map(|location| ::settings::SettingsLocation {
+                let location = location.as_ref().and_then(|location| {
+                    Some(::settings::SettingsLocation {
                         worktree_id: WorktreeId::from_proto(location.worktree_id),
-                        path: Path::new(&location.path),
-                    });
+                        path: RelPath::new(&location.path).ok()?,
+                    })
+                });
 
                 cx.update(|cx| match category.as_str() {
                     "language" => {

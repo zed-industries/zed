@@ -13,7 +13,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use text::Anchor;
-use util::paths::PathMatcher;
+use util::paths::{PathMatcher, PathStyle};
 
 #[derive(Debug)]
 pub enum SearchResult {
@@ -238,7 +238,7 @@ impl SearchQuery {
         is_case_sensitive.map(|c| (c, new_query))
     }
 
-    pub fn from_proto(message: proto::SearchQuery) -> Result<Self> {
+    pub fn from_proto(message: proto::SearchQuery, path_style: PathStyle) -> Result<Self> {
         let files_to_include = if message.files_to_include.is_empty() {
             message
                 .files_to_include_legacy
@@ -270,8 +270,8 @@ impl SearchQuery {
                 message.case_sensitive,
                 message.include_ignored,
                 false,
-                PathMatcher::new(files_to_include)?,
-                PathMatcher::new(files_to_exclude)?,
+                PathMatcher::new(files_to_include, path_style)?,
+                PathMatcher::new(files_to_exclude, path_style)?,
                 message.match_full_paths,
                 None, // search opened only don't need search remote
             )
@@ -281,8 +281,8 @@ impl SearchQuery {
                 message.whole_word,
                 message.case_sensitive,
                 message.include_ignored,
-                PathMatcher::new(files_to_include)?,
-                PathMatcher::new(files_to_exclude)?,
+                PathMatcher::new(files_to_include, path_style)?,
+                PathMatcher::new(files_to_exclude, path_style)?,
                 false,
                 None, // search opened only don't need search remote
             )
@@ -610,9 +610,10 @@ mod tests {
             "dir/[a-z].txt",
             "../dir/filé",
         ] {
-            let path_matcher = PathMatcher::new(&[valid_path.to_owned()]).unwrap_or_else(|e| {
-                panic!("Valid path {valid_path} should be accepted, but got: {e}")
-            });
+            let path_matcher = PathMatcher::new(&[valid_path.to_owned()], PathStyle::local())
+                .unwrap_or_else(|e| {
+                    panic!("Valid path {valid_path} should be accepted, but got: {e}")
+                });
             assert!(
                 path_matcher.is_match(valid_path),
                 "Path matcher for valid path {valid_path} should match itself"
@@ -623,7 +624,7 @@ mod tests {
     #[test]
     fn path_matcher_creation_for_globs() {
         for invalid_glob in ["dir/[].txt", "dir/[a-z.txt", "dir/{file"] {
-            match PathMatcher::new(&[invalid_glob.to_owned()]) {
+            match PathMatcher::new(&[invalid_glob.to_owned()], PathStyle::local()) {
                 Ok(_) => panic!("Invalid glob {invalid_glob} should not be accepted"),
                 Err(_expected) => {}
             }
@@ -636,7 +637,7 @@ mod tests {
             "dir/[a-z].txt",
             "{dir,file}",
         ] {
-            match PathMatcher::new(&[valid_glob.to_owned()]) {
+            match PathMatcher::new(&[valid_glob.to_owned()], PathStyle::local()) {
                 Ok(_expected) => {}
                 Err(e) => panic!("Valid glob should be accepted, but got: {e}"),
             }

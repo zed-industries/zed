@@ -70,6 +70,7 @@ pub use toolchain::{
     ToolchainMetadata, ToolchainScope,
 };
 use tree_sitter::{self, Query, QueryCursor, WasmStore, wasmtime};
+use util::rel_path::RelPath;
 use util::serde::default_true;
 
 pub use buffer::Operation;
@@ -307,7 +308,7 @@ pub trait LspAdapterDelegate: Send + Sync {
     ) -> Result<Option<(PathBuf, String)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
-    async fn read_text_file(&self, path: PathBuf) -> Result<String>;
+    async fn read_text_file(&self, path: &RelPath) -> Result<String>;
     async fn try_exec(&self, binary: LanguageServerBinary) -> Result<()>;
 }
 

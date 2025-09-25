@@ -1574,6 +1574,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::{Entry, Project, ProjectPath, Worktree};
     use std::path::Path;
+    use util::rel_path::RelPath;
     use workspace::AppState;
 
     // Working directory calculation tests
@@ -1735,7 +1736,7 @@ mod tests {
         let entry = cx
             .update(|cx| {
                 wt.update(cx, |wt, cx| {
-                    wt.create_entry(Path::new(""), is_dir, None, cx)
+                    wt.create_entry(RelPath::empty().into(), is_dir, None, cx)
                 })
             })
             .await
