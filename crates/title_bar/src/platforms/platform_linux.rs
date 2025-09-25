@@ -16,61 +16,50 @@ impl LinuxWindowControls {
     }
 }
 
-impl RenderOnce for LinuxWindowControls {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let title_bar_settings = TitleBarSettings::get(None, cx);
-        let controls = match title_bar_settings.window_controls_position {
+impl LinuxWindowControls {
+    /// Builds the window controls based on the position setting.
+    fn build_controls(
+        position: WindowControlsPosition,
+        window: &Window,
+        close_action: Box<dyn Action>,
+        cx: &mut App,
+    ) -> Vec<WindowControl> {
+        let maximize_type = if window.is_maximized() {
+            WindowControlType::Restore
+        } else {
+            WindowControlType::Maximize
+        };
+
+        match position {
             WindowControlsPosition::Left => {
-                // Lado esquerdo: Close, Minimize, Maximize (left to right)
+                // Left side: Close, Minimize, Maximize (left to right)
                 vec![
-                    WindowControl::new_close(
-                        "close",
-                        WindowControlType::Close,
-                        self.close_window_action,
-                        cx,
-                    ),
-                    WindowControl::new(
-                        "minimize",
-                        WindowControlType::Minimize,
-                        cx,
-                    ),
-                    WindowControl::new(
-                        "maximize-or-restore",
-                        if window.is_maximized() {
-                            WindowControlType::Restore
-                        } else {
-                            WindowControlType::Maximize
-                        },
-                        cx,
-                    ),
+                    WindowControl::new_close("close", WindowControlType::Close, close_action, cx),
+                    WindowControl::new("minimize", WindowControlType::Minimize, cx),
+                    WindowControl::new("maximize-or-restore", maximize_type, cx),
                 ]
             }
             WindowControlsPosition::Right => {
-                // Lado direito: Minimize, Maximize, Close (left to right)
+                // Right side: Minimize, Maximize, Close (left to right)
                 vec![
-                    WindowControl::new(
-                        "minimize",
-                        WindowControlType::Minimize,
-                        cx,
-                    ),
-                    WindowControl::new(
-                        "maximize-or-restore",
-                        if window.is_maximized() {
-                            WindowControlType::Restore
-                        } else {
-                            WindowControlType::Maximize
-                        },
-                        cx,
-                    ),
-                    WindowControl::new_close(
-                        "close",
-                        WindowControlType::Close,
-                        self.close_window_action,
-                        cx,
-                    ),
+                    WindowControl::new("minimize", WindowControlType::Minimize, cx),
+                    WindowControl::new("maximize-or-restore", maximize_type, cx),
+                    WindowControl::new_close("close", WindowControlType::Close, close_action, cx),
                 ]
             }
-        };
+        }
+    }
+}
+
+impl RenderOnce for LinuxWindowControls {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let title_bar_settings = TitleBarSettings::get(None, cx);
+        let controls = Self::build_controls(
+            title_bar_settings.window_controls_position,
+            window,
+            self.close_window_action,
+            cx,
+        );
 
         let mut flex = h_flex()
             .id("generic-window-controls")
