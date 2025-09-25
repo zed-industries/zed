@@ -15,6 +15,7 @@ use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use itertools::Itertools;
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use settings::watch_config_dir;
 
 pub const COPILOT_OAUTH_ENV_VAR: &str = "GH_COPILOT_TOKEN";
@@ -767,7 +768,101 @@ async fn stream_completion(
 
     let is_streaming = request.stream;
 
-    let json = serde_json::to_string(&request)?;
+    // GPT-5 Codex uses Responses API format with 'input' parameter instead of 'messages'
+    let json = if request.model == "gpt-5-codex" {
+        // Separate system messages for instructions
+        let instructions = request.messages.iter()
+            .find_map(|msg| match msg {
+                ChatMessage::System { content } => Some(content.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| "You are a helpful coding assistant.".to_string());
+
+        // Check if we have vision content (images)
+        let has_vision_content = request.messages.iter().any(|msg| match msg {
+            ChatMessage::User { content } => matches!(content, ChatMessageContent::Multipart(_)),
+            _ => false,
+        });
+
+        let input = if has_vision_content {
+            // Use array format for complex content (images, etc.)
+            let input_messages: Vec<serde_json::Value> = request.messages.iter()
+                .filter_map(|msg| match msg {
+                    ChatMessage::System { .. } => None, // Skip system messages (they become instructions)
+                    ChatMessage::User { content } => {
+                        let content_parts = match content {
+                            ChatMessageContent::Plain(text) => {
+                                vec![json!({
+                                    "type": "input_text",
+                                    "text": text
+                                })]
+                            }
+                            ChatMessageContent::Multipart(parts) => {
+                                parts.iter().map(|part| match part {
+                                    ChatMessagePart::Text(text) => json!({
+                                        "type": "input_text",
+                                        "text": text.clone()
+                                    }),
+                                    ChatMessagePart::Image { image_url, .. } => json!({
+                                        "type": "input_image",
+                                        "image_url": image_url.clone()
+                                    }),
+                                }).collect()
+                            }
+                        };
+                        Some(json!({
+                            "role": "user",
+                            "content": content_parts
+                        }))
+                    }
+                    ChatMessage::Assistant { content, .. } => {
+                        Some(json!({
+                            "role": "assistant",
+                            "content": [json!({
+                                "type": "input_text",
+                                "text": content.to_string()
+                            })]
+                        }))
+                    }
+                    ChatMessage::Tool { content, .. } => {
+                        Some(json!({
+                            "role": "tool",
+                            "content": [json!({
+                                "type": "input_text",
+                                "text": content.to_string()
+                            })]
+                        }))
+                    }
+                })
+                .collect();
+            json!(input_messages)
+        } else {
+            // Use simple string format for text-only content
+            let input_text = request.messages.iter()
+                .filter_map(|msg| match msg {
+                    ChatMessage::System { .. } => None, // Skip system messages
+                    ChatMessage::User { content } => Some(content.to_string()),
+                    ChatMessage::Assistant { content, .. } => Some(format!("Assistant: {}", content.to_string())),
+                    ChatMessage::Tool { content, .. } => Some(format!("Tool: {}", content.to_string())),
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            json!(input_text)
+        };
+
+        // Create Responses API compatible request
+        let responses_request = json!({
+            "model": request.model,
+            "instructions": instructions,
+            "input": input,
+            "stream": request.stream,
+            "temperature": request.temperature
+        });
+        serde_json::to_string(&responses_request)?
+    } else {
+        // Use standard Chat Completions API format
+        serde_json::to_string(&request)?
+    };
     let request = request_builder.body(AsyncBody::from(json))?;
     let mut response = client.send(request).await?;
 
