@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{FutureExt, Stream, StreamExt, future, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, SharedString, Task, Entity};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task};
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
