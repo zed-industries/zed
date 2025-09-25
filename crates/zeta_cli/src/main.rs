@@ -15,6 +15,7 @@ use language_model::LlmApiToken;
 use project::{Project, ProjectPath, Worktree};
 use release_channel::AppVersion;
 use reqwest_client::ReqwestClient;
+use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::str::FromStr;
@@ -86,6 +87,7 @@ enum PromptFormat {
     #[default]
     MarkedExcerpt,
     LabeledSections,
+    OnlySnippets,
 }
 
 impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
@@ -93,6 +95,7 @@ impl Into<predict_edits_v3::PromptFormat> for PromptFormat {
         match self {
             Self::MarkedExcerpt => predict_edits_v3::PromptFormat::MarkedExcerpt,
             Self::LabeledSections => predict_edits_v3::PromptFormat::LabeledSections,
+            Self::OnlySnippets => predict_edits_v3::PromptFormat::OnlySnippets,
         }
     }
 }
@@ -102,6 +105,7 @@ enum OutputFormat {
     #[default]
     Prompt,
     Request,
+    Both,
 }
 
 #[derive(Debug, Clone)]
@@ -269,16 +273,18 @@ async fn get_context(
                             zeta.cloud_request_for_zeta_cli(&project, &buffer, cursor, cx)
                         })?
                         .await?;
+
+                    let planned_prompt = cloud_zeta2_prompt::PlannedPrompt::populate(&request)?;
+                    let prompt_string = planned_prompt.to_prompt_string()?.0;
                     match zeta2_args.output_format {
-                        OutputFormat::Prompt => {
-                            let planned_prompt =
-                                cloud_zeta2_prompt::PlannedPrompt::populate(&request)?;
-                            // TODO: Output the section label ranges
-                            anyhow::Ok(planned_prompt.to_prompt_string()?.0)
-                        }
+                        OutputFormat::Prompt => anyhow::Ok(prompt_string),
                         OutputFormat::Request => {
                             anyhow::Ok(serde_json::to_string_pretty(&request)?)
                         }
+                        OutputFormat::Both => anyhow::Ok(serde_json::to_string_pretty(&json!({
+                            "request": request,
+                            "prompt": prompt_string,
+                        }))?),
                     }
                 })
             })?
