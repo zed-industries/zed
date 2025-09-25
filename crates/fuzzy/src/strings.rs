@@ -4,7 +4,7 @@ use crate::{
 };
 use gpui::BackgroundExecutor;
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Borrow,
     cmp::{self, Ordering},
     iter,
     ops::Range,
@@ -28,13 +28,13 @@ impl StringMatchCandidate {
     }
 }
 
-impl<'a> MatchCandidate for &'a StringMatchCandidate {
+impl MatchCandidate for &StringMatchCandidate {
     fn has_chars(&self, bag: CharBag) -> bool {
         self.char_bag.is_superset(bag)
     }
 
-    fn to_string(&self) -> Cow<'a, str> {
-        self.string.as_str().into()
+    fn candidate_chars(&self) -> impl Iterator<Item = char> {
+        self.string.chars()
     }
 }
 

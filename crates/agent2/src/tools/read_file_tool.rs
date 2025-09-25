@@ -82,12 +82,12 @@ impl AgentTool for ReadFileTool {
         {
             match (input.start_line, input.end_line) {
                 (Some(start), Some(end)) => {
-                    format!("Read file `{}` (lines {}-{})", path.display(), start, end,)
+                    format!("Read file `{path}` (lines {}-{})", start, end,)
                 }
                 (Some(start), None) => {
-                    format!("Read file `{}` (from line {})", path.display(), start)
+                    format!("Read file `{path}` (from line {})", start)
                 }
-                _ => format!("Read file `{}`", path.display()),
+                _ => format!("Read file `{path}`"),
             }
             .into()
         } else {
@@ -225,9 +225,12 @@ impl AgentTool for ReadFileTool {
                 Ok(result.into())
             } else {
                 // No line ranges specified, so check file size to see if it's too big.
-                let buffer_content =
-                    outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), cx)
-                        .await?;
+                let buffer_content = outline::get_buffer_content_or_outline(
+                    buffer.clone(),
+                    Some(&abs_path.to_string_lossy()),
+                    cx,
+                )
+                .await?;
 
                 action_log.update(cx, |log, cx| {
                     log.buffer_read(buffer.clone(), cx);

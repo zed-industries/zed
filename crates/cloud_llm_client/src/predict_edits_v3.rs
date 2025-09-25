@@ -1,6 +1,11 @@
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
-use std::{ops::Range, path::PathBuf};
+use std::{
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
+use strum::EnumIter;
 use uuid::Uuid;
 
 use crate::PredictEditsGitInfo;
@@ -10,7 +15,7 @@ use crate::PredictEditsGitInfo;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PredictEditsRequest {
     pub excerpt: String,
-    pub excerpt_path: PathBuf,
+    pub excerpt_path: Arc<Path>,
     /// Within file
     pub excerpt_range: Range<usize>,
     /// Within `excerpt`
@@ -32,10 +37,36 @@ pub struct PredictEditsRequest {
     // Only available to staff
     #[serde(default)]
     pub debug_info: bool,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub prompt_max_bytes: Option<usize>,
+    #[serde(default)]
+    pub prompt_format: PromptFormat,
+}
+
+#[derive(Default, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, EnumIter)]
+pub enum PromptFormat {
+    #[default]
+    MarkedExcerpt,
+    LabeledSections,
+}
+
+impl PromptFormat {
+    pub fn iter() -> impl Iterator<Item = Self> {
+        <Self as strum::IntoEnumIterator>::iter()
+    }
+}
+
+impl std::fmt::Display for PromptFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PromptFormat::MarkedExcerpt => write!(f, "Marked Excerpt"),
+            PromptFormat::LabeledSections => write!(f, "Labeled Sections"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(any(test, feature = "test-support"), derive(PartialEq))]
 #[serde(tag = "event")]
 pub enum Event {
     BufferChange {
@@ -59,7 +90,7 @@ pub struct Signature {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReferencedDeclaration {
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub text: String,
     pub text_is_truncated: bool,
     /// Range of `text` within file, possibly truncated according to `text_is_truncated`
@@ -117,7 +148,7 @@ pub struct DebugInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Edit {
-    pub path: PathBuf,
+    pub path: Arc<Path>,
     pub range: Range<usize>,
     pub content: String,
 }

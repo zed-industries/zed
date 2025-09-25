@@ -272,21 +272,43 @@ pub struct TitleBarSettingsContent {
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
     /// Opt into the new audio system.
-    #[serde(rename = "experimental.rodio_audio", default)]
-    pub rodio_audio: Option<bool>,
+    ///
+    /// You need to rejoin a call for this setting to apply
+    #[serde(rename = "experimental.rodio_audio")]
+    pub rodio_audio: Option<bool>, // default is false
     /// Requires 'rodio_audio: true'
     ///
-    /// Use the new audio systems automatic gain control for your microphone.
-    /// This affects how loud you sound to others.
-    #[serde(rename = "experimental.control_input_volume", default)]
-    pub control_input_volume: Option<bool>,
+    /// Automatically increase or decrease you microphone's volume. This affects how
+    /// loud you sound to others.
+    ///
+    /// Recommended: off (default)
+    /// Microphones are too quite in zed, until everyone is on experimental
+    /// audio and has auto speaker volume on this will make you very loud
+    /// compared to other speakers.
+    #[serde(rename = "experimental.auto_microphone_volume")]
+    pub auto_microphone_volume: Option<bool>,
     /// Requires 'rodio_audio: true'
     ///
-    /// Use the new audio systems automatic gain control on everyone in the
-    /// call. This makes call members who are too quite louder and those who are
-    /// too loud quieter. This only affects how things sound for you.
-    #[serde(rename = "experimental.control_output_volume", default)]
-    pub control_output_volume: Option<bool>,
+    /// Automatically increate or decrease the volume of other call members.
+    /// This only affects how things sound for you.
+    #[serde(rename = "experimental.auto_speaker_volume")]
+    pub auto_speaker_volume: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Remove background noises. Works great for typing, cars, dogs, AC. Does
+    /// not work well on music.
+    #[serde(rename = "experimental.denoise")]
+    pub denoise: Option<bool>,
+    /// Requires 'rodio_audio: true'
+    ///
+    /// Use audio parameters compatible with the previous versions of
+    /// experimental audio and non-experimental audio. When this is false you
+    /// will sound strange to anyone not on the latest experimental audio. In
+    /// the future we will migrate by setting this to false
+    ///
+    /// You need to rejoin a call for this setting to apply
+    #[serde(rename = "experimental.legacy_audio_compatible")]
+    pub legacy_audio_compatible: Option<bool>,
 }
 
 /// Control what info is collected by Zed.
@@ -571,7 +593,6 @@ pub enum ModeContent {
     #[default]
     Normal,
     Insert,
-    HelixNormal,
 }
 
 /// Controls when to use system clipboard.
@@ -845,6 +866,12 @@ pub struct SaturatingBool(pub bool);
 impl From<bool> for SaturatingBool {
     fn from(value: bool) -> Self {
         SaturatingBool(value)
+    }
+}
+
+impl From<SaturatingBool> for bool {
+    fn from(value: SaturatingBool) -> bool {
+        value.0
     }
 }
 

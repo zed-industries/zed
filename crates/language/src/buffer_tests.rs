@@ -24,6 +24,7 @@ use text::{BufferId, LineEnding};
 use text::{Point, ToPoint};
 use theme::ActiveTheme;
 use unindent::Unindent as _;
+use util::rel_path::rel_path;
 use util::test::marked_text_offsets;
 use util::{RandomCharIter, assert_set_eq, post_inc, test::marked_text_ranges};
 
@@ -380,7 +381,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
 
 fn file(path: &str) -> Arc<dyn File> {
     Arc::new(TestFile {
-        path: Path::new(path).into(),
+        path: Arc::from(rel_path(path)),
         root_name: "zed".into(),
         local_root: None,
     })

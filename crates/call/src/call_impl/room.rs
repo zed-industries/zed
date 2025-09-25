@@ -24,7 +24,7 @@ use postage::{sink::Sink, stream::Stream, watch};
 use project::Project;
 use settings::Settings as _;
 use std::{future::Future, mem, rc::Rc, sync::Arc, time::Duration};
-use util::{ResultExt, TryFutureExt, post_inc};
+use util::{ResultExt, TryFutureExt, paths::PathStyle, post_inc};
 
 pub const RECONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -1163,6 +1163,7 @@ impl Room {
             room_id: self.id(),
             worktrees: project.read(cx).worktree_metadata_protos(cx),
             is_ssh_project: project.read(cx).is_via_remote_server(),
+            windows_paths: Some(project.read(cx).path_style(cx) == PathStyle::Windows),
         });
 
         cx.spawn(async move |this, cx| {

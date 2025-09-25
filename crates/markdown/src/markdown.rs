@@ -334,7 +334,10 @@ impl Markdown {
                 }
 
                 for path in paths {
-                    if let Ok(language) = registry.language_for_file_path(&path).await {
+                    if let Ok(language) = registry
+                        .language_for_file_path(Path::new(path.as_ref()))
+                        .await
+                    {
                         languages_by_path.insert(path, language);
                     }
                 }
@@ -434,7 +437,7 @@ pub struct ParsedMarkdown {
     pub source: SharedString,
     pub events: Arc<[(Range<usize>, MarkdownEvent)]>,
     pub languages_by_name: TreeMap<SharedString, Arc<Language>>,
-    pub languages_by_path: TreeMap<Arc<Path>, Arc<Language>>,
+    pub languages_by_path: TreeMap<Arc<str>, Arc<Language>>,
 }
 
 impl ParsedMarkdown {

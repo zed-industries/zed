@@ -48,7 +48,7 @@ use std::{
 use text::OffsetRangeExt;
 use theme::ThemeSettings;
 use ui::{ButtonLike, TintColor, Toggleable, prelude::*};
-use util::{ResultExt, debug_panic};
+use util::{ResultExt, debug_panic, rel_path::RelPath};
 use workspace::{Workspace, notifications::NotifyResultExt as _};
 use zed_actions::agent::Chat;
 
@@ -452,9 +452,12 @@ impl MessageEditor {
             .update(cx, |project, cx| project.open_buffer(project_path, cx));
         cx.spawn(async move |_, cx| {
             let buffer = buffer.await?;
-            let buffer_content =
-                outline::get_buffer_content_or_outline(buffer.clone(), Some(&abs_path), &cx)
-                    .await?;
+            let buffer_content = outline::get_buffer_content_or_outline(
+                buffer.clone(),
+                Some(&abs_path.to_string_lossy()),
+                &cx,
+            )
+            .await?;
 
             Ok(Mention::Text {
                 content: buffer_content.text,
@@ -947,6 +950,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let path_style = self.project.read(cx).path_style(cx);
         let buffer = self.editor.read(cx).buffer().clone();
         let Some(buffer) = buffer.read(cx).as_singleton() else {
             return;
@@ -956,18 +960,15 @@ impl MessageEditor {
             let Some(entry) = self.project.read(cx).entry_for_path(&path, cx) else {
                 continue;
             };
-            let Some(abs_path) = self.project.read(cx).absolute_path(&path, cx) else {
+            let Some(worktree) = self.project.read(cx).worktree_for_id(path.worktree_id, cx) else {
                 continue;
             };
-            let path_prefix = abs_path
-                .file_name()
-                .unwrap_or(path.path.as_os_str())
-                .display()
-                .to_string();
+            let abs_path = worktree.read(cx).absolutize(&path.path);
             let (file_name, _) =
                 crate::context_picker::file_context_picker::extract_file_name_and_directory(
                     &path.path,
-                    &path_prefix,
+                    worktree.read(cx).root_name(),
+                    path_style,
                 );
 
             let uri = if entry.is_dir() {
@@ -1176,14 +1177,20 @@ fn full_mention_for_directory(
     abs_path: &Path,
     cx: &mut App,
 ) -> Task<Result<Mention>> {
-    fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<(Arc<Path>, PathBuf)> {
+    fn collect_files_in_path(worktree: &Worktree, path: &RelPath) -> Vec<(Arc<RelPath>, String)> {
         let mut files = Vec::new();
 
         for entry in worktree.child_entries(path) {
             if entry.is_dir() {
                 files.extend(collect_files_in_path(worktree, &entry.path));
             } else if entry.is_file() {
-                files.push((entry.path.clone(), worktree.full_path(&entry.path)));
+                files.push((
+                    entry.path.clone(),
+                    worktree
+                        .full_path(&entry.path)
+                        .to_string_lossy()
+                        .to_string(),
+                ));
             }
         }
 
@@ -1261,7 +1268,7 @@ fn full_mention_for_directory(
     })
 }
 
-fn render_directory_contents(entries: Vec<(Arc<Path>, PathBuf, String)>) -> String {
+fn render_directory_contents(entries: Vec<(Arc<RelPath>, String, String)>) -> String {
     let mut output = String::new();
     for (_relative_path, full_path, content) in entries {
         let fence = codeblock_fence_for_path(Some(&full_path), None);
@@ -1595,7 +1602,7 @@ mod tests {
     use serde_json::json;
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
-    use util::{path, uri};
+    use util::{path, paths::PathStyle, rel_path::rel_path};
     use workspace::{AppState, Item, Workspace};
 
     use crate::acp::{
@@ -2105,15 +2112,17 @@ mod tests {
         let mut cx = VisualTestContext::from_window(*window, cx);
 
         let paths = vec![
-            path!("a/one.txt"),
-            path!("a/two.txt"),
-            path!("a/three.txt"),
-            path!("a/four.txt"),
-            path!("b/five.txt"),
-            path!("b/six.txt"),
-            path!("b/seven.txt"),
-            path!("b/eight.txt"),
+            rel_path("a/one.txt"),
+            rel_path("a/two.txt"),
+            rel_path("a/three.txt"),
+            rel_path("a/four.txt"),
+            rel_path("b/five.txt"),
+            rel_path("b/six.txt"),
+            rel_path("b/seven.txt"),
+            rel_path("b/eight.txt"),
         ];
+
+        let slash = PathStyle::local().separator();
 
         let mut opened_editors = Vec::new();
         for path in paths {
@@ -2122,7 +2131,7 @@ mod tests {
                     workspace.open_path(
                         ProjectPath {
                             worktree_id,
-                            path: Path::new(path).into(),
+                            path: path.into(),
                         },
                         None,
                         false,
@@ -2183,10 +2192,10 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
+                    format!("eight.txt dir{slash}b{slash}"),
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
                 ]
             );
             editor.set_text("", window, cx);
@@ -2214,14 +2223,14 @@ mod tests {
             assert_eq!(
                 current_completion_labels(editor),
                 &[
-                    "eight.txt dir/b/",
-                    "seven.txt dir/b/",
-                    "six.txt dir/b/",
-                    "five.txt dir/b/",
-                    "Files & Directories",
-                    "Symbols",
-                    "Threads",
-                    "Fetch"
+                    format!("eight.txt dir{slash}b{slash}"),
+                    format!("seven.txt dir{slash}b{slash}"),
+                    format!("six.txt dir{slash}b{slash}"),
+                    format!("five.txt dir{slash}b{slash}"),
+                    "Files & Directories".into(),
+                    "Symbols".into(),
+                    "Threads".into(),
+                    "Fetch".into()
                 ]
             );
         });
@@ -2248,7 +2257,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(editor.text(cx), "Lorem @file one");
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), vec!["one.txt dir/a/"]);
+            assert_eq!(
+                current_completion_labels(editor),
+                vec![format!("one.txt dir{slash}a{slash}")]
+            );
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2256,7 +2268,11 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
-        let url_one = uri!("file:///dir/a/one.txt");
+        let url_one = MentionUri::File {
+            abs_path: path!("/dir/a/one.txt").into(),
+        }
+        .to_uri()
+        .to_string();
         editor.update(&mut cx, |editor, cx| {
             let text = editor.text(cx);
             assert_eq!(text, format!("Lorem [@one.txt]({url_one}) "));
@@ -2361,7 +2377,11 @@ mod tests {
             .into_values()
             .collect::<Vec<_>>();
 
-        let url_eight = uri!("file:///dir/b/eight.txt");
+        let url_eight = MentionUri::File {
+            abs_path: path!("/dir/b/eight.txt").into(),
+        }
+        .to_uri()
+        .to_string();
 
         {
             let [_, (uri, Mention::Text { content, .. })] = contents.as_slice() else {
@@ -2460,6 +2480,12 @@ mod tests {
             editor.confirm_completion(&editor::actions::ConfirmCompletion::default(), window, cx);
         });
 
+        let symbol = MentionUri::Symbol {
+            abs_path: path!("/dir/a/one.txt").into(),
+            name: "MySymbol".into(),
+            line_range: 0..=0,
+        };
+
         let contents = message_editor
             .update(&mut cx, |message_editor, cx| {
                 message_editor.mention_set().contents(
@@ -2479,12 +2505,7 @@ mod tests {
                 panic!("Unexpected mentions");
             };
             pretty_assertions::assert_eq!(content, "1");
-            pretty_assertions::assert_eq!(
-                uri,
-                &format!("{url_one}?symbol=MySymbol#L1:1")
-                    .parse::<MentionUri>()
-                    .unwrap()
-            );
+            pretty_assertions::assert_eq!(uri, &symbol);
         }
 
         cx.run_until_parked();
@@ -2492,7 +2513,10 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri(),
+                )
             );
         });
 
@@ -2502,10 +2526,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
             );
             assert!(editor.has_visible_completions_menu());
-            assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+            assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
         });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2531,7 +2555,10 @@ mod tests {
         editor.read_with(&cx, |editor, cx| {
             assert_eq!(
                 editor.text(cx),
-                format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri()
+                )
             );
         });
 
@@ -2541,10 +2568,10 @@ mod tests {
         editor.update(&mut cx, |editor, cx| {
                     assert_eq!(
                         editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) @file x.png")
+                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) @file x.png", symbol.to_uri())
                     );
                     assert!(editor.has_visible_completions_menu());
-                    assert_eq!(current_completion_labels(editor), &["x.png dir/"]);
+                    assert_eq!(current_completion_labels(editor), &[format!("x.png dir{slash}")]);
                 });
 
         editor.update_in(&mut cx, |editor, window, cx| {
@@ -2556,11 +2583,14 @@ mod tests {
 
         // Mention was removed
         editor.read_with(&cx, |editor, cx| {
-                    assert_eq!(
-                        editor.text(cx),
-                        format!("Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({url_one}?symbol=MySymbol#L1:1) ")
-                    );
-                });
+            assert_eq!(
+                editor.text(cx),
+                format!(
+                    "Lorem [@one.txt]({url_one})  Ipsum [@eight.txt]({url_eight}) [@MySymbol]({}) ",
+                    symbol.to_uri()
+                )
+            );
+        });
 
         // Now getting the contents succeeds, because the invalid mention was removed
         let contents = message_editor

@@ -12,22 +12,17 @@ use anyhow::{Context as _, Result};
 pub use git2 as libgit;
 use gpui::{Action, actions};
 pub use repository::RemoteCommandOutput;
-pub use repository::WORK_DIRECTORY_REPO_PATH;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
 use std::fmt;
 use std::str::FromStr;
-use std::sync::LazyLock;
 
-pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
-pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
-pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
-    LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
-pub static LFS_DIR: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("lfs"));
-pub static COMMIT_MESSAGE: LazyLock<&'static OsStr> =
-    LazyLock::new(|| OsStr::new("COMMIT_EDITMSG"));
-pub static INDEX_LOCK: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("index.lock"));
+pub const DOT_GIT: &str = ".git";
+pub const GITIGNORE: &str = ".gitignore";
+pub const FSMONITOR_DAEMON: &str = "fsmonitor--daemon";
+pub const LFS_DIR: &str = "lfs";
+pub const COMMIT_MESSAGE: &str = "COMMIT_EDITMSG";
+pub const INDEX_LOCK: &str = "index.lock";
 
 actions!(
     git,

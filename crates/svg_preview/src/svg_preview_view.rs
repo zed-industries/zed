@@ -240,7 +240,6 @@ impl SvgPreviewView {
             return file
                 .path()
                 .extension()
-                .and_then(|ext| ext.to_str())
                 .map(|ext| ext.eq_ignore_ascii_case("svg"))
                 .unwrap_or(false);
         }
