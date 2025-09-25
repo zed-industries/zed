@@ -487,7 +487,11 @@ impl<'a> PlannedPrompt<'a> {
         }
 
         Ok(SectionLabels {
-            excerpt_index: excerpt_index.context("bug: no snippet found for excerpt")?,
+            // TODO: Clean this up
+            excerpt_index: match self.request.prompt_format {
+                PromptFormat::OnlySnippets => 0,
+                _ => excerpt_index.context("bug: no snippet found for excerpt")?,
+            },
             section_ranges,
         })
     }
