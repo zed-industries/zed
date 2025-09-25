@@ -35,6 +35,7 @@ pub enum IconName {
     ArrowUp,
     ArrowUpRight,
     Attach,
+    Audio,
     AudioOff,
     AudioOn,
     Backspace,
