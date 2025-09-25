@@ -16,19 +16,23 @@ default = []
 
 [dependencies]
 anyhow.workspace = true
+dap.workspace = true
+extension.workspace = true
 gpui.workspace = true
+paths.workspace = true
 project.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-theme.workspace = true
 settings.workspace = true
-util.workspace = true
-paths.workspace = true
-task.workspace = true
 snippet_provider.workspace = true
-extension.workspace = true
-dap.workspace = true
+task.workspace = true
+theme.workspace = true
+util.workspace = true
+workspace.workspace = true
+editor.workspace = true
+language.workspace = true
+
 
 
 # Uncomment other workspace dependencies as needed

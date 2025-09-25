@@ -8392,8 +8392,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dap",
+ "editor",
  "extension",
  "gpui",
+ "language",
  "paths",
  "project",
  "schemars 1.0.1",
@@ -8404,6 +8406,7 @@ dependencies = [
  "task",
  "theme",
  "util",
+ "workspace",
 ]
 
 [[package]]

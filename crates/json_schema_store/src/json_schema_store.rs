@@ -1,9 +1,13 @@
 //! # json_schema_store
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Context as _, Result};
-use gpui::{App, AsyncApp, BorrowAppContext as _, Entity, SharedString, WeakEntity};
+use gpui::{
+    App, AppContext as _, AsyncApp, BorrowAppContext as _, Entity, SharedString, WeakEntity,
+};
+use language::LanguageRegistry;
 use project::LspStore;
+use util::ResultExt as _;
 
 // Origin: https://github.com/SchemaStore/schemastore
 const TSCONFIG_SCHEMA: &str = include_str!("schemas/tsconfig.json");
@@ -46,7 +50,7 @@ pub fn init(cx: &mut App) {
 }
 
 #[derive(Default)]
-struct SchemaStore {
+pub struct SchemaStore {
     lsp_stores: Vec<WeakEntity<LspStore>>,
 }
 
@@ -65,6 +69,57 @@ impl SchemaStore {
             true
         })
     }
+
+    pub fn open_builtin_json_schema(
+        &self,
+        schema_path: String,
+        app_state: Arc<workspace::AppState>,
+        cx: &mut App,
+    ) {
+        workspace::with_active_or_new_workspace(cx, |workspace, window, cx| {
+            // let app_state = app_state.clone();
+            cx.spawn_in(window, async move |workspace, cx| {
+                let app_state = app_state.clone();
+                let res = async move {
+                    let json = app_state.languages.language_for_name("JSON").await.ok();
+                    let json_schema_content =
+                        resolve_schema_request_inner(&app_state.languages, &schema_path, cx)?;
+                    let json_schema_content = serde_json::to_string_pretty(&json_schema_content)
+                        .context("Failed to serialize JSON Schema as JSON")?;
+                    let buffer_task = workspace.update(cx, |workspace, cx| {
+                        workspace
+                            .project()
+                            .update(cx, |project, cx| project.create_buffer(false, cx))
+                    })?;
+
+                    let buffer = buffer_task.await?;
+
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        buffer.update(cx, |buffer, cx| {
+                            buffer.set_language(json, cx);
+                            buffer.edit([(0..0, json_schema_content)], None, cx);
+                        });
+
+                        workspace.add_item_to_active_pane(
+                            Box::new(cx.new(|cx| {
+                                let mut editor =
+                                    editor::Editor::for_buffer(buffer, None, window, cx);
+                                editor.set_read_only(true);
+                                editor
+                            })),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                    })
+                }
+                .await;
+                res.context("Failed to open builtin JSON Schema").log_err();
+            })
+            .detach();
+        });
+    }
 }
 
 fn handle_schema_request(
@@ -72,24 +127,32 @@ fn handle_schema_request(
     uri: String,
     cx: &mut AsyncApp,
 ) -> Result<String> {
-    let schema = resolve_schema_request(lsp_store, uri, cx)?;
+    let languages = lsp_store.read_with(cx, |lsp_store, _| lsp_store.languages.clone())?;
+    let schema = resolve_schema_request(&languages, uri, cx)?;
     serde_json::to_string(&schema).context("Failed to serialize schema")
 }
 
-fn resolve_schema_request(
-    lsp_store: Entity<LspStore>,
+pub fn resolve_schema_request(
+    languages: &Arc<LanguageRegistry>,
     uri: String,
     cx: &mut AsyncApp,
 ) -> Result<serde_json::Value> {
     let path = uri.strip_prefix("zed://schemas/").context("Invalid URI")?;
+    resolve_schema_request_inner(languages, path, cx)
+}
 
-    let (family, rest) = path.split_once('/').unzip();
-    let family = family.unwrap_or(path);
-    let schema = match family {
+pub fn resolve_schema_request_inner(
+    languages: &Arc<LanguageRegistry>,
+    path: &str,
+    cx: &mut AsyncApp,
+) -> Result<serde_json::Value> {
+    let (schema_name, rest) = path.split_once('/').unzip();
+    let schema_name = schema_name.unwrap_or(path);
+
+    let schema = match schema_name {
         "settings" => cx.update(|cx| {
             let font_names = &cx.text_system().all_font_names();
-            let language_names = &lsp_store
-                .read_with(cx, |lsp_store, _| lsp_store.languages.clone())
+            let language_names = &languages
                 .language_names()
                 .into_iter()
                 .map(|name| name.to_string())
@@ -140,7 +203,7 @@ fn resolve_schema_request(
         }
         "snippets" => snippet_provider::format::VsSnippetsFile::generate_json_schema(),
         _ => {
-            anyhow::bail!("Unrecognized schema family: {}", family);
+            anyhow::bail!("Unrecognized builtin JSON schema: {}", schema_name);
         }
     };
     Ok(schema)

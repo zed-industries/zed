@@ -44,6 +44,7 @@ use theme::{
     ActiveTheme, IconThemeNotFoundError, SystemAppearance, ThemeNotFoundError, ThemeRegistry,
     ThemeSettings,
 };
+use ui::BorrowAppContext;
 use util::{ResultExt, TryFutureExt, maybe};
 use uuid::Uuid;
 use workspace::{
@@ -778,6 +779,17 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
             }
             OpenRequestKind::DockMenuAction { index } => {
                 cx.perform_dock_menu_action(index);
+            }
+            OpenRequestKind::BuiltinJsonSchema {
+                schema_path: schema_name,
+            } => {
+                if !cx.has_global::<json_schema_store::SchemaStore>() {
+                    log::error!("bug: No schema store for opening builtin JSON schema");
+                    return;
+                }
+                cx.update_global::<json_schema_store::SchemaStore, _>(|schema_store, cx| {
+                    schema_store.open_builtin_json_schema(schema_name, app_state, cx);
+                });
             }
         }
 
