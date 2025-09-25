@@ -88,7 +88,9 @@ actions!(
         /// Moves to the next search match.
         MoveToNextMatch,
         /// Moves to the previous search match.
-        MoveToPreviousMatch
+        MoveToPreviousMatch,
+        // Cancel current operation while preserve search highlights
+        Cancel
     ]
 );
 
@@ -101,6 +103,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::search_deploy);
     Vim::action(editor, cx, Vim::find_command);
     Vim::action(editor, cx, Vim::replace_command);
+    Vim::action(editor, cx, Vim::cancel);
 }
 
 impl Vim {
@@ -195,7 +198,7 @@ impl Vim {
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode,
-                        vim_search_active: false
+                        vim_search_active: true,
                     }
                 });
             }
@@ -558,6 +561,19 @@ impl Vim {
             })
         })
         .detach_and_log_err(cx);
+    }
+
+    fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        let has_vim_search_highlights = self.search.vim_search_active
+        && self.update_editor(cx, |_, editor, _| {
+            editor.has_background_highlights::<editor::items::BufferSearchHighlights>()
+        }).unwrap_or(false);
+
+        if has_vim_search_highlights {
+            return;
+        }
+            
+        cx.propagate();
     }
 }
 

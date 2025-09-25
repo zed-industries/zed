@@ -21,7 +21,9 @@ mod visual;
 
 use collections::HashMap;
 use editor::{
-    items, movement::{self, FindRange}, Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects, ToPoint
+    Anchor, Bias, Editor, EditorEvent, EditorSettings, HideMouseCursorOrigin, SelectionEffects,
+    ToPoint,
+    movement::{self, FindRange},
 };
 use gpui::{
     Action, App, AppContext, Axis, Context, Entity, EventEmitter, KeyContext, KeystrokeEvent,
@@ -795,10 +797,6 @@ impl Vim {
                 );
             });
 
-            Vim::action(editor, cx, |vim, _: &editor::actions::Cancel, _window, cx| {
-                vim.cancel_search_highlights(cx);
-            });
-
             normal::register(editor, cx);
             insert::register(editor, cx);
             helix::register(editor, cx);
@@ -1245,6 +1243,8 @@ impl Vim {
         }
         context.set("vim_mode", mode);
         context.set("vim_operator", operator_id);
+
+        context.set("vim_search_active", self.search.vim_search_active.to_string());
     }
 
     fn focused(&mut self, preserve_selection: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -1793,19 +1793,6 @@ impl Vim {
             editor.set_edit_predictions_hidden_for_vim_mode(hide_edit_predictions, window, cx);
         });
         cx.notify()
-    }
-
-    fn cancel_search_highlights(&mut self,cx: &mut Context<Self>) {
-        let has_vim_search_highlights = self.search.vim_search_active 
-        && self.update_editor(cx, |_, editor, _| {
-            editor.has_background_highlights::<items::BufferSearchHighlights>()
-        }).unwrap_or(false);
-        
-        if has_vim_search_highlights {
-            return;
-        }
-        
-        cx.propagate();
     }
 }
 
