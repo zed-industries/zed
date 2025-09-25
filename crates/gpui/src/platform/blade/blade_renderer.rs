@@ -1005,7 +1005,6 @@ struct RenderingParameters {
     grayscale_enhanced_contrast: f32,
 }
 
-// TODO kb md docs
 impl RenderingParameters {
     fn from_env(context: &BladeContext) -> Self {
         use std::env;
