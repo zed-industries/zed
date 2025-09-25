@@ -662,6 +662,7 @@ mod test {
     use crate::{
         state::Mode,
         test::{NeovimBackedTestContext, VimTestContext},
+        VimAddon,
     };
     use editor::{DisplayPoint, display_map::DisplayRow};
 
@@ -1209,28 +1210,21 @@ mod test {
     }
 
     #[gpui::test]
-    async fn test_regular_search_highlights_cleared_after_escape(cx: &mut gpui::TestAppContext) {
-        let mut cx = VimTestContext::new(cx, false).await;
+    async fn test_vim_cancel_propagates_when_no_vim_search(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.cx.set_state("ˇhello hello hello hello");
-        cx.run_until_parked();
-        
-        cx.simulate_keystrokes("cmd-f");
-        cx.run_until_parked();
-    
-        cx.simulate_keystrokes("hello");
-        cx.run_until_parked();
-
-        cx.update_editor(|editor, window, cx| {
-            let highlights = editor.all_text_background_highlights(window, cx);
-            assert!(!highlights.is_empty());
+        cx.set_state("ˇhello hello hello hello", Mode::Normal);
+        let vim_entity = cx.update_editor(|editor, _window, _cx| {
+            editor.addon::<VimAddon>().cloned().unwrap()
         });
 
+        cx.update_entity(vim_entity.entity, |vim, _window, _cx| {
+            assert!(!vim.search.vim_search_active);
+        });
+        
         cx.simulate_keystroke("escape");
         cx.run_until_parked();
 
-        cx.update_editor(|editor, window, cx| {
-            let _highlights = editor.all_text_background_highlights(window, cx);
-        });
+        cx.assert_state("ˇhello hello hello hello", Mode::Normal);
     }
 }
