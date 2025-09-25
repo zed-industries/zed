@@ -7087,6 +7087,7 @@ dependencies = [
  "parking_lot",
  "pathfinder_geometry",
  "postage",
+ "pretty_assertions",
  "profiling",
  "rand 0.9.1",
  "raw-window-handle",
