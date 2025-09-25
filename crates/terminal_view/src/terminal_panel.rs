@@ -1069,7 +1069,7 @@ pub fn new_terminal_pane(
             project.clone(),
             Default::default(),
             None,
-            NewTerminal.boxed_clone(),
+            Some(NewTerminal.boxed_clone()),
             window,
             cx,
         );
