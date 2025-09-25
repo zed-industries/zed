@@ -336,10 +336,12 @@ pub fn get_shell_safe_zed_cli_path() -> Result<String> {
                 .ok()
                 .filter(|p| p != &zed_path)
         })
-        .with_context(|| format!(
-            "could not find zed-cli from any of: {}",
-            possible_locations.join(", ")
-        ))?
+        .with_context(|| {
+            format!(
+                "could not find zed-cli from any of: {}",
+                possible_locations.join(", ")
+            )
+        })?
         .to_string_lossy()
         .to_string();
 
