@@ -2,7 +2,6 @@ use edit_prediction::EditPredictionProvider;
 use gpui::{Entity, prelude::*};
 use indoc::indoc;
 use multi_buffer::{Anchor, MultiBufferSnapshot, ToPoint};
-use project::Project;
 use std::ops::Range;
 use text::{Point, ToOffset};
 
@@ -326,7 +325,7 @@ fn propose_edits<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -357,7 +356,7 @@ fn propose_edits_non_zed<T: ToOffset>(
 
     cx.update(|_, cx| {
         provider.update(cx, |provider, _| {
-            provider.set_edit_prediction(Some(edit_prediction::EditPrediction {
+            provider.set_edit_prediction(Some(edit_prediction::EditPrediction::Local {
                 id: None,
                 edits: edits.collect(),
                 edit_preview: None,
@@ -418,7 +417,6 @@ impl EditPredictionProvider for FakeEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,
@@ -492,7 +490,6 @@ impl EditPredictionProvider for FakeNonZedEditPredictionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         _buffer: gpui::Entity<language::Buffer>,
         _cursor_position: language::Anchor,
         _debounce: bool,

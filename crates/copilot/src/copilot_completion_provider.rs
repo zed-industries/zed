@@ -3,7 +3,6 @@ use anyhow::Result;
 use edit_prediction::{Direction, EditPrediction, EditPredictionProvider};
 use gpui::{App, Context, Entity, EntityId, Task};
 use language::{Buffer, OffsetRangeExt, ToOffset, language_settings::AllLanguageSettings};
-use project::Project;
 use settings::Settings;
 use std::{path::Path, time::Duration};
 
@@ -84,7 +83,6 @@ impl EditPredictionProvider for CopilotCompletionProvider {
 
     fn refresh(
         &mut self,
-        _project: Option<Entity<Project>>,
         buffer: Entity<Buffer>,
         cursor_position: language::Anchor,
         debounce: bool,
@@ -249,7 +247,7 @@ impl EditPredictionProvider for CopilotCompletionProvider {
                 None
             } else {
                 let position = cursor_position.bias_right(buffer);
-                Some(EditPrediction {
+                Some(EditPrediction::Local {
                     id: None,
                     edits: vec![(position..position, completion_text.into())],
                     edit_preview: None,

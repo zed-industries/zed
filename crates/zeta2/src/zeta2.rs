@@ -17,8 +17,8 @@ use gpui::{
     App, Entity, EntityId, Global, SemanticVersion, SharedString, Subscription, Task, WeakEntity,
     http_client, prelude::*,
 };
-use language::BufferSnapshot;
 use language::{Buffer, DiagnosticSet, LanguageServerId, ToOffset as _, ToPoint};
+use language::{BufferSnapshot, TextBufferSnapshot};
 use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::Project;
 use release_channel::AppVersion;
@@ -94,6 +94,60 @@ struct ZetaProject {
     syntax_index: Entity<SyntaxIndex>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
+    current_prediction: Option<CurrentEditPrediction>,
+}
+
+#[derive(Clone)]
+struct CurrentEditPrediction {
+    pub requested_by_buffer_id: EntityId,
+    pub prediction: EditPrediction,
+}
+
+impl CurrentEditPrediction {
+    fn should_replace_prediction(
+        &self,
+        old_prediction: &Self,
+        snapshot: &TextBufferSnapshot,
+    ) -> bool {
+        if self.requested_by_buffer_id != old_prediction.requested_by_buffer_id {
+            return true;
+        }
+
+        let Some(old_edits) = old_prediction.prediction.interpolate(snapshot) else {
+            return true;
+        };
+        let Some(new_edits) = self.prediction.interpolate(snapshot) else {
+            return false;
+        };
+
+        if old_edits.len() == 1 && new_edits.len() == 1 {
+            let (old_range, old_text) = &old_edits[0];
+            let (new_range, new_text) = &new_edits[0];
+            new_range == old_range && new_text.starts_with(old_text)
+        } else {
+            true
+        }
+    }
+}
+
+/// A prediction from the perspective of a buffer.
+enum BufferEditPrediction<'a> {
+    Local {
+        prediction: &'a EditPrediction,
+    },
+    Jump {
+        path: Arc<Path>,
+        cursor_position: language::Anchor,
+    },
+}
+
+impl BufferEditPrediction<'_> {
+    pub fn as_local(&self) -> Option<&EditPrediction> {
+        match self {
+            BufferEditPrediction::Local { prediction } => Some(prediction),
+            BufferEditPrediction::Jump { .. } => None,
+        }
+    }
 }
 
 struct RegisteredBuffer {
@@ -204,6 +258,7 @@ impl Zeta {
                 syntax_index: cx.new(|cx| SyntaxIndex::new(project, cx)),
                 events: VecDeque::new(),
                 registered_buffers: HashMap::new(),
+                current_prediction: None,
             })
     }
 
@@ -305,6 +360,90 @@ impl Zeta {
         events.push_back(event);
     }
 
+    fn current_prediction_for_buffer(
+        &self,
+        buffer: &Entity<Buffer>,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> Option<BufferEditPrediction<'_>> {
+        let project_state = self.projects.get(&project.entity_id())?;
+
+        let CurrentEditPrediction {
+            requested_by_buffer_id,
+            prediction,
+        } = project_state.current_prediction.as_ref()?;
+
+        if *requested_by_buffer_id == buffer.entity_id() {
+            if prediction.targets_buffer(buffer, cx) {
+                Some(BufferEditPrediction::Local { prediction })
+            } else {
+                Some(BufferEditPrediction::Jump {
+                    path: prediction.path.clone(),
+                    cursor_position: prediction.edits.first()?.0.start,
+                })
+            }
+        } else if prediction.targets_buffer(buffer, cx) {
+            Some(BufferEditPrediction::Local { prediction })
+        } else {
+            None
+        }
+    }
+
+    fn accept_current_prediction(&mut self, project: &Entity<Project>) {
+        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
+            project_state.current_prediction.take();
+        };
+        // TODO report accepted
+    }
+
+    fn discard_current_prediction(&mut self, project: &Entity<Project>) {
+        if let Some(project_state) = self.projects.get_mut(&project.entity_id()) {
+            project_state.current_prediction.take();
+        };
+    }
+
+    fn refresh_prediction(
+        &mut self,
+        project: &Entity<Project>,
+        buffer: &Entity<Buffer>,
+        position: language::Anchor,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        let request_task = self.request_prediction(project, buffer, position, cx);
+        let buffer = buffer.clone();
+        let project = project.clone();
+
+        cx.spawn(async move |this, cx| {
+            if let Some(prediction) = request_task.await? {
+                this.update(cx, |this, cx| {
+                    let project_state = this
+                        .projects
+                        .get_mut(&project.entity_id())
+                        .context("Project not found")?;
+
+                    let new_prediction = CurrentEditPrediction {
+                        requested_by_buffer_id: buffer.entity_id(),
+                        prediction: prediction,
+                    };
+
+                    if project_state
+                        .current_prediction
+                        .as_ref()
+                        .is_none_or(|old_prediction| {
+                            new_prediction
+                                .should_replace_prediction(&old_prediction, buffer.read(cx))
+                        })
+                    {
+                        project_state.current_prediction = Some(new_prediction);
+                    }
+                    anyhow::Ok(())
+                })??;
+            }
+            Ok(())
+        })
+    }
+
+    // todo! make private, debug view should call refresh
     pub fn request_prediction(
         &mut self,
         project: &Entity<Project>,
@@ -453,9 +592,13 @@ impl Zeta {
                 }
 
                 let (response, usage) = response?;
+                // TODO only allow cloud to return one path
+                let Some(path) = response.edits.first().map(|e| e.path.clone()) else {
+                    return Ok(None);
+                };
                 let edits = edits_from_response(&response.edits, &snapshot);
 
-                anyhow::Ok(Some((response.request_id, edits, usage)))
+                anyhow::Ok(Some((response.request_id, path, edits, usage)))
             }
         });
 
@@ -463,7 +606,7 @@ impl Zeta {
 
         cx.spawn(async move |this, cx| {
             match request_task.await {
-                Ok(Some((id, edits, usage))) => {
+                Ok(Some((id, path, edits, usage))) => {
                     if let Some(usage) = usage {
                         this.update(cx, |this, cx| {
                             this.user_store.update(cx, |user_store, cx| {
@@ -489,6 +632,7 @@ impl Zeta {
                         id: id.into(),
                         edits,
                         snapshot,
+                        path,
                         edit_preview: edit_preview_task.await,
                     }))
                 }

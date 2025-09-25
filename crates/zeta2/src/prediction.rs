@@ -1,12 +1,16 @@
-use std::{borrow::Cow, ops::Range, sync::Arc};
+use std::{borrow::Cow, ops::Range, path::Path, sync::Arc};
 
 use cloud_llm_client::predict_edits_v3;
-use language::{Anchor, BufferSnapshot, EditPreview, OffsetRangeExt, text_diff};
+use gpui::{App, Entity};
+use language::{
+    Anchor, Buffer, BufferSnapshot, EditPreview, OffsetRangeExt, TextBufferSnapshot, text_diff,
+};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct EditPrediction {
     pub id: EditPredictionId,
+    pub path: Arc<Path>,
     pub edits: Arc<[(Range<Anchor>, String)]>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
@@ -15,9 +19,13 @@ pub struct EditPrediction {
 impl EditPrediction {
     pub fn interpolate(
         &self,
-        new_snapshot: &BufferSnapshot,
+        new_snapshot: &TextBufferSnapshot,
     ) -> Option<Vec<(Range<Anchor>, String)>> {
         interpolate_edits(&self.snapshot, new_snapshot, self.edits.clone())
+    }
+
+    pub fn targets_buffer(&self, buffer: &Entity<Buffer>, cx: &App) -> bool {
+        buffer.read(cx).file().map(|p| p.full_path(cx)).as_deref() == Some(self.path.as_ref())
     }
 }
 
@@ -43,8 +51,8 @@ impl std::fmt::Display for EditPredictionId {
 }
 
 pub fn interpolate_edits(
-    old_snapshot: &BufferSnapshot,
-    new_snapshot: &BufferSnapshot,
+    old_snapshot: &TextBufferSnapshot,
+    new_snapshot: &TextBufferSnapshot,
     current_edits: Arc<[(Range<Anchor>, String)]>,
 ) -> Option<Vec<(Range<Anchor>, String)>> {
     let mut edits = Vec::new();
@@ -221,6 +229,7 @@ mod tests {
             id: EditPredictionId(Uuid::new_v4()),
             edits,
             snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
+            path: Path::new("test.txt").into(),
             edit_preview,
         };
 

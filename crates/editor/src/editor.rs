@@ -7163,13 +7163,7 @@ impl Editor {
             return None;
         }
 
-        provider.refresh(
-            self.project.clone(),
-            buffer,
-            cursor_buffer_position,
-            debounce,
-            cx,
-        );
+        provider.refresh(buffer, cursor_buffer_position, debounce, cx);
         Some(())
     }
 
@@ -7870,8 +7864,15 @@ impl Editor {
         }
 
         let edit_prediction = provider.suggest(&buffer, cursor_buffer_position, cx)?;
-        let edits = edit_prediction
-            .edits
+        let edit_prediction::EditPrediction::Local {
+            id: completion_id,
+            edits,
+            edit_preview,
+        } = edit_prediction
+        else {
+            todo!("jump")
+        };
+        let edits = edits
             .into_iter()
             .flat_map(|(range, new_text)| {
                 let start = multibuffer.anchor_in_excerpt(excerpt_id, range.start)?;
@@ -7965,7 +7966,7 @@ impl Editor {
 
             EditPrediction::Edit {
                 edits,
-                edit_preview: edit_prediction.edit_preview,
+                edit_preview,
                 display_mode,
                 snapshot,
             }
@@ -7982,7 +7983,7 @@ impl Editor {
         self.active_edit_prediction = Some(EditPredictionState {
             inlay_ids,
             completion,
-            completion_id: edit_prediction.id,
+            completion_id,
             invalidation_range,
         });
 
