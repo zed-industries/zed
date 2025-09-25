@@ -1009,7 +1009,7 @@ mod tests {
         .await;
         let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
 
-        let path_to_buffer_uri = lsp::Uri::from_file_path("/root/foo.md").unwrap();
+        let path_to_buffer_uri = lsp::Uri::from_file_path(path!("/root/foo.md")).unwrap();
         let diagnostic = lsp::Diagnostic {
             range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
             severity: Some(lsp::DiagnosticSeverity::ERROR),
