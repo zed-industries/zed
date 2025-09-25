@@ -1082,7 +1082,7 @@ async fn stream_completion(
                             match serde_json::from_str::<ResponsesApiStreamEvent>(line) {
                                 Ok(stream_event) => {
                                     // Convert streaming event to ResponseEvent
-                                    if let Some(response) = stream_event.into() {
+                                    if let Some(response) = <ResponsesApiStreamEvent as Into<Option<ResponseEvent>>>::into(stream_event) {
                                         if response.choices.is_empty() {
                                             None
                                         } else {
