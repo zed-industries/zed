@@ -345,15 +345,24 @@ pub struct ResponseEvent {
 
 // Response structure for Responses API (used by GPT-5 Codex)
 #[derive(Deserialize, Debug)]
-pub struct ResponsesApiEvent {
-    pub output: Option<Vec<ResponsesApiOutput>>,
+pub struct ResponsesApiStreamEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub response: Option<ResponsesApiResponse>,
+    pub delta: Option<String>,
+    pub text: Option<String>,
+    pub item_id: Option<String>,
+    pub output_index: Option<usize>,
+    pub content_index: Option<usize>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct ResponsesApiResponse {
     pub id: String,
+    pub object: String,
+    pub status: String,
+    pub output: Option<Vec<ResponsesApiOutput>>,
     pub usage: Option<Usage>,
-    // Add fields that might be in the actual response
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default)]
-    pub error: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -371,43 +380,91 @@ pub struct ResponsesApiContent {
     pub text: Option<String>,
 }
 
-impl From<ResponsesApiEvent> for ResponseEvent {
-    fn from(responses_event: ResponsesApiEvent) -> Self {
-        let choices = responses_event.output.unwrap_or_default().into_iter().enumerate().map(|(index, output)| {
-            let content = output.content.iter()
-                .filter_map(|c| c.text.as_ref())
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join("");
+impl From<ResponsesApiStreamEvent> for Option<ResponseEvent> {
+    fn from(event: ResponsesApiStreamEvent) -> Self {
+        match event.event_type.as_str() {
+            "response.output_text.delta" => {
+                // Convert delta event to ResponseEvent
+                if let Some(delta_text) = event.delta {
+                    let choice = ResponseChoice {
+                        index: 0,
+                        finish_reason: None,
+                        delta: Some(ResponseDelta {
+                            content: Some(delta_text),
+                            role: Some(Role::Assistant),
+                            tool_calls: vec![],
+                        }),
+                        message: None,
+                    };
 
-            ResponseChoice {
-                index,
-                finish_reason: Some("stop".to_string()),
-                delta: Some(ResponseDelta {
-                    content: if content.is_empty() { None } else { Some(content.clone()) },
-                    role: Some(match output.role.as_str() {
-                        "assistant" => Role::Assistant,
-                        "user" => Role::User,
-                        _ => Role::Assistant,
-                    }),
-                    tool_calls: vec![],
-                }),
-                message: Some(ResponseDelta {
-                    content: if content.is_empty() { None } else { Some(content) },
-                    role: Some(match output.role.as_str() {
-                        "assistant" => Role::Assistant,
-                        "user" => Role::User,
-                        _ => Role::Assistant,
-                    }),
-                    tool_calls: vec![],
-                }),
+                    Some(ResponseEvent {
+                        choices: vec![choice],
+                        id: event.item_id.unwrap_or_else(|| "unknown".to_string()),
+                        usage: None,
+                    })
+                } else {
+                    None
+                }
             }
-        }).collect();
+            "response.output_text.done" => {
+                // Convert completed text event to ResponseEvent
+                if let Some(text) = event.text {
+                    let choice = ResponseChoice {
+                        index: 0,
+                        finish_reason: Some("stop".to_string()),
+                        delta: None,
+                        message: Some(ResponseDelta {
+                            content: Some(text),
+                            role: Some(Role::Assistant),
+                            tool_calls: vec![],
+                        }),
+                    };
 
-        ResponseEvent {
-            choices,
-            id: responses_event.id,
-            usage: responses_event.usage,
+                    Some(ResponseEvent {
+                        choices: vec![choice],
+                        id: event.item_id.unwrap_or_else(|| "unknown".to_string()),
+                        usage: None,
+                    })
+                } else {
+                    None
+                }
+            }
+            "response.completed" => {
+                // Convert final response
+                if let Some(response) = event.response {
+                    let choices = response.output.unwrap_or_default().into_iter().enumerate().map(|(index, output)| {
+                        let content = output.content.iter()
+                            .filter_map(|c| c.text.as_ref())
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join("");
+
+                        ResponseChoice {
+                            index,
+                            finish_reason: Some("stop".to_string()),
+                            delta: None,
+                            message: Some(ResponseDelta {
+                                content: if content.is_empty() { None } else { Some(content) },
+                                role: Some(match output.role.as_str() {
+                                    "assistant" => Role::Assistant,
+                                    "user" => Role::User,
+                                    _ => Role::Assistant,
+                                }),
+                                tool_calls: vec![],
+                            }),
+                        }
+                    }).collect();
+
+                    Some(ResponseEvent {
+                        choices,
+                        id: response.id,
+                        usage: response.usage,
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None, // Ignore other event types
         }
     }
 }
@@ -1019,16 +1076,20 @@ async fn stream_completion(
                             return None;
                         }
 
-                        // Parse based on model - GPT-5 Codex should use Responses API format
+                        // Parse based on model - GPT-5 Codex uses Responses API streaming format
                         if model == "gpt-5-codex" {
-                            // Try Responses API format first
-                            match serde_json::from_str::<ResponsesApiEvent>(line) {
-                                Ok(responses_event) => {
-                                    let response: ResponseEvent = responses_event.into();
-                                    if response.choices.is_empty() {
-                                        None
+                            // Try Responses API streaming format first
+                            match serde_json::from_str::<ResponsesApiStreamEvent>(line) {
+                                Ok(stream_event) => {
+                                    // Convert streaming event to ResponseEvent
+                                    if let Some(response) = stream_event.into() {
+                                        if response.choices.is_empty() {
+                                            None
+                                        } else {
+                                            Some(Ok(response))
+                                        }
                                     } else {
-                                        Some(Ok(response))
+                                        None // Skip events we don't handle
                                     }
                                 }
                                 Err(_) => {
@@ -1069,11 +1130,40 @@ async fn stream_completion(
         response.body_mut().read_to_end(&mut body).await?;
         let body_str = std::str::from_utf8(&body)?;
 
-        // Parse response based on model - GPT-5 Codex should use Responses API format
+        // Parse response based on model - GPT-5 Codex uses Responses API format
         let response: ResponseEvent = if request.model == "gpt-5-codex" {
-            // Try Responses API format first
-            match serde_json::from_str::<ResponsesApiEvent>(body_str) {
-                Ok(responses_event) => responses_event.into(),
+            // Try Responses API response format first
+            match serde_json::from_str::<ResponsesApiResponse>(body_str) {
+                Ok(responses_response) => {
+                    let choices = responses_response.output.unwrap_or_default().into_iter().enumerate().map(|(index, output)| {
+                        let content = output.content.iter()
+                            .filter_map(|c| c.text.as_ref())
+                            .map(|s| s.as_str())
+                            .collect::<Vec<_>>()
+                            .join("");
+
+                        ResponseChoice {
+                            index,
+                            finish_reason: Some("stop".to_string()),
+                            delta: None,
+                            message: Some(ResponseDelta {
+                                content: if content.is_empty() { None } else { Some(content) },
+                                role: Some(match output.role.as_str() {
+                                    "assistant" => Role::Assistant,
+                                    "user" => Role::User,
+                                    _ => Role::Assistant,
+                                }),
+                                tool_calls: vec![],
+                            }),
+                        }
+                    }).collect();
+
+                    ResponseEvent {
+                        choices,
+                        id: responses_response.id,
+                        usage: responses_response.usage,
+                    }
+                }
                 Err(_) => {
                     // Fallback to Chat Completions format if Responses API parsing fails
                     log::warn!("GPT-5 Codex response parsing failed with Responses API format, trying Chat Completions format. Response: {}", body_str);
