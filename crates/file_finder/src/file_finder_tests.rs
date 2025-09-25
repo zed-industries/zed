@@ -2897,6 +2897,62 @@ fn assert_match_selection(
     assert_match_at_position(finder, expected_selection_index, expected_file_name);
 }
 
+#[gpui::test]
+async fn test_open_without_dismiss(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "a": {
+                    "file1.txt": "content1",
+                    "file2.txt": "content2",
+                    "b": {
+                        "file3.txt": "content3",
+                    },
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, workspace, cx) = build_find_picker(project, cx);
+
+    // Search for file1 and open it without dismissing
+    cx.simulate_input("file1");
+    picker.update(cx, |picker, _| {
+        assert!(!picker.delegate.matches.matches.is_empty(), "Should have matches for file1");
+        assert_match_at_position(picker, 0, "file1.txt");
+    });
+
+    // Use the OpenWithoutDismiss action
+    cx.dispatch_action(crate::OpenWithoutDismiss);
+
+    // Verify that a file was opened (in background)
+    cx.read(|cx| {
+        let pane = workspace.read(cx).active_pane().read(cx);
+        let items: Vec<_> = pane.items().collect();
+        assert!(!items.is_empty(), "Should have opened at least one item");
+    });
+
+    // Verify that the file finder is still open (most important test)
+    cx.read(|cx| {
+        let file_finder = workspace.read(cx).active_modal::<FileFinder>(cx);
+        assert!(file_finder.is_some(), "File finder should still be open after OpenWithoutDismiss");
+    });
+
+    // Now test the regular confirm to ensure it still dismisses
+    cx.dispatch_action(Confirm);
+
+    // Verify that the file finder is now closed
+    cx.read(|cx| {
+        let file_finder = workspace.read(cx).active_modal::<FileFinder>(cx);
+        assert!(file_finder.is_none(), "File finder should be dismissed after regular confirm");
+    });
+}
+
 #[track_caller]
 fn assert_match_at_position(
     finder: &Picker<FileFinderDelegate>,
