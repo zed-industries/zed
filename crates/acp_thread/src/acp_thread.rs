@@ -1820,7 +1820,9 @@ impl AcpThread {
             };
 
             let max_point = snapshot.max_point();
-            if line >= max_point.row {
+            let start_position = Point::new(line, 0);
+
+            if start_position > max_point {
                 anyhow::bail!(
                     "Attempting to read beyond the end of the file, line {}:{}",
                     max_point.row + 1,
@@ -1828,7 +1830,7 @@ impl AcpThread {
                 );
             }
 
-            let start = snapshot.anchor_before(Point::new(line, 0));
+            let start = snapshot.anchor_before(start_position);
             let end = snapshot.anchor_before(Point::new(line.saturating_add(limit), 0));
 
             project.update(cx, |project, cx| {
@@ -2452,7 +2454,7 @@ mod tests {
         // Invalid
         let err = thread
             .update(cx, |thread, cx| {
-                thread.read_text_file(path!("/tmp/foo").into(), Some(5), Some(2), false, cx)
+                thread.read_text_file(path!("/tmp/foo").into(), Some(6), Some(2), false, cx)
             })
             .await
             .unwrap_err();
@@ -2460,6 +2462,81 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Attempting to read beyond the end of the file, line 5:0"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_reading_empty_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/tmp"), json!({"foo": ""})).await;
+        let project = Project::test(fs.clone(), [], cx).await;
+        project
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/tmp/foo"), true, cx)
+            })
+            .await
+            .unwrap();
+
+        let connection = Rc::new(FakeAgentConnection::new());
+
+        let thread = cx
+            .update(|cx| connection.new_thread(project, Path::new(path!("/tmp")), cx))
+            .await
+            .unwrap();
+
+        // Whole file
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, None, false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "");
+
+        // Only start line
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(1), None, false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "");
+
+        // Only limit
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), None, Some(2), false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "");
+
+        // Range
+        let content = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(1), Some(1), false, cx)
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(content, "");
+
+        // Invalid
+        let err = thread
+            .update(cx, |thread, cx| {
+                thread.read_text_file(path!("/tmp/foo").into(), Some(5), Some(2), false, cx)
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err.to_string(),
+            "Attempting to read beyond the end of the file, line 1:0"
         );
     }
 
