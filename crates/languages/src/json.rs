@@ -7,7 +7,7 @@ use futures::StreamExt;
 use gpui::{App, AsyncApp, Task};
 use http_client::github::{GitHubLspBinaryVersion, latest_github_release};
 use language::{
-    ContextProvider, LanguageName, LanguageRegistry, LanguageToolchainStore, LocalFile as _,
+    ContextProvider, LanguageName, LocalFile as _,
     LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain,
 };
 use lsp::{LanguageServerBinary, LanguageServerName};
@@ -25,8 +25,7 @@ use std::{
     str::FromStr,
     sync::Arc,
 };
-use task::{AdapterSchemas, TaskTemplate, TaskTemplates, VariableName};
-use theme::ThemeRegistry;
+use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{
     ResultExt, archive::extract_zip, fs::remove_matching, maybe, merge_json_value_into,
     rel_path::RelPath,
