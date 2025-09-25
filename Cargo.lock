@@ -20669,6 +20669,7 @@ dependencies = [
  "anyhow",
  "clap",
  "client",
+ "cloud_llm_client",
  "cloud_zeta2_prompt",
  "debug_adapter_extension",
  "edit_prediction_context",

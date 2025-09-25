@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
 use chrono::TimeDelta;
 use client::{Client, EditPredictionUsage, UserStore};
-use cloud_llm_client::predict_edits_v3::{self, Signature};
+use cloud_llm_client::predict_edits_v3::{self, PromptFormat, Signature};
 use cloud_llm_client::{
     EXPIRED_LLM_TOKEN_HEADER_NAME, MINIMUM_REQUIRED_VERSION_HEADER_NAME, ZED_VERSION_HEADER_NAME,
 };
@@ -23,7 +23,7 @@ use language_model::{LlmApiToken, RefreshLlmTokenListener};
 use project::Project;
 use release_channel::AppVersion;
 use std::collections::{HashMap, VecDeque, hash_map};
-use std::path::PathBuf;
+use std::path::Path;
 use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -53,6 +53,7 @@ pub const DEFAULT_OPTIONS: ZetaOptions = ZetaOptions {
     excerpt: DEFAULT_EXCERPT_OPTIONS,
     max_prompt_bytes: DEFAULT_MAX_PROMPT_BYTES,
     max_diagnostic_bytes: 2048,
+    prompt_format: PromptFormat::MarkedExcerpt,
 };
 
 #[derive(Clone)]
@@ -76,6 +77,7 @@ pub struct ZetaOptions {
     pub excerpt: EditPredictionExcerptOptions,
     pub max_prompt_bytes: usize,
     pub max_diagnostic_bytes: usize,
+    pub prompt_format: predict_edits_v3::PromptFormat,
 }
 
 pub struct PredictionDebugInfo {
@@ -319,7 +321,7 @@ impl Zeta {
         });
         let options = self.options.clone();
         let snapshot = buffer.read(cx).snapshot();
-        let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx)) else {
+        let Some(excerpt_path) = snapshot.file().map(|path| path.full_path(cx).into()) else {
             return Task::ready(Err(anyhow!("No file path for excerpt")));
         };
         let client = self.client.clone();
@@ -412,7 +414,7 @@ impl Zeta {
                     );
 
                 let request = make_cloud_request(
-                    excerpt_path.clone(),
+                    excerpt_path,
                     context,
                     events,
                     // TODO data collection
@@ -424,6 +426,7 @@ impl Zeta {
                     &worktree_snapshots,
                     index_state.as_deref(),
                     Some(options.max_prompt_bytes),
+                    options.prompt_format,
                 );
 
                 let retrieval_time = chrono::Utc::now() - before_retrieval;
@@ -686,7 +689,7 @@ impl Zeta {
             .context("Failed to select excerpt")
             .map(|context| {
                 make_cloud_request(
-                    excerpt_path.clone(),
+                    excerpt_path.into(),
                     context,
                     // TODO pass everything
                     Vec::new(),
@@ -698,6 +701,7 @@ impl Zeta {
                     &worktree_snapshots,
                     index_state.as_deref(),
                     Some(options.max_prompt_bytes),
+                    options.prompt_format,
                 )
             })
         })
@@ -713,7 +717,7 @@ pub struct ZedUpdateRequiredError {
 }
 
 fn make_cloud_request(
-    excerpt_path: PathBuf,
+    excerpt_path: Arc<Path>,
     context: EditPredictionContext,
     events: Vec<predict_edits_v3::Event>,
     can_collect_data: bool,
@@ -724,6 +728,7 @@ fn make_cloud_request(
     worktrees: &Vec<worktree::Snapshot>,
     index_state: Option<&SyntaxIndexState>,
     prompt_max_bytes: Option<usize>,
+    prompt_format: PromptFormat,
 ) -> predict_edits_v3::PredictEditsRequest {
     let mut signatures = Vec::new();
     let mut declaration_to_signature_index = HashMap::default();
@@ -755,7 +760,7 @@ fn make_cloud_request(
 
         let (text, text_is_truncated) = snippet.declaration.item_text();
         referenced_declarations.push(predict_edits_v3::ReferencedDeclaration {
-            path: path.as_std_path().to_path_buf(),
+            path: path.as_std_path().into(),
             text: text.into(),
             range: snippet.declaration.item_range(),
             text_is_truncated,
@@ -797,6 +802,7 @@ fn make_cloud_request(
         git_info,
         debug_info,
         prompt_max_bytes,
+        prompt_format,
     }
 }
 

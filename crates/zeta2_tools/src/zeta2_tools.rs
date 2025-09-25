@@ -244,11 +244,13 @@ impl Zeta2Inspector {
                     ),
                 };
 
+                let zeta_options = this.zeta.read(cx).options();
                 this.set_options(
                     ZetaOptions {
                         excerpt: excerpt_options,
                         max_prompt_bytes: number_input_value(&this.max_prompt_bytes_input, cx),
-                        max_diagnostic_bytes: this.zeta.read(cx).options().max_diagnostic_bytes,
+                        max_diagnostic_bytes: zeta_options.max_diagnostic_bytes,
+                        prompt_format: zeta_options.prompt_format,
                     },
                     cx,
                 );
