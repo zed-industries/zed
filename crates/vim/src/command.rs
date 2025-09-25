@@ -6,6 +6,7 @@ use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
 };
+use futures::AsyncWriteExt as _;
 use gpui::{Action, App, AppContext as _, Context, Global, Keystroke, Task, Window, actions};
 use itertools::Itertools;
 use language::Point;
@@ -16,7 +17,6 @@ use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
 use std::{
-    io::Write,
     iter::Peekable,
     ops::{Deref, Range},
     path::Path,
@@ -1966,7 +1966,6 @@ impl ShellExec {
             process.stdin(Stdio::null());
         };
 
-        util::set_pre_exec_to_start_new_session(&mut process);
         let is_read = self.is_read;
 
         let task = cx.spawn_in(window, async move |vim, cx| {
@@ -1984,18 +1983,16 @@ impl ShellExec {
                 let range = range.clone();
                 cx.background_spawn(async move {
                     for chunk in snapshot.text_for_range(range) {
-                        if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                        if stdin.write_all(chunk.as_bytes()).await.log_err().is_none() {
                             return;
                         }
                     }
-                    stdin.flush().log_err();
+                    stdin.flush().await.log_err();
                 })
                 .detach();
             };
 
-            let output = cx
-                .background_spawn(async move { running.wait_with_output() })
-                .await;
+            let output = cx.background_spawn(running.output()).await;
 
             let Some(output) = output.log_err() else {
                 vim.update_in(cx, |vim, window, cx| {

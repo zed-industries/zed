@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 use std::process::Command;
 
 const ZED_MANIFEST: &str = include_str!("../zed/Cargo.toml");

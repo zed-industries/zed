@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 #[cfg(target_os = "macos")]
 fn main() {
     use std::{env, path::PathBuf, process::Command};

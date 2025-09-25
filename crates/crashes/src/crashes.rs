@@ -3,6 +3,7 @@ use log::info;
 use minidumper::{Client, LoopAction, MinidumpBinary};
 use release_channel::{RELEASE_CHANNEL, ReleaseChannel};
 use serde::{Deserialize, Serialize};
+use smol::process::Command;
 
 #[cfg(target_os = "macos")]
 use std::sync::atomic::AtomicU32;
@@ -12,7 +13,7 @@ use std::{
     io,
     panic::{self, PanicHookInfo},
     path::{Path, PathBuf},
-    process::{self, Command},
+    process::{self},
     sync::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
@@ -53,13 +54,13 @@ pub async fn init(crash_init: InitCrashHandler) {
     // used by the crash handler isn't destroyed correctly which causes it to stay on the file
     // system and block further attempts to initialize crash handlers with that socket path.
     let socket_name = paths::temp_dir().join(format!("zed-crash-handler-{zed_pid}"));
-    #[allow(unused)]
-    let server_pid = Command::new(exe)
+    let _crash_handler = Command::new(exe)
         .arg("--crash-handler")
         .arg(&socket_name)
         .spawn()
-        .expect("unable to spawn server process")
-        .id();
+        .expect("unable to spawn server process");
+    #[cfg(target_os = "linux")]
+    let server_pid = _crash_handler.id();
     info!("spawning crash handler process");
 
     let mut elapsed = Duration::ZERO;

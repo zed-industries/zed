@@ -5,7 +5,7 @@ use collections::HashMap;
 
 /// Capture all environment variables from the login shell.
 #[cfg(unix)]
-pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
+pub async fn capture(directory: &std::path::Path) -> Result<collections::HashMap<String, String>> {
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
 
@@ -59,7 +59,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
 
     super::set_pre_exec_to_start_new_session(&mut command);
 
-    let (env_output, process_output) = spawn_and_read_fd(command, fd_num)?;
+    let (env_output, process_output) = spawn_and_read_fd(command, fd_num).await?;
     let env_output = String::from_utf8_lossy(&env_output);
 
     anyhow::ensure!(
@@ -77,7 +77,7 @@ pub fn capture(directory: &std::path::Path) -> Result<collections::HashMap<Strin
 }
 
 #[cfg(unix)]
-fn spawn_and_read_fd(
+async fn spawn_and_read_fd(
     mut command: std::process::Command,
     child_fd: std::os::fd::RawFd,
 ) -> anyhow::Result<(Vec<u8>, std::process::Output)> {
@@ -91,13 +91,12 @@ fn spawn_and_read_fd(
         child_fd,
     }])?;
 
-    let process = command.spawn()?;
-    drop(command);
+    let process = smol::process::Command::from(command).spawn()?;
 
     let mut buffer = Vec::new();
     reader.read_to_end(&mut buffer)?;
 
-    Ok((buffer, process.wait_with_output()?))
+    Ok((buffer, process.output().await?))
 }
 
 pub fn print_env() {
