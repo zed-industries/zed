@@ -355,9 +355,7 @@ fn collect_files(
                         let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot())?;
                         append_buffer_to_output(
                             &snapshot,
-                            Some(Path::new(
-                                path_including_worktree_name.display(path_style).as_ref(),
-                            )),
+                            Some(path_including_worktree_name.display(path_style).as_ref()),
                             &mut output,
                         )
                         .log_err();
@@ -382,18 +380,18 @@ fn collect_files(
 }
 
 pub fn codeblock_fence_for_path(
-    path: Option<&Path>,
+    path: Option<&str>,
     row_range: Option<RangeInclusive<u32>>,
 ) -> String {
     let mut text = String::new();
     write!(text, "```").unwrap();
 
     if let Some(path) = path {
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+        if let Some(extension) = Path::new(path).extension().and_then(|ext| ext.to_str()) {
             write!(text, "{} ", extension).unwrap();
         }
 
-        write!(text, "{}", path.display()).unwrap();
+        write!(text, "{path}").unwrap();
     } else {
         write!(text, "untitled").unwrap();
     }
@@ -413,12 +411,12 @@ pub struct FileCommandMetadata {
 
 pub fn build_entry_output_section(
     range: Range<usize>,
-    path: Option<&Path>,
+    path: Option<&str>,
     is_directory: bool,
     line_range: Option<Range<u32>>,
 ) -> SlashCommandOutputSection<usize> {
     let mut label = if let Some(path) = path {
-        path.to_string_lossy().to_string()
+        path.to_string()
     } else {
         "untitled".to_string()
     };
@@ -441,7 +439,7 @@ pub fn build_entry_output_section(
         } else {
             path.and_then(|path| {
                 serde_json::to_value(FileCommandMetadata {
-                    path: path.to_string_lossy().to_string(),
+                    path: path.to_string(),
                 })
                 .ok()
             })
@@ -532,7 +530,7 @@ mod custom_path_matcher {
 
 pub fn append_buffer_to_output(
     buffer: &BufferSnapshot,
-    path: Option<&Path>,
+    path: Option<&str>,
     output: &mut SlashCommandOutput,
 ) -> Result<()> {
     let prev_len = output.text.len();
