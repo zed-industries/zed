@@ -74,7 +74,6 @@ impl Model {
     }
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "role", rename_all = "lowercase")]
 pub enum ChatMessage {
@@ -99,21 +98,18 @@ pub enum ChatMessage {
     },
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum OllamaToolCall {
     Function(OllamaFunctionCall),
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct OllamaFunctionCall {
     pub name: String,
     pub arguments: Value,
 }
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 pub struct OllamaFunctionTool {
     pub name: String,
