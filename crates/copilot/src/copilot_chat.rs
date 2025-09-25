@@ -911,11 +911,9 @@ async fn stream_completion(
         });
 
         // Add optional parameters if they have non-default values
-        if let Some(temp) = request.temperature {
-            if temp != 1.0 {
-                // Only add temperature if it's different from default and model supports it
-                // For now, skip temperature for GPT-5 Codex as it's not supported
-            }
+        if request.temperature != 1.0 {
+            // Only add temperature if it's different from default and model supports it
+            // For now, skip temperature for GPT-5 Codex as it's not supported
         }
 
         serde_json::to_string(&responses_request)?
