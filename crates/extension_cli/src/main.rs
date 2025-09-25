@@ -2,7 +2,6 @@ use std::collections::{BTreeSet, HashMap};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use ::fs::{CopyOptions, Fs, RealFs, copy_recursive};
@@ -13,6 +12,7 @@ use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 use language::LanguageConfig;
 use reqwest_client::ReqwestClient;
 use rpc::ExtensionProvides;
+use tokio::process::Command;
 use tree_sitter::{Language, Query, WasmStore};
 
 #[derive(Parser, Debug)]
@@ -89,6 +89,7 @@ async fn main() -> Result<()> {
         .current_dir(&output_dir)
         .args(["-czvf", "archive.tar.gz", "-C", "archive", "."])
         .output()
+        .await
         .context("failed to run tar")?;
     if !tar_output.status.success() {
         bail!(

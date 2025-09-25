@@ -1,3 +1,7 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "We are not in an async environment, so std::process::Command is fine"
+)]
 #![cfg_attr(
     any(target_os = "linux", target_os = "freebsd", target_os = "windows"),
     allow(dead_code)
@@ -970,10 +974,6 @@ mod mac_os {
                         .stdout(subprocess_stdin_file)
                         .arg(url);
 
-                    #[allow(
-                        clippy::disallowed_methods,
-                        reason = "We are starting, no use for async"
-                    )]
                     command
                         .spawn()
                         .with_context(|| format!("Spawning {command:?}"))?;
@@ -1047,10 +1047,6 @@ mod mac_os {
         }
         let app_path = String::from_utf8(app_path_output.stdout)?.trim().to_owned();
         let cli_path = format!("{app_path}/Contents/MacOS/cli");
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "We are starting, no use for async"
-        )]
         Command::new(cli_path).args(leftover_args).spawn()?;
         Ok(())
     }

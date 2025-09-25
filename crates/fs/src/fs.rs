@@ -12,7 +12,7 @@ use gpui::BackgroundExecutor;
 use gpui::Global;
 use gpui::ReadGlobal as _;
 use std::borrow::Cow;
-use util::command::{new_smol_command, new_std_command};
+use util::command::new_smol_command;
 
 #[cfg(unix)]
 use std::os::fd::{AsFd, AsRawFd};
@@ -135,7 +135,8 @@ pub trait Fs: Send + Sync {
     );
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>>;
-    fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String) -> Result<()>;
+    async fn git_init(&self, abs_work_directory: &Path, fallback_branch_name: String)
+    -> Result<()>;
     async fn git_clone(&self, repo_url: &str, abs_work_directory: &Path) -> Result<()>;
     fn is_fake(&self) -> bool;
     async fn is_case_sensitive(&self) -> Result<bool>;
@@ -835,11 +836,16 @@ impl Fs for RealFs {
         )?))
     }
 
-    fn git_init(&self, abs_work_directory_path: &Path, fallback_branch_name: String) -> Result<()> {
-        let config = new_std_command("git")
+    async fn git_init(
+        &self,
+        abs_work_directory_path: &Path,
+        fallback_branch_name: String,
+    ) -> Result<()> {
+        let config = new_smol_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["config", "--global", "--get", "init.defaultBranch"])
-            .output()?;
+            .output()
+            .await?;
 
         let branch_name;
 
@@ -849,11 +855,12 @@ impl Fs for RealFs {
             branch_name = Cow::Borrowed(fallback_branch_name.as_str());
         }
 
-        new_std_command("git")
+        new_smol_command("git")
             .current_dir(abs_work_directory_path)
             .args(&["init", "-b"])
             .arg(branch_name.trim())
-            .output()?;
+            .output()
+            .await?;
 
         Ok(())
     }
@@ -2438,12 +2445,12 @@ impl Fs for FakeFs {
         .log_err()
     }
 
-    fn git_init(
+    async fn git_init(
         &self,
         abs_work_directory_path: &Path,
         _fallback_branch_name: String,
     ) -> Result<()> {
-        smol::block_on(self.create_dir(&abs_work_directory_path.join(".git")))
+        self.create_dir(&abs_work_directory_path.join(".git")).await
     }
 
     async fn git_clone(&self, _repo_url: &str, _abs_work_directory: &Path) -> Result<()> {

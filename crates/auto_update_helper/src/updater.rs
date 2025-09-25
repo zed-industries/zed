@@ -160,6 +160,7 @@ pub(crate) fn perform_update(app_dir: &Path, hwnd: Option<isize>, launch: bool) 
         }
     }
     if launch {
+        #[allow(clippy::disallowed_methods, reason = "doesn't run in the main binary")]
         let _ = std::process::Command::new(app_dir.join("Zed.exe"))
             .creation_flags(CREATE_NEW_PROCESS_GROUP.0)
             .spawn();

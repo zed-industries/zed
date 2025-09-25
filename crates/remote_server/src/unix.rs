@@ -547,32 +547,36 @@ pub(crate) fn execute_proxy(
     .detach();
 
     log::info!("starting proxy process. PID: {}", std::process::id());
+    smol::block_on(async {
+        let server_pid = check_pid_file(&server_paths.pid_file)
+            .await
+            .map_err(|source| ExecuteProxyError::CheckPidFile {
+                source,
+                path: server_paths.pid_file.clone(),
+            })?;
+        let server_running = server_pid.is_some();
+        if is_reconnecting {
+            if !server_running {
+                log::error!("attempted to reconnect, but no server running");
+                return Err(ExecuteProxyError::ServerNotRunning(
+                    ProxyLaunchError::ServerNotRunning,
+                ));
+            }
+        } else {
+            if let Some(pid) = server_pid {
+                log::info!(
+                    "proxy found server already running with PID {}. Killing process and cleaning up files...",
+                    pid
+                );
+                kill_running_server(pid, &server_paths).await?;
+            }
 
-    let server_pid = check_pid_file(&server_paths.pid_file).map_err(|source| {
-        ExecuteProxyError::CheckPidFile {
-            source,
-            path: server_paths.pid_file.clone(),
-        }
+            spawn_server(&server_paths)
+                .await
+                .map_err(ExecuteProxyError::SpawnServer)?;
+        };
+        Ok(())
     })?;
-    let server_running = server_pid.is_some();
-    if is_reconnecting {
-        if !server_running {
-            log::error!("attempted to reconnect, but no server running");
-            return Err(ExecuteProxyError::ServerNotRunning(
-                ProxyLaunchError::ServerNotRunning,
-            ));
-        }
-    } else {
-        if let Some(pid) = server_pid {
-            log::info!(
-                "proxy found server already running with PID {}. Killing process and cleaning up files...",
-                pid
-            );
-            kill_running_server(pid, &server_paths)?;
-        }
-
-        spawn_server(&server_paths).map_err(ExecuteProxyError::SpawnServer)?;
-    };
 
     let stdin_task = smol::spawn(async move {
         let stdin = Async::new(std::io::stdin())?;
@@ -626,11 +630,12 @@ pub(crate) fn execute_proxy(
     Ok(())
 }
 
-fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
+async fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
-    std::process::Command::new("kill")
+    smol::process::Command::new("kill")
         .arg(pid.to_string())
         .output()
+        .await
         .map_err(|source| ExecuteProxyError::KillRunningServer { source, pid })?;
 
     for file in [
@@ -666,7 +671,7 @@ pub(crate) enum SpawnServerError {
     LaunchStatus { status: ExitStatus, paths: String },
 }
 
-fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
+async fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     if paths.stdin_socket.exists() {
         std::fs::remove_file(&paths.stdin_socket).map_err(SpawnServerError::RemoveStdinSocket)?;
     }
@@ -678,7 +683,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
     }
 
     let binary_name = std::env::current_exe().map_err(SpawnServerError::CurrentExe)?;
-    let mut server_process = std::process::Command::new(binary_name);
+    let mut server_process = smol::process::Command::new(binary_name);
     server_process
         .arg("run")
         .arg("--log-file")
@@ -694,6 +699,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<(), SpawnServerError> {
 
     let status = server_process
         .status()
+        .await
         .map_err(SpawnServerError::ProcessStatus)?;
 
     if !status.success() {
@@ -733,7 +739,7 @@ pub(crate) struct CheckPidError {
     pid: u32,
 }
 
-fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
+async fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     let Some(pid) = std::fs::read_to_string(&path)
         .ok()
         .and_then(|contents| contents.parse::<u32>().ok())
@@ -742,10 +748,11 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     };
 
     log::debug!("Checking if process with PID {} exists...", pid);
-    match std::process::Command::new("kill")
+    match smol::process::Command::new("kill")
         .arg("-0")
         .arg(pid.to_string())
         .output()
+        .await
     {
         Ok(output) if output.status.success() => {
             log::debug!(

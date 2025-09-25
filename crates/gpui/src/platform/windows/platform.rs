@@ -349,6 +349,11 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
+
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "We are restarting ourselves, using std command thus is fine"
+        )]
         let restart_process = util::command::new_std_command("powershell.exe")
             .arg("-command")
             .arg(script)
