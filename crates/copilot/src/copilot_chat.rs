@@ -903,7 +903,7 @@ async fn stream_completion(
 
         // Create Responses API compatible request
         // Note: GPT-5 Codex doesn't support temperature and some other parameters
-        let mut responses_request = json!({
+        let responses_request = json!({
             "model": request.model,
             "instructions": instructions,
             "input": input,
