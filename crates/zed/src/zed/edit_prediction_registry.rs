@@ -20,12 +20,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
 
     OllamaLanguageModelProvider::set_global(ollama_provider, cx);
 
-    // Authenticate the provider to ensure API key is loaded from keychain/environment.
-    // This is critical for the edit prediction provider to work correctly - without this,
-    // the OllamaEditPredictionProvider will not have access to the API key when making
-    // requests to the Ollama API, even though it correctly tries to retrieve the key
-    // from the global provider during request time. The authentication loads the API key
-    // from the system keychain or OLLAMA_API_KEY environment variable.
     if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
         let api_url = language_models::provider::ollama::OllamaLanguageModelProvider::api_url(cx);
         log::info!(
@@ -129,7 +123,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                         provider.refresh_models(cx);
                     });
                 }
-                // Reassign edit prediction providers to pick up new model/settings
                 assign_edit_prediction_providers(
                     &editors,
                     provider,
@@ -294,18 +287,15 @@ fn assign_edit_prediction_provider(
         EditPredictionProvider::Ollama => {
             let settings = &AllLanguageModelSettings::get_global(cx).ollama;
 
-            // Get API URL
             let api_url: gpui::SharedString = if settings.api_url.is_empty() {
                 ollama::OLLAMA_API_URL.into()
             } else {
                 settings.api_url.clone().into()
             };
 
-            // Get model from settings or use discovered models
             let model = if let Some(first_model) = settings.available_models.first() {
                 Some(first_model.name.clone())
             } else if let Some(provider) = OllamaLanguageModelProvider::global(cx) {
-                // Use first discovered model
                 provider
                     .read(cx)
                     .available_models_for_completion(cx)
@@ -343,7 +333,6 @@ mod tests {
     async fn test_assign_edit_prediction_provider_with_no_ollama_models(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
-        // Set up the global filesystem before trying to access it
         cx.update(|cx| {
             <dyn fs::Fs>::set_global(app_state.fs.clone(), cx);
         });
@@ -353,7 +342,6 @@ mod tests {
         let (editor, cx) =
             cx.add_window_view(|window, cx| Editor::for_multibuffer(multibuffer, None, window, cx));
 
-        // Override settings to have empty available_models
         cx.update(|_window, cx| {
             let fs = <dyn Fs>::global(cx);
             update_settings_file(fs, cx, |settings, _cx| {
@@ -366,12 +354,10 @@ mod tests {
                 }
                 let ollama_settings = language_models.ollama.as_mut().unwrap();
                 ollama_settings.api_url = Some("http://localhost:11434".to_string());
-                ollama_settings.available_models = Some(vec![]); // Empty models list
+                ollama_settings.available_models = Some(vec![]);
             });
         });
 
-        // Call assign_edit_prediction_provider with Ollama provider
-        // This should complete without panicking even when no models are available
         editor.update_in(cx, |editor, window, cx| {
             assign_edit_prediction_provider(
                 editor,
@@ -389,23 +375,17 @@ mod tests {
         let app_state = init_test(cx);
 
         cx.update(|cx| {
-            // Verify that no global provider exists initially
             assert!(OllamaLanguageModelProvider::global(cx).is_none());
 
-            // Call init to set up the provider
             init(app_state.client.clone(), app_state.user_store.clone(), cx);
 
-            // Verify that the global provider was created and set
             let provider = OllamaLanguageModelProvider::global(cx);
             assert!(
                 provider.is_some(),
                 "Global OllamaLanguageModelProvider should be set after init"
             );
 
-            // The provider should have attempted authentication
-            // We can't easily verify this without mocking, but we can verify the provider is in a valid state
             if let Some(provider) = provider {
-                // The provider should be accessible and not panic when used
                 let _models = provider.read(cx).available_models_for_completion(cx);
             }
         });
@@ -415,25 +395,20 @@ mod tests {
     async fn test_ollama_model_change_updates_existing_editors(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
-        // Set up the global filesystem before trying to access it
         cx.update(|cx| {
             <dyn fs::Fs>::set_global(app_state.fs.clone(), cx);
         });
 
-        // Initialize the global Ollama provider
         cx.update(|cx| {
             init(app_state.client.clone(), app_state.user_store.clone(), cx);
         });
 
-        // Set up initial settings with first model
         let initial_model = "qwen2.5-coder:3b".to_string();
         let updated_model = "codellama:7b-code".to_string();
 
         cx.update(|cx| {
-            // Get current settings to preserve other provider settings
             let current_settings = AllLanguageModelSettings::get_global(cx);
 
-            // Create new settings with updated Ollama config
             let updated_settings = AllLanguageModelSettings {
                 anthropic: current_settings.anthropic.clone(),
                 bedrock: current_settings.bedrock.clone(),
@@ -462,7 +437,6 @@ mod tests {
             };
             AllLanguageModelSettings::override_global(updated_settings, cx);
 
-            // Also set the edit prediction provider to Ollama
             let mut language_settings =
                 language::language_settings::AllLanguageSettings::get_global(cx).clone();
             language_settings.edit_predictions.provider =
@@ -473,7 +447,6 @@ mod tests {
             );
         });
 
-        // Create an editor and assign Ollama provider with initial model
         let buffer = cx.new(|cx| Buffer::local("fn main() {\n    \n}", cx));
         let multibuffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
         let (editor, visual_cx) =
@@ -490,7 +463,6 @@ mod tests {
             );
         });
 
-        // Verify initial provider is set
         let initial_provider_set = editor.read_with(visual_cx, |editor, _| {
             editor.edit_prediction_provider().is_some()
         });
@@ -499,19 +471,15 @@ mod tests {
             "Initial Ollama provider should be set"
         );
 
-        // Get reference to the initial provider to verify it gets replaced
         let initial_provider_ptr = editor.read_with(visual_cx, |editor, _| {
             editor
                 .edit_prediction_provider()
                 .map(|provider| Arc::as_ptr(&provider) as *const ())
         });
 
-        // Change settings to use a different model
         visual_cx.update(|_window, cx| {
-            // Get current settings to preserve other provider settings
             let current_settings = AllLanguageModelSettings::get_global(cx);
 
-            // Create new settings with updated Ollama config
             let updated_settings = AllLanguageModelSettings {
                 anthropic: current_settings.anthropic.clone(),
                 bedrock: current_settings.bedrock.clone(),
@@ -541,10 +509,8 @@ mod tests {
             AllLanguageModelSettings::override_global(updated_settings, cx);
         });
 
-        // Allow the settings change observer to run
         visual_cx.background_executor.run_until_parked();
 
-        // Verify that the provider was reassigned (new instance created)
         let updated_provider_ptr = editor.read_with(visual_cx, |editor, _| {
             editor
                 .edit_prediction_provider()
@@ -556,7 +522,6 @@ mod tests {
             "Provider should be reassigned with new instance when model changes"
         );
 
-        // Verify provider is still present after settings change
         let provider_still_set = editor.read_with(visual_cx, |editor, _| {
             editor.edit_prediction_provider().is_some()
         });

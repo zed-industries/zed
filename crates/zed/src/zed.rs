@@ -2426,7 +2426,6 @@ mod tests {
     async fn test_window_edit_state_restoring_enabled(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
-        // Set up the global filesystem before trying to access it
         cx.update(|cx| {
             <dyn fs::Fs>::set_global(app_state.fs.clone(), cx);
         });
