@@ -72,7 +72,6 @@ screen-capture = [
     "scap",
 ]
 windows-manifest = []
-tracy = ["dep:tracy-client"]
 
 [lib]
 path = "src/gpui.rs"
@@ -125,7 +124,6 @@ strum.workspace = true
 sum_tree.workspace = true
 taffy = "=0.9.0"
 thiserror.workspace = true
-tracy-client = { workspace = true, optional = true }
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"

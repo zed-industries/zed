@@ -174,10 +174,8 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut App) {
     }
 }
 
+#[profiling::function]
 pub fn main() {
-    #[cfg(feature = "tracy")]
-    let _zone = tracy_client::span!();
-
     #[cfg(unix)]
     util::prevent_root_execution();
 
@@ -384,8 +382,7 @@ pub fn main() {
     });
 
     app.run(move |cx| {
-        #[cfg(feature = "tracy")]
-        let _zone = tracy_client::span!();
+        profiling::scope!("app_run");
 
         menu::init();
         zed_actions::init();
