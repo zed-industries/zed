@@ -856,13 +856,11 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs, vec!["/root".as_ref()], cx).await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
 
         let buffer = project
             .update(cx, |project, cx| {
-                let path = project
-                    .find_project_path(path!("/root/foo.md"), cx)
-                    .unwrap();
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
                 project.open_buffer(path, cx)
             })
             .await
@@ -885,7 +883,7 @@ mod tests {
             .send(predict_edits_v3::PredictEditsResponse {
                 request_id: Uuid::new_v4(),
                 edits: vec![predict_edits_v3::Edit {
-                    path: PathBuf::from(path!("/root/foo.md")),
+                    path: PathBuf::from(path!("root/foo.md")),
                     range: 0..snapshot.len(),
                     content: "Hello!\nHow are you?\nBye".into(),
                 }],
@@ -914,13 +912,11 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs, vec!["/root".as_ref()], cx).await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
 
         let buffer = project
             .update(cx, |project, cx| {
-                let path = project
-                    .find_project_path(path!("/root/foo.md"), cx)
-                    .unwrap();
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
                 project.open_buffer(path, cx)
             })
             .await
@@ -965,7 +961,7 @@ mod tests {
             .send(predict_edits_v3::PredictEditsResponse {
                 request_id: Uuid::new_v4(),
                 edits: vec![predict_edits_v3::Edit {
-                    path: PathBuf::from(path!("/root/foo.md")),
+                    path: PathBuf::from(path!("root/foo.md")),
                     range: 0..snapshot.len(),
                     content: "Hello!\nHow are you?\nBye".into(),
                 }],
@@ -994,9 +990,9 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs, vec!["/root".as_ref()], cx).await;
+        let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
 
-        let path_to_buffer_uri = lsp::Uri::from_file_path(path!("/root/foo.md")).unwrap();
+        let path_to_buffer_uri = lsp::Uri::from_file_path("/root/foo.md").unwrap();
         let diagnostic = lsp::Diagnostic {
             range: lsp::Range::new(lsp::Position::new(1, 1), lsp::Position::new(1, 5)),
             severity: Some(lsp::DiagnosticSeverity::ERROR),
@@ -1026,9 +1022,7 @@ mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                let path = project
-                    .find_project_path(path!("/root/foo.md"), cx)
-                    .unwrap();
+                let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
                 project.open_buffer(path, cx)
             })
             .await
