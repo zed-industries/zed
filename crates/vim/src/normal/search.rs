@@ -338,12 +338,9 @@ impl Vim {
         let cursor_word = self.editor_cursor_word(window, cx);
         let vim = cx.entity();
 
-        log::info!("move_to_internal: {:?}", direction);
-
         let searched = pane.update(cx, |pane, cx| {
             self.search.direction = direction;
             self.search.vim_search_active = true;
-            log::info!("move_to_internal: {:?}", self.search.vim_search_active);
             let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() else {
                 return false;
             };
