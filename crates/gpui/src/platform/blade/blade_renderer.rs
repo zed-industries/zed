@@ -989,17 +989,27 @@ fn create_msaa_texture_if_needed(
     Some((texture_msaa, texture_view_msaa))
 }
 
+/// A set of parameters that can be set using a corresponding environment variable.
 struct RenderingParameters {
+    // Env var: ZED_PATH_SAMPLE_COUNT
+    // workaround for https://github.com/zed-industries/zed/issues/26143
     path_sample_count: u32,
+
+    // Env var: ZED_FONTS_GAMMA
+    // Allowed range [1.0, 2.2], other values are clipped
+    // Default: 1.8
     gamma_ratios: [f32; 4],
+    // Env var: ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST
+    // Allowed range: [0.0, ..), other values are clipped
+    // Default: 1.0
     grayscale_enhanced_contrast: f32,
 }
 
+// TODO kb md docs
 impl RenderingParameters {
     fn from_env(context: &BladeContext) -> Self {
         use std::env;
 
-        // workaround for https://github.com/zed-industries/zed/issues/26143
         let path_sample_count = env::var("ZED_PATH_SAMPLE_COUNT")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -1009,12 +1019,16 @@ impl RenderingParameters {
                     .find(|&n| (context.gpu.capabilities().sample_count_mask & n) != 0)
             })
             .unwrap_or(1);
-        // TODO kb check https://github.com/zed-industries/zed/issues/7992#issuecomment-3083871615
-        // TODO kb find a way to un-hardcode this later
-        // [1.0, 2.2] is the range; 1.8 is the default.
-        let gamma_ratios = Self::get_gamma_ratios(1.8);
-        // TODO kb clamp in range [0.0..1.0]
-        let grayscale_enhanced_contrast = 1.0;
+        let gamma = env::var("ZED_FONTS_GAMMA")
+            .ok()
+            .unwrap_or(1.8)
+            .clamp(1.0, 2.2);
+        let gamma_ratios = Self::get_gamma_ratios(gamma);
+        let grayscale_enhanced_contrast = env::var("ZED_FONTS_GRAYSCALE_ENHANCED_CONTRAST")
+            .ok()
+            .unwrap_or(1.0)
+            .max(0.0);
+
         Self {
             path_sample_count,
             gamma_ratios,
