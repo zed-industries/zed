@@ -571,7 +571,6 @@ pub enum ModeContent {
     #[default]
     Normal,
     Insert,
-    HelixNormal,
 }
 
 /// Controls when to use system clipboard.
