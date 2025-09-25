@@ -25,8 +25,8 @@ use util::{paths::PathStyle, rel_path::RelPath};
 
 #[derive(Clone)]
 struct SettingField<T: 'static> {
-    pick: Arc<dyn Send + Fn(&SettingsContent) -> &T>,
-    pick_mut: Arc<dyn Send + Sync + Fn(&mut SettingsContent) -> &mut T>,
+    pick: fn(&SettingsContent) -> &T,
+    pick_mut: fn(&mut SettingsContent) -> &mut T,
 }
 
 #[derive(Default, Clone)]
@@ -69,10 +69,8 @@ fn user_settings_data() -> Vec<SettingsPage> {
                     title: "Confirm Quit",
                     description: "Whether to confirm before quitting Zed",
                     field: Box::new(SettingField {
-                        pick: Arc::new(|settings_content| &settings_content.workspace.confirm_quit),
-                        pick_mut: Arc::new(|settings_content| {
-                            &mut settings_content.workspace.confirm_quit
-                        }),
+                        pick: |settings_content| &settings_content.workspace.confirm_quit,
+                        pick_mut: |settings_content| &mut settings_content.workspace.confirm_quit,
                     }),
                 }),
                 // SettingsPageItem::SettingItem(SettingItem {
