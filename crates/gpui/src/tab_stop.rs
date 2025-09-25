@@ -337,7 +337,7 @@ mod tests {
         let mut found = vec![];
         for _ in 0..expected.len() {
             let handle = tab_index_map.next(prev.as_ref()).unwrap();
-            prev = Some(handle.id.clone());
+            prev = Some(handle.id);
             found.push(handle.id);
         }
 
@@ -345,7 +345,7 @@ mod tests {
             found,
             expected
                 .iter()
-                .map(|handle| handle.id.clone())
+                .map(|handle| handle.id)
                 .collect::<Vec<_>>()
         );
 
@@ -474,17 +474,17 @@ mod tests {
             let mut found = vec![];
             for _ in 0..self.expected.len() {
                 let handle = traverse(&self.tab_map, last_focus_id.as_ref()).unwrap();
-                last_focus_id = Some(handle.id.clone());
+                last_focus_id = Some(handle.id);
                 found.push(handle.id);
             }
             found
         }
 
         fn assert(self) {
-            let mut expected = self.expected.iter().map(|(_, id)| id.clone()).collect_vec();
+            let mut expected = self.expected.iter().map(|(_, id)| *id).collect_vec();
 
             // Check next order
-            let forward_found = self.traverse_tab_map(|tab_map, prev| tab_map.next(prev).clone());
+            let forward_found = self.traverse_tab_map(|tab_map, prev| tab_map.next(prev));
             assert_eq!(forward_found, expected);
 
             // Test overflow. Last to first
@@ -496,7 +496,7 @@ mod tests {
             );
 
             // Check previous order
-            let reversed_found = self.traverse_tab_map(|tab_map, prev| tab_map.prev(prev).clone());
+            let reversed_found = self.traverse_tab_map(|tab_map, prev| tab_map.prev(prev));
             expected.reverse();
             assert_eq!(reversed_found, expected);
 
