@@ -682,7 +682,7 @@ tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
-tree-sitter-python = { git = "https://github.com/zed-industries/tree-sitter-python", rev = "218fcbf3fda3d029225f3dec005cb497d111b35e" }
+tree-sitter-python = "0.25"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.24"
