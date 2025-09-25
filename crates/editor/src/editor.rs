@@ -16319,7 +16319,7 @@ impl Editor {
             None
         };
 
-        let url_finder = cx.spawn_in(window, async move |editor, cx| {
+        let url_finder = cx.spawn_in(window, async move |_editor, cx| {
             let url = if let Some(end_pos) = end_position {
                 find_url_from_range(&buffer, start_position..end_pos, cx.clone())
             } else {
@@ -16327,12 +16327,16 @@ impl Editor {
             };
 
             if let Some(url) = url {
-                editor.update(cx, |_, cx| {
-                    cx.open_url(&url);
-                })
-            } else {
-                Ok(())
+                cx.update(|window, cx| {
+                    if url.starts_with("zed://") {
+                        window.dispatch_action(Box::new(zed_actions::OpenZedUrl { url }), cx);
+                    } else {
+                        cx.open_url(&url);
+                    }
+                })?;
             }
+
+            anyhow::Ok(())
         });
 
         url_finder.detach();
